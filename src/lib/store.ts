@@ -16,6 +16,7 @@ interface AppState {
   fontScale: FontScale
   channelUsername: string | null // открытый экран канала (внутренний)
   post: PostDTO | null // открытый полный экран поста (внутренний)
+  postQueue: PostDTO[] // снимок списка постов вокруг открытого — для свайпов ←/→ в полном экране
   searchSeed: string | null // внешний поисковый запрос (тап по хэштегу в ленте); null — запроса нет
   maintenance: boolean // включён режим техработ и пользователь без допуска
   setMaintenance: (v: boolean) => void
@@ -31,6 +32,7 @@ interface AppState {
   setFontScale: (f: FontScale) => void
   openChannel: (username: string) => void
   closeChannel: () => void
+  setPostQueue: (list: PostDTO[]) => void
   openPost: (post: PostDTO) => void
   closePost: () => void
   openSearchWith: (query: string) => void
@@ -52,6 +54,7 @@ export const useApp = create<AppState>((set, get) => ({
   fontScale: 'md',
   channelUsername: null,
   post: null,
+  postQueue: [],
   searchSeed: null,
   maintenance: false,
   setMaintenance: (maintenance) => set({ maintenance }),
@@ -82,6 +85,7 @@ export const useApp = create<AppState>((set, get) => ({
   },
   openChannel: (username) => set({ channelUsername: username.replace(/^@/, '') }),
   closeChannel: () => set({ channelUsername: null }),
+  setPostQueue: (postQueue) => set({ postQueue }),
   // Полный экран поста («...еще» в ленте): храним снимок поста — оверлей рендерит
   // его мгновенно без запроса; лайки/закладки оверлей обновляет локально
   openPost: (post) => set({ post }),

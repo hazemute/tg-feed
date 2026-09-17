@@ -25,7 +25,7 @@ const PTR_THRESHOLD = 62 // тянем вниз на столько, чтобы 
  * бесконечная вертикальная прокрутка, pull-to-refresh, каждый 10-й слот — реклама.
  */
 export function FeedView() {
-  const { user, category, setCategory, categories, feedVersion, bumpFeed, openSearchWith } = useApp()
+  const { user, category, setCategory, categories, feedVersion, bumpFeed, openSearchWith, setPostQueue } = useApp()
   const [items, setItems] = useState<PostDTO[]>([])
   const [ads, setAds] = useState<AdDTO[]>([])
   const [page, setPage] = useState(0)
@@ -74,6 +74,12 @@ export function FeedView() {
   userRef.current = user
   const itemsRef = useRef(items)
   itemsRef.current = items
+  // Снимок ленты для свайп-навигации ←/→ в полном экране поста (PostOverlay):
+  // обновляется вместе с лентой (догрузка страниц, свежие посты, лайки) — дёшево,
+  // просто ссылка на текущий массив; оверлей ищет соседей по id.
+  useEffect(() => {
+    setPostQueue(items)
+  }, [items, setPostQueue])
   const busyRef = useRef(false)
 
   useEffect(() => {
