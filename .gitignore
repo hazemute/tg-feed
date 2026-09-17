@@ -60,3 +60,4 @@ server.log
 /worklog.md
 /prompt
 /.zscripts/
+local-deploy-secrets.env

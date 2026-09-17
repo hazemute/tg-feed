@@ -10,6 +10,25 @@
 
 ---
 
+## Быстрый путь: скрипты автоматизации
+
+Шаги 1–3 можно выполнить двумя командами (нужны только токены):
+
+```bash
+# 1) Supabase: создать проект, применить schema/policies/seed, вернуть строки подключения
+SUPABASE_ACCESS_TOKEN=sbp_xxx bash scripts/deploy-supabase.sh
+#    → пишет DATABASE_URL / DIRECT_URL в local-deploy-secrets.env (в git не попадает)
+
+# 2) Vercel: проект + env + прод-деплой + health-check
+VERCEL_TOKEN=vercel_xxx bash scripts/deploy-vercel.sh
+#    → печатает прод-URL и ADMIN_KEY для входа в /admin
+```
+
+Скрипты идемпотентны (повторный запуск безопасен), секреты генерируются автоматически
+и сохраняются в `local-deploy-secrets.env`. Ниже — ручной путь.
+
+---
+
 ## Шаг 1. Supabase: база и схема
 
 1. https://supabase.com → **New project** (регион ближе к аудитории; сохраните DB-пароль).
