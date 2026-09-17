@@ -57,6 +57,7 @@ model Channel {
   description      String?
   avatarColor      String    @default("#3390ec")
   photoFileId      String? // file_id аватарки канала (Bot API getChat) → /api/avatar/c_<id>
+  avatarVideoUrl   String? // анимированная аватарка (видео с лендинга t.me) — играет как в Telegram
   avatarFetchedAt  DateTime? // когда последний раз обновляли аватарку (TTL 7 дней)
   membersCount     Int? // реальное число подписчиков из Bot API getChatMemberCount
   membersFetchedAt DateTime? // когда последний раз обновляли счётчик (TTL 7 дней)
@@ -147,6 +148,7 @@ model Subscription {
   channelId String
   hidden    Boolean  @default(false) // скрыть канал из общей ленты
   notify    Boolean  @default(true)  // колокольчик: true — все уведомления, false — без звука
+  notInterestedAt DateTime? // «Не интересно»: канал взвешивается вниз/убирается из ленты
   createdAt DateTime @default(now())
 
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)

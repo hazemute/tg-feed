@@ -55,6 +55,8 @@ export type MediaItemDTO = {
   kind: MediaKind
   url?: string
   poster?: string
+  /** Спойлер-медиа (заблюрено в Telegram) — раскрывается тапом */
+  spoiler?: boolean
   name?: string
   size?: string
   title?: string

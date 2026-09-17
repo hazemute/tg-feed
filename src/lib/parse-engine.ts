@@ -64,6 +64,7 @@ export type MediaItem = {
   poster?: string // постер видео (только http-ссылки)
   name?: string // имя файла
   size?: string // «48.2 MB»
+  spoiler?: boolean // медиа-спойлер (в Telegram заблюрено до тапа)
   title?: string // аудио/линк-превью
   performer?: string // исполнитель аудио
   question?: string // опрос
@@ -173,6 +174,12 @@ function urlNear(block: string, marker: string, span = 500): string | null {
   return null
 }
 
+/** Медиа-спойлер: маркер tg-spoiler/message_spoiler рядом с медиа-элементом */
+function spoilerNear(block: string, index: number, span = 420): boolean {
+  const scope = block.slice(Math.max(0, index - 120), index + span)
+  return /tg-spoiler|message_spoiler/.test(scope)
+}
+
 // ------------------------------------------------------------------
 // Парсер HTML канала
 // ------------------------------------------------------------------
@@ -201,7 +208,12 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
     for (const m of block.matchAll(/tgme_widget_message_photo_wrap/g)) {
       const scope = block.slice(m.index ?? 0, (m.index ?? 0) + 600)
       const url = bgImageOf(scope)
-      if (url) gallery.push({ kind: 'image', url })
+      if (url)
+        gallery.push({
+          kind: 'image',
+          url,
+          ...(spoilerNear(block, m.index ?? 0) ? { spoiler: true } : {}),
+        })
     }
 
     /* ---------- Видео / GIF (прямые <video src>) ---------- */
@@ -215,6 +227,7 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
         kind: isGif ? 'gif' : 'video',
         url: decodeEntities(src),
         ...(poster ? { poster: decodeEntities(poster) } : {}),
+        ...(spoilerNear(block, m.index ?? 0) ? { spoiler: true } : {}),
       })
     }
 
@@ -443,42 +456,54 @@ export async function runParser(
 
       /*
        * Аватарка и счётчик подписчиков: Bot API (getChat / getChatMemberCount).
-       * Обновляем только при протухшем TTL (7 дней) — лишних вызовов Bot API нет,
-       * сбои не ломают парсинг. Аватарка: file_id → /api/avatar/c_<id>.
-       * Счётчик: реальное число подписчиков Telegram — показывается в ленте/поиске.
+       * Обновляем только при протухшем TTL (7 дней), а fetchedAt штампуем
+       * ТОЛЬКО за реально полученные данные: сбой Bot API больше не «замораживает»
+       * пустые аватарку/подписчиков на неделю — попытка повторится на следующем прогоне.
        */
-      if (
-        botEnabled() &&
-        (!channel.photoFileId ||
-          !channel.avatarFetchedAt ||
-          Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS ||
-          channel.membersCount == null ||
-          !channel.membersFetchedAt ||
-          Date.now() - channel.membersFetchedAt.getTime() > AVATAR_TTL_MS)
-      ) {
-        const [fileId, members] = await Promise.all([
+      if (botEnabled()) {
+        const needAvatar =
           !channel.photoFileId ||
           !channel.avatarFetchedAt ||
           Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS
-            ? getChatPhotoFileId(target)
-            : Promise.resolve(null),
+        const needMembers =
           channel.membersCount == null ||
           !channel.membersFetchedAt ||
           Date.now() - channel.membersFetchedAt.getTime() > AVATAR_TTL_MS
-            ? getChatMemberCount(target)
-            : Promise.resolve(null),
-        ])
-        await db.channel
-          .update({
-            where: { id: channel.id },
-            data: {
-              ...(fileId ? { photoFileId: fileId } : {}),
-              ...(members != null ? { membersCount: members } : {}),
-              avatarFetchedAt: new Date(),
-              membersFetchedAt: new Date(),
-            },
-          })
-          .catch(() => {})
+        if (needAvatar || needMembers) {
+          const [fileId, members, landing] = await Promise.all([
+            needAvatar ? getChatPhotoFileId(target) : Promise.resolve(null),
+            needMembers ? getChatMemberCount(target) : Promise.resolve(null),
+            // Анимированная аватарка: в лендинге t.me она приходит <video> вместо <img>
+            needAvatar
+              ? fetch(`https://t.me/${target}`, {
+                  headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0' },
+                  signal: AbortSignal.timeout(10_000),
+                })
+                  .then((r) => (r.ok ? r.text() : ''))
+                  .catch(() => '')
+              : Promise.resolve(''),
+          ])
+          // Видео-аватарка: <video src="…mp4"> внутри блока tgme_page_photo (best-effort)
+          let avatarVideoUrl: string | undefined
+          if (landing) {
+            const photoBlock = landing.slice(
+              Math.max(0, landing.indexOf('tgme_page_photo') - 200),
+              landing.indexOf('tgme_page_photo') + 1400,
+            )
+            const videoSrc = photoBlock.match(/<video[^>]*\ssrc="([^"]+\.(?:mp4|webm)[^"]*)"/)?.[1]
+            if (videoSrc) avatarVideoUrl = decodeEntities(videoSrc)
+          }
+          await db.channel
+            .update({
+              where: { id: channel.id },
+              data: {
+                ...(fileId ? { photoFileId: fileId, avatarFetchedAt: new Date() } : {}),
+                ...(members != null ? { membersCount: members, membersFetchedAt: new Date() } : {}),
+                ...(avatarVideoUrl ? { avatarVideoUrl } : {}),
+              },
+            })
+            .catch(() => {})
+        }
       }
 
       // Новейшие первыми; дубли отклонит unique tgKey — вставляем, пока не доберём per

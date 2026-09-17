@@ -1,5 +1,6 @@
 import type { Channel, Post } from '@prisma/client'
 import type { ChannelDTO, MediaItemDTO, MediaKind, PostDTO } from '@/lib/types'
+import { proxiedMediaUrl } from '@/lib/media'
 
 type ChannelWithCategory = Channel & {
   category?: { slug: string; title: string } | null
@@ -58,7 +59,12 @@ function parseMeta(json: string | null): Record<string, unknown> | null {
   if (!json) return null
   try {
     const obj = JSON.parse(json)
-    return obj && typeof obj === 'object' && !Array.isArray(obj) ? obj : null
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null
+    // URL-поля внутри меты (постер видео, картинка линк-превью) — тоже через прокси
+    const m = obj as Record<string, unknown>
+    if (typeof m.url === 'string') m.url = proxiedMediaUrl(m.url)
+    if (typeof m.poster === 'string') m.poster = proxiedMediaUrl(m.poster)
+    return m
   } catch {
     return null
   }
@@ -72,10 +78,15 @@ function parseGallery(json: string | null): MediaItemDTO[] {
     if (!Array.isArray(arr)) return []
     const items: MediaItemDTO[] = []
     for (const x of arr) {
-      if (typeof x === 'string' && x) items.push({ kind: 'image', url: x })
+      if (typeof x === 'string' && x) items.push({ kind: 'image', url: proxiedMediaUrl(x) ?? undefined })
       else if (x && typeof x === 'object' && typeof (x as MediaItemDTO).kind === 'string') {
         const it = x as MediaItemDTO
-        items.push({ ...it, kind: normalizeKind(it.kind) })
+        items.push({
+          ...it,
+          kind: normalizeKind(it.kind),
+          url: proxiedMediaUrl(it.url) ?? undefined,
+          poster: proxiedMediaUrl(it.poster) ?? undefined,
+        })
       }
     }
     return items
@@ -95,7 +106,7 @@ export function toPostDTO(
     p.mediaUrl || (kind !== 'none' && kind !== 'image')
       ? {
           kind,
-          ...(p.mediaUrl ? { url: p.mediaUrl } : {}),
+          ...(p.mediaUrl ? { url: proxiedMediaUrl(p.mediaUrl) ?? p.mediaUrl } : {}),
           ...(extras ?? {}),
         }
       : null
@@ -107,7 +118,7 @@ export function toPostDTO(
   return {
     id: p.id,
     text: p.text,
-    mediaUrl: p.mediaUrl,
+    mediaUrl: proxiedMediaUrl(p.mediaUrl) ?? p.mediaUrl,
     mediaType: kind,
     media: media as MediaItemDTO | null,
     gallery,

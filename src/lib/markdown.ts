@@ -140,7 +140,7 @@ export function htmlToMarkdownLite(html: string): string {
       for (let i = stack.length - 1; i >= 0; i--) {
         const mk = stack[i]
         const same =
-          (mk.kind === 'inline' && mk.tag === tag) ||
+          (mk.kind === 'inline' && (mk.tag === tag || (tag === 'span' && mk.tag === 'tg-spoiler'))) ||
           (mk.kind === 'link' && tag === 'a') ||
           (mk.kind === 'pre' && tag === 'pre') ||
           (mk.kind === 'quote' && tag === 'blockquote')
@@ -156,6 +156,13 @@ export function htmlToMarkdownLite(html: string): string {
     if (tag === 'a') {
       const href = (attrs ?? '').match(/href="([^"]*)"/)?.[1] ?? ''
       stack.push({ kind: 'link', href, start: out.length })
+      continue
+    }
+    // Спойлеры в веб-превью приходят классом (span/i с class="tg-spoiler") —
+    // превращаем в ||…|| наравне с настоящим тегом <tg-spoiler>
+    if ((attrs ?? '').includes('tg-spoiler')) {
+      stack.push({ kind: 'inline', mark: '||', tag: 'tg-spoiler', start: out.length })
+      out.push('||')
       continue
     }
     if (tag === 'pre') {
@@ -209,6 +216,7 @@ export function htmlToMarkdownLite(html: string): string {
 /** Убирает markdown-разметку, оставляя чистый текст (для превью/уведомлений/поиска) */
 export function stripMarkdown(text: string): string {
   return text
+    .replace(/<br\s*\/?>/gi, ' ') // легаси-HTML старых постов
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/\*\*([^*]*)\*\*/g, '$1')
     .replace(/__([^_]*)__/g, '$1')
@@ -272,10 +280,21 @@ export function spansOf(line: string): Span[] {
   return spans
 }
 
+/**
+ * Легаси-зачистка старых постов: парсер прежних версий складывал в БД
+ * литеральный HTML (<br/>, <b>…). Markdown-парсер клиенту такое рендерит
+ * как текст — нормализуем заранее: <br> → перенос строки.
+ */
+function normalizeLegacyHtml(text: string): string {
+  return text
+    .replace(/(?:<br\s*\/?>\s*){2,}/gi, '\n\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+}
+
 /** Разбирает markdown-lite поста на блоки: абзацы, цитаты, блоки кода */
 export function blocksOf(text: string): Block[] {
   const blocks: Block[] = []
-  const lines = text.split('\n')
+  const lines = normalizeLegacyHtml(text).split('\n')
   let para: string[] = []
   let quote: string[] = []
 
