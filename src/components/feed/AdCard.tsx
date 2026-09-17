@@ -36,7 +36,7 @@ export function AdCard({ ad }: { ad: AdDTO }) {
           <span className="mt-0.5 block truncate text-[16px] font-semibold text-tg-text">
             {ad.title}
           </span>
-          <span className="mt-0.5 line-clamp-2 block text-snippet text-tg-hint">{ad.body}</span>
+          <span className="mt-0.5 line-clamp-2 text-snippet text-tg-hint">{ad.body}</span>
         </span>
         <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" />
       </button>

@@ -341,7 +341,7 @@ export function ProfileTab() {
                     </span>
                     <span
                       className={cn(
-                        'mt-0.5 line-clamp-2 block text-[13.5px] leading-snug',
+                        'mt-0.5 line-clamp-2 text-[13.5px] leading-snug',
                         unread ? 'text-tg-text/80' : 'text-tg-hint',
                       )}
                     >
@@ -458,7 +458,7 @@ export function ProfileTab() {
         subtitle="Умная лента открытых Telegram-каналов"
       >
         <div className="space-y-2.5 text-snippet text-tg-text2">
-          <Row label="Версия" value="4.1 · MVP" />
+          <Row label="Версия" value="4.8.3" />
           <Row label="Источник контента" value="открытые TG-каналы" />
           <Row label="Ранжирование" value="взвешенный скоринг" />
           <Row label="Подписка" value="в один тап [+]" />

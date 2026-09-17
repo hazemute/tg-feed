@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS "Channel" (
     "avatarColor"      text        NOT NULL DEFAULT '#3390ec',
     "photoFileId"      text,
     "avatarFetchedAt"  timestamptz,
+    "membersCount"     integer,
+    "membersFetchedAt" timestamptz,
     "categoryId"       text        NOT NULL,
     "isPremium"        boolean     NOT NULL DEFAULT false,
     "premiumUntil"     timestamptz,

@@ -465,7 +465,7 @@ export function SearchTab() {
                       {timeAgoRu(p.publishedAt)}
                     </span>
                   </span>
-                  <span className="mt-0.5 line-clamp-2 block text-[14px] leading-snug text-tg-hint">
+                  <span className="mt-0.5 line-clamp-2 text-[14px] leading-snug text-tg-hint">
                     {p.text || 'медиа-пост'}
                   </span>
                 </span>
@@ -515,7 +515,7 @@ function ChannelRow({
           {channel.title}
         </span>
         {channel.description && (
-          <span className="mt-0.5 line-clamp-2 block text-[14px] leading-snug text-tg-hint">
+          <span className="mt-0.5 line-clamp-2 text-[14px] leading-snug text-tg-hint">
             {channel.description}
           </span>
         )}

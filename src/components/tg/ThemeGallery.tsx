@@ -9,7 +9,7 @@ import { THEMES, type ThemeGroup } from '@/lib/themes'
 import type { ThemeMode } from '@/lib/types'
 
 /**
- * Галерея тем оформления («как в Google Chrome»): синхронизация с Telegram,
+ * Галерея тем оформления: синхронизация с Telegram,
  * светлые и тёмные палитры. Карточка — мини-превью интерфейса (фон, строки,
  * акцент). Выбор сохраняется в localStorage и применяется мгновенно.
  */
@@ -128,8 +128,8 @@ export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => 
           {/* Сетка тем */}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-28">
             <p className="pt-3 text-[13.5px] leading-snug text-tg-hint">
-              Оформление как в Google Chrome — выбирайте любое. «Как в Telegram» следует
-              настройкам клиента автоматически.
+              Светлые и тёмные палитры на любой вкус. «Как в Telegram»
+              подстраивается под оформление клиента автоматически.
             </p>
             {groups.map((g) => (
               <section key={g} aria-label={GROUP_TITLES[g]} className="pt-4">

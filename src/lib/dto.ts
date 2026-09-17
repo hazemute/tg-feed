@@ -14,11 +14,15 @@ export function toChannelDTO(
     id: c.id,
     title: c.title,
     username: c.username,
-    description: c.description,
+    // Переносы строк в описании схлопываем: в превью и списках текст должен
+    // течь в 2 строки (line-clamp), а не «в столб»
+    description: c.description?.replace(/\s+/g, ' ').trim() ?? null,
     avatarColor: c.avatarColor,
     // Реальная аватарка канала из Bot API (file_id → прокси); null → инициалы
     avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
-    subscribersCount: c.subscribersCount,
+    // Реальное число подписчиков из Telegram (getChatMemberCount);
+    // для каналов, где Bot API недоступен, — оценка из каталога
+    subscribersCount: c.membersCount ?? c.subscribersCount,
     isPremium: c.isPremium,
     status: c.status,
     categorySlug: c.category?.slug ?? null,

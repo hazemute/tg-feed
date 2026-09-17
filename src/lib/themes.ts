@@ -1,7 +1,7 @@
 import type { ThemeMode } from '@/lib/types'
 
 /**
- * Каталог тем оформления («как в Chrome»): синхронизация с Telegram,
+ * Каталог тем оформления: синхронизация с Telegram,
  * светлые и тёмные палитры. Цвета карточек-превью повторяют токены
  * из globals.css ([data-theme='...']).
  */
@@ -60,6 +60,30 @@ export const THEMES: ThemeMeta[] = [
     group: 'light',
     preview: { bg: '#f6f2fc', surface: '#eae2f7', text: '#2c2440', accent: '#8b5cf6' },
   },
+  {
+    id: 'pearl',
+    name: 'Жемчуг',
+    group: 'light',
+    preview: { bg: '#f5f8f8', surface: '#e9f0f0', text: '#1f2a2a', accent: '#2a9d8f' },
+  },
+  {
+    id: 'lime',
+    name: 'Лайм',
+    group: 'light',
+    preview: { bg: '#f5faec', surface: '#e9f2d8', text: '#24301a', accent: '#5f9e2f' },
+  },
+  {
+    id: 'honey',
+    name: 'Медовый',
+    group: 'light',
+    preview: { bg: '#fbf5e6', surface: '#f4ead0', text: '#33280f', accent: '#c58a1d' },
+  },
+  {
+    id: 'coral',
+    name: 'Коралл',
+    group: 'light',
+    preview: { bg: '#fdf4f0', surface: '#f9e5dc', text: '#3a2018', accent: '#e05d3d' },
+  },
   // ------- Тёмные -------
   {
     id: 'dark',
@@ -108,6 +132,30 @@ export const THEMES: ThemeMeta[] = [
     name: 'Закат',
     group: 'dark',
     preview: { bg: '#1a0f0d', surface: '#271715', text: '#f6e8e4', accent: '#f2764a' },
+  },
+  {
+    id: 'emerald',
+    name: 'Изумруд',
+    group: 'dark',
+    preview: { bg: '#0a1410', surface: '#12211a', text: '#e4f2ea', accent: '#38c98c' },
+  },
+  {
+    id: 'crimson',
+    name: 'Багряный',
+    group: 'dark',
+    preview: { bg: '#190c0f', surface: '#241317', text: '#f4e8ea', accent: '#ef5a6f' },
+  },
+  {
+    id: 'aurora',
+    name: 'Аврора',
+    group: 'dark',
+    preview: { bg: '#0a1618', surface: '#122225', text: '#e2f2f1', accent: '#45d0b4' },
+  },
+  {
+    id: 'cherry',
+    name: 'Вишня',
+    group: 'dark',
+    preview: { bg: '#170d12', surface: '#231419', text: '#f4e9ef', accent: '#e6699c' },
   },
 ]
 

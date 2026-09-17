@@ -63,12 +63,12 @@ export async function POST(request: Request) {
     if (action === 'subscribe' && existing) {
       return NextResponse.json({
         subscribed: true,
-        subscribersCount: channel.subscribersCount,
+        subscribersCount: channel.membersCount ?? channel.subscribersCount,
         notify: existing.notify,
       })
     }
     if (action === 'unsubscribe' && !existing) {
-      return NextResponse.json({ subscribed: false, subscribersCount: channel.subscribersCount })
+      return NextResponse.json({ subscribed: false, subscribersCount: channel.membersCount ?? channel.subscribersCount })
     }
 
     if (existing) {
@@ -79,7 +79,8 @@ export async function POST(request: Request) {
       })
       return NextResponse.json({
         subscribed: false,
-        subscribersCount: Math.max(0, updated.subscribersCount),
+        // Реальный счётчик Telegram не меняется от локальной отписки
+        subscribersCount: channel.membersCount ?? Math.max(0, updated.subscribersCount),
       })
     }
 
@@ -91,7 +92,8 @@ export async function POST(request: Request) {
     })
     return NextResponse.json({
       subscribed: true,
-      subscribersCount: updated.subscribersCount,
+      // Реальный счётчик Telegram не меняется от локальной подписки
+      subscribersCount: channel.membersCount ?? updated.subscribersCount,
       notify: true,
     })
   } catch (e) {

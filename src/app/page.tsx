@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useRef } from 'react'
-import { Loader2, Send } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { api, setSessionToken } from '@/lib/api'
@@ -11,6 +10,7 @@ import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@
 import { THEME_BY_ID } from '@/lib/themes'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
+import { Splash } from '@/components/tg/Splash'
 import { FeedView } from '@/components/feed/FeedView'
 import { ChannelSheet } from '@/components/feed/ChannelSheet'
 import { PostOverlay } from '@/components/feed/PostOverlay'
@@ -169,21 +169,7 @@ export default function Home() {
   }
 
   if (!authReady || !user) {
-    return (
-      <div className="flex h-dvh justify-center bg-tg-bg">
-        <div className="flex h-full w-full max-w-[430px] flex-col items-center justify-center bg-tg-bg md:border-x md:border-tg-sep">
-          <div className="flex flex-col items-center gap-4">
-            <div className="flex h-16 w-16 items-center justify-center rounded-[18px] bg-tg-link shadow-lg">
-              <Send className="h-7 w-7 -translate-x-px translate-y-px text-white" />
-            </div>
-            <div className="flex items-center gap-2 text-snippet text-tg-hint">
-              <Loader2 className="h-4 w-4 animate-spin" />
-              Загружаем ленту…
-            </div>
-          </div>
-        </div>
-      </div>
-    )
+    return <Splash />
   }
 
   return (

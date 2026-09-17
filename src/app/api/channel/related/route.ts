@@ -59,6 +59,7 @@ export async function GET(request: Request) {
         photoFileId: true,
         isPremium: true,
         subscribersCount: true,
+        membersCount: true,
         category: { select: { slug: true } },
       },
     })
@@ -79,7 +80,7 @@ export async function GET(request: Request) {
       .map((c) => ({
         username: c.username,
         title: c.title,
-        subscribers: c.subscribersCount,
+        subscribers: c.membersCount ?? c.subscribersCount,
         isPremium: c.isPremium,
         avatarColor: c.avatarColor,
         avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,

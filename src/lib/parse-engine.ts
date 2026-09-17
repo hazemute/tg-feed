@@ -2,10 +2,10 @@ import { db } from '@/lib/db'
 import { isValidChannelUsername } from '@/lib/server'
 import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
-import { botEnabled, getChatPhotoFileId } from '@/lib/tg-bot'
+import { botEnabled, getChatPhotoFileId, getChatMemberCount } from '@/lib/tg-bot'
 import type { NotifiablePost } from '@/lib/tg-bot'
 
-/** TTL обновления аватарок каналов (аватар меняют редко — 7 дней) */
+/** TTL обновления аватарок и счётчиков подписчиков каналов (меняются редко — 7 дней) */
 const AVATAR_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
@@ -36,13 +36,26 @@ export type ParseResult = {
 function decodeEntities(s: string): string {
   return s
     .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
-    .replace(/&#39;/g, "'")
+    .replace(/&#39;|&apos;/g, "'")
     .replace(/&laquo;/g, '«')
     .replace(/&raquo;/g, '»')
+    // Именованные и числовые сущности (&amp; — последним; &#33; → «!», &#x27; и т.п.)
+    .replace(/&#(\d+);/g, (_, code) => safeFromCode(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => safeFromCode(parseInt(hex, 16)))
+    .replace(/&amp;/g, '&')
+}
+
+/** Числовой код символа с защитой от управляющих/невалидных значений */
+function safeFromCode(code: number): string {
+  if (!Number.isFinite(code) || code < 32 || code > 0x10ffff) return ''
+  try {
+    return String.fromCodePoint(code)
+  } catch {
+    return ''
+  }
 }
 
 function stripTags(s: string): string {
@@ -182,23 +195,40 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
       const parsed = parseChannelHtml(html, target)
 
       /*
-       * Аватарка канала: Bot API getChat → file_id → /api/avatar/c_<id>.
-       * Обновляем только при протухшем TTL (7 дней) или отсутствии —
-       * лишних вызовов Bot API нет, сбои не ломают парсинг.
+       * Аватарка и счётчик подписчиков: Bot API (getChat / getChatMemberCount).
+       * Обновляем только при протухшем TTL (7 дней) — лишних вызовов Bot API нет,
+       * сбои не ломают парсинг. Аватарка: file_id → /api/avatar/c_<id>.
+       * Счётчик: реальное число подписчиков Telegram — показывается в ленте/поиске.
        */
       if (
         botEnabled() &&
         (!channel.photoFileId ||
           !channel.avatarFetchedAt ||
-          Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS)
+          Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS ||
+          channel.membersCount == null ||
+          !channel.membersFetchedAt ||
+          Date.now() - channel.membersFetchedAt.getTime() > AVATAR_TTL_MS)
       ) {
-        const fileId = await getChatPhotoFileId(target)
+        const [fileId, members] = await Promise.all([
+          !channel.photoFileId ||
+          !channel.avatarFetchedAt ||
+          Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS
+            ? getChatPhotoFileId(target)
+            : Promise.resolve(null),
+          channel.membersCount == null ||
+          !channel.membersFetchedAt ||
+          Date.now() - channel.membersFetchedAt.getTime() > AVATAR_TTL_MS
+            ? getChatMemberCount(target)
+            : Promise.resolve(null),
+        ])
         await db.channel
           .update({
             where: { id: channel.id },
             data: {
               ...(fileId ? { photoFileId: fileId } : {}),
+              ...(members != null ? { membersCount: members } : {}),
               avatarFetchedAt: new Date(),
+              membersFetchedAt: new Date(),
             },
           })
           .catch(() => {})

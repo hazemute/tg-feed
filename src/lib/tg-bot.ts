@@ -69,6 +69,38 @@ export async function getChatPhotoFileId(username: string): Promise<string | nul
 }
 
 /**
+ * Реальное число подписчиков публичного канала через Bot API getChatMemberCount.
+ * Redis-кэш 24ч («нет данных» тоже кэшим сентинелом none, чтобы не молотить
+ * Bot API на каждый запрос). Для закрытых/несуществующих каналов — null.
+ */
+export async function getChatMemberCount(username: string): Promise<number | null> {
+  if (!botEnabled()) return null
+  const clean = username.replace(/^@/, '')
+
+  const ck = `tgmembers:${clean}`
+  const cached = await cacheGet<string>(ck)
+  if (cached !== null) return cached === 'none' ? null : Number(cached)
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMemberCount`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: `@${clean}` }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json()) as { ok?: boolean; result?: number }
+    if (data?.ok && typeof data.result === 'number' && data.result >= 0) {
+      await cacheSet(ck, String(data.result), 24 * 60 * 60)
+      return data.result
+    }
+    await cacheSet(ck, 'none', 60 * 60)
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Последнее фото профиля пользователя через Bot API (getUserProfilePhotos).
  * Возвращает file_id самого большого размера — вечный идентификатор файла
  * (в отличие от photo_url из initDataUnsafe, который живёт ~1 час).
