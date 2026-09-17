@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { bumpCache } from '@/lib/redis'
 
 export const dynamic = 'force-dynamic'
 
@@ -64,6 +65,9 @@ export async function POST(request: Request) {
       data: { status: action === 'approve' ? 'active' : 'rejected' },
       select: { id: true, title: true, status: true },
     })
+
+    // Инвалидация кэша: состав активных каналов изменился
+    await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
 
     return NextResponse.json({ ok: true, channel })
   } catch (e) {

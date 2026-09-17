@@ -4,6 +4,7 @@ import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { bumpCache } from '@/lib/redis'
 
 export const dynamic = 'force-dynamic'
 
@@ -119,6 +120,9 @@ export async function PATCH(request: Request) {
       select: { id: true, status: true, isPremium: true },
     })
 
+    // Инвалидация кэша: статус/премиум влияет на ленту и каталог
+    await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
+
     return NextResponse.json({ ok: true, channel })
   } catch (e) {
     console.error('[panel/channels PATCH]', e)
@@ -139,6 +143,7 @@ export async function DELETE(request: Request) {
     if (!id || id.length > 64) return err('id required')
 
     await db.channel.delete({ where: { id } })
+    await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[panel/channels DELETE]', e)

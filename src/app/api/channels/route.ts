@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { guardPublic } from '@/lib/guard'
+import { cacheAside, famKey } from '@/lib/redis'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,10 +12,16 @@ const querySchema = z.object({
   q: z.string().trim().max(100).catch(''),
 })
 
+type ChannelItem = Omit<Awaited<ReturnType<typeof loadChannels>>[number], 'subscribed'> & {
+  subscribed: boolean
+}
+
 /**
  * GET /api/channels?category=&q=
  * Каталог активных каналов (для вкладки «Категории»).
  * Без сессии — анонимный просмотр: subscribed = false у всех.
+ * Redis: список каналов (глобальная часть, нейтральные флаги) кэшируется
+ * на 60с при пустом q; флаг subscribed накладывается после кэша.
  */
 export async function GET(request: Request) {
   const g = guardPublic(request, { limit: 120, windowMs: 60_000, bucket: 'channels' })
@@ -27,43 +34,59 @@ export async function GET(request: Request) {
     const category = parsed.success ? parsed.data.category : ''
     const q = parsed.success ? parsed.data.q : ''
 
-    const channels = await db.channel.findMany({
-      where: {
-        status: 'active',
-        ...(category ? { category: { slug: category } } : {}),
-        ...(q ? { OR: [{ title: { contains: q } }, { username: { contains: q } }] } : {}),
-      },
-      include: { category: true, _count: { select: { posts: true } } },
-      orderBy: [{ isPremium: 'desc' }, { subscribersCount: 'desc' }],
-      take: 100,
-    })
+    let items: ChannelItem[]
+    if (q) {
+      items = await loadChannels(category, q)
+    } else {
+      items = await cacheAside({
+        key: await famKey('ch', category || 'all'),
+        ttlSec: 60,
+        memoryTtlMs: 4000,
+        fetcher: () => loadChannels(category, ''),
+      })
+    }
 
-    const subs = userId
-      ? await db.subscription.findMany({
-          where: { userId, channelId: { in: channels.map((c) => c.id) } },
-          select: { channelId: true },
-        })
-      : []
-    const subSet = new Set(subs.map((s) => s.channelId))
+    // Персонализация поверх кэша
+    if (userId && items.length > 0) {
+      const subs = await db.subscription.findMany({
+        where: { userId, channelId: { in: items.map((c) => c.id) } },
+        select: { channelId: true },
+      })
+      const subSet = new Set(subs.map((s) => s.channelId))
+      items = items.map((c) => ({ ...c, subscribed: subSet.has(c.id) }))
+    }
 
-    return NextResponse.json({
-      items: channels.map((c) => ({
-        id: c.id,
-        title: c.title,
-        username: c.username,
-        description: c.description,
-        avatarColor: c.avatarColor,
-        subscribersCount: c.subscribersCount,
-        isPremium: c.isPremium,
-        status: c.status,
-        categorySlug: c.category?.slug ?? null,
-        categoryTitle: c.category?.title ?? null,
-        postsCount: c._count.posts,
-        subscribed: subSet.has(c.id),
-      })),
-    })
+    return NextResponse.json({ items })
   } catch (e) {
     console.error('[channels]', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
+}
+
+async function loadChannels(category: string, q: string) {
+  const channels = await db.channel.findMany({
+    where: {
+      status: 'active',
+      ...(category ? { category: { slug: category } } : {}),
+      ...(q ? { OR: [{ title: { contains: q } }, { username: { contains: q } }] } : {}),
+    },
+    include: { category: true, _count: { select: { posts: true } } },
+    orderBy: [{ isPremium: 'desc' }, { subscribersCount: 'desc' }],
+    take: 100,
+  })
+
+  return channels.map((c) => ({
+    id: c.id,
+    title: c.title,
+    username: c.username,
+    description: c.description,
+    avatarColor: c.avatarColor,
+    subscribersCount: c.subscribersCount,
+    isPremium: c.isPremium,
+    status: c.status,
+    categorySlug: c.category?.slug ?? null,
+    categoryTitle: c.category?.title ?? null,
+    postsCount: c._count.posts,
+    subscribed: false as const,
+  }))
 }

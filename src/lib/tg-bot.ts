@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { cacheGet, cacheSet } from '@/lib/redis'
 
 /**
  * Клиент Telegram Bot API: реальная доставка уведомлений подписчикам.
@@ -49,6 +50,13 @@ type TgPhotoSize = { file_id?: string; width?: number; height?: number }
  */
 export async function getUserPhotoFileId(tgUserId: number): Promise<string | null> {
   if (!botEnabled()) return null
+
+  // Redis-кэш 24ч: file_id вечен, «нет фото» тоже кэшим (сентинел none),
+  // чтобы не дёргать Bot API на каждый вход пользователя.
+  const ck = `tgphoto:${tgUserId}`
+  const cached = await cacheGet<string>(ck)
+  if (cached !== null) return cached === 'none' ? null : cached
+
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getUserProfilePhotos`, {
       method: 'POST',
@@ -61,27 +69,36 @@ export async function getUserPhotoFileId(tgUserId: number): Promise<string | nul
       result?: { photos?: TgPhotoSize[][]; total_count?: number }
     }
     const photos = data?.ok ? data.result?.photos : undefined
-    if (!photos || photos.length === 0) return null
+    if (!photos || photos.length === 0) {
+      await cacheSet(ck, 'none', 24 * 60 * 60)
+      return null
+    }
     const sizes = photos[0]
-    if (!sizes || sizes.length === 0) return null
+    if (!sizes || sizes.length === 0) {
+      await cacheSet(ck, 'none', 24 * 60 * 60)
+      return null
+    }
     // Самый большой размер последним (Telegram отдаёт по возрастанию)
     const best = [...sizes]
       .sort((a, b) => (a.width ?? 0) * (a.height ?? 0) - (b.width ?? 0) * (b.height ?? 0))
       .pop()
-    return best?.file_id && typeof best.file_id === 'string' ? best.file_id : null
+    const fileId = best?.file_id && typeof best.file_id === 'string' ? best.file_id : null
+    if (fileId) await cacheSet(ck, fileId, 24 * 60 * 60)
+    return fileId
   } catch {
     return null
   }
 }
 
-// --- getFile: file_id → временный CDN-URL (кэш 45 минут, URL живёт ~1 час) ---
-
-const fileUrlCache = new Map<string, { url: string; expiresAt: number }>()
-const FILE_URL_TTL_MS = 45 * 60 * 1000
+// --- getFile: file_id → временный CDN-URL ---
+// Redis-кэш 45 минут (URL живёт ~1 час), общий для всех инстансов —
+// аватары не дёргают Bot API на каждый запрос.
+const FILE_URL_TTL_SEC = 45 * 60
 
 export async function resolveTelegramFileUrl(fileId: string): Promise<string | null> {
-  const cached = fileUrlCache.get(fileId)
-  if (cached && cached.expiresAt > Date.now()) return cached.url
+  const ck = `tgfile:${fileId}`
+  const cached = await cacheGet<string>(ck)
+  if (cached) return cached
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getFile`, {
       method: 'POST',
@@ -93,7 +110,7 @@ export async function resolveTelegramFileUrl(fileId: string): Promise<string | n
     const path = data?.ok && data.result?.file_path ? data.result.file_path : null
     if (!path) return null
     const url = `https://api.telegram.org/file/bot${BOT_TOKEN()}/${path}`
-    fileUrlCache.set(fileId, { url, expiresAt: Date.now() + FILE_URL_TTL_MS })
+    await cacheSet(ck, url, FILE_URL_TTL_SEC)
     return url
   } catch {
     return null

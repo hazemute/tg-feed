@@ -4,6 +4,9 @@ import { parseJsonArray } from '@/lib/server'
 /**
  * Общий скоуп ленты для пользователя: активные каналы, минус скрытые,
  * фильтр по категории или интересам. Используется в /api/feed и /api/feed/fresh.
+ *
+ * sig — сигнатура скоупа для Redis-ключа (категория + интересы + скрытые);
+ * null для 'discover' (зависит от истории просмотров, кэш не применяется).
  */
 export async function buildFeedScope(userId: string, category: string) {
   const user = await db.user.findUnique({ where: { id: userId } })
@@ -29,6 +32,7 @@ export async function buildFeedScope(userId: string, category: string) {
     },
   }
 
+  let interests: string[] = []
   if (category === 'discover') {
     // «Интересное»: категории, которые пользователь смотрит МЕНЬШЕ всего
     // (по истории просмотров PostView → Post → Channel.categoryId).
@@ -61,11 +65,16 @@ export async function buildFeedScope(userId: string, category: string) {
   } else if (category !== 'all') {
     where.channel.category = { slug: category }
   } else {
-    const interests = parseJsonArray(user.categories)
+    interests = parseJsonArray(user.categories)
     if (interests.length > 0) {
       where.channel.category = { slug: { in: interests } }
     }
   }
 
-  return { where, user }
+  const sig =
+    category === 'discover'
+      ? null
+      : `${category}|${interests.join(',')}|${hiddenIds.join(',')}`
+
+  return { where, user, sig }
 }

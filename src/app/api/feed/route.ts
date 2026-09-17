@@ -6,6 +6,7 @@ import { computeWeight, rankJitter } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
 import { buildFeedScope } from '@/lib/feed'
 import { guardAuth } from '@/lib/guard'
+import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -18,11 +19,18 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(20).catch(6),
 })
 
+type RankedIndex = { ids: string[]; total: number }
+
 /**
  * GET /api/feed?category=all|slug&page=0&limit=6
  * Взвешенная лента: premium ×1000, лайки с временно́м затуханием,
  * фильтр по интересам, свежие посты приоритетнее, скрытые каналы исключены.
  * Требуется сессия (Bearer); лимит 120 запросов в минуту на пользователя.
+ *
+ * Redis-оптимизация: тяжёлая часть (скан 400 постов + ранжирование) кэшируется
+ * как список id на «скоуп» (категория + интересы + скрытые каналы), а сами посты
+ * запрошенной страницы каждый раз читаются из БД — счётчики лайков/просмотров
+ * остаются свежими, персонализация никогда не кэшируется.
  */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 120, windowMs: 60_000, bucket: 'feed' })
@@ -37,33 +45,61 @@ export async function GET(request: Request) {
 
     const scope = await buildFeedScope(userId, category)
     if (!scope) return err('user not found', 404)
-    const where = scope.where
 
-    const posts = await db.post.findMany({
-      where,
-      include: {
-        channel: { include: { category: true } },
-        _count: { select: { bookmarkedBy: true } },
-      },
-      orderBy: { publishedAt: 'desc' },
-      take: 400,
-    })
+    /* ---------- Ранжированный индекс: Redis (25с) → Postgres ---------- */
+    const indexKey =
+      scope.sig !== null
+        ? await famKey('feed', `${category}:${shortHash(scope.sig)}`)
+        : null // discover — персональный скоуп по истории просмотров, без кэша
 
-    const ranked = posts
-      .map((p) => ({
-        p,
-        w: computeWeight({
-          likesCount: p.likesCount,
-          publishedAt: p.publishedAt,
-          premium: p.channel.isPremium,
-        }) + rankJitter(p.id),
-      }))
-      .sort((a, b) => b.w - a.w)
+    const loadIndex = async (): Promise<RankedIndex> => {
+      const posts = await db.post.findMany({
+        where: scope.where,
+        select: {
+          id: true,
+          likesCount: true,
+          publishedAt: true,
+          channel: { select: { isPremium: true } },
+        },
+        orderBy: { publishedAt: 'desc' },
+        take: 400,
+      })
+      const ranked = posts
+        .map((p) => ({
+          id: p.id,
+          w: computeWeight({
+            likesCount: p.likesCount,
+            publishedAt: p.publishedAt,
+            premium: p.channel.isPremium,
+          }) + rankJitter(p.id),
+        }))
+        .sort((a, b) => b.w - a.w)
+      return { ids: ranked.map((r) => r.id), total: ranked.length }
+    }
 
-    const slice = ranked.slice(page * limit, page * limit + limit)
+    const index: RankedIndex = indexKey
+      ? await cacheAside({ key: indexKey, ttlSec: 25, memoryTtlMs: 2000, fetcher: loadIndex })
+      : await loadIndex()
 
-    const postIds = slice.map((s) => s.p.id)
-    const channelIds = [...new Set(slice.map((s) => s.p.channelId))]
+    /* ---------- Страница: свежие посты по id из индекса ---------- */
+    const sliceIds = index.ids.slice(page * limit, page * limit + limit)
+    const slicePosts = sliceIds.length
+      ? await db.post.findMany({
+          where: { id: { in: sliceIds } },
+          include: {
+            channel: { include: { category: true } },
+            _count: { select: { bookmarkedBy: true } },
+          },
+        })
+      : []
+
+    const byId = new Map(slicePosts.map((p) => [p.id, p]))
+    const slice = sliceIds
+      .map((id) => byId.get(id))
+      .filter((p): p is NonNullable<typeof p> => Boolean(p))
+
+    const postIds = slice.map((s) => s.id)
+    const channelIds = [...new Set(slice.map((s) => s.channelId))]
 
     const [likes, bookmarks, subs] = await Promise.all([
       postIds.length
@@ -87,7 +123,7 @@ export async function GET(request: Request) {
     const bookmarkSet = new Set(bookmarks.map((b) => b.postId))
     const subSet = new Set(subs.map((s) => s.channelId))
 
-    const items: PostDTO[] = slice.map(({ p }) =>
+    const items: PostDTO[] = slice.map((p) =>
       toPostDTO(
         p,
         {
@@ -102,7 +138,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       items,
       page,
-      hasMore: (page + 1) * limit < ranked.length,
+      hasMore: (page + 1) * limit < index.total,
     })
   } catch (e) {
     console.error('[feed]', e)

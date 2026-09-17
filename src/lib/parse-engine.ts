@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { isValidChannelUsername } from '@/lib/server'
 import { emitAppEvent, emitAdminEvent } from '@/lib/events'
+import { bumpCache } from '@/lib/redis'
 import type { NotifiablePost } from '@/lib/tg-bot'
 
 /**
@@ -219,6 +220,9 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
 
   const result = { ok: true as const, results, newPosts }
   emitAdminEvent('parse:done', { newPosts: newPosts.length, ms: Date.now() - startedAt })
+
+  // Инвалидация кэша: лента/тренды/каталог/категории/поиск — новые посты
+  if (newPosts.length > 0) await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
 
   // Живое событие для SSE-подписчиков (/api/events): пилюля «N новых» и
   // бейдж уведомлений обновятся без ожидания ближайшего поллинга
