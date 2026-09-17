@@ -13,6 +13,10 @@
  * Любой новый пост возвращает ритм к быстрому. Реакции/просмотры при этом
  * всё равно обновляются: полный круг по каналам при простое ≈ 1–2 часа.
  *
+ * ПРЕДПРОГРЕВ ОЗВУЧКИ: после каждого тика движок просит приложение сгенерировать
+ * озвучку пары свежих постов (/api/tts/prewarm) — кэш аудио в общей БД тёплый,
+ * пользователи прода слушают посты мгновенно.
+ *
  * Авторизация: Authorization: Bearer <CRON_SECRET> из корневого .env.
  *
  * HTTP-интерфейс (порт 3020):
@@ -101,6 +105,26 @@ async function tick(reason: string): Promise<TickResult> {
   }
 }
 
+async function prewarmTts(): Promise<void> {
+  try {
+    const res = await fetch(`${MAIN_APP}/api/tts/prewarm`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(CRON_SECRET ? { authorization: `Bearer ${CRON_SECRET}` } : {}),
+      },
+      body: '{}',
+      signal: AbortSignal.timeout(90_000),
+    })
+    if (res.ok) {
+      const data = (await res.json()) as { generated?: number }
+      if (data.generated) console.log(`[prewarm] +${data.generated} озвучек`)
+    }
+  } catch {
+    // предпрогрев необязателен — пользовательская генерация сработает по запросу
+  }
+}
+
 /**
  * Самопланирующийся цикл: после каждого тика выбираем следующий интервал.
  * Новые посты (или ошибка сети — возможно, она временная) держат быстрый ритм,
@@ -114,6 +138,7 @@ async function loop(): Promise<void> {
   timer = setTimeout(() => void loop(), delaySec * 1000)
   // unref: таймер не держит процесс, если всё остальное умерло
   timer.unref?.()
+  void prewarmTts()
 }
 
 // HTTP-интерфейс для наблюдения и ручного запуска
