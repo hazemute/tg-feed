@@ -7,6 +7,80 @@ import { err, parseJsonArray, readJson } from '@/lib/server'
 import { guardIp } from '@/lib/guard'
 import type { UserDTO } from '@/lib/types'
 
+/**
+ * Гость стал verified-пользователем: переносим его данные из demo-строки
+ * (лайки/закладки/просмотры/подписки/интересы/граница уведомлений), чтобы
+ * история, накопленная до HMAC-подтверждения, не потерялась. Demo-строка
+ * удаляется после переноса. Ошибка миграции НЕ ломает вход (try/catch снаружи).
+ */
+async function migrateDemoUserData(demoId: string, targetId: string): Promise<void> {
+  try {
+    const demo = await db.user.findUnique({ where: { id: demoId } })
+    if (!demo || demo.id === targetId) return
+
+    await db.$transaction(async (tx) => {
+      const [subs, likes, bookmarks, views] = await Promise.all([
+        tx.subscription.findMany({ where: { userId: demoId } }),
+        tx.like.findMany({ where: { userId: demoId } }),
+        tx.bookmark.findMany({ where: { userId: demoId } }),
+        tx.postView.findMany({ where: { userId: demoId } }),
+      ])
+
+      if (subs.length > 0) {
+        await tx.subscription.createMany({
+          data: subs.map((s) => ({
+            userId: targetId,
+            channelId: s.channelId,
+            hidden: s.hidden,
+            notify: s.notify,
+            createdAt: s.createdAt,
+          })),
+          skipDuplicates: true,
+        })
+        await tx.subscription.deleteMany({ where: { userId: demoId } })
+      }
+      if (likes.length > 0) {
+        await tx.like.createMany({
+          data: likes.map((l) => ({ userId: targetId, postId: l.postId, createdAt: l.createdAt })),
+          skipDuplicates: true,
+        })
+        await tx.like.deleteMany({ where: { userId: demoId } })
+      }
+      if (bookmarks.length > 0) {
+        await tx.bookmark.createMany({
+          data: bookmarks.map((b) => ({
+            userId: targetId,
+            postId: b.postId,
+            createdAt: b.createdAt,
+            readAt: b.readAt,
+          })),
+          skipDuplicates: true,
+        })
+        await tx.bookmark.deleteMany({ where: { userId: demoId } })
+      }
+      if (views.length > 0) {
+        await tx.postView.createMany({
+          data: views.map((v) => ({ userId: targetId, postId: v.postId, createdAt: v.createdAt })),
+          skipDuplicates: true,
+        })
+        await tx.postView.deleteMany({ where: { userId: demoId } })
+      }
+
+      await tx.user.update({
+        where: { id: targetId },
+        data: {
+          ...(demo.categories !== '[]' && { categories: demo.categories }),
+          ...(demo.lastSeenNotifiedAt && { lastSeenNotifiedAt: demo.lastSeenNotifiedAt }),
+        },
+      })
+
+      await tx.user.delete({ where: { id: demoId } })
+    })
+  } catch (e) {
+    console.error('[auth] demo migration failed (non-fatal)', e)
+  }
+}
+
 export const dynamic = 'force-dynamic'
 
 type Body = {
@@ -107,6 +181,8 @@ export async function POST(request: Request) {
 
     // Аватар: photo_url из initData живёт ~1 час, поэтому при наличии bot-токена
     // берём вечный file_id последнего фото профиля (рендер через /api/avatar/[uid]).
+    // ВАЖНО: при сбое Bot API не затираем прежний аватар (update ниже перезаписывает
+    // photoUrl только если есть новое значение).
     if (id?.startsWith('tg_') && botToken) {
       const tgId = Number(id.slice('tg_'.length))
       if (Number.isInteger(tgId) && tgId > 0) {
@@ -126,9 +202,23 @@ export async function POST(request: Request) {
 
     const user = await db.user.upsert({
       where: { id },
-      update: { username, firstName, lastName, photoUrl, isDemo, isPremium, languageCode },
+      update: {
+        username,
+        firstName,
+        lastName,
+        ...(photoUrl ? { photoUrl } : {}),
+        isDemo,
+        isPremium,
+        languageCode,
+      },
       create: { id, username, firstName, lastName, photoUrl, isDemo, isPremium, languageCode, categories: '[]' },
     })
+
+    // Гость с историей стал verified — переносим его данные в настоящий аккаунт
+    if (verified && typeof body?.deviceId === 'string') {
+      const rawDevice = body.deviceId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)
+      if (rawDevice) await migrateDemoUserData(`demo_${rawDevice}`, user.id)
+    }
 
     const token = signSession(user.id, isDemo)
     const botUsername = await getBotUsername()

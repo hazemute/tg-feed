@@ -267,7 +267,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                     <TableRow key={ch.id} className="border-white/[0.06] hover:bg-white/[0.03]">
                       <TableCell>
                         <div className="flex items-center gap-2.5">
-                          <Avatar color={ch.avatarColor} title={ch.title} className="size-8 text-xs" />
+                          <Avatar color={ch.avatarColor} title={ch.title} src={ch.avatarUrl} className="size-8 text-xs" />
                           <div className="max-w-[220px]">
                             <div className="flex items-center gap-1 truncate text-sm font-medium text-slate-200">
                               <span className="truncate">{ch.title}</span>

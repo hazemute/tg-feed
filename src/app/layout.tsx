@@ -48,8 +48,17 @@ export default function RootLayout({
         </Script>
         {children}
         <Toaster position="bottom-center" offset={72} />
-        {/* Telegram WebApp SDK (вне Telegram просто не загрузится) */}
-        <Script src="https://telegram.org/js/telegram-web-app.js" strategy="afterInteractive" />
+        {/*
+          Telegram WebApp SDK — ОБЯЗАТЕЛЬНО до гидрации (beforeInteractive):
+          authenticate() в useEffect читает window.Telegram.WebApp.initData на первом
+          рендере. После Interactive (было) скрипт грузился ПОСЛЕ первого запроса —
+          в Telegram Web/Desktop объект ещё не существовал, initData уходил пустым
+          и ВСЕ пользователи становились гостями без профиля и аватара.
+        */}
+        <Script
+          src="https://telegram.org/js/telegram-web-app.js"
+          strategy="beforeInteractive"
+        />
       </body>
     </html>
   )

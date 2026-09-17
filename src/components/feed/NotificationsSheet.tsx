@@ -153,7 +153,7 @@ function NotificationsScreen({
               >
                 <div className="shrink-0">
                   {/* Аватар как в ленте */}
-                  <Avatar name={g.title} color={g.avatarColor} size={52} />
+                  <Avatar name={g.title} color={g.avatarColor} src={g.avatarUrl} size={52} />
                 </div>
 
                 <div className="min-w-0 flex-1">

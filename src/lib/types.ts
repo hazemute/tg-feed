@@ -15,6 +15,8 @@ export type ChannelDTO = {
   username: string
   description: string | null
   avatarColor: string
+  /** Реальная аватарка (Bot API getChat → прокси /api/avatar/c_<id>); null → инициалы */
+  avatarUrl?: string | null
   subscribersCount: number
   isPremium: boolean
   status: string
@@ -91,6 +93,7 @@ export type AdminStatsDTO = {
   title: string
   username: string
   avatarColor: string
+  avatarUrl?: string | null
   status: string
   isPremium: boolean
   posts: number
@@ -144,6 +147,7 @@ export type RelatedChannelDTO = {
   subscribers: number
   isPremium: boolean
   avatarColor?: string
+  avatarUrl?: string | null
   categorySlug: string | null
   subscribed: boolean
 }
@@ -184,6 +188,7 @@ export type NotificationGroupDTO = {
   title: string
   isPremium: boolean
   avatarColor: string
+  avatarUrl?: string | null
   categorySlug: string | null
   /** Число новых постов этого канала (= posts.length) */
   count: number

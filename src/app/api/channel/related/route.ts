@@ -56,6 +56,7 @@ export async function GET(request: Request) {
         title: true,
         username: true,
         avatarColor: true,
+        photoFileId: true,
         isPremium: true,
         subscribersCount: true,
         category: { select: { slug: true } },
@@ -81,6 +82,7 @@ export async function GET(request: Request) {
         subscribers: c.subscribersCount,
         isPremium: c.isPremium,
         avatarColor: c.avatarColor,
+        avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
         categorySlug: c.category?.slug ?? null,
         // После фильтрации всегда false (поле — для честного DTO и будущих переиспользований)
         subscribed: subscribedIds.has(c.id),

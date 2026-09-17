@@ -266,7 +266,7 @@ export function ProfileTab() {
                   i > 0 && 'border-t border-tg-sep/60',
                 )}
               >
-                <Avatar name={s.channel.title} color={s.channel.avatarColor} size={48} />
+                <Avatar name={s.channel.title} color={s.channel.avatarColor} src={s.channel.avatarUrl} size={48} />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[16.5px] font-semibold text-tg-text">
                     {s.channel.title}
@@ -315,7 +315,7 @@ export function ProfileTab() {
                   )}
                 >
                   <div className="relative shrink-0">
-                    <Avatar name={p.channel.title} color={p.channel.avatarColor} size={40} />
+                    <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={40} />
                     {unread && (
                       <span
                         className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-tg-bg bg-tg-link"
@@ -705,7 +705,7 @@ function MyChannelZone() {
               {myChannels.map((c) => (
                 <div key={c.channelId} className="rounded-2xl bg-tg-surface p-4">
                   <div className="flex items-center gap-2.5">
-                    <Avatar name={c.title} color={c.avatarColor} size={36} />
+                    <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={36} />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-[14.5px] font-semibold text-tg-text">
                         {c.title}

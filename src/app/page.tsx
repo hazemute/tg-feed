@@ -7,7 +7,8 @@ import { toast } from 'sonner'
 import { api, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { getDeviceId } from '@/lib/user-id'
-import { haptic, initTelegram, tg } from '@/lib/tg'
+import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
+import { THEME_BY_ID } from '@/lib/themes'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
 import { Onboarding } from '@/components/tg/Onboarding'
@@ -45,6 +46,41 @@ export default function Home() {
   // Применение темы к DOM
   useEffect(() => {
     document.documentElement.dataset.theme = theme
+  }, [theme])
+
+  /*
+   * Рамки миниаппы ВСЕГДА в цвет активной темы приложения: шапка Telegram,
+   * фон под кнопками и нижняя панель красятся в hex активной палитры
+   * (на старых клиентах — фолбэк на color_key). Плюс подкрашиваем
+   * meta theme-color (браузерный chrome/Safari).
+   */
+  useEffect(() => {
+    const apply = () => {
+      const hex =
+        theme === 'auto'
+          ? (tg()?.themeParams?.bg_color ?? '#ffffff')
+          : (THEME_BY_ID.get(theme)?.preview.bg ?? '#ffffff')
+      applyTgFrame(hex)
+      document
+        .querySelector('meta[name="theme-color"]')
+        ?.setAttribute('content', hex)
+    }
+    // после установки data-theme нужен кадр на пересчёт CSS-переменных
+    const raf = requestAnimationFrame(apply)
+    // смена темы клиента Telegram/системы — актуально для auto-темы
+    const onSys = () => {
+      syncTelegramThemeVars()
+      apply()
+    }
+    const mq = window.matchMedia('(prefers-color-scheme: dark)')
+    mq.addEventListener?.('change', onSys)
+    const w = tg()
+    w?.onEvent?.('themeChanged', onSys)
+    return () => {
+      cancelAnimationFrame(raf)
+      mq.removeEventListener?.('change', onSys)
+      w?.offEvent?.('themeChanged', onSys)
+    }
   }, [theme])
 
   useEffect(() => {

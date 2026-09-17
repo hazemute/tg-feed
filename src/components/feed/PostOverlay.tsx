@@ -168,7 +168,7 @@ export function PostOverlay() {
               aria-label={`Открыть канал ${ch.title}`}
               className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-tg-surface/60"
             >
-              <Avatar name={ch.title} color={ch.avatarColor} size={46} className="ring-1 ring-tg-sep/70" />
+              <Avatar name={ch.title} color={ch.avatarColor} src={ch.avatarUrl} size={46} className="ring-1 ring-tg-sep/70" />
               <span className="min-w-0 flex-1">
                 <span className="flex min-w-0 items-center gap-1">
                   <span className="truncate text-[16px] font-bold leading-tight text-tg-text">{ch.title}</span>

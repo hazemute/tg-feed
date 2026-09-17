@@ -131,7 +131,7 @@ export function ModerationTab({
                   className="flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-4 sm:flex-row sm:items-center"
                 >
                   <div className="flex min-w-0 flex-1 items-start gap-3">
-                    <Avatar color={item.avatarColor} title={item.title} />
+                    <Avatar color={item.avatarColor} title={item.title} src={item.avatarUrl} />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                         <span className="truncate text-sm font-semibold text-slate-100">

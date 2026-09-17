@@ -33,6 +33,7 @@ export async function GET(request: Request) {
           username: s.channel.username,
           description: s.channel.description,
           avatarColor: s.channel.avatarColor,
+          avatarUrl: s.channel.photoFileId ? `/api/avatar/c_${s.channel.id}` : null,
           subscribersCount: s.channel.subscribersCount,
           isPremium: s.channel.isPremium,
           status: s.channel.status,

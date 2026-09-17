@@ -16,6 +16,8 @@ export function toChannelDTO(
     username: c.username,
     description: c.description,
     avatarColor: c.avatarColor,
+    // Реальная аватарка канала из Bot API (file_id → прокси); null → инициалы
+    avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
     subscribersCount: c.subscribersCount,
     isPremium: c.isPremium,
     status: c.status,

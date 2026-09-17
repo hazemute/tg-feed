@@ -102,6 +102,7 @@ export async function GET(request: Request) {
         title: ch.title,
         isPremium: ch.isPremium,
         avatarColor: ch.avatarColor,
+        avatarUrl: ch.photoFileId ? `/api/avatar/c_${ch.id}` : null,
         categorySlug: ch.category?.slug ?? null,
         count: groupPosts.length,
         posts: groupPosts,

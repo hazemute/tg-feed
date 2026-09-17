@@ -36,6 +36,7 @@ export interface FreshPost {
   channelTitle: string
   channelUsername: string
   avatarColor: string
+  avatarUrl?: string | null
   text: string
   publishedAt: string
   mediaUrl: string | null
@@ -53,6 +54,7 @@ export interface TopChannel {
   title: string
   username: string
   avatarColor: string
+  avatarUrl?: string | null
   subscribersCount: number
   postsCount: number
 }
@@ -74,6 +76,7 @@ export interface PanelChannel {
   username: string
   description: string
   avatarColor: string
+  avatarUrl?: string | null
   status: ChannelStatus
   isPremium: boolean
   categoryId: string | null
@@ -97,6 +100,7 @@ export interface ModerationItem {
   username: string
   description: string
   avatarColor: string
+  avatarUrl?: string | null
   categoryTitle: string | null
   postsCount: number
   createdAt: string

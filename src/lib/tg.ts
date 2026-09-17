@@ -9,7 +9,16 @@ export type TgWebApp = {
   expand: () => void
   initData: string
   colorScheme?: 'light' | 'dark'
-  themeParams?: { bg_color?: string; text_color?: string; button_color?: string }
+  themeParams?: {
+    bg_color?: string
+    text_color?: string
+    hint_color?: string
+    link_color?: string
+    button_color?: string
+    secondary_bg_color?: string
+    header_bg_color?: string
+    accent_text_color?: string
+  }
   initDataUnsafe?: {
     user?: {
       id: number
@@ -25,6 +34,9 @@ export type TgWebApp = {
   openLink: (url: string, options?: { try_instant_view?: boolean }) => void
   setHeaderColor?: (color: string) => void
   setBackgroundColor?: (color: string) => void
+  setBottomBarColor?: (color: string) => void
+  onEvent?: (event: string, cb: () => void) => void
+  offEvent?: (event: string, cb: () => void) => void
   disableVerticalSwipes?: () => void
   enableClosingConfirmation?: () => void
   HapticFeedback?: {
@@ -46,6 +58,57 @@ export function tg(): TgWebApp | null {
   return w.Telegram?.WebApp ?? null
 }
 
+/**
+ * Синхронизировать themeParams Telegram → CSS-переменные --tg-theme-*.
+ * Тема «Как в Telegram» (auto) в globals.css построена на этих переменных;
+ * без этой синхронизации она всегда падает в светлое значение.
+ * Вызывается при инициализации и на событие themeChanged.
+ */
+export function syncTelegramThemeVars(): void {
+  const w = tg()
+  const tp = w?.themeParams
+  if (!w || !tp) return
+  const root = document.documentElement.style
+  const map: Array<[string, string | undefined]> = [
+    ['--tg-theme-bg-color', tp.bg_color],
+    ['--tg-theme-text-color', tp.text_color],
+    ['--tg-theme-hint-color', tp.hint_color],
+    ['--tg-theme-link-color', tp.link_color],
+    ['--tg-theme-button-color', tp.button_color],
+    ['--tg-theme-secondary-bg-color', tp.secondary_bg_color],
+    ['--tg-theme-header-bg-color', tp.header_bg_color],
+    ['--tg-theme-accent-text-color', tp.accent_text_color],
+  ]
+  for (const [name, value] of map) {
+    if (value) root.setProperty(name, value)
+  }
+}
+
+/**
+ * Покрасить рамки миниаппы (шапка, фон, нижняя панель) в цвет темы приложения.
+ * Hex-цвета поддерживаются в Bot API ≥ 7.10; на старых клиентах откатываемся
+ * на семантический color_key (bg_color = «в цвет темы клиента»).
+ */
+export function applyTgFrame(hex: string): void {
+  const w = tg()
+  if (!w) return
+  const paint = (fn: ((c: string) => void) | undefined) => {
+    if (!fn) return
+    try {
+      fn(hex)
+    } catch {
+      try {
+        fn('bg_color') // старые клиенты без hex-поддержки
+      } catch {
+        // noop
+      }
+    }
+  }
+  paint(w.setHeaderColor)
+  paint(w.setBackgroundColor)
+  paint(w.setBottomBarColor)
+}
+
 export function initTelegram(): TgWebApp | null {
   const w = tg()
   if (!w) return null
@@ -58,10 +121,9 @@ export function initTelegram(): TgWebApp | null {
     } catch {
       // старые клиенты — не критично
     }
-    // Шапка в цвет темы клиента (light/dark), чтобы не было белой полосы в тёмной теме
-    const dark = w.colorScheme === 'dark'
-    w.setHeaderColor?.(dark ? '#0e141c' : '#ffffff')
-    w.setBackgroundColor?.(dark ? '#0e141c' : '#ffffff')
+    // CSS-переменные темы Telegram (для auto-темы). Цвет рамок ставит
+    // page.tsx после применения активной темы приложения (applyTgFrame).
+    syncTelegramThemeVars()
   } catch {
     // вне Telegram — игнорируем
   }

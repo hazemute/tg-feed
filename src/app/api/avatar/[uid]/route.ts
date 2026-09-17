@@ -34,15 +34,26 @@ function isSafePhotoUrl(raw: string): boolean {
 }
 
 export async function GET(request: Request, ctx: { params: Promise<{ uid: string }> }) {
-  const ip = guardIp(request, { limit: 60, windowMs: 60_000, bucket: 'avatar' })
+  const ip = guardIp(request, { limit: 120, windowMs: 60_000, bucket: 'avatar' })
   if (!ip.ok) return ip.res
 
   const { uid } = await ctx.params
-  if (!uid.startsWith('tg_')) return new NextResponse('not found', { status: 404 })
+  if (!uid.startsWith('tg_') && !uid.startsWith('c_'))
+    return new NextResponse('not found', { status: 404 })
 
   try {
-    const user = await db.user.findUnique({ where: { id: uid }, select: { photoUrl: true } })
-    const photo = user?.photoUrl
+    /* Источник photoUrl: пользователь (tgfile:/https) или канал (tgfile: из getChat) */
+    let photo: string | null = null
+    if (uid.startsWith('c_')) {
+      const channel = await db.channel.findUnique({
+        where: { id: uid.slice('c_'.length) },
+        select: { photoFileId: true },
+      })
+      photo = channel?.photoFileId ? `tgfile:${channel.photoFileId}` : null
+    } else {
+      const user = await db.user.findUnique({ where: { id: uid }, select: { photoUrl: true } })
+      photo = user?.photoUrl ?? null
+    }
     if (!photo) return new NextResponse('not found', { status: 404 })
 
     if (photo.startsWith('http')) {
@@ -59,9 +70,19 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       const img = await fetch(url, { signal: AbortSignal.timeout(10_000) })
       if (!img.ok || !img.body) return new NextResponse('not found', { status: 404 })
       const buf = await img.arrayBuffer()
+      // Telegram иногда отдаёт application/octet-stream — нормализуем по расширению
+      const rawType = img.headers.get('content-type') ?? ''
+      const ext = url.split('.').pop()?.toLowerCase() ?? ''
+      const contentType = /^image\//.test(rawType)
+        ? rawType
+        : ext === 'png'
+          ? 'image/png'
+          : ext === 'webp'
+            ? 'image/webp'
+            : 'image/jpeg'
       return new NextResponse(buf, {
         headers: {
-          'Content-Type': img.headers.get('content-type') ?? 'image/jpeg',
+          'Content-Type': contentType,
           'Cache-Control': 'public, max-age=1800, stale-while-revalidate=86400',
         },
       })

@@ -277,7 +277,7 @@ function ChannelScreen({
             {/* Профиль канала */}
             <div className="px-4 pb-1 pt-5">
               <div className="flex items-center gap-4">
-                <Avatar name={channel.title} color={channel.avatarColor} size={76} />
+                <Avatar name={channel.title} color={channel.avatarColor} src={channel.avatarUrl} size={76} />
                 <div className="min-w-0 flex-1">
                   <h1 className="truncate text-[21px] font-bold leading-tight text-tg-text">{channel.title}</h1>
                   <div className="mt-0.5 text-[14px] text-tg-link">@{channel.username}</div>
@@ -604,7 +604,7 @@ function RelatedCard({
       role="listitem"
       className="relative flex w-[150px] shrink-0 snap-start flex-col items-center gap-2 rounded-2xl border border-tg-sep/60 px-3 py-4"
     >
-      <Avatar name={channel.title} color={channel.avatarColor} size={56} />
+      <Avatar name={channel.title} color={channel.avatarColor} src={channel.avatarUrl} size={56} />
       <span className="line-clamp-1 w-full text-center text-[14px] font-bold leading-tight text-tg-text">
         {channel.title}
       </span>

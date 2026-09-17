@@ -1,6 +1,13 @@
+'use client'
+
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
 
-/** Аватар канала: цветной круг с инициалами (1–2 буквы, как в Telegram) или фото */
+/**
+ * Аватар канала/пользователя: фото (src) с автоматическим фолбэком на
+ * цветной круг с инициалами (1–2 буквы, как в Telegram), если картинки нет
+ * или она не загрузилась (404 у прокси, оффлайн и т.п.).
+ */
 export function Avatar({
   name,
   color,
@@ -14,12 +21,21 @@ export function Avatar({
   size?: number
   className?: string
 }) {
-  if (src) {
+  const [broken, setBroken] = useState(false)
+  // Новая ссылка — сбрасываем флаг (картинка канала могла обновиться).
+  // Сброс во время рендера — канонический паттерн React без лишнего эффекта
+  const [prevSrc, setPrevSrc] = useState(src)
+  if (prevSrc !== src) {
+    setPrevSrc(src)
+    setBroken(false)
+  }
+
+  if (src && !broken) {
     return (
-       
       <img
         src={src}
         alt={name}
+        onError={() => setBroken(true)}
         className={cn('shrink-0 rounded-full object-cover', className)}
         style={{ width: size, height: size }}
       />

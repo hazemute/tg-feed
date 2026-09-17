@@ -455,7 +455,7 @@ export function SearchTab() {
                   i > 0 && 'border-t border-tg-sep/60',
                 )}
               >
-                <Avatar name={p.channel.title} color={p.channel.avatarColor} size={44} />
+                <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={44} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
                     <span className="truncate text-[15px] font-semibold text-tg-text">
@@ -504,7 +504,7 @@ function ChannelRow({
         aria-label={`Открыть канал ${channel.title}`}
         className="shrink-0"
       >
-        <Avatar name={channel.title} color={channel.avatarColor} size={52} />
+        <Avatar name={channel.title} color={channel.avatarColor} src={channel.avatarUrl} size={52} />
       </button>
       <button
         type="button"

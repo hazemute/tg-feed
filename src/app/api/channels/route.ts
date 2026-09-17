@@ -81,6 +81,7 @@ async function loadChannels(category: string, q: string) {
     username: c.username,
     description: c.description,
     avatarColor: c.avatarColor,
+    avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
     subscribersCount: c.subscribersCount,
     isPremium: c.isPremium,
     status: c.status,

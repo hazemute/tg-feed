@@ -307,6 +307,7 @@ export function PostCard({
           <Avatar
             name={ch.title}
             color={ch.avatarColor}
+            src={ch.avatarUrl}
             size={50}
             className={cn(
               'ring-1',

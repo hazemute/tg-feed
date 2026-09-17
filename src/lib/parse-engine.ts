@@ -2,7 +2,11 @@ import { db } from '@/lib/db'
 import { isValidChannelUsername } from '@/lib/server'
 import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
+import { botEnabled, getChatPhotoFileId } from '@/lib/tg-bot'
 import type { NotifiablePost } from '@/lib/tg-bot'
+
+/** TTL обновления аватарок каналов (аватар меняют редко — 7 дней) */
+const AVATAR_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Движок парсинга TG-Feed: забирает посты публичных каналов с веб-превью
@@ -176,6 +180,29 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
 
       const html = await res.text()
       const parsed = parseChannelHtml(html, target)
+
+      /*
+       * Аватарка канала: Bot API getChat → file_id → /api/avatar/c_<id>.
+       * Обновляем только при протухшем TTL (7 дней) или отсутствии —
+       * лишних вызовов Bot API нет, сбои не ломают парсинг.
+       */
+      if (
+        botEnabled() &&
+        (!channel.photoFileId ||
+          !channel.avatarFetchedAt ||
+          Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS)
+      ) {
+        const fileId = await getChatPhotoFileId(target)
+        await db.channel
+          .update({
+            where: { id: channel.id },
+            data: {
+              ...(fileId ? { photoFileId: fileId } : {}),
+              avatarFetchedAt: new Date(),
+            },
+          })
+          .catch(() => {})
+      }
       // Берём только N новейших постов страницы (сортировка по publishedAt desc)
       const queue = [...parsed]
         .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())

@@ -43,6 +43,32 @@ export async function getBotUsername(): Promise<string | null> {
 type TgPhotoSize = { file_id?: string; width?: number; height?: number }
 
 /**
+ * Аватарка публичного канала через Bot API getChat (chat_id=@username).
+ * Возвращает file_id самого большого размера (big_file_id) — вечный
+ * идентификатор, рендер через /api/avatar/c_<channelId> → getFile.
+ */
+export async function getChatPhotoFileId(username: string): Promise<string | null> {
+  if (!botEnabled()) return null
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: `@${username.replace(/^@/, '')}` }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json()) as {
+      ok?: boolean
+      result?: { photo?: { small_file_id?: string; big_file_id?: string } }
+    }
+    if (!data?.ok) return null
+    const photo = data.result?.photo
+    return photo?.big_file_id ?? photo?.small_file_id ?? null
+  } catch {
+    return null
+  }
+}
+
+/**
  * Последнее фото профиля пользователя через Bot API (getUserProfilePhotos).
  * Возвращает file_id самого большого размера — вечный идентификатор файла
  * (в отличие от photo_url из initDataUnsafe, который живёт ~1 час).

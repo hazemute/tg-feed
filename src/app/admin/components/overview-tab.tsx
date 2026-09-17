@@ -239,7 +239,7 @@ export function OverviewTab({
                     key={p.id}
                     className="flex items-start gap-3 rounded-md px-1 py-2 transition-colors hover:bg-white/[0.03]"
                   >
-                    <Avatar color={p.avatarColor} title={p.channelTitle} className="size-8 text-xs" />
+                    <Avatar color={p.avatarColor} title={p.channelTitle} src={p.avatarUrl} className="size-8 text-xs" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
                         <span className="truncate text-sm font-medium text-slate-200">
@@ -277,7 +277,7 @@ export function OverviewTab({
                     key={ch.username}
                     className="flex items-center gap-3 rounded-md px-1 py-2 transition-colors hover:bg-white/[0.03]"
                   >
-                    <Avatar color={ch.avatarColor} title={ch.title} className="size-8 text-xs" />
+                    <Avatar color={ch.avatarColor} title={ch.title} src={ch.avatarUrl} className="size-8 text-xs" />
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-slate-200">{ch.title}</div>
                       <div className="truncate text-xs text-slate-500">@{ch.username}</div>

@@ -30,6 +30,7 @@ export async function GET(request: Request) {
         username: c.username,
         description: c.description,
         avatarColor: c.avatarColor,
+        avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
         categoryTitle: c.category?.title ?? null,
         postsCount: c._count.posts,
         createdAt: c.createdAt.toISOString(),

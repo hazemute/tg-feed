@@ -192,7 +192,7 @@ function TopPosts({ posts }: { posts: PostDTO[] }) {
             >
               {i + 1}
             </span>
-            <Avatar name={p.channel.title} color={p.channel.avatarColor} size={44} />
+            <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={44} />
             <span className="min-w-0 flex-1">
               <span className="flex items-baseline gap-2">
                 <span className="truncate text-[15px] font-semibold text-tg-text">
@@ -290,7 +290,7 @@ function TopChannels({ channels }: { channels: ChannelDTO[] }) {
               aria-label={`Открыть канал ${c.title}`}
               className="shrink-0"
             >
-              <Avatar name={c.title} color={c.avatarColor} size={44} />
+              <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={44} />
             </button>
             <button
               type="button"

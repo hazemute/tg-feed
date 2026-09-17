@@ -31,8 +31,10 @@ export function validateInitData(
     if (!hash) return null
     params.delete('hash')
 
+    // Сортировка СТРОГО в байтовом порядке (спецификация Telegram) —
+    // localeCompare зависит от локали и может дать иной порядок для не-букв
     const dataCheckString = [...params.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
       .map(([k, v]) => `${k}=${v}`)
       .join('\n')
 

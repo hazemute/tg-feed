@@ -60,13 +60,28 @@ export const btnOutlineDark =
 export function Avatar({
   color,
   title,
+  src,
   className,
 }: {
   color: string
   title: string
+  src?: string | null
   className?: string
 }) {
   const letter = (title || '?').trim().charAt(0).toUpperCase() || '?'
+  if (src) {
+    return (
+      <img
+        src={src}
+        alt=""
+        aria-hidden
+        className={cn(
+          'size-9 shrink-0 rounded-full object-cover',
+          className,
+        )}
+      />
+    )
+  }
   return (
     <span
       aria-hidden

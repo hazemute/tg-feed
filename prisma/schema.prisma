@@ -51,6 +51,8 @@ model Channel {
   username         String    @unique // without @
   description      String?
   avatarColor      String    @default("#3390ec")
+  photoFileId      String? // file_id аватарки канала (Bot API getChat) → /api/avatar/c_<id>
+  avatarFetchedAt  DateTime? // когда последний раз обновляли аватарку (TTL 7 дней)
   categoryId       String
   category         Category  @relation(fields: [categoryId], references: [id])
   isPremium        Boolean   @default(false)
