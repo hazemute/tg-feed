@@ -669,13 +669,20 @@ async function processCandidate(
   let addedPosts = 0
   for (const p of queue) {
     try {
+      const primary = p.media
+      const extras = primary
+        ? (({ url: _u, kind: _k, ...rest }) => (Object.keys(rest).length > 0 ? rest : null))(primary)
+        : null
       await db.post.create({
         data: {
           tgKey: p.tgKey,
           channelId: channel.id,
           text: p.text,
-          mediaUrl: p.mediaUrl,
-          mediaType: p.mediaType,
+          mediaUrl: primary?.url ?? null,
+          mediaType: primary?.kind ?? 'none',
+          mediaMeta: extras ? JSON.stringify(extras) : null,
+          gallery: p.gallery.length > 0 ? JSON.stringify(p.gallery) : null,
+          viewsTg: p.viewsTg,
           link: `https://t.me/${p.tgKey.replace(':', '/')}`,
           publishedAt: p.publishedAt,
         },

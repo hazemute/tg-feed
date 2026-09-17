@@ -14,16 +14,17 @@ const CREATOR = 'tgfeed_creator'
 
 /**
  * Форматы продвижения. Ключевая ценность для рекламодателя — не «покажемся»,
- * а измеримый результат: карточка с кнопкой-подпиской, premium-канал в топе
- * ранжирования (×3 к весу постов) и прозрачная статистика каждой кампании.
+ * а измеримый результат: CPA-кампания платит только за уникальные переходы
+ * (эскроу-бюджет), premium-канал в топе ранжирования (×3 к весу постов)
+ * и прозрачная статистика каждой кампании.
  */
 const FORMATS = [
   {
     id: 'feed',
     icon: Megaphone,
-    title: 'Реклама в ленте',
-    price: 'от 350 ₽ / день',
-    note: 'карточка с кнопкой «Подписаться» в каждом 10-м посте',
+    title: 'Реклама за переходы (CPA)',
+    price: 'от 3 ₽ / переход',
+    note: 'карточка в ленте · платите только за уникальных читателей, бюджет в эскроу',
   },
   {
     id: '7d',
@@ -231,8 +232,19 @@ export function PromoteSheet({
                   Запустить кампанию
                 </span>
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  onClose()
+                  useApp.getState().goToTab('mychannel')
+                }}
+                className="h-11 w-full rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link transition active:scale-[0.98]"
+              >
+                Самостоятельно во вкладке «Мой канал»
+              </button>
               <p className="text-center text-[11px] leading-snug text-tg-hint">
-                {activeFormat.title} · оплата переводом (СБП) · запуск в течение часа у @{CREATOR}
+                CPA: бюджет в эскроу, списание за уникальные переходы · {activeFormat.title}
               </p>
             </div>
           </motion.div>

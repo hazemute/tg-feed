@@ -7,6 +7,7 @@ import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
 import { formatCount } from '@/lib/format'
+import { RichText } from '@/components/feed/RichText'
 
 /** Кнопка действия в правой панели поста: иконка + счётчик под ней (макет) */
 export function RailButton({
@@ -131,9 +132,9 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
           transition: 'max-height 320ms ease',
         }}
       >
-        <p ref={innerRef} className="text-post whitespace-pre-line break-words text-tg-text">
-          {text}
-        </p>
+        <div ref={innerRef}>
+          <RichText text={text} />
+        </div>
         {/* Оверлей «...еще» на третьей строке */}
         {clamp && !expanded && (
           <button

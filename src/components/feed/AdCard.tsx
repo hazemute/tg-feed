@@ -16,6 +16,8 @@ import { haptic, openExternal, openTelegram } from '@/lib/tg'
  * Аналитика: показ засчитывается один раз, когда ≥60% карточки появилось
  * на экране (IntersectionObserver, без повторов при скролле туда-сюда);
  * клик — по нажатию CTA. Оба события — fire-and-forget в /api/ads/track.
+ * Для CPA-кампаний клик тарифицируется с анти-накруткой (уникальный
+ * пользователь в сутки) и списывает бюджет из эскроу кампании.
  */
 export function AdCard({ ad }: { ad: AdDTO }) {
   const rootRef = useRef<HTMLElement>(null)
@@ -32,7 +34,7 @@ export function AdCard({ ad }: { ad: AdDTO }) {
           io.disconnect()
           api('/api/ads/track', {
             method: 'POST',
-            body: JSON.stringify({ adId: ad.id, type: 'impression' }),
+            body: JSON.stringify({ adId: ad.id, type: 'impression', kind: ad.kind ?? 'ad' }),
           }).catch(() => {})
         }
       },
@@ -48,7 +50,7 @@ export function AdCard({ ad }: { ad: AdDTO }) {
     haptic('light')
     api('/api/ads/track', {
       method: 'POST',
-      body: JSON.stringify({ adId: ad.id, type: 'click' }),
+      body: JSON.stringify({ adId: ad.id, type: 'click', kind: ad.kind ?? 'ad' }),
     }).catch(() => {})
     if (isTg) openTelegram(ad.link)
     else {

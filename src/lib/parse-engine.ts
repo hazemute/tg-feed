@@ -4,6 +4,7 @@ import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
 import { botEnabled, getChatPhotoFileId, getChatMemberCount } from '@/lib/tg-bot'
 import type { NotifiablePost } from '@/lib/tg-bot'
+import { htmlToMarkdownLite } from '@/lib/markdown'
 
 /** TTL обновления аватарок и счётчиков подписчиков каналов (меняются редко — 7 дней) */
 const AVATAR_TTL_MS = 7 * 24 * 60 * 60 * 1000
@@ -15,6 +16,11 @@ const AVATAR_TTL_MS = 7 * 24 * 60 * 60 * 1000
  * Логика вынесена из src/app/api/parse/route.ts, чтобы её использовали два входа:
  *  - POST /api/parse     — служебный (cron-сервис mini-services/feed-cron, защита CRON_SECRET);
  *  - POST /api/panel/tools {action:"parse"} — ручной запуск из /admin (защита ADMIN_KEY).
+ *
+ * Посты сохраняются в markdown-lite (жирный/курсив/код/спойлеры/цитаты/ссылки),
+ * поддерживаются все типы медиа веб-превью: фото-альбомы, видео, GIF, стикеры,
+ * файлы, аудио/голосовые, опросы и превью ссылок. Просмотры берутся из
+ * оригинального канала (счётчик под постом в t.me/s) и обновляются при ре-парсинге.
  */
 
 /** Результат парсинга одного канала */
@@ -36,6 +42,50 @@ export type ParseResult = {
   totalTargets?: number
 }
 
+// ------------------------------------------------------------------
+// Медиа-модель поста
+// ------------------------------------------------------------------
+
+export type MediaKind =
+  | 'image'
+  | 'video'
+  | 'gif'
+  | 'sticker'
+  | 'voice'
+  | 'audio'
+  | 'file'
+  | 'poll'
+  | 'link'
+
+/** Элемент медиа-контента поста (основной или в галерее) */
+export type MediaItem = {
+  kind: MediaKind
+  url?: string // прямая ссылка на медиа (фото/видео/гиф/стикер/аудио) или картинка-превью
+  poster?: string // постер видео (только http-ссылки)
+  name?: string // имя файла
+  size?: string // «48.2 MB»
+  title?: string // аудио/линк-превью
+  performer?: string // исполнитель аудио
+  question?: string // опрос
+  answers?: string[] // варианты опроса
+  site?: string // домен линк-превью
+  description?: string // описание линк-превью
+  link?: string // URL линк-превью
+}
+
+type ParsedPost = {
+  tgKey: string
+  text: string
+  media: MediaItem | null // основное медиа
+  gallery: MediaItem[] // дополнительные фото/медиа
+  viewsTg: number | null
+  publishedAt: Date
+}
+
+// ------------------------------------------------------------------
+// Вспомогательные функции разметки t.me/s
+// ------------------------------------------------------------------
+
 /** Нормализация HTML-сущностей, встречающихся в разметке t.me/s */
 function decodeEntities(s: string): string {
   return s
@@ -46,13 +96,11 @@ function decodeEntities(s: string): string {
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&laquo;/g, '«')
     .replace(/&raquo;/g, '»')
-    // Именованные и числовые сущности (&amp; — последним; &#33; → «!», &#x27; и т.п.)
     .replace(/&#(\d+);/g, (_, code) => safeFromCode(Number(code)))
     .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => safeFromCode(parseInt(hex, 16)))
     .replace(/&amp;/g, '&')
 }
 
-/** Числовой код символа с защитой от управляющих/невалидных значений */
 function safeFromCode(code: number): string {
   if (!Number.isFinite(code) || code < 32 || code > 0x10ffff) return ''
   try {
@@ -66,17 +114,72 @@ function stripTags(s: string): string {
   return decodeEntities(s.replace(/<br\s*\/?>/gi, '\n').replace(/<[^>]+>/g, '')).trim()
 }
 
-type ParsedPost = {
-  tgKey: string
-  text: string
-  mediaUrl: string | null
-  mediaType: 'image' | 'video'
-  publishedAt: Date
+/**
+ * Внутренний HTML элемента с балансировкой вложенных <div>.
+ * Класс-стрелка возвращает null, если закрытие не найдено (битая разметка).
+ */
+function extractInnerBalanced(html: string, startIdx: number): string | null {
+  const openTagEnd = html.indexOf('>', startIdx)
+  if (openTagEnd === -1) return null
+  let depth = 1
+  const re = /<\/?div\b/g
+  re.lastIndex = openTagEnd + 1
+  let m: RegExpExecArray | null
+  while ((m = re.exec(html))) {
+    depth += m[0] === '</div' ? -1 : 1
+    if (depth === 0) return html.slice(openTagEnd + 1, m.index)
+  }
+  return null
+}
+
+/** Значение CSS background-image: url('…') из фрагмента */
+function bgImageOf(fragment: string): string | null {
+  const m = fragment.match(/background-image:\s*url\('([^']+)'\)/)
+  return m ? decodeEntities(m[1]) : null
+}
+/** «2.1K» / «1 234» / «1,2M» → число просмотров оригинального канала */
+export function parseTgViews(raw: string): number | null {
+  const s = raw.trim().replace(/\s|\u00a0/g, '')
+  const m = s.match(/^([\d.,]+)([KkMm])?$/)
+  if (!m) return null
+  let num = Number(m[1].replace(',', '.'))
+  if (!Number.isFinite(num)) return null
+  const suffix = m[2]?.toLowerCase()
+  if (suffix === 'k') num *= 1_000
+  if (suffix === 'm') num *= 1_000_000
+  return Math.round(num)
 }
 
 /**
+ * Полный текст поста: тег <div class="tgme_widget_message_text …"> с
+ * балансировкой вложенных div (старый регэксп обрезал текст на первом
+ * вложенном </div>). Возвращается markdown-lite со всей разметкой.
+ */
+function extractText(block: string): string {
+  const marker = block.search(/<div class="tgme_widget_message_text[\s"]/)
+  if (marker === -1) return ''
+  const inner = extractInnerBalanced(block, marker)
+  if (!inner) return ''
+  return htmlToMarkdownLite(inner)
+}
+
+/** URL рядом с вхождением маркера класса: url('…') или src="…" (для стикеров) */
+function urlNear(block: string, marker: string, span = 500): string | null {
+  for (const m of block.matchAll(new RegExp(marker, 'g'))) {
+    const scope = block.slice(m.index ?? 0, (m.index ?? 0) + span)
+    const url = bgImageOf(scope) ?? scope.match(/\ssrc="([^"]+)"/)?.[1]
+    if (url) return decodeEntities(url)
+  }
+  return null
+}
+
+// ------------------------------------------------------------------
+// Парсер HTML канала
+// ------------------------------------------------------------------
+
+/**
  * Парсер публичной веб-версии канала t.me/s/<username>.
- * Достаём текст, фото/видео и время публикации из HTML.
+ * Достаёт текст (markdown-lite), все типы медиа и просмотры из HTML.
  */
 export function parseChannelHtml(html: string, username: string): ParsedPost[] {
   const out: ParsedPost[] = []
@@ -88,25 +191,107 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
     const rawKey = keyMatch[1] // "username/12345"
     const key = rawKey.includes('/') ? rawKey : `${username}/${rawKey}`
 
-    const textMatch = block.match(
-      /<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/,
-    )
-    const text = textMatch ? stripTags(textMatch[1]) : ''
+    const text = extractText(block)
+    const gallery: MediaItem[] = []
+    let media: MediaItem | null = null
 
-    // Видео (прямой src в теге video) приоритетнее фото
-    const videoMatch = block.match(/<video[^>]*src="([^"]+)"/)
-    const photoMatch = block.match(
-      /tgme_widget_message_photo_wrap[^>]*style="background-image:\s*url\('([^']+)'/,
+    /* ---------- Фото (возможно альбом: несколько photo_wrap в одном посте) ---------- */
+    for (const m of block.matchAll(/tgme_widget_message_photo_wrap[^>]*style="[^"]*background-image:\s*url\('([^']+)'/g)) {
+      gallery.push({ kind: 'image', url: decodeEntities(m[1]) })
+    }
+
+    /* ---------- Видео / GIF (прямые <video src>) ---------- */
+    for (const m of block.matchAll(/<video([^>]*)>/g)) {
+      const attrs = m[1]
+      const src = attrs.match(/\ssrc="([^"]+)"/)?.[1]
+      if (!src) continue
+      const isGif = /loop|autoplay/i.test(attrs)
+      const poster = attrs.match(/\sposter="(https:[^"]+)"/)?.[1]
+      gallery.push({
+        kind: isGif ? 'gif' : 'video',
+        url: decodeEntities(src),
+        ...(poster ? { poster: decodeEntities(poster) } : {}),
+      })
+    }
+
+    /* ---------- Стикеры (webp/webm: bg-image или <img>, рядом с классом) ---------- */
+    const stickerUrl = urlNear(block, 'tgme_widget_message_sticker')
+    if (stickerUrl) gallery.push({ kind: 'sticker', url: stickerUrl })
+
+    /* ---------- Файлы (документы: имя + размер) ---------- */
+    for (const doc of block.matchAll(
+      /<div class="tgme_widget_message_document_title[^"]*">([\s\S]*?)<\/div>\s*<div class="tgme_widget_message_document_extra[^"]*">([\s\S]*?)<\/div>/g,
+    )) {
+      gallery.push({ kind: 'file', name: stripTags(doc[1]), size: stripTags(doc[2]) })
+    }
+
+    /* ---------- Голосовые / аудио ---------- */
+    const isVoice = block.includes('tgme_widget_message_voice')
+    const audioTitle = block.match(/tgme_widget_message_audio_title[^>]*>([\s\S]*?)</)
+    const audioSub = block.match(/tgme_widget_message_audio_subtitle[^>]*>([\s\S]*?)</)
+    const audioSrc = block.match(/<audio[^>]*src="([^"]+)"/)?.[1]
+    if (isVoice || audioTitle || audioSrc) {
+      const item: MediaItem = {
+        kind: isVoice ? 'voice' : 'audio',
+        ...(audioSrc ? { url: decodeEntities(audioSrc) } : {}),
+        ...(audioTitle ? { title: stripTags(audioTitle[1]) } : {}),
+        ...(audioSub ? { performer: stripTags(audioSub[1]) } : {}),
+      }
+      gallery.push(item)
+    }
+
+    /* ---------- Опросы ---------- */
+    const pollQ = block.match(/tgme_widget_message_poll_question[^>]*>([\s\S]*?)</)
+    if (pollQ) {
+      const answers = [...block.matchAll(/tgme_widget_message_poll_answer_text[^>]*>([\s\S]*?)</g)].map(
+        (x) => stripTags(x[1]),
+      )
+      gallery.push({ kind: 'poll', question: stripTags(pollQ[1]), answers })
+    }
+
+    /* ---------- Превью ссылки ---------- */
+    const linkM = block.match(
+      /<a[^>]*class="[^"]*tgme_widget_message_link_preview[^"]*"[^>]*href="([^"]+)"/,
     )
-    const mediaUrl = videoMatch ? videoMatch[1] : photoMatch ? photoMatch[1] : null
-    const mediaType: 'image' | 'video' = videoMatch ? 'video' : 'image'
+    const linkM2 = linkM ?? block.match(/<a[^>]*href="([^"]+)"[^>]*class="[^"]*tgme_widget_message_link_preview/)
+    if (linkM2) {
+      const idx = block.indexOf(linkM2[0])
+      const scope = block.slice(idx, idx + 4000)
+      const title = scope.match(/tgme_widget_message_link_title[^>]*>([\s\S]*?)</)?.[1]
+      const desc = scope.match(/tgme_widget_message_link_description[^>]*>([\s\S]*?)</)?.[1]
+      const site = scope.match(/tgme_widget_message_link_site[^>]*>([\s\S]*?)</)?.[1]
+      const image = bgImageOf(scope)
+      gallery.push({
+        kind: 'link',
+        link: decodeEntities(linkM2[1]),
+        ...(title ? { title: stripTags(title) } : {}),
+        ...(desc ? { description: stripTags(desc) } : {}),
+        ...(site ? { site: stripTags(site) } : {}),
+        ...(image ? { url: image } : {}),
+      })
+    }
+
+    /* ---------- Выбор основного медиа (приоритет видео > гиф > фото > …) ---------- */
+    const priority: MediaKind[] = ['video', 'gif', 'image', 'sticker', 'voice', 'audio', 'file', 'poll', 'link']
+    for (const kind of priority) {
+      const idx = gallery.findIndex((x) => x.kind === kind && (x.url || x.name || x.question || x.link))
+      if (idx !== -1) {
+        media = gallery[idx]
+        gallery.splice(idx, 1)
+        break
+      }
+    }
+
+    /* ---------- Просмотры оригинального канала ---------- */
+    const viewsRaw = block.match(/tgme_widget_message_views[^>]*>([\s\S]*?)</)?.[1] ?? ''
+    const viewsTg = parseTgViews(stripTags(viewsRaw))
 
     const timeMatch = block.match(/<time[^>]*datetime="([^"]+)"/)
     const publishedAt = timeMatch ? new Date(timeMatch[1]) : new Date()
     if (isNaN(publishedAt.getTime())) continue
 
-    if (!text && !mediaUrl) continue
-    out.push({ tgKey: key.replace('/', ':'), text, mediaUrl, mediaType, publishedAt })
+    if (!text && !media && gallery.length === 0) continue
+    out.push({ tgKey: key.replace('/', ':'), text, media, gallery, viewsTg, publishedAt })
   }
 
   return out
@@ -282,25 +467,44 @@ export async function runParser(
           })
           .catch(() => {})
       }
+
       // Новейшие первыми; дубли отклонит unique tgKey — вставляем, пока не доберём per
       const queue = [...parsed].sort(
         (a, b) => b.publishedAt.getTime() - a.publishedAt.getTime(),
       )
 
+      // Просмотры и текст (markdown-апгрейд) обновляются и у уже существующих постов:
+      // один SELECT по ключам перед вставками → точечные UPDATE только где изменилось
+      const existing = await db.post.findMany({
+        where: { channelId: channel.id, tgKey: { in: queue.map((p) => p.tgKey) } },
+        select: { tgKey: true, viewsTg: true, text: true },
+      })
+      const existingMap = new Map(existing.map((p) => [p.tgKey, p]))
+
       let added = 0
       for (const p of queue) {
         if (added >= per) break
+        const primary = p.media
+        // mediaMeta — доп. атрибуты основного медиа (файл/аудио/опрос/линк-превью);
+        // gallery — остальные элементы (JSON MediaItem[])
+        const extras = primary
+          ? (({ url: _u, kind: _k, ...rest }) => (Object.keys(rest).length > 0 ? rest : null))(primary)
+          : null
+        const data = {
+          tgKey: p.tgKey,
+          channelId: channel.id,
+          text: p.text,
+          mediaUrl: primary?.url ?? null,
+          mediaType: primary?.kind ?? 'none',
+          mediaMeta: extras ? JSON.stringify(extras) : null,
+          gallery: p.gallery.length > 0 ? JSON.stringify(p.gallery) : null,
+          link: `https://t.me/${p.tgKey.replace(':', '/')}`,
+          viewsTg: p.viewsTg,
+          publishedAt: p.publishedAt,
+        }
         try {
           const created = await db.post.create({
-            data: {
-              tgKey: p.tgKey,
-              channelId: channel.id,
-              text: p.text,
-              mediaUrl: p.mediaUrl,
-              mediaType: p.mediaType,
-              link: `https://t.me/${p.tgKey.replace(':', '/')}`,
-              publishedAt: p.publishedAt,
-            },
+            data,
             select: { id: true, text: true, link: true },
           })
           added++
@@ -311,7 +515,21 @@ export async function runParser(
             channel: { username: channel.username, title: channel.title },
           })
         } catch {
-          // дубликат (unique tgKey) — пропускаем
+          // дубликат (unique tgKey) — обновляем просмотры/текст, только если изменились
+          const old = existingMap.get(p.tgKey)
+          const viewsChanged = p.viewsTg != null && old?.viewsTg !== p.viewsTg
+          const textChanged = p.text.length > 0 && p.text !== old?.text // markdown-апгрейд/зачистка старых постов
+          if (viewsChanged || textChanged) {
+            await db.post
+              .update({
+                where: { tgKey: p.tgKey },
+                data: {
+                  ...(viewsChanged ? { viewsTg: p.viewsTg } : {}),
+                  ...(textChanged ? { text: p.text } : {}),
+                },
+              })
+              .catch(() => {})
+          }
         }
       }
       results.push({ username: target, added })

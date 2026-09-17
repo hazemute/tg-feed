@@ -37,7 +37,7 @@ interface AppState {
   clearSearchSeed: () => void
 }
 
-const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'profile']
+const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
 
 export const useApp = create<AppState>((set, get) => ({
   user: null,

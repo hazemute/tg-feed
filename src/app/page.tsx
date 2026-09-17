@@ -17,9 +17,10 @@ import { ChannelSheet } from '@/components/feed/ChannelSheet'
 import { PostOverlay } from '@/components/feed/PostOverlay'
 import { TrendingTab } from '@/components/tabs/TrendingTab'
 import { SearchTab } from '@/components/tabs/SearchTab'
+import { MyChannelTab } from '@/components/tabs/MyChannelTab'
 import { ProfileTab } from '@/components/tabs/ProfileTab'
 
-const TABS: Tab[] = ['feed', 'trending', 'search', 'profile']
+const TABS: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
 
 // Анимация перехода между вкладками (направление зависит от порядка вкладок)
 const tabVariants = {
@@ -228,6 +229,7 @@ export default function Home() {
             {tab === 'feed' && <FeedView />}
             {tab === 'trending' && <TrendingTab />}
             {tab === 'search' && <SearchTab />}
+            {tab === 'mychannel' && <MyChannelTab />}
             {tab === 'profile' && <ProfileTab />}
           </motion.main>
         </AnimatePresence>

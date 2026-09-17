@@ -24,6 +24,10 @@ export type ChannelDTO = {
   categoryTitle: string | null
   postsCount?: number
   subscribed: boolean
+  /** Тизер-режим канала («Мой канал»): none | cut | blur */
+  teaserMode: string
+  /** Сколько символов показывать в режиме cut */
+  teaserLimit: number
 }
 
 export type SubscriptionDTO = {
@@ -34,14 +38,48 @@ export type SubscriptionDTO = {
   channel: ChannelDTO
 }
 
+export type MediaKind =
+  | 'image'
+  | 'video'
+  | 'gif'
+  | 'sticker'
+  | 'voice'
+  | 'audio'
+  | 'file'
+  | 'poll'
+  | 'link'
+  | 'none'
+
+/** Элемент медиа поста (основной или в галерее) — экран/данные с парсера */
+export type MediaItemDTO = {
+  kind: MediaKind
+  url?: string
+  poster?: string
+  name?: string
+  size?: string
+  title?: string
+  performer?: string
+  question?: string
+  answers?: string[]
+  site?: string
+  description?: string
+  link?: string
+}
+
 export type PostDTO = {
   id: string
   text: string
   mediaUrl: string | null
-  mediaType: 'image' | 'video'
-  gallery: string[]
+  mediaType: string // 'image' | 'video' | 'gif' | 'sticker' | 'voice' | 'audio' | 'file' | 'poll' | 'link' | 'none'
+  /** Основное медиа (kind + url + доп. атрибуты из mediaMeta) */
+  media: MediaItemDTO | null
+  /** Дополнительные медиа (карусель фото/видео, карточки файлов и т.д.) */
+  gallery: MediaItemDTO[]
   link: string | null
+  /** Просмотры для показа: приоритет у оригинального канала Telegram */
   viewsCount: number
+  /** Просмотры из оригинального канала (t.me/s); null — нет данных */
+  viewsTg: number | null
   likesCount: number
   bookmarksCount: number
   publishedAt: string
@@ -52,11 +90,69 @@ export type PostDTO = {
 
 export type AdDTO = {
   id: string
+  /** kind='campaign' — CPA-кампания пользователя (биллинг за клик) */
+  kind: 'ad' | 'campaign'
   title: string
   body: string
   ctaLabel: string
   link: string
   imageUrl: string | null
+}
+
+/** CPA-кампания рекламодателя (список в «Мой канал») */
+export type CampaignDTO = {
+  id: string
+  title: string
+  body: string
+  ctaLabel: string
+  link: string
+  imageUrl: string | null
+  costPerClickKop: number
+  budgetKop: number
+  spentKop: number
+  impressions: number
+  clicks: number
+  rawClicks: number
+  status: string
+  note: string | null
+  createdAt: string
+}
+
+/** Эскроу-счёт рекламодателя (копейки) */
+export type AdvertiserDTO = {
+  balanceKop: number
+  topupsTotalKop: number
+  spentTotalKop: number
+}
+
+/** Канал «Мой канал» со статистикой и кампаниями */
+export type MyChannelDTO = {
+  id: string
+  title: string
+  username: string
+  description: string | null
+  avatarColor: string
+  avatarUrl: string | null
+  subscribersCount: number
+  status: string
+  categorySlug: string
+  categoryTitle: string
+  teaserMode: string
+  teaserLimit: number
+  stats: {
+    posts: number
+    views24h: number
+    likes: number
+    bookmarks: number
+    lastPostAt: string | null
+  }
+  campaigns: CampaignDTO[]
+}
+
+/** Ответ GET /api/mychannel */
+export type MyChannelResponse = {
+  channels: MyChannelDTO[]
+  advertiser: AdvertiserDTO
 }
 
 /** Живая статистика площадки для шита продвижения (GET /api/ads/stats) */
@@ -144,7 +240,7 @@ export type ThemeMode =
   | 'cherry'
 export type FontScale = 'sm' | 'md' | 'lg'
 
-export type Tab = 'feed' | 'trending' | 'search' | 'profile'
+export type Tab = 'feed' | 'trending' | 'search' | 'mychannel' | 'profile'
 
 /** Один день статистики активности в профиле (мини-барчарт «Активность за 7 дней») */
 export type ActivityDayDTO = {

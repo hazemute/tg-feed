@@ -186,3 +186,87 @@ CREATE TABLE IF NOT EXISTS "SystemSetting" (
   "value" TEXT NOT NULL,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
+
+-- =====================================================================
+-- v4.10: rich-посты (mediaMeta/viewsTg/translations), «Мой канал» (claim +
+-- тизер-настройки), CPA-реклама (AdCampaign + эскроу AdvertiserAccount,
+-- анти-накрутка CampaignClick, дневная CampaignStat), журнал переводов
+-- =====================================================================
+
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "mediaMeta" text;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "viewsTg" integer;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "translations" text;
+
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "claimedById" text;
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "claimedAt" timestamptz;
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "teaserMode" text NOT NULL DEFAULT 'none';
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "teaserLimit" integer NOT NULL DEFAULT 160;
+
+CREATE TABLE IF NOT EXISTS "AdCampaign" (
+    "id"              text        NOT NULL DEFAULT gen_random_uuid()::text,
+    "ownerId"         text        NOT NULL,
+    "channelId"       text,
+    "title"           text        NOT NULL,
+    "body"            text        NOT NULL,
+    "ctaLabel"        text        NOT NULL DEFAULT 'Подписаться',
+    "link"            text        NOT NULL,
+    "imageUrl"        text,
+    "costPerClickKop" integer     NOT NULL DEFAULT 300,
+    "budgetKop"       integer     NOT NULL DEFAULT 0,
+    "spentKop"        integer     NOT NULL DEFAULT 0,
+    "impressions"     integer     NOT NULL DEFAULT 0,
+    "clicks"          integer     NOT NULL DEFAULT 0,
+    "rawClicks"       integer     NOT NULL DEFAULT 0,
+    "status"          text        NOT NULL DEFAULT 'moderation',
+    "note"            text,
+    "createdAt"       timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "startedAt"       timestamptz,
+    "completedAt"     timestamptz,
+    CONSTRAINT "AdCampaign_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "AdvertiserAccount" (
+    "userId"         text        NOT NULL,
+    "balanceKop"     integer     NOT NULL DEFAULT 0,
+    "topupsTotalKop" integer     NOT NULL DEFAULT 0,
+    "spentTotalKop"  integer     NOT NULL DEFAULT 0,
+    "updatedAt"      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "AdvertiserAccount_pkey" PRIMARY KEY ("userId")
+);
+
+CREATE TABLE IF NOT EXISTS "CampaignClick" (
+    "id"           text        NOT NULL DEFAULT gen_random_uuid()::text,
+    "campaignId"   text        NOT NULL,
+    "userId"       text        NOT NULL,
+    "lastBilledAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "billedCount"  integer     NOT NULL DEFAULT 1,
+    CONSTRAINT "CampaignClick_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "CampaignStat" (
+    "id"         text   NOT NULL DEFAULT gen_random_uuid()::text,
+    "campaignId" text   NOT NULL,
+    "day"        text   NOT NULL,
+    "impressions" integer NOT NULL DEFAULT 0,
+    "clicks"     integer NOT NULL DEFAULT 0,
+    "spentKop"   integer NOT NULL DEFAULT 0,
+    CONSTRAINT "CampaignStat_pkey" PRIMARY KEY ("id")
+);
+
+CREATE TABLE IF NOT EXISTS "TranslationLog" (
+    "id"        text        NOT NULL DEFAULT gen_random_uuid()::text,
+    "userId"    text,
+    "postId"    text        NOT NULL,
+    "srcLang"   text        NOT NULL,
+    "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "TranslationLog_pkey" PRIMARY KEY ("id")
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS "AdvertiserAccount_userId_key"    ON "AdvertiserAccount" ("userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "CampaignClick_campaignId_userId_key" ON "CampaignClick" ("campaignId", "userId");
+CREATE UNIQUE INDEX IF NOT EXISTS "CampaignStat_campaignId_day_key" ON "CampaignStat" ("campaignId", "day");
+CREATE INDEX IF NOT EXISTS "AdCampaign_status_idx"     ON "AdCampaign" ("status");
+CREATE INDEX IF NOT EXISTS "AdCampaign_ownerId_idx"    ON "AdCampaign" ("ownerId");
+CREATE INDEX IF NOT EXISTS "AdCampaign_channelId_idx"  ON "AdCampaign" ("channelId");
+CREATE INDEX IF NOT EXISTS "CampaignStat_day_idx"      ON "CampaignStat" ("day");
+CREATE INDEX IF NOT EXISTS "TranslationLog_postId_idx" ON "TranslationLog" ("postId");

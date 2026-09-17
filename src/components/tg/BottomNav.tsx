@@ -1,6 +1,6 @@
 'use client'
 
-import { Flame, Home, Search, UserRound } from 'lucide-react'
+import { Flame, Home, Radio, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -11,6 +11,7 @@ const items: { id: Tab; label: string; icon: typeof Home }[] = [
   { id: 'feed', label: 'Лента', icon: Home },
   { id: 'trending', label: 'Тренды', icon: Flame },
   { id: 'search', label: 'Поиск', icon: Search },
+  { id: 'mychannel', label: 'Канал', icon: Radio },
   { id: 'profile', label: 'Профиль', icon: UserRound },
 ]
 

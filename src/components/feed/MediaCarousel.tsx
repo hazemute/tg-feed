@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Heart, Play, Volume2, VolumeX } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import type { MediaItemDTO } from '@/lib/types'
 
 /**
  * Ширина «выглядывания» соседних слайдов в peek-макете, px (~12–16).
@@ -26,15 +27,16 @@ const PEEK_PX = 14
  * слайда i — это ровно i * slideWidth (последний слайд тоже центрируется).
  */
 export function MediaCarousel({
-  images,
+  items,
   alt,
   onDoubleTap,
 }: {
-  images: string[]
+  /** Слайды карусели: фото, видео, GIF и стикеры (визуальные типы) */
+  items: MediaItemDTO[]
   alt: string
   onDoubleTap?: () => void
 }) {
-  const list = images.filter(Boolean)
+  const list = items.filter((x) => !!x.url)
   const ref = useRef<HTMLDivElement>(null)
   const [idx, setIdx] = useState(0)
   const [hidden, setHidden] = useState<Set<number>>(new Set())
@@ -112,7 +114,7 @@ export function MediaCarousel({
             "scroll-px-3.5 before:content-[''] before:block before:w-3.5 before:shrink-0 after:content-[''] after:block after:w-3.5 after:shrink-0",
         )}
       >
-        {list.map((src, i) =>
+        {list.map((item, i) =>
           hidden.has(i) ? null : (
             <div
               key={i}
@@ -126,20 +128,46 @@ export function MediaCarousel({
                   opacity: activeIdx === i ? 1 : 0.75,
                 }}
               >
-                <img
-                  src={src}
-                  alt={`${alt} — изображение ${i + 1}`}
-                  loading="lazy"
-                  onError={() =>
-                    setHidden((h) => {
-                      const n = new Set(h)
-                      n.add(i)
-                      return n
-                    })
-                  }
-                  className="mx-auto aspect-[4/5] max-h-[54dvh] w-full rounded-[14px] object-cover"
-                  draggable={false}
-                />
+                {item.kind === 'video' || item.kind === 'gif' ? (
+                  <video
+                    src={item.url}
+                    poster={item.poster}
+                    aria-label={`${alt} — видео ${i + 1}`}
+                    muted
+                    loop
+                    autoPlay
+                    playsInline
+                    preload="metadata"
+                    onError={() =>
+                      setHidden((h) => {
+                        const n = new Set(h)
+                        n.add(i)
+                        return n
+                      })
+                    }
+                    className="mx-auto aspect-[4/5] max-h-[54dvh] w-full rounded-[14px] bg-tg-surface object-cover"
+                  />
+                ) : (
+                  <img
+                    src={item.url}
+                    alt={`${alt} — изображение ${i + 1}`}
+                    loading="lazy"
+                    onError={() =>
+                      setHidden((h) => {
+                        const n = new Set(h)
+                        n.add(i)
+                        return n
+                      })
+                    }
+                    className={cn(
+                      'mx-auto max-h-[54dvh] w-full rounded-[14px]',
+                      item.kind === 'sticker'
+                        ? 'max-h-[44dvh] max-w-[300px] bg-transparent object-contain'
+                        : 'aspect-[4/5] bg-tg-surface object-cover',
+                    )}
+                    draggable={false}
+                  />
+                )}
               </div>
             </div>
           ),

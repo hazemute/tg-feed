@@ -1,19 +1,20 @@
 'use client'
 
-import { useMemo, useState } from 'react'
-import { ArrowLeft, Bookmark, Forward, Heart, Sparkle, Star } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowLeft, Bookmark, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { haptic, sharePost, useBackButton } from '@/lib/tg'
+import { haptic, openTelegram, sharePost, useBackButton } from '@/lib/tg'
 import { formatCount, timeAgoRu } from '@/lib/format'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
-import { MediaCarousel, VideoPlayer } from '@/components/feed/MediaCarousel'
+import { RichText } from '@/components/feed/RichText'
+import { PostMedia } from '@/components/feed/PostMedia'
+import { TranslateButton } from '@/components/feed/TranslateButton'
 import { SummarySheet } from '@/components/feed/SummarySheet'
-import { tokenizeHashtags } from '@/components/feed/PostCard'
 
 /**
  * Полный экран поста («...еще» в ленте): весь текст без обрезки, все картинки,
@@ -22,39 +23,6 @@ import { tokenizeHashtags } from '@/components/feed/PostCard'
  * Лайк/закладка оптимистично обновляют оверлей и рассылают событие
  * tgfeed:post-updated, чтобы лента синхронизировалась без рефетча.
  */
-
-/** Полный текст поста с кликабельными #хэштегами (без clamp) */
-function FullText({ text }: { text: string }) {
-  const openSearchWith = useApp((s) => s.openSearchWith)
-  const parts = useMemo(() => tokenizeHashtags(text), [text])
-  return (
-    <p className="text-post whitespace-pre-line break-words text-tg-text">
-      {parts.map((part, i) =>
-        typeof part === 'string' ? (
-          part
-        ) : (
-          <button
-            key={i}
-            type="button"
-            aria-label={`Найти по теме ${part.tag}`}
-            onClick={(e) => {
-              e.stopPropagation()
-              haptic('light')
-              api('/api/hashtags/click', {
-                method: 'POST',
-                body: JSON.stringify({ tag: part.tag.slice(1) }),
-              }).catch(() => {})
-              openSearchWith(part.tag.slice(1))
-            }}
-            className="text-tg-link active:opacity-60"
-          >
-            {part.tag}
-          </button>
-        ),
-      )}
-    </p>
-  )
-}
 
 /** Синхронизация изменений поста с лентой без рефетча */
 export function emitPostUpdated(patch: {
@@ -122,8 +90,18 @@ export function PostOverlay() {
     }
   }
 
-  const images = current ? [current.mediaUrl, ...current.gallery].filter((x): x is string => !!x) : []
   const fullDate = current ? new Date(current.publishedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''
+  // Тизер-режим канала: полный текст — только у подписчиков оригинала
+  const chTeaser = current?.channel
+  const teaser =
+    chTeaser &&
+    !chTeaser.subscribed &&
+    chTeaser.teaserMode !== 'none' &&
+    current.text.length > chTeaser.teaserLimit
+  const teaserText =
+    chTeaser && current && chTeaser.teaserMode === 'cut'
+      ? current.text.slice(0, Math.max(60, chTeaser.teaserLimit)).trimEnd() + '…'
+      : current?.text ?? ''
 
   return (
     <>
@@ -186,23 +164,42 @@ export function PostOverlay() {
               </span>
             </button>
 
-            {/* Медиа */}
-            {current.mediaType === 'video' && current.mediaUrl ? (
-              <VideoPlayer
-                src={current.mediaUrl}
-                alt={`Видео канала «${ch.title}»`}
-                onDoubleTap={onLike}
-              />
-            ) : (
-              images.length > 0 && (
-                <MediaCarousel images={images} alt={`Пост канала «${ch.title}»`} onDoubleTap={onLike} />
-              )
-            )}
+            {/* Медиа (все типы: фото/видео/гиф/стикер/файл/аудио/опрос/линк) */}
+            <PostMedia post={current} onDoubleTap={onLike} />
 
-            {/* Текст (всегда полностью) */}
-            {current.text && (
-              <div className="px-4 pt-3">
-                <FullText text={current.text} />
+            {/* Текст (тизер или полностью) */}
+            {current.text &&
+              (teaser && chTeaser?.teaserMode === 'blur' ? (
+                <div className="px-4 pt-3">
+                  <div className="pointer-events-none select-none blur-[7px]" aria-hidden>
+                    <RichText text={current.text} />
+                  </div>
+                </div>
+              ) : (
+                <div className="px-4 pt-3">
+                  <RichText text={teaser ? teaserText : current.text} />
+                  {/* Перевод поста (как в Twitter) — без тизера */}
+                  {!teaser && <TranslateButton postId={current.id} text={current.text} />}
+                </div>
+              ))}
+
+            {/* CTA тизера: конвертация читателя в подписчика канала */}
+            {teaser && current.text && chTeaser && (
+              <div className="mt-3 px-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    openTelegram(current.link ?? `https://t.me/${chTeaser.username}`)
+                  }}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link transition active:scale-[0.98]"
+                >
+                  <Send className="h-4 w-4" aria-hidden />
+                  Читать полностью в Telegram
+                </button>
+                <p className="mt-1.5 text-center text-[12px] leading-snug text-tg-hint">
+                  Автор показывает полный текст только подписчикам канала
+                </p>
               </div>
             )}
 
@@ -220,8 +217,8 @@ export function PostOverlay() {
                 </>
               )}
             </div>
-            {/* Краткое содержание доступно и из полного экрана — у любого длинного текста */}
-            {current.text && current.text.length > 400 && (
+            {/* Краткое содержание доступно и из полного экрана — у любого длинного текста без тизера */}
+            {current.text && current.text.length > 400 && !teaser && (
               <button
                 type="button"
                 onClick={() => {

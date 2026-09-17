@@ -31,8 +31,12 @@ model User {
   likes         Like[]
   views         PostView[]
   subscriptions Subscription[]
-  channels      Channel[]
+  channels      Channel[]      @relation("addedChannels")
+  claimed       Channel[]      @relation("claimedChannels")
   bookmarks     Bookmark[]
+  advertiser    AdvertiserAccount?
+  campaigns     AdCampaign[]
+  translations  TranslationLog[]
 }
 
 model Category {
@@ -63,12 +67,21 @@ model Channel {
   status           String    @default("active") // active | moderation
   subscribersCount Int       @default(0)
   clicksCount      Int       @default(0) // клики по кнопке [+] подписки
+  // === «Мой канал»: владение и гибкие настройки показа ===
+  claimedById      String? // пользователь, доказавший владение каналом
+  claimedBy        User?     @relation("claimedChannels", fields: [claimedById], references: [id])
+  claimedAt        DateTime?
+  // Тизер-режим: none — посты целиком; cut — первые N символов + «Читать в канале»;
+  // blur — весь текст виден, но размазан до подписки (жёстче конверсия)
+  teaserMode       String    @default("none")
+  teaserLimit      Int       @default(160) // сколько символов показывать в режиме cut
   addedById        String?
-  addedBy          User?     @relation(fields: [addedById], references: [id])
+  addedBy          User?     @relation("addedChannels", fields: [addedById], references: [id])
   createdAt        DateTime  @default(now())
 
   posts            Post[]
   subscriptions    Subscription[]
+  campaigns        AdCampaign[]
 }
 
 model Post {
@@ -76,14 +89,18 @@ model Post {
   tgKey       String   @unique // "<username>:<messageId>"
   channelId   String
   channel     Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  text        String   @default("")
+  text        String   @default("") // markdown-lite: **bold**, __italic__, `code`, ||спойлер||, > цитата, [текст](url)
   mediaUrl    String?
-  mediaType   String   @default("image") // image | video
-  gallery     String? // JSON array — дополнительные медиа (карусель)
+  // image | video | gif | sticker | audio | voice | file | poll | link | none
+  mediaType   String   @default("image")
+  mediaMeta   String? // JSON: имя/размер файла, длительность, варианты опроса, превью ссылки и т.п.
+  gallery     String? // JSON array — дополнительные медиа (карусель фото)
   link        String? // original t.me link
   viewsCount  Int      @default(0)
+  viewsTg     Int? // просмотры из оригинального канала Telegram (t.me/s) — обновляются при парсинге
   likesCount  Int      @default(0)
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
+  translations String? // кэш переводов: {"en":{"text":"…","at":"ISO"}}
   publishedAt DateTime
   notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
 
@@ -156,6 +173,88 @@ model Ad {
   createdAt  DateTime @default(now())
 
   stats      AdStat[]
+}
+
+// === CPA-реклама: платят за уникальные переходы, деньги списываются с
+// предоплаченного баланса (эскроу) — рекламодатель физически не может
+// «не оплатить»: кампания крутится ровно до исчерпания внесённого бюджета.
+model AdCampaign {
+  id             String    @id @default(cuid())
+  ownerId        String
+  owner          User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  channelId      String? // продвигаемый канал (если есть в базе)
+  channel        Channel?  @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  title          String
+  body           String
+  ctaLabel       String    @default("Подписаться")
+  link           String
+  imageUrl       String?
+  costPerClickKop Int      @default(300) // цена уникального перехода, копейки (≥100)
+  budgetKop      Int       @default(0) // внесённый бюджет, копейки
+  spentKop       Int       @default(0) // списано за подтверждённые клики
+  impressions    Int       @default(0)
+  clicks         Int       @default(0) // оплаченные уникальные клики
+  rawClicks      Int       @default(0) // все клики (для аналитики накрутки)
+  status         String    @default("moderation") // moderation | active | paused | completed | rejected
+  note           String? // комментарий модератора (причина отказа и т.п.)
+  createdAt      DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  clicksLog      CampaignClick[]
+  stats          CampaignStat[]
+
+  @@index([status])
+}
+
+// Баланс рекламодателя (эскроу): пополнение админом после оплаты, списание
+// за уникальные клики кампаний. userId = @id — один кошелёк на пользователя.
+model AdvertiserAccount {
+  userId         String   @id
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceKop     Int      @default(0)
+  topupsTotalKop Int      @default(0)
+  spentTotalKop  Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+// Анти-накрутка: один оплаченный клик на пару (кампания, пользователь) в сутки.
+// Повторные клики того же пользователя не тарифицируются.
+model CampaignClick {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId       String
+  lastBilledAt DateTime @default(now()) // день последнего тарифицируемого клика
+  billedCount  Int      @default(1)
+
+  @@unique([campaignId, userId])
+}
+
+// Дневная статистика кампании (аналог AdStat)
+model CampaignStat {
+  id          String @id @default(cuid())
+  campaignId  String
+  campaign    AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  day         String // YYYY-MM-DD (UTC)
+  impressions Int    @default(0)
+  clicks      Int    @default(0)
+  spentKop    Int    @default(0)
+
+  @@unique([campaignId, day])
+  @@index([day])
+}
+
+// Журнал переводов постов (анти-абьюз и статистика; кэш текста — в Post.translations)
+model TranslationLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  postId    String
+  srcLang   String
+  createdAt DateTime @default(now())
+
+  @@index([postId])
 }
 
 // Дневная аналитика рекламы (одна строка на рекламу в день): CTR и динамика

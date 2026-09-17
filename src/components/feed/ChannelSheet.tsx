@@ -12,7 +12,7 @@ import { openChannelToJoin } from '@/lib/tg-subscribe'
 import { formatCount, timeAgoRu } from '@/lib/format'
 import type { ChannelDTO, PostDTO, RelatedChannelDTO, RelatedChannelsResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
-import { MediaCarousel, VideoPlayer } from '@/components/feed/MediaCarousel'
+import { PostMedia } from '@/components/feed/PostMedia'
 import { ExpandableText } from '@/components/feed/actions'
 
 const PAGE_SIZE = 10
@@ -398,27 +398,22 @@ function ChannelPost({
   onLike: () => void
   onBookmark: () => void
 }) {
-  const images = [post.mediaUrl, ...post.gallery].filter((x): x is string => !!x)
-
   return (
     <article className="px-4 py-4">
       <div className="flex items-center gap-1.5 text-[12.5px] text-tg-hint">
         <span>{timeAgoRu(post.publishedAt)}</span>
         <span aria-hidden>·</span>
-        <span className="tabular-nums">{formatCount(post.viewsCount)} просмотров</span>
+        <span className="tabular-nums">
+          {formatCount(post.viewsCount)}
+          {post.viewsTg != null ? ' в канале' : ' просмотров'}
+        </span>
       </div>
 
       <div className="mt-2.5 flex items-start gap-1.5">
         <div className="min-w-0 flex-1">
-          {post.mediaType === 'video' && post.mediaUrl ? (
-            <VideoPlayer src={post.mediaUrl} alt={`Видео от ${timeAgoRu(post.publishedAt)}`} />
-          ) : (
-            images.length > 0 && (
-              <MediaCarousel images={images} alt={`Пост канала от ${timeAgoRu(post.publishedAt)}`} />
-            )
-          )}
+          <PostMedia post={post} />
           {post.text && (
-            <div className={images.length > 0 || (post.mediaType === 'video' && post.mediaUrl) ? 'mt-2.5' : ''}>
+            <div className="mt-0.5">
               <ExpandableText text={post.text} />
             </div>
           )}
