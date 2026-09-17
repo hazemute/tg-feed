@@ -34,6 +34,8 @@ export async function GET(request: Request) {
         lastName: user.lastName,
         photoUrl: user.photoUrl,
         isDemo: user.isDemo,
+        isPremium: user.isPremium,
+        languageCode: user.languageCode,
         categories: parseJsonArray(user.categories),
       },
       stats: { likes, subscriptions, views, bookmarks },

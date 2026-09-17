@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS "User" (
     "lastName"           text,
     "photoUrl"           text,
     "isDemo"             boolean     NOT NULL DEFAULT true,
+    "isPremium"          boolean     NOT NULL DEFAULT false,
+    "languageCode"       text,
     "categories"         text        NOT NULL DEFAULT '[]',
     "lastSeenNotifiedAt" timestamptz,
     "createdAt"          timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,

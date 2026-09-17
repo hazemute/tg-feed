@@ -17,13 +17,14 @@ import {
   Eye,
   CheckCheck,
   Heart,
+  Star,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatCount, pluralRu } from '@/lib/format'
-import { haptic } from '@/lib/tg'
+import { haptic, userAvatarUrl } from '@/lib/tg'
 import type { AdminStatsDTO, PostDTO, ProfileStatsResponse, SubscriptionDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
@@ -133,14 +134,27 @@ export function ProfileTab() {
 
       {/* Пользователь */}
       <section className="flex items-center gap-4 px-4 pt-2">
-        <Avatar name={name} color="#0a84ff" src={user.photoUrl} size={80} />
+        <Avatar name={name} color="#0a84ff" src={userAvatarUrl(user.id, user.photoUrl)} size={80} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-[22px] font-bold leading-tight text-tg-text">{name}</div>
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[22px] font-bold leading-tight text-tg-text">{name}</span>
+            {user.isPremium && (
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-tg-star/15 px-2 py-0.5 text-[11px] font-bold text-tg-star"
+                title="Telegram Premium"
+              >
+                <Star className="h-3 w-3 fill-current" /> Premium
+              </span>
+            )}
+          </div>
           <div className="mt-0.5 truncate text-[15.5px] text-tg-hint">
-            {user.username ? `@${user.username}` : 'Демо-режим'}
+            {user.username ? `@${user.username}` : user.isDemo ? 'Гость · демо-режим' : 'Без username'}
           </div>
           {!user.isDemo && (
-            <div className="mt-1 text-[12px] font-medium text-tg-link">Telegram аккаунт</div>
+            <div className="mt-1 flex items-center gap-1 text-[12px] font-medium text-tg-link">
+              <ShieldCheck className="h-3.5 w-3.5" />
+              Telegram аккаунт подтверждён
+            </div>
           )}
         </div>
         <button

@@ -1,4 +1,11 @@
 import type { NextConfig } from "next";
+import { config } from "dotenv";
+
+// .env (gitignored) — источник истины для локальной среды. Песочница/CI могут
+// экспортировать устаревшие DATABASE_URL/DIRECT_URL в process.env — Next их
+// не перекрывает, поэтому форсим значения из .env. На Vercel файла .env нет,
+// конфиг собирается из Variables — вызов безопасный no-op.
+config({ override: true });
 
 const nextConfig: NextConfig = {
   output: "standalone",

@@ -63,6 +63,8 @@ export type UserDTO = {
   lastName?: string | null
   photoUrl: string | null
   isDemo: boolean
+  isPremium?: boolean
+  languageCode?: string | null
   categories: string[]
 }
 

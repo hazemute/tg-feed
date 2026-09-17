@@ -19,8 +19,10 @@ model User {
   username      String?
   firstName     String?
   lastName      String?
-  photoUrl      String?
+  photoUrl      String? // http URL или tgfile:<file_id> (аватар через /api/avatar)
   isDemo        Boolean  @default(true)
+  isPremium     Boolean  @default(false) // Telegram Premium (из initData)
+  languageCode  String? // язык клиента Telegram (IETF-код)
   categories    String   @default("[]") // JSON array of category slugs (interests)
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
   createdAt     DateTime @default(now())

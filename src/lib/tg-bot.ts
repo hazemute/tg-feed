@@ -39,6 +39,67 @@ export async function getBotUsername(): Promise<string | null> {
   }
 }
 
+type TgPhotoSize = { file_id?: string; width?: number; height?: number }
+
+/**
+ * Последнее фото профиля пользователя через Bot API (getUserProfilePhotos).
+ * Возвращает file_id самого большого размера — вечный идентификатор файла
+ * (в отличие от photo_url из initDataUnsafe, который живёт ~1 час).
+ * Превращается в URL через /api/avatar/[uid] → getFile.
+ */
+export async function getUserPhotoFileId(tgUserId: number): Promise<string | null> {
+  if (!botEnabled()) return null
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getUserProfilePhotos`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: tgUserId, limit: 1 }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json()) as {
+      ok?: boolean
+      result?: { photos?: TgPhotoSize[][]; total_count?: number }
+    }
+    const photos = data?.ok ? data.result?.photos : undefined
+    if (!photos || photos.length === 0) return null
+    const sizes = photos[0]
+    if (!sizes || sizes.length === 0) return null
+    // Самый большой размер последним (Telegram отдаёт по возрастанию)
+    const best = [...sizes]
+      .sort((a, b) => (a.width ?? 0) * (a.height ?? 0) - (b.width ?? 0) * (b.height ?? 0))
+      .pop()
+    return best?.file_id && typeof best.file_id === 'string' ? best.file_id : null
+  } catch {
+    return null
+  }
+}
+
+// --- getFile: file_id → временный CDN-URL (кэш 45 минут, URL живёт ~1 час) ---
+
+const fileUrlCache = new Map<string, { url: string; expiresAt: number }>()
+const FILE_URL_TTL_MS = 45 * 60 * 1000
+
+export async function resolveTelegramFileUrl(fileId: string): Promise<string | null> {
+  const cached = fileUrlCache.get(fileId)
+  if (cached && cached.expiresAt > Date.now()) return cached.url
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: fileId }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json()) as { ok?: boolean; result?: { file_path?: string } }
+    const path = data?.ok && data.result?.file_path ? data.result.file_path : null
+    if (!path) return null
+    const url = `https://api.telegram.org/file/bot${BOT_TOKEN()}/${path}`
+    fileUrlCache.set(fileId, { url, expiresAt: Date.now() + FILE_URL_TTL_MS })
+    return url
+  } catch {
+    return null
+  }
+}
+
 async function callMethod(method: string, body: Record<string, unknown>): Promise<boolean> {
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {

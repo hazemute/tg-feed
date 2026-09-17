@@ -8,6 +8,8 @@ export type TgWebApp = {
   ready: () => void
   expand: () => void
   initData: string
+  colorScheme?: 'light' | 'dark'
+  themeParams?: { bg_color?: string; text_color?: string; button_color?: string }
   initDataUnsafe?: {
     user?: {
       id: number
@@ -15,15 +17,20 @@ export type TgWebApp = {
       first_name?: string
       last_name?: string
       photo_url?: string
+      is_premium?: boolean
+      language_code?: string
     }
   }
   openTelegramLink: (url: string) => void
   openLink: (url: string, options?: { try_instant_view?: boolean }) => void
   setHeaderColor?: (color: string) => void
   setBackgroundColor?: (color: string) => void
+  disableVerticalSwipes?: () => void
+  enableClosingConfirmation?: () => void
   HapticFeedback?: {
     impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void
     notificationOccurred: (type: 'error' | 'success' | 'warning') => void
+    selectionChanged?: () => void
   }
   BackButton?: {
     show: () => void
@@ -45,8 +52,16 @@ export function initTelegram(): TgWebApp | null {
   try {
     w.ready()
     w.expand()
-    w.setHeaderColor?.('#ffffff')
-    w.setBackgroundColor?.('#ffffff')
+    // Вертикальные свайпы Telegram конфликтуют со свайпом вкладок ленты — отключаем
+    try {
+      w.disableVerticalSwipes?.()
+    } catch {
+      // старые клиенты — не критично
+    }
+    // Шапка в цвет темы клиента (light/dark), чтобы не было белой полосы в тёмной теме
+    const dark = w.colorScheme === 'dark'
+    w.setHeaderColor?.(dark ? '#0e141c' : '#ffffff')
+    w.setBackgroundColor?.(dark ? '#0e141c' : '#ffffff')
   } catch {
     // вне Telegram — игнорируем
   }
@@ -98,17 +113,29 @@ export function useBackButton(open: boolean, onClose: () => void) {
   }, [open, onClose])
 }
 
-export function haptic(kind: 'light' | 'success' | 'warning' | 'error' = 'light') {
+export function haptic(kind: 'light' | 'success' | 'warning' | 'error' | 'select' = 'light') {
   const h = tg()?.HapticFeedback
   if (!h) return
   try {
     if (kind === 'light') h.impactOccurred('light')
     else if (kind === 'success') h.notificationOccurred('success')
     else if (kind === 'warning') h.notificationOccurred('warning')
+    else if (kind === 'select') h.selectionChanged?.()
     else h.notificationOccurred('error')
   } catch {
     // noop
   }
+}
+
+/**
+ * Аватар текущего пользователя: прочный прокси-URL /api/avatar/<uid>
+ * (tgfile:<file_id> из Bot API или временный CDN-URL в демо-режиме).
+ * Возвращает null, если у пользователя нет фото — рисуем инициалы.
+ */
+export function userAvatarUrl(userId: string, photoUrl?: string | null): string | null {
+  if (!photoUrl) return null
+  if (photoUrl.startsWith('tgfile:')) return `/api/avatar/${userId}`
+  return photoUrl
 }
 
 /** Репост поста: в Telegram — нативный шаринг, иначе navigator.share / буфер обмена */

@@ -7,6 +7,8 @@ export type TgUserPayload = {
   first_name?: string
   last_name?: string
   photo_url?: string
+  is_premium?: boolean
+  language_code?: string
 }
 
 /**
@@ -56,6 +58,8 @@ export function validateInitData(
     if (user.first_name && user.first_name.length > 128)
       user.first_name = user.first_name.slice(0, 128)
     if (user.last_name && user.last_name.length > 128) user.last_name = user.last_name.slice(0, 128)
+    if (user.language_code && user.language_code.length > 10)
+      user.language_code = user.language_code.slice(0, 10)
     return user
   } catch {
     return null

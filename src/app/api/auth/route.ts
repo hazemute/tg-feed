@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { validateInitData } from '@/lib/tg-auth'
 import { signSession } from '@/lib/session'
-import { getBotUsername } from '@/lib/tg-bot'
+import { getBotUsername, getUserPhotoFileId } from '@/lib/tg-bot'
 import { err, parseJsonArray, readJson } from '@/lib/server'
 import { guardIp } from '@/lib/guard'
 import type { UserDTO } from '@/lib/types'
@@ -17,12 +17,18 @@ type Body = {
     first_name?: unknown
     last_name?: unknown
     photo_url?: unknown
+    is_premium?: unknown
+    language_code?: unknown
   }
   deviceId?: unknown
 }
 
 function str(v: unknown, max: number): string | null {
   return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null
+}
+
+function bool(v: unknown): boolean {
+  return v === true
 }
 
 /**
@@ -53,6 +59,8 @@ export async function POST(request: Request) {
     let firstName: string | null = null
     let lastName: string | null = null
     let photoUrl: string | null = null
+    let isPremium = false
+    let languageCode: string | null = null
     let verified = false // прошёл ли пользователь HMAC-проверку Telegram
 
     const tgUser = body?.tgUser
@@ -66,6 +74,8 @@ export async function POST(request: Request) {
         firstName = str(u.first_name, 128)
         lastName = str(u.last_name, 128)
         photoUrl = str(u.photo_url, 512)
+        isPremium = u.is_premium === true
+        languageCode = str(u.language_code, 10)
         verified = true
       }
     } else if (initData && tgUser && typeof tgUser.id === 'number' && tgUser.id > 0) {
@@ -75,7 +85,19 @@ export async function POST(request: Request) {
       firstName = str(tgUser.first_name, 128)
       lastName = str(tgUser.last_name, 128)
       photoUrl = str(tgUser.photo_url, 512)
+      isPremium = bool(tgUser.is_premium)
+      languageCode = str(tgUser.language_code, 10)
       verified = false
+    }
+
+    // Аватар: photo_url из initData живёт ~1 час, поэтому при наличии bot-токена
+    // берём вечный file_id последнего фото профиля (рендер через /api/avatar/[uid]).
+    if (id?.startsWith('tg_') && botToken) {
+      const tgId = Number(id.slice('tg_'.length))
+      if (Number.isInteger(tgId) && tgId > 0) {
+        const fileId = await getUserPhotoFileId(tgId)
+        if (fileId) photoUrl = `tgfile:${fileId}`
+      }
     }
 
     if (!id) {
@@ -89,8 +111,8 @@ export async function POST(request: Request) {
 
     const user = await db.user.upsert({
       where: { id },
-      update: { username, firstName, lastName, photoUrl, isDemo },
-      create: { id, username, firstName, lastName, photoUrl, isDemo, categories: '[]' },
+      update: { username, firstName, lastName, photoUrl, isDemo, isPremium, languageCode },
+      create: { id, username, firstName, lastName, photoUrl, isDemo, isPremium, languageCode, categories: '[]' },
     })
 
     const token = signSession(user.id, isDemo)
@@ -103,6 +125,8 @@ export async function POST(request: Request) {
       lastName: user.lastName,
       photoUrl: user.photoUrl,
       isDemo: user.isDemo,
+      isPremium: user.isPremium,
+      languageCode: user.languageCode,
       categories: parseJsonArray(user.categories),
     }
 
