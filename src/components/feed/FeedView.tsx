@@ -653,7 +653,7 @@ export function FeedView() {
       {/* Сама лента — естественный скролл + pull-to-refresh */}
       <div
         ref={scrollRef}
-        className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain"
+        className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain pb-24"
         aria-label="Лента постов"
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}

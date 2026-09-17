@@ -39,6 +39,7 @@ export async function GET(request: Request) {
         id: c.id,
         slug: c.slug,
         title: c.title,
+        emoji: c.emoji,
         channelCount: c._count.channels,
         todayCount: todayByCategory.get(c.id) ?? 0,
       })),

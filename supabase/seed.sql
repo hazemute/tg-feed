@@ -55,18 +55,18 @@
 BEGIN;
 
 -- ---------------------------------------------------------------------------
--- 1. Категории (9) — id 'cat_<slug>', emoji = ''
+-- 1. Категории (9) — id 'cat_<slug>' с эмодзи
 -- ---------------------------------------------------------------------------
 INSERT INTO "Category" ("id", "slug", "title", "emoji", "order") VALUES
-    ('cat_crypto',   'crypto',   'Крипта',         '', 1),
-    ('cat_news',     'news',     'Новости',        '', 2),
-    ('cat_it',       'it',       'IT и AI',        '', 3),
-    ('cat_humor',    'humor',    'Юмор',           '', 4),
-    ('cat_business', 'business', 'Бизнес',         '', 5),
-    ('cat_travel',   'travel',   'Путешествия',    '', 6),
-    ('cat_food',     'food',     'Еда',            '', 7),
-    ('cat_sport',    'sport',    'Спорт',          '', 8),
-    ('cat_other',    'other',    'Без категории',  '', 9)
+    ('cat_crypto',   'crypto',   'Крипта',         '🪙', 1),
+    ('cat_news',     'news',     'Новости',        '📰', 2),
+    ('cat_it',       'it',       'IT и AI',        '🤖', 3),
+    ('cat_humor',    'humor',    'Юмор',           '😂', 4),
+    ('cat_business', 'business', 'Бизнес',         '📈', 5),
+    ('cat_travel',   'travel',   'Путешествия',    '✈️', 6),
+    ('cat_food',     'food',     'Еда',            '🍕', 7),
+    ('cat_sport',    'sport',    'Спорт',          '⚽', 8),
+    ('cat_other',    'other',    'Без категории',  '🗂', 9)
 ON CONFLICT ("id") DO UPDATE SET
     "slug"  = EXCLUDED."slug",
     "title" = EXCLUDED."title",

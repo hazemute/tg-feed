@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Send } from 'lucide-react'
+import { Check, Send, Sparkles } from 'lucide-react'
+import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -11,6 +12,7 @@ import { haptic } from '@/lib/tg'
 /**
  * Экран выбора интересов (онбординг при первом входе / редактирование из профиля).
  * PRD: при первом входе нужно выбрать минимум 3 темы.
+ * Чипы с эмодзи, stagger-появление, живой прогресс до минимума.
  */
 export function Onboarding({
   open,
@@ -34,6 +36,8 @@ export function Onboarding({
   if (!open) return null
 
   const min = mode === 'onboarding' ? 3 : 1
+  const progress = Math.min(1, selected.length / min)
+  const canSave = selected.length >= min && !saving
 
   const toggle = (slug: string) => {
     haptic('light')
@@ -68,10 +72,24 @@ export function Onboarding({
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-tg-bg" role="dialog" aria-modal="true">
+      {/* Логотип с мягким пульсом */}
       <div className="flex justify-center pt-12">
-        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-tg-button">
-          <Send className="h-5 w-5 -translate-x-px translate-y-px text-white" />
-        </div>
+        <motion.div
+          initial={{ scale: 0.8, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+          className="relative flex h-14 w-14 items-center justify-center rounded-[18px] bg-tg-link shadow-lg shadow-tg-link/30"
+        >
+          <Send className="h-6 w-6 -translate-x-px translate-y-px text-white" />
+          {mode === 'onboarding' && (
+            <motion.span
+              aria-hidden
+              animate={{ scale: [1, 1.5], opacity: [0.35, 0] }}
+              transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
+              className="absolute inset-0 rounded-[18px] bg-tg-link"
+            />
+          )}
+        </motion.div>
       </div>
 
       <div className="px-6 pt-5 text-center">
@@ -85,26 +103,66 @@ export function Onboarding({
         </p>
       </div>
 
-      <div className="no-scrollbar flex flex-1 flex-wrap content-start justify-center gap-2.5 overflow-y-auto px-6 py-6">
+      {/* Прогресс выбора: N из M тем */}
+      <div className="mx-auto mt-4 flex w-full max-w-[300px] items-center gap-2.5 px-6" aria-live="polite">
+        <div className="h-1 flex-1 overflow-hidden rounded-full bg-tg-surface">
+          <motion.div
+            className="h-full rounded-full bg-tg-link"
+            initial={false}
+            animate={{ width: `${Math.round(progress * 100)}%` }}
+            transition={{ type: 'spring', stiffness: 260, damping: 26 }}
+          />
+        </div>
+        <span
+          className={cn(
+            'min-w-12 text-right text-[12px] font-semibold tabular-nums transition-colors',
+            selected.length >= min ? 'text-tg-green' : 'text-tg-hint',
+          )}
+        >
+          {selected.length}/{min}
+        </span>
+      </div>
+
+      <div className="no-scrollbar flex flex-1 flex-wrap content-start justify-center gap-2.5 overflow-y-auto px-6 py-5">
         {categories.length === 0
           ? [...Array(8)].map((_, i) => (
               <div key={i} className="h-11 w-28 animate-pulse rounded-full bg-tg-surface" />
             ))
-          : categories.map((c) => {
+          : categories.map((c, i) => {
               const active = selected.includes(c.slug)
               return (
-                <button
+                <motion.button
                   key={c.slug}
                   type="button"
                   aria-pressed={active}
                   onClick={() => toggle(c.slug)}
+                  initial={{ opacity: 0, y: 10, scale: 0.92 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ delay: 0.03 * i, type: 'spring', stiffness: 380, damping: 26 }}
                   className={cn(
-                    'rounded-full px-4 py-2.5 text-[14px] font-medium transition active:scale-95',
-                    active ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text',
+                    'flex items-center gap-1.5 rounded-full py-2.5 pl-4 pr-3.5 text-[14px] font-medium transition-colors active:scale-95',
+                    active
+                      ? 'bg-tg-link text-white shadow-md shadow-tg-link/25'
+                      : 'bg-tg-surface text-tg-text',
                   )}
                 >
+                  <span aria-hidden>{c.emoji}</span>
                   {c.title}
-                </button>
+                  <AnimatePresence>
+                    {active && (
+                      <motion.span
+                        initial={{ scale: 0, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        exit={{ scale: 0, opacity: 0 }}
+                        transition={{ type: 'spring', stiffness: 500, damping: 26 }}
+                        aria-hidden
+                        className="flex h-4 w-4 items-center justify-center rounded-full bg-white/25"
+                      >
+                        <Check className="h-3 w-3 text-white" strokeWidth={3} />
+                      </motion.span>
+                    )}
+                  </AnimatePresence>
+                </motion.button>
               )
             })}
       </div>
@@ -112,17 +170,18 @@ export function Onboarding({
       <div className="shrink-0 border-t border-tg-sep p-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
         <button
           type="button"
-          disabled={selected.length < min || saving}
+          disabled={!canSave}
           onClick={save}
           className={cn(
-            'h-[52px] w-full rounded-full text-[16px] font-semibold transition active:scale-[0.98]',
-            selected.length < min
-              ? 'cursor-not-allowed bg-tg-surface text-tg-hint'
-              : 'bg-tg-link text-white',
+            'flex h-[52px] w-full items-center justify-center gap-2 rounded-full text-[16px] font-semibold transition active:scale-[0.98]',
+            canSave
+              ? 'bg-tg-link text-white shadow-lg shadow-tg-link/25'
+              : 'cursor-not-allowed bg-tg-surface text-tg-hint',
           )}
         >
+          {canSave && mode === 'onboarding' && <Sparkles className="h-[18px] w-[18px]" />}
           {selected.length < min
-            ? `Выбрано: ${selected.length}/${min}`
+            ? `Выбрано ${selected.length} из ${min} — добавьте ещё ${min - selected.length}`
             : saving
               ? 'Сохраняем…'
               : mode === 'onboarding'

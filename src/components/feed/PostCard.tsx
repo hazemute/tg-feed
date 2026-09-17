@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Forward, Heart, Sparkle } from 'lucide-react'
+import { Forward, Heart, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -280,16 +280,36 @@ export function PostCard({
           aria-label={`Открыть канал ${ch.title}`}
           className="flex min-w-0 flex-1 items-center gap-3 text-left"
         >
-          <Avatar name={ch.title} color={ch.avatarColor} size={52} />
+          <Avatar
+            name={ch.title}
+            color={ch.avatarColor}
+            size={50}
+            className="ring-1 ring-tg-sep/70"
+          />
           <span className="min-w-0 flex-1">
-            <span className="block truncate text-[17px] font-bold leading-tight text-tg-text">
-              {ch.title}
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="truncate text-[16.5px] font-bold leading-tight text-tg-text">
+                {ch.title}
+              </span>
+              {ch.isPremium && (
+                <Star
+                  className="h-3.5 w-3.5 shrink-0 fill-tg-star text-tg-star"
+                  aria-label="Продвинутый канал"
+                />
+              )}
             </span>
-            <span className="mt-0.5 block truncate text-[14px] leading-tight text-tg-hint">
+            <span className="mt-0.5 block truncate text-[13.5px] leading-tight text-tg-hint">
               {formatCount(ch.subscribersCount)} подписчиков
             </span>
           </span>
         </button>
+        <time
+          dateTime={post.publishedAt}
+          className="shrink-0 text-[12.5px] text-tg-hint"
+          title={new Date(post.publishedAt).toLocaleString('ru-RU')}
+        >
+          {timeAgoRu(post.publishedAt)}
+        </time>
         <SubscribeCircle subscribed={ch.subscribed} onClick={onSubscribe} />
       </div>
 
@@ -349,7 +369,6 @@ export function PostCard({
           post.text ? 'mt-2' : 'mt-3',
         )}
       >
-        <span>{timeAgoRu(post.publishedAt)}</span>
         <span aria-hidden>·</span>
         <span className="tabular-nums">{formatCount(post.viewsCount)} просмотров</span>
         {!post.text && (

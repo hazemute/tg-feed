@@ -1,6 +1,7 @@
 'use client'
 
 import { Flame, Home, Search, UserRound } from 'lucide-react'
+import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
@@ -13,16 +14,23 @@ const items: { id: Tab; label: string; icon: typeof Home }[] = [
   { id: 'profile', label: 'Профиль', icon: UserRound },
 ]
 
-/** Нижняя навигация как в макетах: иконка + подпись, активная — синим */
+/**
+ * Плавающая нижняя навигация: стеклянная капсула со скруглением и активной
+ * пилюлей (layoutId). Контент вкладок прокручивается под ней — вкладки
+ * дают нижний паддинг. safe-area учтена в pb капсулы.
+ */
 export function BottomNav() {
   const { tab, goToTab } = useApp()
 
   return (
     <nav
-      className="shrink-0 border-t border-tg-sep bg-tg-bg pb-[env(safe-area-inset-bottom)]"
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center pb-[calc(env(safe-area-inset-bottom)+10px)]"
       aria-label="Основная навигация"
     >
-      <div className="grid grid-cols-4">
+      <div
+        data-noswipe
+        className="pointer-events-auto flex items-center gap-0.5 rounded-[24px] border border-tg-sep/70 bg-tg-surface/85 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.16)] backdrop-blur-xl dark:bg-tg-surface/75"
+      >
         {items.map(({ id, label, icon: Icon }) => {
           const active = tab === id
           return (
@@ -36,17 +44,31 @@ export function BottomNav() {
                 }
               }}
               aria-current={active ? 'page' : undefined}
-              className={cn(
-                'flex min-h-[52px] flex-col items-center justify-center gap-[3px] pt-1.5 pb-1 transition active:scale-95',
-                active ? 'text-tg-link' : 'text-tg-text',
-              )}
+              aria-label={label}
+              className="relative flex h-[52px] w-[72px] flex-col items-center justify-center gap-[3px] transition active:scale-95"
             >
+              {active && (
+                <motion.span
+                  layoutId="bottomnav-pill"
+                  transition={{ type: 'spring', stiffness: 480, damping: 36 }}
+                  aria-hidden
+                  className="absolute inset-x-1 inset-y-0 rounded-[18px] bg-tg-link/12"
+                />
+              )}
               <Icon
-                className="h-[24px] w-[24px]"
-                strokeWidth={active ? 2.2 : 1.7}
+                className={cn(
+                  'relative z-10 h-[22px] w-[22px] transition-colors',
+                  active ? 'text-tg-link' : 'text-tg-hint',
+                )}
+                strokeWidth={active ? 2.3 : 1.8}
                 fill={active && (id === 'feed' || id === 'trending') ? 'currentColor' : 'none'}
               />
-              <span className={cn('text-[10px] leading-none', active ? 'font-semibold' : 'font-medium')}>
+              <span
+                className={cn(
+                  'relative z-10 text-[10px] leading-none transition-colors',
+                  active ? 'font-semibold text-tg-link' : 'font-medium text-tg-hint',
+                )}
+              >
                 {label}
               </span>
             </button>

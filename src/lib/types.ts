@@ -4,6 +4,7 @@ export type CategoryDTO = {
   id: string
   slug: string
   title: string
+  emoji?: string
   channelCount: number
   todayCount: number
 }

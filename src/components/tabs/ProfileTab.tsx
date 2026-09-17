@@ -126,7 +126,7 @@ export function ProfileTab() {
   const categoryTitle = (slug: string) => categories.find((c) => c.slug === slug)?.title ?? slug
 
   return (
-    <div className="no-scrollbar h-full overflow-y-auto overscroll-contain pb-6">
+    <div className="no-scrollbar h-full overflow-y-auto overscroll-contain pb-28">
       {/* Заголовок */}
       <header className="px-4 pb-2 pt-4">
         <h1 className="text-screen-title text-tg-text">Профиль</h1>
@@ -134,7 +134,13 @@ export function ProfileTab() {
 
       {/* Пользователь */}
       <section className="flex items-center gap-4 px-4 pt-2">
-        <Avatar name={name} color="#0a84ff" src={userAvatarUrl(user.id, user.photoUrl)} size={80} />
+        <Avatar
+          name={name}
+          color="#0a84ff"
+          src={userAvatarUrl(user.id, user.photoUrl)}
+          size={80}
+          className="ring-2 ring-tg-sep/70"
+        />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[22px] font-bold leading-tight text-tg-text">{name}</span>

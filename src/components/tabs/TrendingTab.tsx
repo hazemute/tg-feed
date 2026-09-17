@@ -41,7 +41,7 @@ export function TrendingTab() {
   }, [reloadKey])
 
   return (
-    <div className="no-scrollbar h-full overflow-y-auto overscroll-contain">
+    <div className="no-scrollbar h-full overflow-y-auto overscroll-contain pb-24">
       {/* Заголовок — как на «Поиске» */}
       <header className="px-4 pb-3 pt-4">
         <h1 className="text-screen-title text-tg-text">Тренды</h1>
