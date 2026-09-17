@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import {
   Table,
   TableBody,
@@ -24,6 +25,7 @@ import {
   isAuthOrNetworkError,
   panelFetch,
   PanelError,
+  type PanelUser,
   type UsersResponse,
 } from './api'
 import {
@@ -49,6 +51,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [localTick, setLocalTick] = useState(0)
+  const [bypassBusy, setBypassBusy] = useState<string | null>(null)
 
   useEffect(() => {
     let alive = true
@@ -77,7 +80,34 @@ export function UsersTab({ tick, onSettled }: TabProps) {
     }
   }, [debouncedQ, page, tick, localTick])
 
-  const displayName = (u: UsersResponse['items'][number]) =>
+  /** Переключить допуск пользователя мимо техработ (PATCH + оптимистичный апдейт) */
+  const toggleBypass = async (u: PanelUser, next: boolean) => {
+    setBypassBusy(u.id)
+    const prev = data
+    if (data) {
+      setData({
+        ...data,
+        items: data.items.map((x) => (x.id === u.id ? { ...x, bypassMaintenance: next } : x)),
+      })
+    }
+    try {
+      await panelFetch('/api/panel/users', {
+        method: 'PATCH',
+        json: { userId: u.id, bypassMaintenance: next },
+      })
+      toast.success(next ? 'Допуск выдан' : 'Допуск отозван')
+    } catch (e) {
+      if (prev) setData(prev) // откат
+      if (!isAuthOrNetworkError(e)) {
+        const msg = e instanceof PanelError ? e.message : 'Не получилось'
+        toast.error(msg)
+      }
+    } finally {
+      setBypassBusy(null)
+    }
+  }
+
+  const displayName = (u: PanelUser) =>
     [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.id
 
   return (
@@ -86,9 +116,9 @@ export function UsersTab({ tick, onSettled }: TabProps) {
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-base text-slate-100">Пользователи</CardTitle>
+              <CardTitle className="text-base text-slate-900">Пользователи</CardTitle>
               <CardDescription className="text-xs text-slate-500">
-                Только чтение · поиск по ID и username
+                Поиск по ID и username · «Допуск» — проход мимо техработ
               </CardDescription>
             </div>
             <div className="relative">
@@ -148,66 +178,111 @@ export function UsersTab({ tick, onSettled }: TabProps) {
             />
           ) : data ? (
             <>
-              <div className="admin-scroll max-h-[560px] overflow-auto rounded-md border border-white/[0.06]">
-              <Table className="min-w-[820px]">
-                <TableHeader>
-                  <TableRow className="border-white/[0.06] hover:bg-transparent">
-                    <TableHead className="text-xs text-slate-500">ID</TableHead>
-                    <TableHead className="text-xs text-slate-500">Имя</TableHead>
-                    <TableHead className="text-xs text-slate-500">Username</TableHead>
-                    <TableHead className="text-xs text-slate-500">Тип</TableHead>
-                    <TableHead className="text-right text-xs text-slate-500">Лайки</TableHead>
-                    <TableHead className="text-right text-xs text-slate-500">Подписки</TableHead>
-                    <TableHead className="text-right text-xs text-slate-500">Закладки</TableHead>
-                    <TableHead className="text-right text-xs text-slate-500">Просмотры</TableHead>
-                    <TableHead className="text-xs text-slate-500">Регистрация</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.items.map((u) => (
-                    <TableRow key={u.id} className="border-white/[0.06] hover:bg-white/[0.03]">
-                      <TableCell className="max-w-[140px]">
-                        <span
-                          title={u.id}
-                          className="block truncate font-mono text-xs text-slate-500"
-                        >
-                          {u.id}
-                        </span>
-                      </TableCell>
-                      <TableCell className="max-w-[160px] truncate text-sm text-slate-200">
-                        {displayName(u)}
-                      </TableCell>
-                      <TableCell className="max-w-[140px] truncate text-xs text-slate-400">
-                        {u.username ? `@${u.username}` : '—'}
-                      </TableCell>
-                      <TableCell>
-                        <UserKindBadge isDemo={u.isDemo} />
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-slate-300">
-                        {fmtNum(u.likes)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-slate-300">
-                        {fmtNum(u.subscriptions)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-slate-300">
-                        {fmtNum(u.bookmarks)}
-                      </TableCell>
-                      <TableCell className="text-right tabular-nums text-slate-300">
-                        {fmtNum(u.views)}
-                      </TableCell>
-                      <TableCell className="text-sm text-slate-400">{fmtAgo(u.createdAt)}</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+              {/* Десктоп: таблица */}
+              <div className="hidden md:block">
+                <div className="admin-scroll max-h-[560px] overflow-auto rounded-md border border-slate-200">
+                  <Table className="min-w-[880px]">
+                    <TableHeader>
+                      <TableRow className="border-slate-200 hover:bg-transparent">
+                        <TableHead className="text-xs text-slate-500">ID</TableHead>
+                        <TableHead className="text-xs text-slate-500">Имя</TableHead>
+                        <TableHead className="text-xs text-slate-500">Username</TableHead>
+                        <TableHead className="text-xs text-slate-500">Тип</TableHead>
+                        <TableHead className="text-right text-xs text-slate-500">Лайки</TableHead>
+                        <TableHead className="text-right text-xs text-slate-500">Подписки</TableHead>
+                        <TableHead className="text-right text-xs text-slate-500">Закладки</TableHead>
+                        <TableHead className="text-right text-xs text-slate-500">Просмотры</TableHead>
+                        <TableHead className="text-center text-xs text-slate-500">Допуск</TableHead>
+                        <TableHead className="text-xs text-slate-500">Регистрация</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data.items.map((u) => (
+                        <TableRow key={u.id} className="border-slate-200 hover:bg-slate-50">
+                          <TableCell className="max-w-[140px]">
+                            <span title={u.id} className="block truncate font-mono text-xs text-slate-500">
+                              {u.id}
+                            </span>
+                          </TableCell>
+                          <TableCell className="max-w-[160px] truncate text-sm text-slate-800">
+                            {displayName(u)}
+                          </TableCell>
+                          <TableCell className="max-w-[140px] truncate text-xs text-slate-500">
+                            {u.username ? `@${u.username}` : '—'}
+                          </TableCell>
+                          <TableCell>
+                            <UserKindBadge isDemo={u.isDemo} />
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-slate-700">{fmtNum(u.likes)}</TableCell>
+                          <TableCell className="text-right tabular-nums text-slate-700">
+                            {fmtNum(u.subscriptions)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-slate-700">
+                            {fmtNum(u.bookmarks)}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-slate-700">
+                            {fmtNum(u.views)}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Switch
+                              checked={u.bypassMaintenance}
+                              onCheckedChange={(v) => void toggleBypass(u, v)}
+                              disabled={bypassBusy === u.id}
+                              aria-label={`Допуск мимо техработ: ${displayName(u)}`}
+                              className="mx-auto"
+                            />
+                          </TableCell>
+                          <TableCell className="text-sm text-slate-500">{fmtAgo(u.createdAt)}</TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
+
+              {/* Мобильные: карточки */}
+              <div className="space-y-2 md:hidden">
+                {data.items.map((u) => (
+                  <div key={u.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="truncate text-sm font-medium text-slate-900">{displayName(u)}</span>
+                          <UserKindBadge isDemo={u.isDemo} />
+                        </div>
+                        <span className="block truncate font-mono text-[11px] text-slate-500">{u.id}</span>
+                      </div>
+                      <Switch
+                        checked={u.bypassMaintenance}
+                        onCheckedChange={(v) => void toggleBypass(u, v)}
+                        disabled={bypassBusy === u.id}
+                        aria-label={`Допуск мимо техработ: ${displayName(u)}`}
+                      />
+                    </div>
+                    <div className="mt-2 grid grid-cols-4 gap-1 text-center">
+                      {(
+                        [
+                          ['Лайки', u.likes],
+                          ['Подп.', u.subscriptions],
+                          ['Закл.', u.bookmarks],
+                          ['Взгл.', u.views],
+                        ] as const
+                      ).map(([label, v]) => (
+                        <div key={label} className="rounded bg-slate-50 py-1">
+                          <div className="text-sm font-semibold tabular-nums text-slate-800">{fmtNum(v)}</div>
+                          <div className="text-[10px] text-slate-500">{label}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-1.5 text-[11px] text-slate-400">
+                      {u.username ? `@${u.username} · ` : ''}регистрация {fmtAgo(u.createdAt)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               <div className="mt-4">
-                <Pagination
-                  page={data.page}
-                  pageSize={data.pageSize}
-                  total={data.total}
-                  onChange={setPage}
-                />
+                <Pagination page={data.page} pageSize={data.pageSize} total={data.total} onChange={setPage} />
               </div>
             </>
           ) : null}

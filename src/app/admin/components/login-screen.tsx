@@ -46,15 +46,15 @@ export function LoginScreen({ onSuccess }: { onSuccess: (version: string) => voi
       <Card className={`w-full max-w-sm ${panelCard}`}>
         <CardHeader className="items-center text-center">
           <img src="/logo.svg" alt="" className="mx-auto h-10 w-10" />
-          <CardTitle className="text-lg font-semibold text-slate-100">Tg Swipe · Админ</CardTitle>
-          <CardDescription className="text-sm text-slate-400">
+          <CardTitle className="text-lg font-semibold text-slate-900">Tg Swipe · Админ</CardTitle>
+          <CardDescription className="text-sm text-slate-500">
             Локальная панель управления · доступ по ключу
           </CardDescription>
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-3" noValidate>
             <div className="space-y-1.5">
-              <Label htmlFor="admin-key" className="text-xs text-slate-400">
+              <Label htmlFor="admin-key" className="text-xs text-slate-500">
                 Ключ администратора
               </Label>
               <Input
@@ -71,7 +71,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: (version: string) => voi
               />
             </div>
             {error ? (
-              <p role="alert" className="text-sm text-red-400">
+              <p role="alert" className="text-sm text-red-600">
                 {error}
               </p>
             ) : null}
@@ -87,7 +87,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: (version: string) => voi
         </CardContent>
         <CardFooter className="justify-center">
           {doneVersion !== null ? (
-            <p className="text-xs text-emerald-300">
+            <p className="text-xs text-emerald-700">
               Вход выполнен{doneVersion ? ` · API v${doneVersion}` : ''}
             </p>
           ) : (

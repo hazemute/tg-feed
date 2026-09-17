@@ -142,7 +142,7 @@ export function ToolsTab({
       {/* Парсер */}
       <Card className={panelCard}>
         <CardHeader>
-          <CardTitle className="text-base text-slate-100">Парсер ленты</CardTitle>
+          <CardTitle className="text-base text-slate-900">Парсер ленты</CardTitle>
           <CardDescription className="text-xs text-slate-500">
             Забирает новые посты из t.me/s по активным каналам (лимит: 3 запуска за 5 минут)
           </CardDescription>
@@ -150,20 +150,20 @@ export function ToolsTab({
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-end gap-3">
             <div className="space-y-1.5">
-              <Label htmlFor="parse-per-channel" className="text-xs text-slate-400">
+              <Label htmlFor="parse-per-channel" className="text-xs text-slate-500">
                 Постов на канал
               </Label>
               <Select value={perChannel} onValueChange={setPerChannel}>
                 <SelectTrigger
                   id="parse-per-channel"
                   aria-label="Постов на канал"
-                  className="w-[120px] border-white/10 bg-white/[0.04] text-slate-300"
+                  className="w-[120px] border-slate-200 bg-slate-100 text-slate-700"
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-white/10 bg-[#16202b] text-slate-200">
+                <SelectContent className="border-slate-200 bg-[#16202b] text-slate-800">
                   {PER_CHANNEL_OPTIONS.map((o) => (
-                    <SelectItem key={o} value={o} className="text-slate-300">
+                    <SelectItem key={o} value={o} className="text-slate-700">
                       {o}
                     </SelectItem>
                   ))}
@@ -171,7 +171,7 @@ export function ToolsTab({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="parse-username" className="text-xs text-slate-400">
+              <Label htmlFor="parse-username" className="text-xs text-slate-500">
                 Один канал (username)
               </Label>
               <Input
@@ -195,16 +195,16 @@ export function ToolsTab({
           {/* Живой прогресс (SSE) */}
           {live && (
             <div
-              className="space-y-2.5 rounded-md border border-white/[0.08] bg-white/[0.02] px-3 py-3"
+              className="space-y-2.5 rounded-md border border-slate-200 bg-slate-50 px-3 py-3"
               role="status"
               aria-live="polite"
             >
               <div className="flex items-center justify-between gap-2 text-xs">
-                <span className="flex items-center gap-1.5 text-slate-300">
+                <span className="flex items-center gap-1.5 text-slate-700">
                   {live.phase === 'running' ? (
-                    <Loader2 className="size-3.5 animate-spin text-emerald-300" aria-hidden />
+                    <Loader2 className="size-3.5 animate-spin text-emerald-700" aria-hidden />
                   ) : (
-                    <CheckCircle2 className="size-3.5 text-emerald-300" aria-hidden />
+                    <CheckCircle2 className="size-3.5 text-emerald-700" aria-hidden />
                   )}
                   {live.phase === 'running' ? 'Идёт парсинг…' : 'Готово'}
                   <span className="text-slate-500">
@@ -215,22 +215,22 @@ export function ToolsTab({
               </div>
               <Progress
                 value={live.total > 0 ? (live.current / live.total) * 100 : live.phase === 'done' ? 100 : 0}
-                className="h-1.5 bg-white/[0.06]"
+                className="h-1.5 bg-slate-200"
                 aria-label="Прогресс парсинга"
               />
               {live.lines.length > 0 && (
                 <ul className="admin-scroll max-h-40 space-y-1 overflow-auto pr-1">
                   {live.lines.map((l, i) => (
                     <li key={`${l.username}-${i}`} className="flex items-center gap-2 text-xs">
-                      <span className="w-16 shrink-0 truncate font-mono text-slate-400">@{l.username}</span>
-                      <span className="min-w-0 flex-1 truncate text-slate-300">{l.title}</span>
+                      <span className="w-16 shrink-0 truncate font-mono text-slate-500">@{l.username}</span>
+                      <span className="min-w-0 flex-1 truncate text-slate-700">{l.title}</span>
                       {l.error ? (
-                        <span className="shrink-0 text-red-300">{l.error}</span>
+                        <span className="shrink-0 text-red-700">{l.error}</span>
                       ) : (
                         <span
                           className={cn(
                             'shrink-0 tabular-nums',
-                            l.added > 0 ? 'font-medium text-emerald-300' : 'text-slate-500',
+                            l.added > 0 ? 'font-medium text-emerald-700' : 'text-slate-500',
                           )}
                         >
                           +{fmtNum(l.added)}
@@ -251,10 +251,10 @@ export function ToolsTab({
                 Получателей: <b>{fmtNum(result.notified.recipients)}</b>
               </div>
               {result.results.length > 0 ? (
-                <div className="admin-scroll max-h-[420px] overflow-auto rounded-md border border-white/[0.06]">
+                <div className="admin-scroll max-h-[420px] overflow-auto rounded-md border border-slate-200">
                   <Table className="min-w-[520px]">
                   <TableHeader>
-                    <TableRow className="border-white/[0.06] hover:bg-transparent">
+                    <TableRow className="border-slate-200 hover:bg-transparent">
                       <TableHead className="text-xs text-slate-500">Канал</TableHead>
                       <TableHead className="text-right text-xs text-slate-500">Добавлено</TableHead>
                       <TableHead className="text-xs text-slate-500">Ошибка</TableHead>
@@ -262,12 +262,12 @@ export function ToolsTab({
                   </TableHeader>
                   <TableBody>
                     {result.results.map((r) => (
-                      <TableRow key={r.username} className="border-white/[0.06] hover:bg-white/[0.03]">
-                        <TableCell className="font-mono text-xs text-slate-300">@{r.username}</TableCell>
-                        <TableCell className="text-right tabular-nums text-sm text-slate-200">
+                      <TableRow key={r.username} className="border-slate-200 hover:bg-slate-50">
+                        <TableCell className="font-mono text-xs text-slate-700">@{r.username}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm text-slate-800">
                           {r.added}
                         </TableCell>
-                        <TableCell className="text-xs text-red-300">{r.error ?? '—'}</TableCell>
+                        <TableCell className="text-xs text-red-700">{r.error ?? '—'}</TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -288,8 +288,8 @@ export function ToolsTab({
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle className="flex items-center gap-2 text-base text-slate-100">
-                <HeartPulse className="size-4 text-emerald-300" aria-hidden />
+              <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                <HeartPulse className="size-4 text-emerald-700" aria-hidden />
                 Состояние системы
               </CardTitle>
               <CardDescription className="flex items-center gap-1.5 text-xs text-slate-500">
@@ -300,7 +300,7 @@ export function ToolsTab({
                     connected ? 'animate-pulse bg-emerald-400' : 'bg-slate-600',
                   )}
                 />
-                <span className={connected ? 'text-emerald-300/80' : 'text-slate-500'}>
+                <span className={connected ? 'text-emerald-700/80' : 'text-slate-500'}>
                   Ответ GET /api/panel/health · live {connected ? 'онлайн' : 'оффлайн'}
                 </span>
               </CardDescription>
@@ -324,7 +324,7 @@ export function ToolsTab({
               {healthRows(health).map((row) => (
                 <div
                   key={row.label}
-                  className="rounded-md border border-white/[0.06] bg-white/[0.02] px-3 py-2"
+                  className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
                 >
                   <div className="text-[10px] uppercase tracking-wide text-slate-500">{row.label}</div>
                   <div className="mt-1 truncate">{row.value}</div>
@@ -342,7 +342,7 @@ export function ToolsTab({
 
 /** Строки для карточки здоровья (чистая функция рендера). */
 function healthRows(h: PanelHealth): { label: string; value: ReactNode }[] {
-  const mono = (v: string) => <span className="font-mono text-xs text-slate-300">{v}</span>
+  const mono = (v: string) => <span className="font-mono text-xs text-slate-700">{v}</span>
   return [
     { label: 'API ok', value: <BoolBadge value={h.ok} /> },
     { label: 'База данных', value: <BoolBadge value={h.db} /> },
@@ -353,7 +353,7 @@ function healthRows(h: PanelHealth): { label: string; value: ReactNode }[] {
     },
     { label: 'Сессии', value: mono(h.session || '—') },
     { label: 'Версия', value: mono(h.version || '—') },
-    { label: 'Uptime', value: <span className="text-xs text-slate-300">{fmtUptime(h.uptimeSec)}</span> },
+    { label: 'Uptime', value: <span className="text-xs text-slate-700">{fmtUptime(h.uptimeSec)}</span> },
     { label: 'CRON_SECRET', value: <BoolBadge value={h.env.cronSecretSet} /> },
     { label: 'ADMIN_KEY', value: <BoolBadge value={h.env.adminKeySet} /> },
     { label: 'BOT_TOKEN', value: <BoolBadge value={h.env.botTokenSet} /> },

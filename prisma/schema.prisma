@@ -24,6 +24,7 @@ model User {
   isPremium     Boolean  @default(false) // Telegram Premium (из initData)
   languageCode  String? // язык клиента Telegram (IETF-код)
   categories    String   @default("[]") // JSON array of category slugs (interests)
+  bypassMaintenance Boolean @default(false) // допуск в миниапп во время техработ (кроме админов из ADMIN_TG_IDS)
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
   createdAt     DateTime @default(now())
 
@@ -161,4 +162,12 @@ model HashtagClick {
   createdAt DateTime @default(now())
 
   @@index([tag, createdAt])
+}
+
+// Системные настройки (key-value): флаг техработ и прочее. Redis — рантайм,
+// эта таблица — зеркало для долговечности и восстановления после сбоя кэша.
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }

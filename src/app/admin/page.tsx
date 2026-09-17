@@ -25,14 +25,15 @@ import { ChannelsTab } from './components/channels-tab'
 import { LoginScreen } from './components/login-screen'
 import { ModerationTab } from './components/moderation-tab'
 import { OverviewTab } from './components/overview-tab'
+import { SystemTab } from './components/system-tab'
 import { ToolsTab } from './components/tools-tab'
 import { UsersTab } from './components/users-tab'
 
 type AuthState = 'checking' | 'authed' | 'anon'
 
 const TAB_TRIGGER =
-  'flex-none gap-1.5 rounded-md px-3 py-1.5 text-sm text-slate-400 transition-colors ' +
-  'data-[state=active]:bg-emerald-500/15 data-[state=active]:text-emerald-300 ' +
+  'flex-none gap-1.5 rounded-md px-3 py-1.5 text-sm text-slate-500 transition-colors ' +
+  'data-[state=active]:bg-emerald-100 data-[state=active]:text-emerald-700 ' +
   'data-[state=active]:shadow-none'
 
 export default function AdminPage() {
@@ -44,6 +45,8 @@ export default function AdminPage() {
   const [refreshing, setRefreshing] = useState(false)
   const [modCount, setModCount] = useState<number | null>(null)
   const [apiVersion, setApiVersion] = useState('')
+  const [maintOn, setMaintOn] = useState(false)
+  const handleMaintenance = useCallback((on: boolean) => setMaintOn(on), [])
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true)
@@ -153,33 +156,33 @@ export default function AdminPage() {
 
   const pill =
     healthOk === null
-      ? { dot: 'bg-slate-500', text: 'text-slate-400', label: 'API…', ring: 'border-white/10 bg-white/[0.04]' }
+      ? { dot: 'bg-slate-500', text: 'text-slate-500', label: 'API…', ring: 'border-slate-200 bg-slate-100' }
       : healthOk
         ? {
             dot: 'bg-emerald-400',
-            text: 'text-emerald-300',
+            text: 'text-emerald-700',
             label: 'API OK',
-            ring: 'border-emerald-500/30 bg-emerald-500/10',
+            ring: 'border-emerald-500/30 bg-emerald-50',
           }
         : {
             dot: 'bg-red-400',
-            text: 'text-red-300',
+            text: 'text-red-700',
             label: 'API недоступен',
-            ring: 'border-red-500/30 bg-red-500/10',
+            ring: 'border-red-500/30 bg-red-50',
           }
 
   return (
     <div className="min-h-screen">
       {/* Шапка */}
-      <header className="sticky top-0 z-40 border-b border-white/[0.08] bg-[#0e141c]/90 backdrop-blur">
+      <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 md:px-6">
           <img src="/logo.svg" alt="" className="h-7 w-7" />
-          <h1 className="truncate text-sm font-semibold text-slate-100 md:text-base">
+          <h1 className="truncate text-sm font-semibold text-slate-900 md:text-base">
             Tg Swipe · Админ-панель
           </h1>
           <Badge
             variant="outline"
-            className="hidden border-white/10 bg-white/[0.04] text-slate-400 sm:inline-flex"
+            className="hidden border-slate-200 bg-slate-100 text-slate-500 sm:inline-flex"
           >
             <ShieldCheck className="size-3" aria-hidden /> Локальный доступ
           </Badge>
@@ -211,7 +214,7 @@ export default function AdminPage() {
               size="icon"
               onClick={logout}
               aria-label="Выйти"
-              className="text-slate-400 hover:bg-red-500/10 hover:text-red-300"
+              className="text-slate-500 hover:bg-red-50 hover:text-red-700"
             >
               <LogOut aria-hidden />
             </Button>
@@ -224,7 +227,7 @@ export default function AdminPage() {
         <Tabs defaultValue="overview">
           <TabsList
             className={cn(
-              'h-auto w-full max-w-full justify-start overflow-x-auto rounded-lg border border-white/[0.08] bg-white/[0.04] p-1 no-scrollbar md:w-fit',
+              'h-auto w-full max-w-full justify-start overflow-x-auto rounded-lg border border-slate-200 bg-slate-100 p-1 no-scrollbar md:w-fit',
             )}
           >
             <TabsTrigger value="overview" className={TAB_TRIGGER}>
@@ -236,7 +239,7 @@ export default function AdminPage() {
             <TabsTrigger value="moderation" className={TAB_TRIGGER}>
               Модерация
               {modCount !== null && modCount > 0 ? (
-                <span className="ml-1 rounded-full bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
                   {modCount}
                 </span>
               ) : null}
@@ -246,6 +249,14 @@ export default function AdminPage() {
             </TabsTrigger>
             <TabsTrigger value="ads" className={TAB_TRIGGER}>
               Реклама
+            </TabsTrigger>
+            <TabsTrigger value="system" className={TAB_TRIGGER}>
+              Система
+              {maintOn ? (
+                <span className="ml-1 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">
+                  техработы
+                </span>
+              ) : null}
             </TabsTrigger>
             <TabsTrigger value="tools" className={TAB_TRIGGER}>
               Инструменты
@@ -267,13 +278,16 @@ export default function AdminPage() {
           <TabsContent value="ads" className="mt-4 outline-none">
             <AdsTab tick={tick} onSettled={handleSettled} />
           </TabsContent>
+          <TabsContent value="system" className="mt-4 outline-none">
+            <SystemTab tick={tick} onSettled={handleSettled} onMaintenance={handleMaintenance} />
+          </TabsContent>
           <TabsContent value="tools" className="mt-4 outline-none">
             <ToolsTab health={health} onRecheck={() => void loadHealth()} healthLoading={healthLoading} />
           </TabsContent>
         </Tabs>
       </main>
 
-      <footer className="mx-auto flex max-w-7xl items-center justify-between px-4 pb-6 text-xs text-slate-600 md:px-6">
+      <footer className="mx-auto flex max-w-7xl items-center justify-between px-4 pb-6 text-xs text-slate-500 md:px-6">
         <span>
           Tg Swipe{apiVersion ? ` · API v${apiVersion}` : ''} · локальная админ-панель
         </span>

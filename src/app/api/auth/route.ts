@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { validateInitData } from '@/lib/tg-auth'
 import { signSession } from '@/lib/session'
 import { getBotUsername, getUserPhotoFileId } from '@/lib/tg-bot'
+import { adminUids, isMaintenanceOn } from '@/lib/maintenance'
 import { err, parseJsonArray, readJson } from '@/lib/server'
 import { guardIp } from '@/lib/guard'
 import type { UserDTO } from '@/lib/types'
@@ -223,6 +224,14 @@ export async function POST(request: Request) {
     const token = signSession(user.id, isDemo)
     const botUsername = await getBotUsername()
 
+    // Статус техработ для клиента: экран техработ показывается только тем,
+    // у кого нет допуска (админы из ADMIN_TG_IDS + галка bypassMaintenance)
+    const maintenanceActive = await isMaintenanceOn()
+    const maintenance = {
+      active: maintenanceActive,
+      canBypass: adminUids().includes(user.id) || user.bypassMaintenance,
+    }
+
     const dto: UserDTO = {
       id: user.id,
       username: user.username,
@@ -235,7 +244,7 @@ export async function POST(request: Request) {
       categories: parseJsonArray(user.categories),
     }
 
-    return NextResponse.json({ user: dto, token, bot: botUsername ? { username: botUsername } : null })
+    return NextResponse.json({ user: dto, token, bot: botUsername ? { username: botUsername } : null, maintenance })
   } catch (e) {
     console.error('[auth]', e)
     return err('auth failed', 500)

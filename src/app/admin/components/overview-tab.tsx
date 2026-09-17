@@ -50,6 +50,47 @@ import {
   staggerContainer,
 } from './bits'
 
+/** Спарклайн SVG: посты по дням, область + линия (светлая палитра) */
+function PostsSparkline({ values }: { values: number[] }) {
+  const w = 560
+  const h = 72
+  const pad = 6
+  const max = Math.max(1, ...values)
+  const n = values.length
+  const px = (i: number) => pad + (i * (w - pad * 2)) / Math.max(1, n - 1)
+  const py = (v: number) => h - pad - (v / max) * (h - pad * 2)
+  const line = values.map((v, i) => `${px(i)},${py(v)}`).join(' ')
+  const area = `${pad},${h - pad} ${line} ${px(n - 1)},${h - pad}`
+  const last = values[n - 1] ?? 0
+
+  return (
+    <div className="flex items-end justify-between gap-4">
+      <div>
+        <div className="text-2xl font-semibold tabular-nums text-slate-900">{fmtNum(last)}</div>
+        <div className="mt-0.5 text-xs text-slate-500">публикаций сегодня</div>
+      </div>
+      <svg
+        viewBox={`0 0 ${w} ${h}`}
+        className="h-16 w-full max-w-[420px]"
+        preserveAspectRatio="none"
+        role="img"
+        aria-label="Публикации по дням за 14 дней"
+      >
+        <polygon points={area} fill="rgb(16 185 129 / 0.12)" />
+        <polyline
+          points={line}
+          fill="none"
+          stroke="rgb(5 150 105)"
+          strokeWidth="2"
+          strokeLinejoin="round"
+          strokeLinecap="round"
+        />
+        <circle cx={px(n - 1)} cy={py(last)} r="3" fill="rgb(5 150 105)" />
+      </svg>
+    </div>
+  )
+}
+
 export function OverviewTab({
   tick,
   onSettled,
@@ -103,7 +144,7 @@ export function OverviewTab({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
           {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} className="h-[86px] rounded-lg border border-white/[0.06] bg-white/[0.02]" />
+            <div key={i} className="h-[86px] rounded-lg border border-slate-200 bg-slate-50" />
           ))}
         </div>
         <Card className={panelCard}>
@@ -146,11 +187,11 @@ export function OverviewTab({
       {/* Live-статус панели (SSE) */}
       <motion.div
         variants={fadeUp}
-        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.08] bg-[#131c26] px-4 py-2.5"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5"
         role="status"
         aria-live="off"
       >
-        <span className="flex items-center gap-2 text-xs text-slate-300">
+        <span className="flex items-center gap-2 text-xs text-slate-700">
           <span
             aria-hidden
             className={cn(
@@ -161,7 +202,7 @@ export function OverviewTab({
           {connected ? 'Live-поток подключён' : 'Live-поток недоступен'}
         </span>
         {botLive !== null && (
-          <span className={cn('text-xs', botLive ? 'text-emerald-400' : 'text-slate-500')}>
+          <span className={cn('text-xs', botLive ? 'text-emerald-600' : 'text-slate-500')}>
             бот: {botLive ? 'вкл' : 'выкл'}
           </span>
         )}
@@ -177,42 +218,82 @@ export function OverviewTab({
           label="Пользователи"
           value={c.users}
           badges={[
-            { text: `TG ${fmtNum(c.usersTelegram)}`, className: 'bg-sky-500/15 text-sky-300' },
-            { text: `Демо ${fmtNum(c.usersDemo)}`, className: 'bg-slate-500/20 text-slate-300' },
+            { text: `+${fmtNum(data.deltas24h.users)} за 24ч`, className: 'bg-emerald-50 text-emerald-700' },
+            { text: `TG ${fmtNum(c.usersTelegram)}`, className: 'bg-sky-100 text-sky-700' },
+            { text: `Демо ${fmtNum(c.usersDemo)}`, className: 'bg-slate-100 text-slate-700' },
           ]}
         />
-        <MetricCard icon={Newspaper} label="Посты" value={c.posts} />
+        <MetricCard
+          icon={Newspaper}
+          label="Посты"
+          value={c.posts}
+          badges={[{ text: `+${fmtNum(data.deltas24h.posts)} за 24ч`, className: 'bg-emerald-50 text-emerald-700' }]}
+        />
         <MetricCard
           icon={Radio}
           label="Каналы · активных"
           value={c.channelsActive}
           badges={[
-            { text: `модерация ${fmtNum(c.channelsModeration)}`, className: 'bg-amber-500/15 text-amber-300' },
-            { text: `отклонено ${fmtNum(c.channelsRejected)}`, className: 'bg-red-500/15 text-red-300' },
+            { text: `модерация ${fmtNum(c.channelsModeration)}`, className: 'bg-amber-100 text-amber-700' },
+            { text: `отклонено ${fmtNum(c.channelsRejected)}`, className: 'bg-red-100 text-red-700' },
           ]}
         />
-        <MetricCard icon={Heart} label="Лайки" value={c.likes} />
-        <MetricCard icon={UserPlus} label="Подписки" value={c.subscriptions} />
+        <MetricCard
+          icon={Heart}
+          label="Лайки"
+          value={c.likes}
+          badges={[{ text: `+${fmtNum(data.deltas24h.likes)} за 24ч`, className: 'bg-emerald-50 text-emerald-700' }]}
+        />
+        <MetricCard
+          icon={UserPlus}
+          label="Подписки"
+          value={c.subscriptions}
+          badges={[{ text: `+${fmtNum(data.deltas24h.subscriptions)} за 24ч`, className: 'bg-emerald-50 text-emerald-700' }]}
+        />
         <MetricCard icon={Bookmark} label="Закладки" value={c.bookmarks} />
         <MetricCard icon={Hash} label="Клики #хэштегов · 24ч" value={c.hashtagClicks24h} />
         <MetricCard icon={Megaphone} label="Реклама" value={c.ads} />
       </motion.div>
 
+      {/* Спарклайн публикаций + просмотры за сутки */}
+      <motion.div variants={fadeUp} className="grid gap-3 lg:grid-cols-2">
+        <div className="rounded-lg border border-slate-200 bg-white p-4">
+          <p className="mb-3 text-sm font-medium text-slate-800">Публикации · 14 дней</p>
+          <PostsSparkline
+            values={
+              data.postsPerDay?.length
+                ? data.postsPerDay
+                : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+            }
+          />
+        </div>
+        <div className="flex flex-col justify-center gap-2 rounded-lg border border-slate-200 bg-white p-4">
+          <p className="text-sm font-medium text-slate-800">Просмотры · 24 часа</p>
+          <div className="text-2xl font-semibold tabular-nums text-slate-900">
+            {fmtNum(data.deltas24h.views)}
+          </div>
+          <p className="text-xs leading-relaxed text-slate-500">
+            Открытия постов пользователями за последние сутки. Рост — лента цепляет, спад — пора
+            обновить каналы.
+          </p>
+        </div>
+      </motion.div>
+
       {/* Push-уведомления — отдельная строка-карточка */}
       <motion.div
         variants={fadeUp}
-        className="flex flex-wrap items-center gap-3 rounded-lg border border-white/[0.08] bg-[#131c26] px-4 py-3"
+        className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3"
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-300">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
           <Bell className="size-4" aria-hidden />
         </span>
-        <p className="text-sm text-slate-300">
+        <p className="text-sm text-slate-700">
           Push-уведомления 24ч:{' '}
-          <b className="font-semibold tabular-nums text-slate-100">{fmtNum(data.notif.sent24h)}</b>
+          <b className="font-semibold tabular-nums text-slate-900">{fmtNum(data.notif.sent24h)}</b>
           <span className="text-slate-500"> · </span>бот:{' '}
           <span
             className={
-              data.notif.botConfigured ? 'font-medium text-emerald-400' : 'font-medium text-red-400'
+              data.notif.botConfigured ? 'font-medium text-emerald-600' : 'font-medium text-red-600'
             }
           >
             {data.notif.botConfigured ? 'вкл' : 'выкл'}
@@ -225,7 +306,7 @@ export function OverviewTab({
         <motion.div variants={fadeUp}>
           <Card className={panelCard}>
             <CardHeader>
-              <CardTitle className="text-base text-slate-100">Свежие посты</CardTitle>
+              <CardTitle className="text-base text-slate-900">Свежие посты</CardTitle>
               <CardDescription className="text-xs text-slate-500">
                 Последние публикации в ленте
               </CardDescription>
@@ -237,12 +318,12 @@ export function OverviewTab({
                 data.freshPosts.map((p) => (
                   <div
                     key={p.id}
-                    className="flex items-start gap-3 rounded-md px-1 py-2 transition-colors hover:bg-white/[0.03]"
+                    className="flex items-start gap-3 rounded-md px-1 py-2 transition-colors hover:bg-slate-50"
                   >
                     <Avatar color={p.avatarColor} title={p.channelTitle} src={p.avatarUrl} className="size-8 text-xs" />
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-1.5">
-                        <span className="truncate text-sm font-medium text-slate-200">
+                        <span className="truncate text-sm font-medium text-slate-800">
                           {p.channelTitle}
                         </span>
                         {p.mediaUrl ? <ImageIcon className="size-3 shrink-0 text-slate-500" aria-hidden /> : null}
@@ -251,7 +332,7 @@ export function OverviewTab({
                         </span>
                       </div>
                       <div className="truncate text-xs text-slate-500">@{p.channelUsername}</div>
-                      <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-400">{p.text}</p>
+                      <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-500">{p.text}</p>
                     </div>
                   </div>
                 ))
@@ -263,7 +344,7 @@ export function OverviewTab({
         <motion.div variants={fadeUp}>
           <Card className={panelCard}>
             <CardHeader>
-              <CardTitle className="text-base text-slate-100">Топ каналов</CardTitle>
+              <CardTitle className="text-base text-slate-900">Топ каналов</CardTitle>
               <CardDescription className="text-xs text-slate-500">
                 По числу подписчиков
               </CardDescription>
@@ -275,15 +356,15 @@ export function OverviewTab({
                 data.topChannels.map((ch) => (
                   <div
                     key={ch.username}
-                    className="flex items-center gap-3 rounded-md px-1 py-2 transition-colors hover:bg-white/[0.03]"
+                    className="flex items-center gap-3 rounded-md px-1 py-2 transition-colors hover:bg-slate-50"
                   >
                     <Avatar color={ch.avatarColor} title={ch.title} src={ch.avatarUrl} className="size-8 text-xs" />
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-slate-200">{ch.title}</div>
+                      <div className="truncate text-sm font-medium text-slate-800">{ch.title}</div>
                       <div className="truncate text-xs text-slate-500">@{ch.username}</div>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm font-semibold tabular-nums text-slate-200">
+                      <div className="text-sm font-semibold tabular-nums text-slate-800">
                         {fmtNum(ch.subscribersCount)}
                       </div>
                       <div className="text-[11px] text-slate-500">{fmtNum(ch.postsCount)} постов</div>
@@ -298,7 +379,7 @@ export function OverviewTab({
         <motion.div variants={fadeUp}>
           <Card className={`${panelCard} lg:col-span-2 xl:col-span-1`}>
             <CardHeader>
-              <CardTitle className="text-base text-slate-100">Новые пользователи</CardTitle>
+              <CardTitle className="text-base text-slate-900">Новые пользователи</CardTitle>
               <CardDescription className="text-xs text-slate-500">
                 Последние 8 регистраций
               </CardDescription>
@@ -310,10 +391,10 @@ export function OverviewTab({
                 data.recentUsers.map((u) => (
                   <div
                     key={u.id}
-                    className="flex items-center gap-3 rounded-md px-1 py-2 transition-colors hover:bg-white/[0.03]"
+                    className="flex items-center gap-3 rounded-md px-1 py-2 transition-colors hover:bg-slate-50"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium text-slate-200">
+                      <div className="truncate text-sm font-medium text-slate-800">
                         {u.firstName || u.username || u.id}
                       </div>
                       {u.username ? (

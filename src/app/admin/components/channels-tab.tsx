@@ -169,7 +169,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-base text-slate-100">Каналы</CardTitle>
+              <CardTitle className="text-base text-slate-900">Каналы</CardTitle>
               <CardDescription className="text-xs text-slate-500">
                 Статусы, премиум и модерация каталога
               </CardDescription>
@@ -185,13 +185,13 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                 <SelectTrigger
                   size="sm"
                   aria-label="Статус каналов"
-                  className="w-[168px] border-white/10 bg-white/[0.04] text-slate-300"
+                  className="w-[168px] border-slate-200 bg-slate-100 text-slate-700"
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-white/10 bg-[#16202b] text-slate-200">
+                <SelectContent className="border-slate-200 bg-[#16202b] text-slate-800">
                   {STATUS_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value} className="text-slate-300">
+                    <SelectItem key={o.value} value={o.value} className="text-slate-700">
                       {o.label}
                     </SelectItem>
                   ))}
@@ -248,10 +248,10 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
             />
           ) : data ? (
             <>
-              <div className="admin-scroll max-h-[600px] overflow-auto rounded-md border border-white/[0.06]">
+              <div className="admin-scroll max-h-[600px] overflow-auto rounded-md border border-slate-200">
               <Table className="min-w-[900px]">
                 <TableHeader>
-                  <TableRow className="border-white/[0.06] hover:bg-transparent">
+                  <TableRow className="border-slate-200 hover:bg-transparent">
                     <TableHead className="text-xs text-slate-500">Канал</TableHead>
                     <TableHead className="text-xs text-slate-500">Категория</TableHead>
                     <TableHead className="text-xs text-slate-500">Статус</TableHead>
@@ -264,12 +264,12 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                 </TableHeader>
                 <TableBody>
                   {data.items.map((ch) => (
-                    <TableRow key={ch.id} className="border-white/[0.06] hover:bg-white/[0.03]">
+                    <TableRow key={ch.id} className="border-slate-200 hover:bg-slate-50">
                       <TableCell>
                         <div className="flex items-center gap-2.5">
                           <Avatar color={ch.avatarColor} title={ch.title} src={ch.avatarUrl} className="size-8 text-xs" />
                           <div className="max-w-[220px]">
-                            <div className="flex items-center gap-1 truncate text-sm font-medium text-slate-200">
+                            <div className="flex items-center gap-1 truncate text-sm font-medium text-slate-800">
                               <span className="truncate">{ch.title}</span>
                               {ch.isPremium ? (
                                 <Star className="size-3 shrink-0 fill-amber-400 text-amber-400" aria-hidden />
@@ -279,7 +279,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                           </div>
                         </div>
                       </TableCell>
-                      <TableCell className="text-sm text-slate-400">
+                      <TableCell className="text-sm text-slate-500">
                         {ch.categoryTitle ?? '—'}
                       </TableCell>
                       <TableCell>
@@ -294,13 +294,13 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                           className="data-[state=checked]:bg-emerald-500"
                         />
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-slate-300">
+                      <TableCell className="text-right tabular-nums text-slate-700">
                         {fmtNum(ch.subscribersCount)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-slate-300">
+                      <TableCell className="text-right tabular-nums text-slate-700">
                         {fmtNum(ch.postsCount)}
                       </TableCell>
-                      <TableCell className="text-sm text-slate-400">{fmtAgo(ch.createdAt)}</TableCell>
+                      <TableCell className="text-sm text-slate-500">{fmtAgo(ch.createdAt)}</TableCell>
                       <TableCell>
                         <motion.div
                           whileHover={{ y: -1 }}
@@ -314,13 +314,13 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                               size="sm"
                               aria-label={`Статус канала ${ch.title}`}
                               disabled={savingId === ch.id}
-                              className="h-8 w-[126px] border-white/10 bg-white/[0.04] text-xs text-slate-300"
+                              className="h-8 w-[126px] border-slate-200 bg-slate-100 text-xs text-slate-700"
                             >
                               <SelectValue />
                             </SelectTrigger>
-                            <SelectContent className="border-white/10 bg-[#16202b] text-slate-200">
+                            <SelectContent className="border-slate-200 bg-[#16202b] text-slate-800">
                               {ROW_STATUS_OPTIONS.map((o) => (
-                                <SelectItem key={o.value} value={o.value} className="text-slate-300">
+                                <SelectItem key={o.value} value={o.value} className="text-slate-700">
                                   {o.label}
                                 </SelectItem>
                               ))}
@@ -332,7 +332,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                                 variant="ghost"
                                 size="icon"
                                 aria-label={`Удалить канал ${ch.title}`}
-                                className="size-8 text-slate-500 hover:bg-red-500/10 hover:text-red-300"
+                                className="size-8 text-slate-500 hover:bg-red-50 hover:text-red-700"
                               >
                                 {savingId === ch.id ? (
                                   <Loader2 className="size-4 animate-spin" aria-hidden />
@@ -341,12 +341,12 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                                 )}
                               </Button>
                             </AlertDialogTrigger>
-                            <AlertDialogContent className="border-white/10 bg-[#131c26] text-slate-200">
+                            <AlertDialogContent className="border-slate-200 bg-white text-slate-800">
                               <AlertDialogHeader>
-                                <AlertDialogTitle className="text-slate-100">
+                                <AlertDialogTitle className="text-slate-900">
                                   Удалить канал?
                                 </AlertDialogTitle>
-                                <AlertDialogDescription className="text-slate-400">
+                                <AlertDialogDescription className="text-slate-500">
                                   Канал «{ch.title}» и все его посты будут удалены. Действие
                                   необратимо.
                                 </AlertDialogDescription>
@@ -354,7 +354,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                               <AlertDialogFooter>
                                 <AlertDialogCancel
                                   className={cn(
-                                    'border-white/10 bg-transparent text-slate-300 hover:bg-white/[0.06] hover:text-slate-100',
+                                    'border-slate-200 bg-transparent text-slate-700 hover:bg-slate-100 hover:text-slate-900',
                                   )}
                                 >
                                   Отмена

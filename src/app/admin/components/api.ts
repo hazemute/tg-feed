@@ -61,6 +61,14 @@ export interface TopChannel {
 
 export interface Overview {
   counts: OverviewCounts
+  deltas24h: {
+    users: number
+    posts: number
+    likes: number
+    views: number
+    subscriptions: number
+  }
+  postsPerDay: number[]
   notif: OverviewNotif
   freshPosts: FreshPost[]
   recentUsers: RecentUser[]
@@ -116,6 +124,8 @@ export interface PanelUser {
   firstName: string
   lastName: string
   isDemo: boolean
+  isPremium?: boolean
+  bypassMaintenance: boolean
   createdAt: string
   likes: number
   subscriptions: number
@@ -191,6 +201,29 @@ export interface ToolsParseResponse {
 export interface LoginResponse {
   ok: boolean
   version: string
+}
+
+export interface SystemInfo {
+  maintenance: {
+    enabled: boolean
+    dbMirror: boolean
+  }
+  admins: string[]
+  allow: {
+    users: Array<{
+      id: string
+      username: string | null
+      firstName: string | null
+      lastName: string | null
+      isDemo: boolean
+      bypassMaintenance: boolean
+    }>
+    pendingIds: string[]
+  }
+  cache: {
+    redis: 'upstash' | 'memory-only' | 'down'
+    versions: Record<string, number>
+  }
 }
 
 /* ===================== Ключ администратора ===================== */

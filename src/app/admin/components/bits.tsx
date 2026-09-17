@@ -14,17 +14,11 @@ import { fmtNum, type ChannelStatus } from './api'
 
 /* ===================== Тема ===================== */
 
-/**
- * Включает shadcn-токены .dark на <html> (в root layout темы нет — мини-апп
- * управляет темой через data-theme). На размонтировании возвращает как было.
+/*
+ * Панель работает в светлой теме (bg-slate-50 + shadcn-токены по умолчанию).
+ * Раньше здесь был ThemeController, принудительно включавший .dark, —
+ * удалён вместе с boot-скриптом в layout.
  */
-export function ThemeController() {
-  useEffect(() => {
-    document.documentElement.classList.add('dark')
-    return () => document.documentElement.classList.remove('dark')
-  }, [])
-  return null
-}
 
 /* ===================== Motion-варианты ===================== */
 
@@ -49,11 +43,11 @@ export interface TabProps {
 
 /* ===================== Стили-константы ===================== */
 
-export const panelCard = 'border-white/[0.08] bg-[#131c26]'
+export const panelCard = 'border-slate-200 bg-white'
 export const inputDark =
-  'border-white/10 bg-white/[0.04] text-slate-200 placeholder:text-slate-500'
+  'border-slate-200 bg-slate-100 text-slate-800 placeholder:text-slate-500'
 export const btnOutlineDark =
-  'border-white/10 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08] hover:text-slate-100'
+  'border-slate-200 bg-slate-100 text-slate-700 hover:bg-slate-200/70 hover:text-slate-900'
 
 /* ===================== Аватар-кружок ===================== */
 
@@ -99,9 +93,9 @@ export function Avatar({
 /* ===================== Бейджи ===================== */
 
 const STATUS_META: Record<ChannelStatus, { label: string; className: string }> = {
-  active: { label: 'активен', className: 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300' },
-  moderation: { label: 'модерация', className: 'border-amber-500/30 bg-amber-500/10 text-amber-300' },
-  rejected: { label: 'отклонён', className: 'border-red-500/30 bg-red-500/10 text-red-300' },
+  active: { label: 'активен', className: 'border-emerald-500/30 bg-emerald-50 text-emerald-700' },
+  moderation: { label: 'модерация', className: 'border-amber-500/30 bg-amber-50 text-amber-700' },
+  rejected: { label: 'отклонён', className: 'border-red-500/30 bg-red-50 text-red-700' },
 }
 
 export function statusLabel(status: ChannelStatus): string {
@@ -119,11 +113,11 @@ export function StatusBadge({ status }: { status: ChannelStatus }) {
 
 export function UserKindBadge({ isDemo }: { isDemo: boolean }) {
   return isDemo ? (
-    <Badge variant="outline" className="border-white/10 bg-white/[0.04] text-slate-400">
+    <Badge variant="outline" className="border-slate-200 bg-slate-100 text-slate-500">
       Демо
     </Badge>
   ) : (
-    <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-300">
+    <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700">
       TG
     </Badge>
   )
@@ -139,11 +133,11 @@ export function BoolBadge({
   falseText?: string
 }) {
   return value ? (
-    <Badge variant="outline" className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+    <Badge variant="outline" className="border border-emerald-500/30 bg-emerald-50 text-emerald-700">
       {trueText}
     </Badge>
   ) : (
-    <Badge variant="outline" className="border border-white/10 bg-white/[0.04] text-slate-400">
+    <Badge variant="outline" className="border border-slate-200 bg-slate-100 text-slate-500">
       {falseText}
     </Badge>
   )
@@ -167,16 +161,16 @@ export function MetricCard({
   return (
     <motion.div
       variants={fadeUp}
-      className="rounded-lg border border-white/[0.08] bg-[#131c26] p-4"
+      className="rounded-lg border border-slate-200 bg-white p-4"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-xl font-semibold tabular-nums text-slate-100 md:text-2xl">
+          <div className="text-xl font-semibold tabular-nums text-slate-900 md:text-2xl">
             {fmtNum(value)}
           </div>
-          <div className="mt-0.5 truncate text-xs text-slate-400">{label}</div>
+          <div className="mt-0.5 truncate text-xs text-slate-500">{label}</div>
         </div>
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-500/10 text-emerald-300">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
           <Icon className="size-4" aria-hidden />
         </span>
       </div>
@@ -212,8 +206,8 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center gap-2 px-4 py-14 text-center">
-      <Icon className="size-10 text-slate-600" aria-hidden />
-      <p className="text-sm font-medium text-slate-300">{title}</p>
+      <Icon className="size-10 text-slate-500" aria-hidden />
+      <p className="text-sm font-medium text-slate-700">{title}</p>
       {hint ? <p className="max-w-xs text-xs text-slate-500">{hint}</p> : null}
       {action ? <div className="mt-2">{action}</div> : null}
     </div>
@@ -224,7 +218,7 @@ export function SkeletonRows({ rows = 6, className }: { rows?: number; className
   return (
     <div className={cn('space-y-2', className)} aria-hidden>
       {Array.from({ length: rows }, (_, i) => (
-        <Skeleton key={i} className="h-12 w-full rounded-md bg-white/[0.05]" />
+        <Skeleton key={i} className="h-12 w-full rounded-md bg-slate-100" />
       ))}
     </div>
   )
@@ -245,7 +239,7 @@ export function Pagination({
 }) {
   const pages = Math.max(1, Math.ceil(total / pageSize))
   return (
-    <div className="flex items-center justify-between gap-3 border-t border-white/[0.06] px-1 pt-4">
+    <div className="flex items-center justify-between gap-3 border-t border-slate-200 px-1 pt-4">
       <Button
         variant="outline"
         size="sm"

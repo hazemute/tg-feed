@@ -17,6 +17,8 @@ interface AppState {
   channelUsername: string | null // открытый экран канала (внутренний)
   post: PostDTO | null // открытый полный экран поста (внутренний)
   searchSeed: string | null // внешний поисковый запрос (тап по хэштегу в ленте); null — запроса нет
+  maintenance: boolean // включён режим техработ и пользователь без допуска
+  setMaintenance: (v: boolean) => void
   setUser: (u: UserDTO | null) => void
   setAuthReady: (v: boolean) => void
   setTab: (t: Tab) => void
@@ -51,6 +53,8 @@ export const useApp = create<AppState>((set, get) => ({
   channelUsername: null,
   post: null,
   searchSeed: null,
+  maintenance: false,
+  setMaintenance: (maintenance) => set({ maintenance }),
   setUser: (user) => set({ user, interests: user?.categories ?? [] }),
   setAuthReady: (authReady) => set({ authReady }),
   setTab: (tab) => set({ tab }),

@@ -1,8 +1,9 @@
 import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { err } from '@/lib/server'
+import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { setMaintenanceAllowed } from '@/lib/maintenance'
 
 export const dynamic = 'force-dynamic'
 
@@ -38,7 +39,15 @@ export async function GET(request: Request) {
       db.user.count({ where }),
       db.user.findMany({
         where,
-        include: {
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          isDemo: true,
+          isPremium: true,
+          bypassMaintenance: true,
+          createdAt: true,
           _count: { select: { likes: true, subscriptions: true, bookmarks: true, views: true } },
         },
         orderBy: { createdAt: 'desc' },
@@ -54,6 +63,8 @@ export async function GET(request: Request) {
         firstName: u.firstName,
         lastName: u.lastName,
         isDemo: u.isDemo,
+        isPremium: u.isPremium,
+        bypassMaintenance: u.bypassMaintenance,
         createdAt: u.createdAt.toISOString(),
         likes: u._count.likes,
         subscriptions: u._count.subscriptions,
@@ -67,5 +78,26 @@ export async function GET(request: Request) {
   } catch (e) {
     console.error('[panel/users]', e)
     return err('users failed', 500)
+  }
+}
+
+/**
+ * PATCH { userId, bypassMaintenance } — переключить допуск пользователя
+ * мимо техработ. Синхронно обновляет БД и Redis-множество для middleware.
+ */
+export async function PATCH(request: Request) {
+  const g = guardAdmin(request, { limit: 60, windowMs: 60_000, bucket: 'panel-users-post' })
+  if (!g.ok) return g.res
+
+  try {
+    const body = await readJson<{ userId?: unknown; bypassMaintenance?: unknown }>(request)
+    const userId = typeof body.userId === 'string' ? body.userId.trim().slice(0, 80) : ''
+    if (!userId) return err('userId required')
+    const bypass = body.bypassMaintenance === true
+    await setMaintenanceAllowed(userId, bypass)
+    return NextResponse.json({ ok: true, userId, bypassMaintenance: bypass })
+  } catch (e) {
+    console.error('[panel/users PATCH]', e)
+    return err('user update failed', 500)
   }
 }

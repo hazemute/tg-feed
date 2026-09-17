@@ -79,11 +79,11 @@ interface AdForm {
 
 function ActiveBadge({ isActive }: { isActive: boolean }) {
   return isActive ? (
-    <Badge variant="outline" className="border border-emerald-500/30 bg-emerald-500/10 text-emerald-300">
+    <Badge variant="outline" className="border border-emerald-500/30 bg-emerald-50 text-emerald-700">
       активна
     </Badge>
   ) : (
-    <Badge variant="outline" className="border border-white/10 bg-white/[0.04] text-slate-400">
+    <Badge variant="outline" className="border border-slate-200 bg-slate-100 text-slate-500">
       выключена
     </Badge>
   )
@@ -185,7 +185,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
         <CardHeader>
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
-              <CardTitle className="text-base text-slate-100">Реклама</CardTitle>
+              <CardTitle className="text-base text-slate-900">Реклама</CardTitle>
               <CardDescription className="text-xs text-slate-500">
                 Блоки рекламы в ленте мини-аппа
               </CardDescription>
@@ -245,17 +245,17 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                   key={ad.id}
                   variants={fadeUp}
                   whileHover={{ y: -2 }}
-                  className="flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-4"
+                  className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="truncate text-sm font-semibold text-slate-100">
+                        <span className="truncate text-sm font-semibold text-slate-900">
                           {ad.title}
                         </span>
                         <ActiveBadge isActive={ad.isActive} />
                       </div>
-                      <p className="mt-1 line-clamp-2 text-xs leading-snug text-slate-400">
+                      <p className="mt-1 line-clamp-2 text-xs leading-snug text-slate-500">
                         {ad.body}
                       </p>
                     </div>
@@ -271,7 +271,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                       href={ad.link}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex min-w-0 items-center gap-1 text-xs text-emerald-300 hover:text-emerald-200"
+                      className="flex min-w-0 items-center gap-1 text-xs text-emerald-700 hover:text-emerald-200"
                     >
                       <ExternalLink className="size-3 shrink-0" aria-hidden />
                       <span className="truncate">
@@ -286,24 +286,24 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                             variant="ghost"
                             size="icon"
                             aria-label={`Удалить рекламу ${ad.title}`}
-                            className="size-8 text-slate-500 hover:bg-red-500/10 hover:text-red-300"
+                            className="size-8 text-slate-500 hover:bg-red-50 hover:text-red-700"
                           >
                             <Trash2 className="size-4" aria-hidden />
                           </Button>
                         </AlertDialogTrigger>
-                        <AlertDialogContent className="border-white/10 bg-[#131c26] text-slate-200">
+                        <AlertDialogContent className="border-slate-200 bg-white text-slate-800">
                           <AlertDialogHeader>
-                            <AlertDialogTitle className="text-slate-100">
+                            <AlertDialogTitle className="text-slate-900">
                               Удалить рекламу?
                             </AlertDialogTitle>
-                            <AlertDialogDescription className="text-slate-400">
+                            <AlertDialogDescription className="text-slate-500">
                               Блок «{ad.title}» будет удалён без возможности восстановления.
                             </AlertDialogDescription>
                           </AlertDialogHeader>
                           <AlertDialogFooter>
                             <AlertDialogCancel
                               className={cn(
-                                'border-white/10 bg-transparent text-slate-300 hover:bg-white/[0.06] hover:text-slate-100',
+                                'border-slate-200 bg-transparent text-slate-700 hover:bg-slate-100 hover:text-slate-900',
                               )}
                             >
                               Отмена
@@ -328,16 +328,16 @@ export function AdsTab({ tick, onSettled }: TabProps) {
 
       {/* Диалог создания */}
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="border-white/10 bg-[#131c26] text-slate-200 sm:max-w-lg">
+        <DialogContent className="border-slate-200 bg-white text-slate-800 sm:max-w-lg">
           <DialogHeader>
-            <DialogTitle className="text-slate-100">Новая реклама</DialogTitle>
-            <DialogDescription className="text-slate-400">
+            <DialogTitle className="text-slate-900">Новая реклама</DialogTitle>
+            <DialogDescription className="text-slate-500">
               Появится в ленте как рекламный пост с кнопкой действия
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label htmlFor="ad-title" className="text-xs text-slate-400">
+              <Label htmlFor="ad-title" className="text-xs text-slate-500">
                 Заголовок *
               </Label>
               <Input
@@ -349,7 +349,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="ad-body" className="text-xs text-slate-400">
+              <Label htmlFor="ad-body" className="text-xs text-slate-500">
                 Текст *
               </Label>
               <Textarea
@@ -361,7 +361,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="ad-link" className="text-xs text-slate-400">
+              <Label htmlFor="ad-link" className="text-xs text-slate-500">
                 Ссылка *
               </Label>
               <Input
@@ -375,7 +375,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label htmlFor="ad-cta" className="text-xs text-slate-400">
+                <Label htmlFor="ad-cta" className="text-xs text-slate-500">
                   Кнопка
                 </Label>
                 <Input
@@ -387,7 +387,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label htmlFor="ad-image" className="text-xs text-slate-400">
+                <Label htmlFor="ad-image" className="text-xs text-slate-500">
                   Картинка (URL)
                 </Label>
                 <Input
@@ -405,7 +405,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
             <Button
               variant="outline"
               onClick={() => setDialogOpen(false)}
-              className={cn('border-white/10 bg-transparent text-slate-300 hover:bg-white/[0.06] hover:text-slate-100')}
+              className={cn('border-slate-200 bg-transparent text-slate-700 hover:bg-slate-100 hover:text-slate-900')}
             >
               Отмена
             </Button>

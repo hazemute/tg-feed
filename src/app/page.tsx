@@ -11,6 +11,7 @@ import { THEME_BY_ID } from '@/lib/themes'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
 import { Splash } from '@/components/tg/Splash'
+import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
 import { FeedView } from '@/components/feed/FeedView'
 import { ChannelSheet } from '@/components/feed/ChannelSheet'
 import { PostOverlay } from '@/components/feed/PostOverlay'
@@ -28,7 +29,7 @@ const tabVariants = {
 }
 
 export default function Home() {
-  const { user, authReady, tab, tabDir, theme, fontScale, setUser, setAuthReady, setCategories, setTheme, setFontScale, goToTab } =
+  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, setUser, setAuthReady, setCategories, setTheme, setFontScale, setMaintenance, goToTab } =
     useApp()
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
   // Сплэш живёт минимум 1.35с — влёт самолётика (1.15с) всегда доигрывает
@@ -101,7 +102,11 @@ export default function Home() {
   const authenticate = useCallback(async (): Promise<boolean> => {
     const w = initTelegram()
     try {
-      const res = await api<{ user: UserDTO; token: string }>('/api/auth', {
+      const res = await api<{
+        user: UserDTO
+        token: string
+        maintenance?: { active: boolean; canBypass: boolean }
+      }>('/api/auth', {
         method: 'POST',
         body: JSON.stringify({
           initData: w?.initData ?? '',
@@ -111,6 +116,11 @@ export default function Home() {
       })
       setSessionToken(res.token)
       setUser(res.user)
+      // Техработы: без допуска — переключаемся на экран техработ;
+      // категории не запрашиваем (API закрыт middleware), чтобы не сыпать тостами
+      const blocked = res.maintenance?.active === true && res.maintenance.canBypass !== true
+      setMaintenance(blocked)
+      if (blocked) return true
       const cats = await api<{ items: CategoryDTO[] }>('/api/categories')
       setCategories(cats.items)
       return true
@@ -118,7 +128,14 @@ export default function Home() {
       toast.error('Ошибка входа. Обновите страницу.')
       return false
     }
-  }, [setUser, setCategories])
+  }, [setUser, setCategories, setMaintenance])
+
+  // Любой API вернул 503 {maintenance:true} — весь app на экран техработ
+  useEffect(() => {
+    const onMaintenance = () => setMaintenance(true)
+    window.addEventListener('tgfeed:maintenance', onMaintenance)
+    return () => window.removeEventListener('tgfeed:maintenance', onMaintenance)
+  }, [setMaintenance])
 
   useEffect(() => {
     let cancelled = false
@@ -179,6 +196,17 @@ export default function Home() {
 
   if (!authReady || !user || !splashMinDone) {
     return <Splash />
+  }
+
+  if (maintenance) {
+    return (
+      <MaintenanceScreen
+        onRetry={async () => {
+          await authenticate()
+          return !useApp.getState().maintenance
+        }}
+      />
+    )
   }
 
   return (

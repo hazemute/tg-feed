@@ -15,7 +15,13 @@ export async function GET(request: Request) {
 
   try {
     const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000)
+    const days14Ago = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000)
 
+    /*
+     * Все каунты одним $transaction-массивом: Prisma выполняет их по ОДНОЙ
+     * коннекции из пула (connection_limit=1 при pgbouncer) — большой
+     * Promise.all исчерпывает пул и падает по таймауту.
+     */
     const [
       users,
       usersTelegram,
@@ -30,7 +36,12 @@ export async function GET(request: Request) {
       bookmarks,
       hashtagClicks24h,
       notifiedPosts24h,
-    ] = await Promise.all([
+      users24h,
+      posts24h,
+      likes24h,
+      views24h,
+      subs24h,
+    ] = await db.$transaction([
       db.user.count(),
       db.user.count({ where: { isDemo: false } }),
       db.user.count({ where: { isDemo: true } }),
@@ -44,9 +55,20 @@ export async function GET(request: Request) {
       db.bookmark.count(),
       db.hashtagClick.count({ where: { createdAt: { gte: dayAgo } } }),
       db.post.count({ where: { notifiedAt: { gte: dayAgo } } }),
+      db.user.count({ where: { createdAt: { gte: dayAgo } } }),
+      db.post.count({ where: { publishedAt: { gte: dayAgo } } }),
+      db.like.count({ where: { createdAt: { gte: dayAgo } } }),
+      db.postView.count({ where: { createdAt: { gte: dayAgo } } }),
+      db.subscription.count({ where: { createdAt: { gte: dayAgo } } }),
     ])
 
-    const [freshPosts, recentUsers, topChannels] = await Promise.all([
+    // Посты по дням (14 дней) для спарклайна «Обзора» — лёгкая выборка дат;
+    // свежие посты/юзеры/каналы — одной коннекцией в транзакции (пул = 1)
+    const [recentPostDates, freshPosts, recentUsers, topChannels] = await db.$transaction([
+      db.post.findMany({
+        where: { publishedAt: { gte: days14Ago } },
+        select: { publishedAt: true },
+      }),
       db.post.findMany({
         orderBy: { publishedAt: 'desc' },
         take: 8,
@@ -77,6 +99,22 @@ export async function GET(request: Request) {
         },
       }),
     ])
+    const postsPerDay: number[] = []
+    {
+      const buckets = new Array<number>(14).fill(0)
+      const startOfDay = new Date()
+      startOfDay.setHours(0, 0, 0, 0)
+      for (const p of recentPostDates) {
+        const dayIdx = Math.floor(
+          (startOfDay.getTime() - p.publishedAt.getTime()) / (24 * 60 * 60 * 1000),
+        )
+        // 0 — сегодня, 13 — 13 дней назад; будущее (сдвиг часового пояса) клампим в сегодня
+        const idx = Math.min(13, Math.max(0, dayIdx))
+        buckets[idx] += 1
+      }
+      // разворачиваем: слева — старые, справа — сегодня
+      for (let i = 13; i >= 0; i--) postsPerDay.push(buckets[i])
+    }
 
     return NextResponse.json({
       counts: {
@@ -93,6 +131,14 @@ export async function GET(request: Request) {
         bookmarks,
         hashtagClicks24h,
       },
+      deltas24h: {
+        users: users24h,
+        posts: posts24h,
+        likes: likes24h,
+        views: views24h,
+        subscriptions: subs24h,
+      },
+      postsPerDay,
       notif: {
         botConfigured: Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim()),
         sent24h: notifiedPosts24h,

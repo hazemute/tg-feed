@@ -86,7 +86,7 @@ export function ModerationTab({
     <motion.div variants={fadeUp} initial="hidden" animate="show">
       <Card className={panelCard}>
         <CardHeader>
-          <CardTitle className="text-base text-slate-100">Модерация каналов</CardTitle>
+          <CardTitle className="text-base text-slate-900">Модерация каналов</CardTitle>
           <CardDescription className="text-xs text-slate-500">
             Заявки, добавленные пользователями через мини-апп
           </CardDescription>
@@ -128,19 +128,19 @@ export function ModerationTab({
                   key={item.id}
                   variants={fadeUp}
                   whileHover={{ y: -1 }}
-                  className="flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] p-4 sm:flex-row sm:items-center"
+                  className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center"
                 >
                   <div className="flex min-w-0 flex-1 items-start gap-3">
                     <Avatar color={item.avatarColor} title={item.title} src={item.avatarUrl} />
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                        <span className="truncate text-sm font-semibold text-slate-100">
+                        <span className="truncate text-sm font-semibold text-slate-900">
                           {item.title}
                         </span>
                         <span className="truncate text-xs text-slate-500">@{item.username}</span>
                       </div>
                       {item.description ? (
-                        <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-400">
+                        <p className="mt-0.5 line-clamp-2 text-xs leading-snug text-slate-500">
                           {item.description}
                         </p>
                       ) : null}
@@ -156,7 +156,7 @@ export function ModerationTab({
                       size="sm"
                       disabled={busyId === item.id}
                       onClick={() => void act(item, 'approve')}
-                      className="border border-emerald-500/30 bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                      className="border border-emerald-500/30 bg-emerald-100 text-emerald-700 hover:bg-emerald-500/25"
                     >
                       {busyId === item.id ? (
                         <Loader2 className="animate-spin" aria-hidden />
@@ -171,7 +171,7 @@ export function ModerationTab({
                       disabled={busyId === item.id}
                       onClick={() => void act(item, 'reject')}
                       className={cn(
-                        'border-red-500/30 bg-transparent text-red-300 hover:bg-red-500/10 hover:text-red-200',
+                        'border-red-500/30 bg-transparent text-red-700 hover:bg-red-50 hover:text-red-200',
                       )}
                     >
                       <X aria-hidden /> Отклонить

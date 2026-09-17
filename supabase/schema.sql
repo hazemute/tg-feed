@@ -162,3 +162,12 @@ CREATE INDEX IF NOT EXISTS "PostView_postId_idx"       ON "PostView" ("postId");
 CREATE INDEX IF NOT EXISTS "PostView_userId_idx"       ON "PostView" ("userId");
 CREATE INDEX IF NOT EXISTS "Bookmark_postId_idx"       ON "Bookmark" ("postId");
 CREATE INDEX IF NOT EXISTS "Subscription_channelId_idx" ON "Subscription" ("channelId");
+
+-- v4.9: допуск пользователей при техработах + системные настройки (зеркало Redis)
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bypassMaintenance" BOOLEAN NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS "SystemSetting" (
+  "key" TEXT PRIMARY KEY,
+  "value" TEXT NOT NULL,
+  "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT now()
+);
