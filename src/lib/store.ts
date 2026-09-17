@@ -1,0 +1,86 @@
+'use client'
+
+import { create } from 'zustand'
+import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
+
+interface AppState {
+  user: UserDTO | null
+  authReady: boolean
+  tab: Tab
+  tabDir: number // направление анимации перехода вкладок (-1 | 1)
+  category: string // slug | 'all'
+  categories: CategoryDTO[]
+  interests: string[]
+  feedVersion: number
+  theme: ThemeMode
+  fontScale: FontScale
+  channelUsername: string | null // открытый экран канала (внутренний)
+  searchSeed: string | null // внешний поисковый запрос (тап по хэштегу в ленте); null — запроса нет
+  setUser: (u: UserDTO | null) => void
+  setAuthReady: (v: boolean) => void
+  setTab: (t: Tab) => void
+  goToTab: (t: Tab) => void
+  setCategory: (c: string) => void
+  setCategories: (c: CategoryDTO[]) => void
+  setInterests: (i: string[]) => void
+  bumpFeed: () => void
+  setTheme: (t: ThemeMode) => void
+  setFontScale: (f: FontScale) => void
+  openChannel: (username: string) => void
+  closeChannel: () => void
+  openSearchWith: (query: string) => void
+  clearSearchSeed: () => void
+}
+
+const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'profile']
+
+export const useApp = create<AppState>((set, get) => ({
+  user: null,
+  authReady: false,
+  tab: 'feed',
+  tabDir: 1,
+  category: 'all',
+  categories: [],
+  interests: [],
+  feedVersion: 0,
+  theme: 'light',
+  fontScale: 'md',
+  channelUsername: null,
+  searchSeed: null,
+  setUser: (user) => set({ user, interests: user?.categories ?? [] }),
+  setAuthReady: (authReady) => set({ authReady }),
+  setTab: (tab) => set({ tab }),
+  goToTab: (next) =>
+    set((s) => {
+      if (next === s.tab) return s
+      const dir = Math.sign(TAB_ORDER.indexOf(next) - TAB_ORDER.indexOf(s.tab))
+      return { tab: next, tabDir: dir !== 0 ? dir : 1 }
+    }),
+  setCategory: (category) => set({ category }),
+  setCategories: (categories) => set({ categories }),
+  setInterests: (interests) => set({ interests }),
+  bumpFeed: () => set((s) => ({ feedVersion: s.feedVersion + 1 })),
+  setTheme: (theme) => {
+    try {
+      localStorage.setItem('tgfeed_theme', theme)
+    } catch {}
+    set({ theme })
+  },
+  setFontScale: (fontScale) => {
+    try {
+      localStorage.setItem('tgfeed_font', fontScale)
+    } catch {}
+    set({ fontScale })
+  },
+  openChannel: (username) => set({ channelUsername: username.replace(/^@/, '') }),
+  closeChannel: () => set({ channelUsername: null }),
+  // Внешний запуск поиска (тап по хэштегу в ленте, «Открыть поиск» из пустой ленты):
+  // кладём запрос в searchSeed и переходим на вкладку поиска через goToTab
+  // (сохраняет направление анимации перехода; если уже на поиске — no-op).
+  openSearchWith: (query) => {
+    set({ searchSeed: query })
+    get().goToTab('search')
+  },
+  // SearchTab сбрасывает seed после приёма, чтобы повторный тап того же тега сработал
+  clearSearchSeed: () => set({ searchSeed: null }),
+}))

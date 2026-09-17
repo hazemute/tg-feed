@@ -1,0 +1,155 @@
+// TG-Feed — Prisma schema (SQLite)
+// Note: SQLite has no native arrays/enums → JSON strings + status fields.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Telegram user (id from initData) or demo user (id from deviceId)
+model User {
+  id            String   @id // "tg_<uid>" | "demo_<deviceId>"
+  username      String?
+  firstName     String?
+  lastName      String?
+  photoUrl      String?
+  isDemo        Boolean  @default(true)
+  categories    String   @default("[]") // JSON array of category slugs (interests)
+  lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
+  createdAt     DateTime @default(now())
+
+  likes         Like[]
+  views         PostView[]
+  subscriptions Subscription[]
+  channels      Channel[]
+  bookmarks     Bookmark[]
+}
+
+model Category {
+  id       String @id @default(cuid())
+  slug     String @unique
+  title    String
+  emoji    String
+  order    Int    @default(0)
+
+  channels Channel[]
+}
+
+model Channel {
+  id               String    @id @default(cuid())
+  tgId             String    @unique // Telegram channel id (synthetic for seeds)
+  title            String
+  username         String    @unique // without @
+  description      String?
+  avatarColor      String    @default("#3390ec")
+  categoryId       String
+  category         Category  @relation(fields: [categoryId], references: [id])
+  isPremium        Boolean   @default(false)
+  premiumUntil     DateTime?
+  status           String    @default("active") // active | moderation
+  subscribersCount Int       @default(0)
+  clicksCount      Int       @default(0) // клики по кнопке [+] подписки
+  addedById        String?
+  addedBy          User?     @relation(fields: [addedById], references: [id])
+  createdAt        DateTime  @default(now())
+
+  posts            Post[]
+  subscriptions    Subscription[]
+}
+
+model Post {
+  id          String   @id @default(cuid())
+  tgKey       String   @unique // "<username>:<messageId>"
+  channelId   String
+  channel     Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  text        String   @default("")
+  mediaUrl    String?
+  mediaType   String   @default("image") // image | video
+  gallery     String? // JSON array — дополнительные медиа (карусель)
+  link        String? // original t.me link
+  viewsCount  Int      @default(0)
+  likesCount  Int      @default(0)
+  aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
+  publishedAt DateTime
+  notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
+
+  likedBy     Like[]
+  viewedBy    PostView[]
+  bookmarkedBy Bookmark[]
+}
+
+model Like {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+model PostView {
+  id        String   @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime @default(now())
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+model Subscription {
+  id        String   @id @default(cuid())
+  userId    String
+  channelId String
+  hidden    Boolean  @default(false) // скрыть канал из общей ленты
+  notify    Boolean  @default(true)  // колокольчик: true — все уведомления, false — без звука
+  createdAt DateTime @default(now())
+
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channelId])
+}
+
+model Bookmark {
+  id        String    @id @default(cuid())
+  userId    String
+  postId    String
+  createdAt DateTime  @default(now())
+  readAt    DateTime? // когда пользователь открыл сохранённый пост (непрочитанные — без readAt)
+
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, postId])
+}
+
+model Ad {
+  id        String   @id @default(cuid())
+  title     String
+  body      String
+  ctaLabel  String   @default("Перейти")
+  link      String
+  imageUrl  String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+}
+
+// Клики по #хэштегам в постах — источник трендов «Сейчас обсуждают»
+model HashtagClick {
+  id        String   @id @default(cuid())
+  tag       String // без решётки, lowercase
+  userId    String? // кто кликнул (для анти-спама и аналитики)
+  createdAt DateTime @default(now())
+
+  @@index([tag, createdAt])
+}

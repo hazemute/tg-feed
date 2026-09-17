@@ -1,0 +1,134 @@
+'use client'
+
+import { useEffect } from 'react'
+import { toast } from 'sonner'
+
+/** Минимальные типы Telegram WebApp SDK */
+export type TgWebApp = {
+  ready: () => void
+  expand: () => void
+  initData: string
+  initDataUnsafe?: {
+    user?: {
+      id: number
+      username?: string
+      first_name?: string
+      last_name?: string
+      photo_url?: string
+    }
+  }
+  openTelegramLink: (url: string) => void
+  openLink: (url: string, options?: { try_instant_view?: boolean }) => void
+  setHeaderColor?: (color: string) => void
+  setBackgroundColor?: (color: string) => void
+  HapticFeedback?: {
+    impactOccurred: (style: 'light' | 'medium' | 'heavy' | 'rigid' | 'soft') => void
+    notificationOccurred: (type: 'error' | 'success' | 'warning') => void
+  }
+  BackButton?: {
+    show: () => void
+    hide: () => void
+    onClick: (cb: () => void) => void
+    offClick: (cb: () => void) => void
+  }
+}
+
+export function tg(): TgWebApp | null {
+  if (typeof window === 'undefined') return null
+  const w = window as unknown as { Telegram?: { WebApp?: TgWebApp } }
+  return w.Telegram?.WebApp ?? null
+}
+
+export function initTelegram(): TgWebApp | null {
+  const w = tg()
+  if (!w) return null
+  try {
+    w.ready()
+    w.expand()
+    w.setHeaderColor?.('#ffffff')
+    w.setBackgroundColor?.('#ffffff')
+  } catch {
+    // вне Telegram — игнорируем
+  }
+  return w
+}
+
+export function openTelegram(usernameOrUrl: string) {
+  const url = usernameOrUrl.startsWith('http')
+    ? usernameOrUrl
+    : `https://t.me/${usernameOrUrl.replace(/^@/, '')}`
+  const w = tg()
+  if (w?.openTelegramLink) {
+    w.openTelegramLink(url)
+  } else {
+    window.open(url, '_blank', 'noopener')
+  }
+}
+
+export function openExternal(url: string) {
+  const w = tg()
+  if (w?.openLink) w.openLink(url)
+  else window.open(url, '_blank', 'noopener')
+}
+
+/**
+ * Нативная кнопка «назад» Telegram: пока open=true — показываем её и закрываем шит.
+ * Вне Telegram — no-op (обратная совместимость с браузером).
+ */
+export function useBackButton(open: boolean, onClose: () => void) {
+  useEffect(() => {
+    if (!open) return
+    const bb = tg()?.BackButton
+    if (!bb) return
+    const handler = () => onClose()
+    try {
+      bb.show()
+      bb.onClick(handler)
+      return () => {
+        try {
+          bb.offClick(handler)
+          bb.hide()
+        } catch {
+          // noop
+        }
+      }
+    } catch {
+      // noop
+    }
+  }, [open, onClose])
+}
+
+export function haptic(kind: 'light' | 'success' | 'warning' | 'error' = 'light') {
+  const h = tg()?.HapticFeedback
+  if (!h) return
+  try {
+    if (kind === 'light') h.impactOccurred('light')
+    else if (kind === 'success') h.notificationOccurred('success')
+    else if (kind === 'warning') h.notificationOccurred('warning')
+    else h.notificationOccurred('error')
+  } catch {
+    // noop
+  }
+}
+
+/** Репост поста: в Telegram — нативный шаринг, иначе navigator.share / буфер обмена */
+export async function sharePost(link: string | null, title: string) {
+  const url = link || 'https://t.me/tgfeed_app'
+  const w = tg()
+  try {
+    if (w?.openTelegramLink) {
+      w.openTelegramLink(
+        `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(`Пост из канала «${title}» — смотрел в TG-Feed`)}`,
+      )
+      return
+    }
+    if (typeof navigator !== 'undefined' && navigator.share) {
+      await navigator.share({ title: `TG-Feed · ${title}`, url })
+      return
+    }
+    await navigator.clipboard.writeText(url)
+    toast.success('Ссылка скопирована')
+  } catch {
+    // пользователь отменил шаринг
+  }
+}
