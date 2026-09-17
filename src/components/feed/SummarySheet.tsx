@@ -12,7 +12,12 @@ import type { PostDTO, SummaryResponse } from '@/lib/types'
  * Результат кэшируется на бэке (Post.aiSummary).
  */
 export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose: () => void }) {
-  const [data, setData] = useState<{ postId: string; items?: string[]; note?: string } | null>(null)
+  const [data, setData] = useState<{
+    postId: string
+    items?: string[]
+    note?: string
+    fallback?: boolean
+  } | null>(null)
 
   // Нативная кнопка «назад» Telegram закрывает шит
   useBackButton(!!post, onClose)
@@ -33,7 +38,7 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
             note: 'Пост короткий — саммари не требуется, просто прочитайте его целиком',
           })
         } else {
-          setData({ postId: pid, items: r.items })
+          setData({ postId: pid, items: r.items, fallback: r.fallback === true })
         }
       })
       .catch((e) => {
@@ -126,7 +131,9 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
             </div>
 
             <p className="mt-4 text-center text-[11px] text-tg-hint">
-              Сгенерировано нейросетью · может ошибаться в деталях
+              {data?.fallback
+                ? 'Временный режим: выжимка из первых предложений · нейросеть вернётся позже'
+                : 'Сгенерировано нейросетью · может ошибаться в деталях'}
             </p>
           </motion.div>
         </motion.div>

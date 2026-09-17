@@ -28,6 +28,7 @@ import {
 import { cn } from '@/lib/utils'
 
 import { useAdminSSE } from './admin-sse'
+import { AutoparseCard, ParseAllButton } from './autoparse-card'
 
 import {
   fmtNum,
@@ -139,6 +140,9 @@ export function ToolsTab({
 
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-4">
+      {/* Автосбор: одна кнопка — движок сам находит каналы */}
+      <AutoparseCard />
+
       {/* Парсер */}
       <Card className={panelCard}>
         <CardHeader>
@@ -190,6 +194,9 @@ export function ToolsTab({
               {running ? <Loader2 className="animate-spin" aria-hidden /> : <Play aria-hidden />}
               Запустить парсер
             </Button>
+            <ParseAllButton
+              className="border border-emerald-500/40 bg-transparent text-emerald-800 hover:bg-emerald-500/10"
+            />
           </div>
 
           {/* Живой прогресс (SSE) */}

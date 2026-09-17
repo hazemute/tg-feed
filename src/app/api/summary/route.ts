@@ -45,9 +45,35 @@ function parseBullets(raw: string): string[] {
 }
 
 /**
+ * Fallback без нейросети — извлекающая выжимка: первые содержательные
+ * предложения поста. Гарантирует, что «Краткое содержание» работает всегда,
+ * даже если LLM недоступен (лимиты/сеть) — пользователь не видит пустой шит.
+ */
+function extractiveSummary(text: string): string[] {
+  const clean = text
+    .replace(/#[\wа-яё]{2,30}/gu, '') // хэштеги — мусор для выжимки
+    .replace(/\s+/g, ' ')
+    .trim()
+  const sentences = clean
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 20)
+  const picked: string[] = []
+  for (const s of sentences) {
+    picked.push(s.length > 120 ? s.slice(0, 117) + '…' : s)
+    if (picked.length === 3) break
+  }
+  if (picked.length === 0 && clean.length > 20) {
+    picked.push(clean.slice(0, 117) + (clean.length > 117 ? '…' : ''))
+  }
+  return picked
+}
+
+/**
  * POST /api/summary { postId }
  * AI-саммари поста в 3 пунктах. Результат кэшируется в БД (Post.aiSummary).
- * Требуется сессия (Bearer); лимит 10 запросов в минуту на пользователя.
+ * Если нейросеть недоступна — извлекающий фолбэк (extractiveSummary),
+ * чтобы функция не «умирала» целиком. Требуется сессия; 10 запросов в минуту.
  */
 export async function POST(request: Request) {
   const g = guardAuth(request, { limit: 10, windowMs: 60_000, bucket: 'summary' })
@@ -77,20 +103,36 @@ export async function POST(request: Request) {
       return NextResponse.json({ items: [], cached: false, tooShort: true })
     }
 
-    const zai = await ZAI.create()
-    const completion = await zai.chat.completions.create({
-      messages: [
-        { role: 'assistant', content: SYSTEM_PROMPT },
-        { role: 'user', content: text.slice(0, 4000) },
-      ],
-      thinking: { type: 'disabled' },
-    })
-
-    const raw = completion.choices[0]?.message?.content ?? ''
-    const items = parseBullets(raw)
+    let items: string[] = []
+    let llmFailed = false
+    try {
+      const zai = await ZAI.create()
+      const completion = await zai.chat.completions.create({
+        messages: [
+          { role: 'assistant', content: SYSTEM_PROMPT },
+          { role: 'user', content: text.slice(0, 4000) },
+        ],
+        thinking: { type: 'disabled' },
+      })
+      const raw = completion.choices[0]?.message?.content ?? ''
+      items = parseBullets(raw)
+    } catch (e) {
+      console.error('[summary] llm failed, fallback on', e)
+      llmFailed = true
+    }
 
     if (items.length === 0) {
-      return NextResponse.json({ items: [], cached: false, tooShort: true })
+      // Нейросеть не ответила или вернула мусор — выжимаем предложения сами.
+      // Не кэшируем в Post.aiSummary: при следующем запросе попробуем LLM снова.
+      const fallback = extractiveSummary(text)
+      if (fallback.length === 0) {
+        return NextResponse.json({ items: [], cached: false, tooShort: true })
+      }
+      return NextResponse.json({
+        items: fallback,
+        cached: false,
+        ...(llmFailed ? { fallback: true } : {}),
+      })
     }
 
     await db.post.update({ where: { id: postId }, data: { aiSummary: JSON.stringify(items) } })

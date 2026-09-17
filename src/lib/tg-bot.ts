@@ -108,6 +108,72 @@ export async function getChatPhotoFileId(username: string): Promise<string | nul
   }
 }
 
+export type TgChatInfo = {
+  id: string
+  title: string
+  username: string
+  description: string | null
+  members: number | null
+  photoFileId: string | null
+}
+
+/**
+ * Полная карточка публичного канала одним вызовом Bot API getChat:
+ * реальный chat id, название, описание, аватарка (file_id), число подписчиков.
+ * Используется автосбором при создании канала; null — канал не существует,
+ * приватный или недоступен боту.
+ */
+export async function getChatInfo(username: string): Promise<TgChatInfo | null> {
+  if (!botEnabled()) return null
+  const clean = username.replace(/^@/, '')
+  const mk = `ci:${clean}`
+  const local = memGet(mk)
+  if (local !== undefined) {
+    if (local === null || local === 'none') return null
+    try {
+      return JSON.parse(local) as TgChatInfo
+    } catch {
+      return null
+    }
+  }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChat`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: `@${clean}` }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json()) as {
+      ok?: boolean
+      result?: {
+        id?: number
+        type?: string
+        title?: string
+        username?: string
+        description?: string
+        photo?: { big_file_id?: string; small_file_id?: string }
+      }
+    }
+    const r = data?.result
+    if (!data?.ok || !r || r.type !== 'channel' || typeof r.id !== 'number') {
+      memSet(mk, 'none', 10 * 60_000)
+      return null
+    }
+    const info: TgChatInfo = {
+      id: String(r.id),
+      title: r.title ?? clean,
+      username: r.username ?? clean,
+      description: r.description ?? null,
+      members: null, // member count идёт отдельным дешёвым вызовом по необходимости
+      photoFileId: r.photo?.big_file_id ?? r.photo?.small_file_id ?? null,
+    }
+    memSet(mk, JSON.stringify(info), 30 * 60_000)
+    return info
+  } catch {
+    return null
+  }
+}
+
 /**
  * Реальное число подписчиков публичного канала через Bot API getChatMemberCount.
  * Кэш: память 1ч → Redis 24ч («нет данных» тоже кэшим сентинелом none, чтобы
@@ -205,6 +271,56 @@ export async function getUserPhotoFileId(tgUserId: number): Promise<string | nul
       memSet(mk, fileId, 6 * 60 * 60_000)
     }
     return fileId
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Состоит ли пользователь в публичном канале? Bot API getChatMember.
+ *
+ * Нюансы доступа: боту разрешено запрашивать участников канала, только если
+ * сам бот в нём состоит (обычно админ). Поэтому:
+ *  - true/false — бот видит чат и ответил точно (кэш в памяти 5 мин);
+ *  - null — проверить нечем (бота нет в канале / чат не найдён / нет токена).
+ * Используется для подтверждения «подписки в один тап»: миниапп открывает
+ * канал в клиенте Telegram, а после возврата мы сверяем членство.
+ */
+export async function isTelegramMember(
+  username: string,
+  tgUserId: number,
+): Promise<boolean | null> {
+  if (!botEnabled()) return null
+  const clean = username.replace(/^@/, '')
+
+  const mk = `cm:${clean}:${tgUserId}`
+  const local = memGet(mk)
+  if (local !== undefined) return local === '1' ? true : local === '0' ? false : null
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMember`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: `@${clean}`, user_id: tgUserId }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json()) as {
+      ok?: boolean
+      result?: { status?: string; is_member?: boolean }
+    }
+    if (data?.ok) {
+      const status = data.result?.status
+      const member =
+        status === 'creator' ||
+        status === 'administrator' ||
+        status === 'member' ||
+        (status === 'restricted' && data.result?.is_member === true)
+      memSet(mk, member ? '1' : '0', 5 * 60_000)
+      return member
+    }
+    // «bot is not a member» / «chat not found» — проверка недоступна
+    memSet(mk, 'none', 5 * 60_000)
+    return null
   } catch {
     return null
   }

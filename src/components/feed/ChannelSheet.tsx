@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic, openTelegram, useBackButton } from '@/lib/tg'
+import { openChannelToJoin } from '@/lib/tg-subscribe'
 import { formatCount, timeAgoRu } from '@/lib/format'
 import type { ChannelDTO, PostDTO, RelatedChannelDTO, RelatedChannelsResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
@@ -194,7 +195,7 @@ function ChannelScreen({
       })),
     )
     haptic(next ? 'success' : 'light')
-    if (next) toast.success(`Вы подписались на «${channel.title}»`)
+    if (!next) toast.info('Подписка в ленте отключена')
     try {
       await api('/api/subscribe', {
         method: 'POST',
@@ -203,6 +204,9 @@ function ChannelScreen({
       // Синхронизация ленты: SubscribeCircle в шапке поста должен увидеть
       // новую подписку, иначе его toggle отменит её (баг qa18 №1)
       bumpFeed()
+      // Подписка в один тап: открываем канал в Telegram, чтобы пользователь
+      // нажал родную «Подписаться»; после возврата членство сверится тихо
+      if (next) openChannelToJoin(channel.username)
     } catch {
       setChannel((c) =>
         c ? { ...c, subscribed: !next, subscribersCount: Math.max(0, c.subscribersCount + (next ? -1 : 1)) } : c,
@@ -543,7 +547,9 @@ function RelatedChannels({ username, userId }: { username: string; userId: strin
         method: 'POST',
         body: JSON.stringify({ userId: uid, username: c.username }),
       })
-      toast.success(next ? `Вы подписались на «${c.title}»` : `Вы отписались от «${c.title}»`)
+      if (!next) toast.info(`«${c.title}» убран из подписок`)
+      // Подписка в один тап: открываем канал в Telegram для родной кнопки
+      if (next) openChannelToJoin(c.username)
       bumpFeed() // лента зависит от подписок — пересобрать
     } catch {
       setItems((prev) =>

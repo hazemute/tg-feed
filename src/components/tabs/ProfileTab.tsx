@@ -744,7 +744,7 @@ function MyChannelZone() {
             </div>
           )}
 
-          {/* Продвижение */}
+          {/* Продвижение / реклама своего канала */}
           <button
             type="button"
             onClick={() => {
@@ -753,7 +753,7 @@ function MyChannelZone() {
             }}
             className="mt-3.5 h-12 w-full rounded-full bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
           >
-            Продвинуть в Топ
+            Реклама и продвижение
           </button>
 
           {/* Добавление канала */}

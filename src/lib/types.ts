@@ -59,6 +59,15 @@ export type AdDTO = {
   imageUrl: string | null
 }
 
+/** Живая статистика площадки для шита продвижения (GET /api/ads/stats) */
+export type AdsPlatformStats = {
+  channels: number
+  posts: number
+  users: number
+  views24h: number
+  adsActive: number
+}
+
 export type UserDTO = {
   id: string
   username: string | null
@@ -86,6 +95,8 @@ export type SummaryResponse = {
   items: string[]
   cached: boolean
   tooShort?: boolean
+  /** true — нейросеть была недоступна, выжимка собрана из первых предложений */
+  fallback?: boolean
 }
 
 export type AdminStatsDTO = {

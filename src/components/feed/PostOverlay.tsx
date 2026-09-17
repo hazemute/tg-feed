@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { ArrowLeft, Bookmark, Forward, Heart, Star } from 'lucide-react'
+import { ArrowLeft, Bookmark, Forward, Heart, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -12,6 +12,7 @@ import { formatCount, timeAgoRu } from '@/lib/format'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { MediaCarousel, VideoPlayer } from '@/components/feed/MediaCarousel'
+import { SummarySheet } from '@/components/feed/SummarySheet'
 import { tokenizeHashtags } from '@/components/feed/PostCard'
 
 /**
@@ -75,6 +76,8 @@ export function PostOverlay() {
 
   // Локальная копия для оптимистичных действий
   const [live, setLive] = useState<PostDTO | null>(null)
+  // «Краткое содержание» прямо из полного экрана поста
+  const [summaryPost, setSummaryPost] = useState<PostDTO | null>(null)
   const current = post && live && live.id === post.id ? live : post
 
   useBackButton(open, closePost)
@@ -123,20 +126,21 @@ export function PostOverlay() {
   const fullDate = current ? new Date(current.publishedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''
 
   return (
-    <AnimatePresence>
-      {open && current && ch && (
-        <motion.div
-          key={current.id}
-          initial={{ y: '100%' }}
-          animate={{ y: 0 }}
-          exit={{ y: '100%' }}
-          transition={{ type: 'spring', damping: 32, stiffness: 330 }}
-          className="fixed inset-0 z-[65] mx-auto flex w-full max-w-[430px] flex-col bg-tg-bg"
-          role="dialog"
-          aria-modal="true"
-          aria-label="Пост"
-          data-noswipe
-        >
+    <>
+      <AnimatePresence>
+        {open && current && ch && (
+          <motion.div
+            key={current.id}
+            initial={{ y: '100%' }}
+            animate={{ y: 0 }}
+            exit={{ y: '100%' }}
+            transition={{ type: 'spring', damping: 32, stiffness: 330 }}
+            className="fixed inset-0 z-[65] mx-auto flex w-full max-w-[430px] flex-col bg-tg-bg"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Пост"
+            data-noswipe
+          >
           {/* Шапка */}
           <header className="flex shrink-0 items-center gap-2 border-b border-tg-sep px-2 py-2.5 pt-[max(0.625rem,env(safe-area-inset-top))]">
             <button
@@ -216,6 +220,20 @@ export function PostOverlay() {
                 </>
               )}
             </div>
+            {/* Краткое содержание доступно и из полного экрана — у любого длинного текста */}
+            {current.text && current.text.length > 400 && (
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  setSummaryPost(current)
+                }}
+                className="mt-3 mx-4 inline-flex items-center gap-1.5 rounded-xl bg-tg-surface px-3.5 py-2.5 text-[14px] font-semibold text-tg-link active:opacity-70"
+              >
+                <Sparkle className="h-4 w-4" aria-hidden />
+                Краткое содержание
+              </button>
+            )}
             <div className="h-24" />
           </div>
 
@@ -288,6 +306,9 @@ export function PostOverlay() {
           </nav>
         </motion.div>
       )}
-    </AnimatePresence>
+      </AnimatePresence>
+      {/* Саммари рендерится поверх полного экрана поста */}
+      <SummarySheet post={summaryPost} onClose={() => setSummaryPost(null)} />
+    </>
   )
 }

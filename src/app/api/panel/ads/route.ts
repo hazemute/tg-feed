@@ -30,16 +30,21 @@ const patchSchema = z.object({
   imageUrl: z.string().trim().max(512).optional().nullable(),
 })
 
-function serialize(ad: {
-  id: string
-  title: string
-  body: string
-  ctaLabel: string
-  link: string
-  imageUrl: string | null
-  isActive: boolean
-  createdAt: Date
-}) {
+function serialize(
+  ad: {
+    id: string
+    title: string
+    body: string
+    ctaLabel: string
+    link: string
+    imageUrl: string | null
+    isActive: boolean
+    createdAt: Date
+    impressions?: number
+    clicks?: number
+  },
+  extra?: { impressions24h: number; clicks24h: number },
+) {
   return {
     id: ad.id,
     title: ad.title,
@@ -49,6 +54,10 @@ function serialize(ad: {
     imageUrl: ad.imageUrl,
     isActive: ad.isActive,
     createdAt: ad.createdAt.toISOString(),
+    impressions: ad.impressions ?? 0,
+    clicks: ad.clicks ?? 0,
+    impressions24h: extra?.impressions24h ?? 0,
+    clicks24h: extra?.clicks24h ?? 0,
   }
 }
 
@@ -61,11 +70,33 @@ export async function GET(request: Request) {
 
   try {
     const ads = await db.ad.findMany({ orderBy: { createdAt: 'desc' } })
-    return NextResponse.json({ items: ads.map(serialize) })
+
+    // Суточные суммы одним запросом: день (UTC) сегодня + вчера
+    const since = new Date(Date.now() - 24 * 60 * 60_000)
+    const days = [...new Set([dayKey(since), dayKey(new Date())])]
+    const stats = await db.adStat.groupBy({
+      by: ['adId'],
+      where: { day: { in: days } },
+      _sum: { impressions: true, clicks: true },
+    })
+    const byAd = new Map(stats.map((s) => [s.adId, s._sum]))
+
+    return NextResponse.json({
+      items: ads.map((ad) =>
+        serialize(ad, {
+          impressions24h: byAd.get(ad.id)?.impressions ?? 0,
+          clicks24h: byAd.get(ad.id)?.clicks ?? 0,
+        }),
+      ),
+    })
   } catch (e) {
     console.error('[panel/ads GET]', e)
     return err('ads failed', 500)
   }
+}
+
+function dayKey(d: Date): string {
+  return d.toISOString().slice(0, 10)
 }
 
 /**
@@ -90,7 +121,10 @@ export async function POST(request: Request) {
       },
     })
 
-    return NextResponse.json({ ok: true, ad: serialize(ad) })
+    return NextResponse.json({
+      ok: true,
+      ad: serialize(ad, { impressions24h: 0, clicks24h: 0 }),
+    })
   } catch (e) {
     console.error('[panel/ads POST]', e)
     return err('create failed', 500)
@@ -117,7 +151,7 @@ export async function PATCH(request: Request) {
     if (Object.keys(data).length === 0) return err('нужен хотя бы один изменяемый столбец')
 
     const ad = await db.ad.update({ where: { id }, data })
-    return NextResponse.json({ ok: true, ad: serialize(ad) })
+    return NextResponse.json({ ok: true, ad: serialize(ad, { impressions24h: 0, clicks24h: 0 }) })
   } catch (e) {
     console.error('[panel/ads PATCH]', e)
     return err('ad not found', 404)

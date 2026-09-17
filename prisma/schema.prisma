@@ -144,14 +144,32 @@ model Bookmark {
 }
 
 model Ad {
-  id        String   @id @default(cuid())
-  title     String
-  body      String
-  ctaLabel  String   @default("Перейти")
-  link      String
-  imageUrl  String?
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
+  id         String   @id @default(cuid())
+  title      String
+  body       String
+  ctaLabel   String   @default("Перейти")
+  link       String
+  imageUrl   String?
+  isActive   Boolean  @default(true)
+  impressions Int     @default(0) // показы в ленте (счётчик за всё время)
+  clicks     Int      @default(0) // клики по CTA (счётчик за всё время)
+  createdAt  DateTime @default(now())
+
+  stats      AdStat[]
+}
+
+// Дневная аналитика рекламы (одна строка на рекламу в день): CTR и динамика
+// для рекламодателей. Счётчики увеличиваются атомарным upsert.
+model AdStat {
+  id          String   @id @default(cuid())
+  adId        String
+  ad          Ad       @relation(fields: [adId], references: [id], onDelete: Cascade)
+  day         String // YYYY-MM-DD (UTC)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+
+  @@unique([adId, day])
+  @@index([day])
 }
 
 // Клики по #хэштегам в постах — источник трендов «Сейчас обсуждают»

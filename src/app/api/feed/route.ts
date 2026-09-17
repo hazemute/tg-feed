@@ -2,9 +2,9 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
-import { computeWeight, rankJitter } from '@/lib/rank'
+import { computeWeight, diversify, personalBoost, rankJitter } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
-import { buildFeedScope } from '@/lib/feed'
+import { buildFeedScope, loadPersonalSignals } from '@/lib/feed'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import type { PostDTO } from '@/lib/types'
@@ -19,18 +19,23 @@ const querySchema = z.object({
   limit: z.coerce.number().int().min(1).max(20).catch(6),
 })
 
-type RankedIndex = { ids: string[]; total: number }
+/**
+ * Запись глобального индекса: id поста, id канала, id категории, вес.
+ * Кэшируется для ВСЕХ пользователей (вес — глобальное качество поста),
+ * персонализация применяется на каждом запросе поверх этих данных.
+ */
+type IndexEntry = { i: string; c: string; g: string | null; w: number }
+type RankedIndex = { entries: IndexEntry[]; total: number }
 
 /**
- * GET /api/feed?category=all|slug&page=0&limit=6
- * Взвешенная лента: premium ×1000, лайки с временно́м затуханием,
- * фильтр по интересам, свежие посты приоритетнее, скрытые каналы исключены.
- * Требуется сессия (Bearer); лимит 120 запросов в минуту на пользователя.
+ * GET /api/feed?category=all|slug|discover&page=0&limit=6
  *
- * Redis-оптимизация: тяжёлая часть (скан 400 постов + ранжирование) кэшируется
- * как список id на «скоуп» (категория + интересы + скрытые каналы), а сами посты
- * запрошенной страницы каждый раз читаются из БД — счётчики лайков/просмотров
- * остаются свежими, персонализация никогда не кэшируется.
+ * Рекомендации в два уровня:
+ *  1) глобальный вес (качество: лайки, закладки, просмотры, свежесть, премиум)
+ *     — кэшируется как индекс на «скоуп» в Redis;
+ *  2) персональный буст (аффинити к каналам/категориям, подписки, штраф за
+ *     просмотренное) + гарантия разнообразия (≤3 постов канала подряд).
+ * Требуется сессия (Bearer); лимит 120 запросов в минуту на пользователя.
  */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 120, windowMs: 60_000, bucket: 'feed' })
@@ -46,43 +51,71 @@ export async function GET(request: Request) {
     const scope = await buildFeedScope(userId, category)
     if (!scope) return err('user not found', 404)
 
-    /* ---------- Ранжированный индекс: Redis (25с) → Postgres ---------- */
+    /* ---------- Глобальный индекс: Redis (25с) → Postgres ---------- */
     const indexKey =
       scope.sig !== null
-        ? await famKey('feed', `${category}:${shortHash(scope.sig)}`)
-        : null // discover — персональный скоуп по истории просмотров, без кэша
+        ? await famKey('feed', `${category}:v2:${shortHash(scope.sig)}`)
+        : null // discover — персональный скоуп по интересам, без кэша
 
     const loadIndex = async (): Promise<RankedIndex> => {
       const posts = await db.post.findMany({
         where: scope.where,
         select: {
           id: true,
+          channelId: true,
           likesCount: true,
+          viewsCount: true,
           publishedAt: true,
-          channel: { select: { isPremium: true } },
+          channel: {
+            select: { isPremium: true, categoryId: true },
+          },
         },
         orderBy: { publishedAt: 'desc' },
         take: 400,
       })
-      const ranked = posts
+      const entries: IndexEntry[] = posts
         .map((p) => ({
-          id: p.id,
+          i: p.id,
+          c: p.channelId,
+          g: p.channel.categoryId,
           w: computeWeight({
             likesCount: p.likesCount,
+            viewsCount: p.viewsCount,
             publishedAt: p.publishedAt,
             premium: p.channel.isPremium,
           }) + rankJitter(p.id),
         }))
         .sort((a, b) => b.w - a.w)
-      return { ids: ranked.map((r) => r.id), total: ranked.length }
+      return { entries, total: entries.length }
     }
 
     const index: RankedIndex = indexKey
       ? await cacheAside({ key: indexKey, ttlSec: 25, memoryTtlMs: 3000, fetcher: loadIndex })
       : await loadIndex()
 
-    /* ---------- Страница: свежие посты по id из индекса ---------- */
-    const sliceIds = index.ids.slice(page * limit, page * limit + limit)
+    /* ---------- Персональный слой: аффинити + просмотренное ---------- */
+    const signals = await loadPersonalSignals(userId)
+
+    const boosted = index.entries.map((e) => ({
+      id: e.i,
+      cid: e.c,
+      w:
+        e.w +
+        personalBoost({
+          channelId: e.c,
+          categoryId: e.g,
+          subscribed: signals.subscribedIds.has(e.c),
+          viewed: signals.viewedIds.has(e.i),
+          affinity: signals.affinity,
+        }),
+    }))
+    boosted.sort((a, b) => b.w - a.w)
+
+    // Разнообразие: не более трёх постов одного канала подряд
+    const ordered = diversify(boosted, (x) => x.cid)
+
+    /* ---------- Страница: посты по id из индекса ---------- */
+    const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
     const slicePosts = sliceIds.length
       ? await db.post.findMany({
           where: { id: { in: sliceIds } },
@@ -101,7 +134,7 @@ export async function GET(request: Request) {
     const postIds = slice.map((s) => s.id)
     const channelIds = [...new Set(slice.map((s) => s.channelId))]
 
-    const [likes, bookmarks, subs] = await Promise.all([
+    const [likes, bookmarks] = await Promise.all([
       postIds.length
         ? db.like.findMany({ where: { userId, postId: { in: postIds } }, select: { postId: true } })
         : Promise.resolve([]),
@@ -111,17 +144,10 @@ export async function GET(request: Request) {
             select: { postId: true },
           })
         : Promise.resolve([]),
-      channelIds.length
-        ? db.subscription.findMany({
-            where: { userId, channelId: { in: channelIds } },
-            select: { channelId: true },
-          })
-        : Promise.resolve([]),
     ])
 
     const likeSet = new Set(likes.map((l) => l.postId))
     const bookmarkSet = new Set(bookmarks.map((b) => b.postId))
-    const subSet = new Set(subs.map((s) => s.channelId))
 
     const items: PostDTO[] = slice.map((p) =>
       toPostDTO(
@@ -129,7 +155,7 @@ export async function GET(request: Request) {
         {
           liked: likeSet.has(p.id),
           bookmarked: bookmarkSet.has(p.id),
-          subscribed: subSet.has(p.channelId),
+          subscribed: signals.subscribedIds.has(p.channelId),
         },
         p._count.bookmarkedBy,
       ),

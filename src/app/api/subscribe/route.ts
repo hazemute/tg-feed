@@ -72,7 +72,7 @@ export async function POST(request: Request) {
     }
 
     if (existing) {
-      await db.subscription.delete({ where: { id: existing.id } })
+      await db.subscription.deleteMany({ where: { id: existing.id } })
       const updated = await db.channel.update({
         where: { id: channel.id },
         data: { subscribersCount: { decrement: 1 } },
@@ -84,7 +84,13 @@ export async function POST(request: Request) {
       })
     }
 
-    await db.subscription.create({ data: { userId, channelId: channel.id, notify: true } })
+    // Идемпотентно даже при гонке (двойной тап / параллельные запросы):
+    // upsert не падает на unique-конфликте, в отличие от create
+    await db.subscription.upsert({
+      where: { userId_channelId: { userId, channelId: channel.id } },
+      create: { userId, channelId: channel.id, notify: true },
+      update: {},
+    })
     // Клик по [+] учитывается в дашборде админа (CTR)
     const updated = await db.channel.update({
       where: { id: channel.id },

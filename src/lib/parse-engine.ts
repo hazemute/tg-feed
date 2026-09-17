@@ -30,6 +30,10 @@ export type ParseResult = {
   results: ParseChannelResult[]
   /** реально созданные посты — для рассылки уведомлений (Bot API) */
   newPosts: NotifiablePost[]
+  /** true — прогон оборван по тайм-бюджету: продолжите ещё раз (для серверлес-лимитов) */
+  truncated?: boolean
+  /** всего активных каналов в очереди прогона (для прогресса «N из M») */
+  totalTargets?: number
 }
 
 /** Нормализация HTML-сущностей, встречающихся в разметке t.me/s */
@@ -111,12 +115,24 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
 /**
  * Запуск парсера (вся логика прежнего POST /api/parse).
  *
- * @param perChannel — сколько новейших постов добавлять на канал за один прогон
+ * @param perChannel — сколько НОВЫХ постов добавлять на канал за один прогон
  *   (1..50; некорректное значение → 5). Источник: https://t.me/s/<username>.
  * @param singleUsername — опционально: парсить один канал (@name / t.me/name / name)
- *   вместо активных каналов из базы (первые 20).
+ *   вместо активных каналов из базы.
+ * @param maxChannels — сколько активных каналов обрабатывать за прогон
+ *   (по умолчанию 20, как в cron-режиме; для крупного прогона — 500).
+ * @param deadlineMs — мягкий тайм-бюджет всего прогона (0 = без бюджета):
+ *   после дедлайна цикл останавливается, truncated=true — продолжите новым запуском.
+ * @param pages — страниц истории на канал (1 = только свежие; 4 = углубление
+ *   в архив через t.me/s?before=<id>). Крупные прогоны истории — pages=4.
  */
-export async function runParser(perChannel: number, singleUsername?: string): Promise<ParseResult> {
+export async function runParser(
+  perChannel: number,
+  singleUsername?: string,
+  maxChannels = 20,
+  deadlineMs = 0,
+  pages = 1,
+): Promise<ParseResult> {
   // Нормализация лимита: некорректное/нулевое значение → дефолт 5 (как в cron-режиме)
   const per =
     Number.isFinite(perChannel) && perChannel > 0 ? Math.min(50, Math.floor(perChannel)) : 5
@@ -140,7 +156,7 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
     const active = await db.channel.findMany({
       where: { status: 'active' },
       select: { username: true },
-      take: 20,
+      take: Math.max(1, Math.min(500, Math.floor(maxChannels))),
     })
     targets = active.map((c) => c.username)
   }
@@ -162,7 +178,13 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
   }
 
   let processed = 0
+  let truncated = false
   for (const target of targets) {
+    // тайм-бюджет (серверлес-лимиты): дообработаем остальные каналы следующим прогоном
+    if (deadlineMs > 0 && processed > 0 && Date.now() > deadlineMs) {
+      truncated = true
+      break
+    }
     try {
       const channel = await db.channel.findUnique({ where: { username: target } })
       if (!channel) {
@@ -192,7 +214,34 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
       const html = await res.text()
-      const parsed = parseChannelHtml(html, target)
+      let parsed = parseChannelHtml(html, target)
+
+      /* ---------- История канала: ?before=<id> пагинация ---------- */
+      const maxPages = Math.max(1, Math.min(6, Math.floor(pages)))
+      for (let page = 1; page < maxPages && parsed.length > 0; page++) {
+        let minId: number | null = null
+        for (const p of parsed) {
+          const n = Number(p.tgKey.split(":")[1])
+          if (Number.isFinite(n) && (minId === null || n < minId)) minId = n
+        }
+        if (minId === null || minId <= 1) break
+        try {
+          const res2 = await fetch(`https://t.me/s/${target}?before=${minId}`, {
+            headers: {
+              "User-Agent":
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+              "Accept-Language": "ru,en;q=0.9",
+            },
+            signal: AbortSignal.timeout(15000),
+          })
+          if (!res2.ok) break
+          const parsed2 = parseChannelHtml(await res2.text(), target)
+          if (parsed2.length === 0) break
+          parsed = parsed.concat(parsed2)
+        } catch {
+          break
+        }
+      }
 
       /*
        * Аватарка и счётчик подписчиков: Bot API (getChat / getChatMemberCount).
@@ -233,13 +282,14 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
           })
           .catch(() => {})
       }
-      // Берём только N новейших постов страницы (сортировка по publishedAt desc)
-      const queue = [...parsed]
-        .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
-        .slice(0, per)
+      // Новейшие первыми; дубли отклонит unique tgKey — вставляем, пока не доберём per
+      const queue = [...parsed].sort(
+        (a, b) => b.publishedAt.getTime() - a.publishedAt.getTime(),
+      )
 
       let added = 0
       for (const p of queue) {
+        if (added >= per) break
         try {
           const created = await db.post.create({
             data: {
@@ -275,7 +325,7 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
     }
   }
 
-  const result = { ok: true as const, results, newPosts }
+  const result = { ok: true as const, results, newPosts, truncated, totalTargets: targets.length }
   emitAdminEvent('parse:done', { newPosts: newPosts.length, ms: Date.now() - startedAt })
 
   // Инвалидация кэша: лента/тренды/каталог/категории/поиск — новые посты

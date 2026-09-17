@@ -43,6 +43,7 @@ import { cn } from '@/lib/utils'
 
 import {
   fmtAgo,
+  fmtNum,
   isAuthOrNetworkError,
   panelFetch,
   PanelError,
@@ -86,6 +87,38 @@ function ActiveBadge({ isActive }: { isActive: boolean }) {
     <Badge variant="outline" className="border border-slate-200 bg-slate-100 text-slate-500">
       выключена
     </Badge>
+  )
+}
+
+/** CTR строкой: «12.3%», для нулей — прочерк */
+function ctr(clicks: number, impressions: number): string {
+  if (impressions <= 0) return '—'
+  return `${((clicks / impressions) * 100).toFixed(1)}%`
+}
+
+/** Метрики кампании: показы/клики/CTR за всё время и за 24 часа */
+function AdMetrics({ ad }: { ad: Ad }) {
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      <Metric label="Показы" value={fmtNum(ad.impressions)} sub={`за 24ч: ${fmtNum(ad.impressions24h)}`} />
+      <Metric label="Клики" value={fmtNum(ad.clicks)} sub={`за 24ч: ${fmtNum(ad.clicks24h)}`} />
+      <Metric label="CTR" value={ctr(ad.clicks, ad.impressions)} sub={`за 24ч: ${ctr(ad.clicks24h, ad.impressions24h)}`} />
+      <Metric
+        label="Статус"
+        value={ad.isActive ? 'идёт показ' : 'пауза'}
+        sub={ad.isActive ? 'ротация активна' : 'не показывается'}
+      />
+    </div>
+  )
+}
+
+function Metric({ label, value, sub }: { label: string; value: string; sub: string }) {
+  return (
+    <div className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
+      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="mt-0.5 text-sm font-bold tabular-nums text-slate-800">{value}</div>
+      <div className="text-[10px] tabular-nums text-slate-400">{sub}</div>
+    </div>
   )
 }
 
@@ -266,6 +299,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                       className="data-[state=checked]:bg-emerald-500"
                     />
                   </div>
+                  <AdMetrics ad={ad} />
                   <div className="mt-auto flex items-center justify-between gap-2">
                     <a
                       href={ad.link}

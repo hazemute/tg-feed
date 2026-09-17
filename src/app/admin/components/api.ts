@@ -149,6 +149,10 @@ export interface Ad {
   imageUrl: string
   isActive: boolean
   createdAt: string
+  impressions: number
+  clicks: number
+  impressions24h: number
+  clicks24h: number
 }
 
 export interface AdsResponse {
@@ -191,11 +195,37 @@ export interface ParseResult {
   results: ParseResultRow[]
   newPostsCount: number
   notified: { sent: number; failed: number; recipients: number }
+  truncated?: boolean
+  totalTargets?: number
 }
 
 export interface ToolsParseResponse {
   ok: boolean
   result: ParseResult
+}
+
+export interface AutodiscoverState {
+  running: boolean
+  phase: 'idle' | 'working' | 'done' | 'stopped'
+  source: 'all' | 'tgstat' | 'combot' | 'curated'
+  queueSize: number
+  visitedCount: number
+  processedCount: number
+  channelsAdded: number
+  postsAdded: number
+  rejectedCount: number
+  maxNew: number
+  sourcesLeft: number
+  added: Array<{ username: string; title: string; category: string; posts: number; members: number | null }>
+  rejected: Array<{ username: string; reason: string }>
+  log: Array<{ at: number; msg: string }>
+  startedAt: number
+  updatedAt: number
+}
+
+export interface AutoparseResponse {
+  ok: boolean
+  state: AutodiscoverState | null
 }
 
 export interface LoginResponse {

@@ -10,6 +10,7 @@ import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
 import { pluralRu } from '@/lib/format'
 import { loadFeedCache, saveFeedCache } from '@/lib/offline'
+import { openChannelToJoin } from '@/lib/tg-subscribe'
 import type { AdDTO, FeedResponse, NotificationsResponse, PostDTO } from '@/lib/types'
 import { PostCard } from '@/components/feed/PostCard'
 import { AdCard } from '@/components/feed/AdCard'
@@ -524,6 +525,10 @@ export function FeedView() {
           ),
         )
         if (finalSubscribed) haptic('success')
+        // Подписка в один тап: локальная запись создана — открываем канал
+        // в Telegram, где пользователь нажимает родную «Подписаться».
+        // После возврата членство тихо сверится через Bot API.
+        if (finalSubscribed && next) openChannelToJoin(ch.username)
       } catch {
         setItems((prev) =>
           prev.map((p) =>

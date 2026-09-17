@@ -122,16 +122,31 @@ CREATE TABLE IF NOT EXISTS "Bookmark" (
 );
 
 CREATE TABLE IF NOT EXISTS "Ad" (
-    "id"        text        NOT NULL DEFAULT gen_random_uuid()::text,
-    "title"     text        NOT NULL,
-    "body"      text        NOT NULL,
-    "ctaLabel"  text        NOT NULL DEFAULT 'Перейти',
-    "link"      text        NOT NULL,
-    "imageUrl"  text,
-    "isActive"  boolean     NOT NULL DEFAULT true,
-    "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "id"          text        NOT NULL DEFAULT gen_random_uuid()::text,
+    "title"       text        NOT NULL,
+    "body"        text        NOT NULL,
+    "ctaLabel"    text        NOT NULL DEFAULT 'Перейти',
+    "link"        text        NOT NULL,
+    "imageUrl"    text,
+    "isActive"    boolean     NOT NULL DEFAULT true,
+    "impressions" integer     NOT NULL DEFAULT 0,
+    "clicks"      integer     NOT NULL DEFAULT 0,
+    "createdAt"   timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT "Ad_pkey" PRIMARY KEY ("id")
 );
+
+-- Дневная аналитика рекламы (одна строка на рекламу в день)
+CREATE TABLE IF NOT EXISTS "AdStat" (
+    "id"          text        NOT NULL DEFAULT gen_random_uuid()::text,
+    "adId"        text        NOT NULL,
+    "day"         text        NOT NULL,
+    "impressions" integer     NOT NULL DEFAULT 0,
+    "clicks"      integer     NOT NULL DEFAULT 0,
+    CONSTRAINT "AdStat_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "AdStat_adId_fkey" FOREIGN KEY ("adId") REFERENCES "Ad"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "AdStat_adId_day_key" UNIQUE ("adId", "day")
+);
+CREATE INDEX IF NOT EXISTS "AdStat_day_idx" ON "AdStat"("day");
 
 CREATE TABLE IF NOT EXISTS "HashtagClick" (
     "id"        text        NOT NULL DEFAULT gen_random_uuid()::text,
