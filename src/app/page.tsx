@@ -11,7 +11,6 @@ import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@
 import { THEME_BY_ID } from '@/lib/themes'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
-import { Onboarding } from '@/components/tg/Onboarding'
 import { FeedView } from '@/components/feed/FeedView'
 import { ChannelSheet } from '@/components/feed/ChannelSheet'
 import { PostOverlay } from '@/components/feed/PostOverlay'
@@ -29,7 +28,7 @@ const tabVariants = {
 }
 
 export default function Home() {
-  const { user, authReady, tab, tabDir, interests, theme, fontScale, setUser, setAuthReady, setCategories, setTheme, setFontScale, goToTab } =
+  const { user, authReady, tab, tabDir, theme, fontScale, setUser, setAuthReady, setCategories, setTheme, setFontScale, goToTab } =
     useApp()
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
 
@@ -187,9 +186,6 @@ export default function Home() {
     )
   }
 
-  // PRD: первому входу — выбор 3 интересных направлений
-  const needsOnboarding = interests.length === 0
-
   return (
     <div className="flex h-dvh justify-center bg-tg-bg">
       <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-tg-bg md:border-x md:border-tg-sep md:shadow-xl">
@@ -213,7 +209,6 @@ export default function Home() {
           </motion.main>
         </AnimatePresence>
         <BottomNav />
-        <Onboarding open={needsOnboarding} mode="onboarding" onClose={() => {}} />
         {/* Экран канала внутри приложения */}
         <ChannelSheet />
         {/* Полный экран поста (открывается из «...еще») */}

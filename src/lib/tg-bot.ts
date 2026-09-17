@@ -179,7 +179,7 @@ function formatPostMessage(post: NotifiablePost): string {
   const title = escapeHtml(post.channel.title)
   const text = post.text ? escapeHtml(post.text.slice(0, 350)) + (post.text.length > 350 ? '…' : '') : ''
   const url = post.link || `https://t.me/${post.channel.username}`
-  return `📰 <b>${title}</b>${text ? `\n\n${text}` : ''}\n\n<a href="${url}">Открыть в Telegram →</a>`
+  return `<b>${title}</b>${text ? `\n\n${text}` : ''}\n\n<a href="${url}">Открыть в Telegram →</a>`
 }
 
 /**

@@ -10,9 +10,8 @@ import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
 
 /**
- * Экран выбора интересов (онбординг при первом входе / редактирование из профиля).
- * PRD: при первом входе нужно выбрать минимум 3 темы.
- * Чипы с эмодзи, stagger-появление, живой прогресс до минимума.
+ * Экран выбора интересов (редактирование из профиля).
+ * Чипы без эмодзи, stagger-появление, живой прогресс до минимума.
  */
 export function Onboarding({
   open,
@@ -140,13 +139,12 @@ export function Onboarding({
                   animate={{ opacity: 1, y: 0, scale: 1 }}
                   transition={{ delay: 0.03 * i, type: 'spring', stiffness: 380, damping: 26 }}
                   className={cn(
-                    'flex items-center gap-1.5 rounded-full py-2.5 pl-4 pr-3.5 text-[14px] font-medium transition-colors active:scale-95',
+                    'flex items-center gap-1.5 rounded-full px-4 py-2.5 text-[14px] font-medium transition-colors active:scale-95',
                     active
                       ? 'bg-tg-link text-white shadow-md shadow-tg-link/25'
                       : 'bg-tg-surface text-tg-text',
                   )}
                 >
-                  <span aria-hidden>{c.emoji}</span>
                   {c.title}
                   <AnimatePresence>
                     {active && (
