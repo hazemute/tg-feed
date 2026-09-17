@@ -1,12 +1,13 @@
 'use client'
 
-import { useState } from 'react'
-import { ArrowLeft, Bookmark, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { ArrowLeft, Bookmark, ChevronLeft, ChevronRight, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
+import { fullDateLocalized, useT } from '@/lib/i18n'
 import { haptic, openTelegram, sharePost, useBackButton } from '@/lib/tg'
 import { formatCount, timeAgoRu } from '@/lib/format'
 import type { PostDTO } from '@/lib/types'
@@ -39,15 +40,83 @@ export function emitPostUpdated(patch: {
 export function PostOverlay() {
   const post = useApp((s) => s.post)
   const closePost = useApp((s) => s.closePost)
+  const openPost = useApp((s) => s.openPost)
+  const postQueue = useApp((s) => s.postQueue)
   const openChannel = useApp((s) => s.openChannel)
   const user = useApp((s) => s.user)
   const open = !!post
+  const t = useT()
+  const lang = useApp((s) => s.lang)
 
-  // Локальная копия для оптимистичных действий
-  const [live, setLive] = useState<PostDTO | null>(null)
+  // Локальная копия для оптимистичных действий: хранится вместе с id поста —
+  // при переключении на соседний пост (свайп/стрелки) копия автоматически
+  // игнорируется, отдельный сброс в эффекте не нужен
+  const [live, setLive] = useState<{ id: string; data: PostDTO } | null>(null)
   // «Краткое содержание» прямо из полного экрана поста
   const [summaryPost, setSummaryPost] = useState<PostDTO | null>(null)
-  const current = post && live && live.id === post.id ? live : post
+  const current = post && live && live.id === post.id ? live.data : post
+
+  /* ---------- Свайп ←/→ между постами очереди ленты ---------- */
+
+  // Направление последнего переключения (1 — к следующему, -1 — к предыдущему,
+  // 0 — первичное открытие): задаёт сторону влёта контента
+  const [slideDir, setSlideDir] = useState(0)
+
+  const qIndex = current ? postQueue.findIndex((p) => p.id === current.id) : -1
+  const hasNext = qIndex >= 0 && qIndex < postQueue.length - 1
+  const hasPrev = qIndex > 0
+
+  const goNext = useCallback(() => {
+    const i = postQueue.findIndex((p) => p.id === post?.id)
+    if (i >= 0 && i < postQueue.length - 1) {
+      setSlideDir(1)
+      haptic('light')
+      openPost(postQueue[i + 1])
+    }
+  }, [postQueue, post?.id, openPost])
+
+  const goPrev = useCallback(() => {
+    const i = postQueue.findIndex((p) => p.id === post?.id)
+    if (i > 0) {
+      setSlideDir(-1)
+      haptic('light')
+      openPost(postQueue[i - 1])
+    }
+  }, [postQueue, post?.id, openPost])
+
+  // Сброс оптимистичной копии при смене поста происходит автоматически:
+  // current берёт live только при совпадении id (см. комментарий выше)
+
+  // Клавиатура (десктоп): ←/→ листают посты очереди
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') goNext()
+      else if (e.key === 'ArrowLeft') goPrev()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, goNext, goPrev])
+
+  // Touch-свайп: горизонталь должна доминировать над вертикалью (иначе это скролл),
+  // порог 80px и не дольше 700мс — не мешает вертикальной прокрутке контента
+  const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)
+  const onTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches[0]
+    touchStart.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  }
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const s = touchStart.current
+    touchStart.current = null
+    if (!s) return
+    const t = e.changedTouches[0]
+    const dx = t.clientX - s.x
+    const dy = t.clientY - s.y
+    if (Date.now() - s.t > 700) return
+    if (Math.abs(dx) < 80 || Math.abs(dx) < Math.abs(dy) * 1.5) return
+    if (dx < 0) goNext()
+    else goPrev()
+  }
 
   useBackButton(open, closePost)
 
@@ -57,18 +126,22 @@ export function PostOverlay() {
     if (!current || !user) return
     const nextLiked = !current.liked
     const nextCount = Math.max(0, current.likesCount + (nextLiked ? 1 : -1))
-    setLive({ ...current, liked: nextLiked, likesCount: nextCount })
+    setLive({ id: current.id, data: { ...current, liked: nextLiked, likesCount: nextCount } })
     haptic('light')
     try {
       const r = await api<{ liked: boolean; likesCount: number }>('/api/like', {
         method: 'POST',
         body: JSON.stringify({ userId: user.id, postId: current.id }),
       })
-      setLive((prev) => (prev ? { ...prev, liked: r.liked, likesCount: r.likesCount } : prev))
+      setLive((prev) =>
+        prev && prev.id === current.id
+          ? { ...prev, data: { ...prev.data, liked: r.liked, likesCount: r.likesCount } }
+          : prev,
+      )
       emitPostUpdated({ postId: current.id, liked: r.liked, likesCount: r.likesCount })
     } catch {
-      setLive({ ...current, liked: !nextLiked, likesCount: current.likesCount })
-      toast.error('Не удалось сохранить лайк')
+      setLive({ id: current.id, data: { ...current, liked: !nextLiked, likesCount: current.likesCount } })
+      toast.error(t('post.likeError'))
     }
   }
 
@@ -76,22 +149,22 @@ export function PostOverlay() {
     if (!current || !user) return
     const next = !current.bookmarked
     const nextCount = Math.max(0, current.bookmarksCount + (next ? 1 : -1))
-    setLive({ ...current, bookmarked: next, bookmarksCount: nextCount })
+    setLive({ id: current.id, data: { ...current, bookmarked: next, bookmarksCount: nextCount } })
     haptic(next ? 'success' : 'light')
     try {
       await api('/api/bookmark', {
         method: 'POST',
         body: JSON.stringify({ userId: user.id, postId: current.id }),
       })
-      toast.success(next ? 'Сохранено' : 'Убрано из сохранённых')
+      toast.success(next ? t('post.savedToast') : t('post.unsavedToast'))
       emitPostUpdated({ postId: current.id, bookmarked: next, bookmarksCount: nextCount })
     } catch {
-      setLive({ ...current, bookmarked: !next, bookmarksCount: current.bookmarksCount })
-      toast.error('Ошибка')
+      setLive({ id: current.id, data: { ...current, bookmarked: !next, bookmarksCount: current.bookmarksCount } })
+      toast.error(t('post.error'))
     }
   }
 
-  const fullDate = current ? new Date(current.publishedAt).toLocaleString('ru-RU', { day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }) : ''
+  const fullDate = current ? fullDateLocalized(lang, current.publishedAt) : ''
   // Тизер-режим канала: полный текст — только у подписчиков оригинала
   const chTeaser = current?.channel
   const teaser =
@@ -128,19 +201,62 @@ export function PostOverlay() {
                 haptic('light')
                 closePost()
               }}
-              aria-label="Назад"
+              aria-label={t('post.back')}
               className="flex h-10 w-10 items-center justify-center rounded-full text-tg-text active:bg-tg-surface"
             >
               <ArrowLeft className="h-6 w-6" strokeWidth={1.8} />
             </button>
-            <span className="flex-1 text-[17px] font-semibold text-tg-text">Пост</span>
+            <span className="flex-1 text-[17px] font-semibold text-tg-text">{t('post.title')}</span>
+            {/* Пейджер очереди ленты: свайп/стрелки листают посты без выхода в ленту */}
+            {qIndex >= 0 && postQueue.length > 1 && (
+              <nav aria-label={t('post.pager')} className="flex items-center gap-0.5 rounded-full bg-tg-surface px-1 py-0.5">
+                <button
+                  type="button"
+                  onClick={goPrev}
+                  disabled={!hasPrev}
+                  aria-label={t('post.prev')}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full',
+                    hasPrev ? 'text-tg-text active:bg-tg-sep/60' : 'text-tg-hint/40',
+                  )}
+                >
+                  <ChevronLeft className="h-4.5 w-4.5" strokeWidth={2.2} />
+                </button>
+                <span className="min-w-[38px] text-center text-[12px] font-semibold tabular-nums text-tg-hint" aria-live="polite">
+                  {qIndex + 1}/{postQueue.length}
+                </span>
+                <button
+                  type="button"
+                  onClick={goNext}
+                  disabled={!hasNext}
+                  aria-label={t('post.next')}
+                  className={cn(
+                    'flex h-7 w-7 items-center justify-center rounded-full',
+                    hasNext ? 'text-tg-text active:bg-tg-sep/60' : 'text-tg-hint/40',
+                  )}
+                >
+                  <ChevronRight className="h-4.5 w-4.5" strokeWidth={2.2} />
+                </button>
+              </nav>
+            )}
             <time dateTime={current.publishedAt} className="pr-2 text-[12.5px] text-tg-hint">
               {timeAgoRu(current.publishedAt)}
             </time>
           </header>
 
           {/* Контент */}
-          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+          <div
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain"
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
+          >
+            {/* Смена поста (свайп/стрелки) приезжает с соответствующей стороны */}
+            <motion.div
+              key={current.id}
+              initial={{ x: slideDir * 72, opacity: slideDir === 0 ? 1 : 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              transition={{ type: 'spring', damping: 34, stiffness: 400 }}
+            >
             {/* Канал */}
             <button
               type="button"
@@ -148,7 +264,7 @@ export function PostOverlay() {
                 haptic('light')
                 openChannel(ch.username)
               }}
-              aria-label={`Открыть канал ${ch.title}`}
+              aria-label={`${t('post.openChannel')} ${ch.title}`}
               className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-tg-surface/60"
             >
               <Avatar name={ch.title} color={ch.avatarColor} src={ch.avatarUrl} size={46} className="ring-1 ring-tg-sep/70" />
@@ -156,11 +272,11 @@ export function PostOverlay() {
                 <span className="flex min-w-0 items-center gap-1">
                   <span className="truncate text-[16px] font-bold leading-tight text-tg-text">{ch.title}</span>
                   {ch.isPremium && (
-                    <Star className="h-3.5 w-3.5 shrink-0 fill-tg-star text-tg-star" aria-label="Продвинутый канал" />
+                    <Star className="h-3.5 w-3.5 shrink-0 fill-tg-star text-tg-star" aria-label={t('post.premium')} />
                   )}
                 </span>
                 <span className="mt-0.5 block truncate text-[13px] leading-tight text-tg-hint">
-                  {formatCount(ch.subscribersCount)} подписчиков · @{ch.username}
+                  {formatCount(ch.subscribersCount)} {t('post.subscribers')} · @{ch.username}
                 </span>
               </span>
             </button>
@@ -196,10 +312,10 @@ export function PostOverlay() {
                   className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link transition active:scale-[0.98]"
                 >
                   <Send className="h-4 w-4" aria-hidden />
-                  Читать полностью в Telegram
+                  {t('post.readInTg')}
                 </button>
                 <p className="mt-1.5 text-center text-[12px] leading-snug text-tg-hint">
-                  Автор показывает полный текст только подписчикам канала
+                  {t('post.teaserHint')}
                 </p>
               </div>
             )}
@@ -208,13 +324,13 @@ export function PostOverlay() {
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-3 text-[12.5px] text-tg-hint">
               <span>{fullDate}</span>
               <span aria-hidden>·</span>
-              <span className="tabular-nums">{formatCount(current.viewsCount)} просмотров</span>
+              <span className="tabular-nums">{formatCount(current.viewsCount)} {t('post.views')}</span>
               <span aria-hidden>·</span>
-              <span className="tabular-nums">{formatCount(current.likesCount)} лайков</span>
+              <span className="tabular-nums">{formatCount(current.likesCount)} {t('post.likes')}</span>
               {current.bookmarksCount > 0 && (
                 <>
                   <span aria-hidden>·</span>
-                  <span className="tabular-nums">{formatCount(current.bookmarksCount)} в закладках</span>
+                  <span className="tabular-nums">{formatCount(current.bookmarksCount)} {t('post.inBookmarks')}</span>
                 </>
               )}
             </div>
@@ -239,10 +355,11 @@ export function PostOverlay() {
                 className="mt-3 mx-4 inline-flex items-center gap-1.5 rounded-xl bg-tg-surface px-3.5 py-2.5 text-[14px] font-semibold text-tg-link active:opacity-70"
               >
                 <Sparkle className="h-4 w-4" aria-hidden />
-                Краткое содержание
+                {t('post.summary')}
               </button>
             )}
             <div className="h-24" />
+            </motion.div>
           </div>
 
           {/* Панель действий */}
@@ -256,7 +373,7 @@ export function PostOverlay() {
                 whileTap={{ scale: 1.2 }}
                 transition={{ type: 'spring', stiffness: 500, damping: 15 }}
                 onClick={onLike}
-                aria-label="Нравится"
+                aria-label={t('post.like')}
                 aria-pressed={current.liked}
                 className="flex items-center gap-1.5 py-1.5"
               >
@@ -274,7 +391,7 @@ export function PostOverlay() {
               <button
                 type="button"
                 onClick={onBookmark}
-                aria-label="Сохранить"
+                aria-label={t('post.save')}
                 aria-pressed={current.bookmarked}
                 className="flex items-center gap-1.5 py-1.5"
               >
@@ -292,11 +409,11 @@ export function PostOverlay() {
               <button
                 type="button"
                 onClick={() => sharePost(current.link, ch.title)}
-                aria-label="Поделиться"
+                aria-label={t('post.shareAria')}
                 className="flex items-center gap-1.5 py-1.5"
               >
                 <Forward className="h-[23px] w-[23px] text-tg-text" strokeWidth={1.7} />
-                <span className="text-[13px] font-medium text-tg-text2">Поделиться</span>
+                <span className="text-[13px] font-medium text-tg-text2">{t('post.share')}</span>
               </button>
               <a
                 href={current.link || `https://t.me/${ch.username}`}

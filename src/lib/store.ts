@@ -2,6 +2,7 @@
 
 import { create } from 'zustand'
 import type { CategoryDTO, FontScale, PostDTO, Tab, ThemeMode, UserDTO } from '@/lib/types'
+import type { Lang } from '@/lib/i18n'
 
 interface AppState {
   user: UserDTO | null
@@ -14,6 +15,8 @@ interface AppState {
   feedVersion: number
   theme: ThemeMode
   fontScale: FontScale
+  lang: Lang
+  setLang: (l: Lang) => void
   channelUsername: string | null // открытый экран канала (внутренний)
   post: PostDTO | null // открытый полный экран поста (внутренний)
   postQueue: PostDTO[] // снимок списка постов вокруг открытого — для свайпов ←/→ в полном экране
@@ -52,6 +55,13 @@ export const useApp = create<AppState>((set, get) => ({
   feedVersion: 0,
   theme: 'light',
   fontScale: 'md',
+  lang: 'ru',
+  setLang: (lang) => {
+    try {
+      localStorage.setItem('tgfeed_lang', lang)
+    } catch {}
+    set({ lang })
+  },
   channelUsername: null,
   post: null,
   postQueue: [],

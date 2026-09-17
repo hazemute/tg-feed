@@ -213,9 +213,26 @@ export function htmlToMarkdownLite(html: string): string {
   return result.trim()
 }
 
+/**
+ * Схлопывает декоративные обёртки вокруг эмодзи/символов прямо на клиенте:
+ * __**👍**__ → 👍, **⚡** → ⚡. Старые посты в БД сохранены с вложенной
+ * разметкой — серверная зачистка сработает только при ре-парсинге, поэтому
+ * нормализация дублируется на рендере (рекурсивно — по одному слою за итерацию).
+ */
+export function normalizeDecorations(text: string): string {
+  const re = /(\*\*|__|~~|\|\|)([^*_~|\wа-яёА-ЯЁ0-9\s]{1,6}?)\1/gu
+  let out = text
+  let prev = text
+  do {
+    prev = out
+    out = out.replace(re, '$2')
+  } while (out !== prev)
+  return out
+}
+
 /** Убирает markdown-разметку, оставляя чистый текст (для превью/уведомлений/поиска) */
 export function stripMarkdown(text: string): string {
-  return text
+  const cleaned = text
     .replace(/<br\s*\/?>/gi, ' ') // легаси-HTML старых постов
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/\*\*([^*]*)\*\*/g, '$1')
@@ -227,6 +244,9 @@ export function stripMarkdown(text: string): string {
     .replace(/^>\s?/gm, '')
     .replace(/\s+/g, ' ')
     .trim()
+
+  // финальная зачистка декора: «__**👍**__» → «👍» (после снятия обёрток)
+  return normalizeDecorations(cleaned)
 }
 
 // ---------- Клиентская часть: markdown-lite → блоки и спаны ----------
@@ -294,7 +314,7 @@ function normalizeLegacyHtml(text: string): string {
 /** Разбирает markdown-lite поста на блоки: абзацы, цитаты, блоки кода */
 export function blocksOf(text: string): Block[] {
   const blocks: Block[] = []
-  const lines = normalizeLegacyHtml(text).split('\n')
+  const lines = normalizeDecorations(normalizeLegacyHtml(text)).split('\n')
   let para: string[] = []
   let quote: string[] = []
 

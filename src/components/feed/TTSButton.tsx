@@ -5,6 +5,7 @@ import { Loader2, Pause, Play, Volume2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { useT } from '@/lib/i18n'
 import { haptic } from '@/lib/tg'
 
 /**
@@ -29,6 +30,7 @@ function getAudio(): HTMLAudioElement {
 export function useTTS(postId: string, text: string) {
   const [status, setStatus] = useState<Status>('idle')
   const mounted = useRef(true)
+  const t = useT()
 
   useEffect(() => {
     mounted.current = true
@@ -67,7 +69,7 @@ export function useTTS(postId: string, text: string) {
       })
       if (!r.ok || !r.audio) {
         setStatus('idle')
-        toast.error(r.reason === 'short' ? 'В посте слишком мало текста для озвучки' : 'Озвучка недоступна')
+        toast.error(r.reason === 'short' ? t('tts.tooShort') : t('tts.unavailable'))
         return
       }
       audio.src = `data:audio/mpeg;base64,${r.audio}`
@@ -87,7 +89,7 @@ export function useTTS(postId: string, text: string) {
       }
     } catch {
       setStatus('idle')
-      toast.error('Озвучка недоступна, попробуйте позже')
+      toast.error(t('tts.error'))
     }
   }, [postId, status])
 
@@ -105,6 +107,7 @@ export function ListenButton({
   className?: string
 }) {
   const { status, toggle } = useTTS(postId, text)
+  const t = useT()
   const busy = status === 'loading'
 
   return (
@@ -115,7 +118,7 @@ export function ListenButton({
         e.stopPropagation()
         void toggle()
       }}
-      aria-label={status === 'playing' ? 'Пауза' : 'Слушать пост'}
+      aria-label={status === 'playing' ? t('tts.pause') : t('tts.aria')}
       className={cn(
         'inline-flex items-center gap-1.5 text-[13px] font-medium transition active:opacity-60',
         status === 'playing' ? 'text-tg-link' : 'text-tg-hint',
@@ -131,7 +134,7 @@ export function ListenButton({
       ) : (
         <Volume2 className="h-3.5 w-3.5" aria-hidden />
       )}
-      {status === 'playing' ? 'Играет' : 'Слушать'}
+      {status === 'playing' ? t('tts.playing') : t('tts.listen')}
     </button>
   )
 }

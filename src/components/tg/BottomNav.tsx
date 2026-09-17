@@ -4,15 +4,16 @@ import { Flame, Home, Radio, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
+import { useT } from '@/lib/i18n'
 import { haptic } from '@/lib/tg'
 import type { Tab } from '@/lib/types'
 
-const items: { id: Tab; label: string; icon: typeof Home }[] = [
-  { id: 'feed', label: 'Лента', icon: Home },
-  { id: 'trending', label: 'Тренды', icon: Flame },
-  { id: 'search', label: 'Поиск', icon: Search },
-  { id: 'mychannel', label: 'Канал', icon: Radio },
-  { id: 'profile', label: 'Профиль', icon: UserRound },
+const items: { id: Tab; labelKey: 'nav.feed' | 'nav.trending' | 'nav.search' | 'nav.channel' | 'nav.profile'; icon: typeof Home }[] = [
+  { id: 'feed', labelKey: 'nav.feed', icon: Home },
+  { id: 'trending', labelKey: 'nav.trending', icon: Flame },
+  { id: 'search', labelKey: 'nav.search', icon: Search },
+  { id: 'mychannel', labelKey: 'nav.channel', icon: Radio },
+  { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]
 
 /**
@@ -22,18 +23,20 @@ const items: { id: Tab; label: string; icon: typeof Home }[] = [
  */
 export function BottomNav() {
   const { tab, goToTab } = useApp()
+  const t = useT()
 
   return (
     <nav
       className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center pb-[calc(env(safe-area-inset-bottom)+10px)] lg:hidden"
-      aria-label="Основная навигация"
+      aria-label={t('nav.main')}
     >
       <div
         data-noswipe
         className="pointer-events-auto flex items-center gap-0.5 rounded-[24px] border border-tg-sep/70 bg-tg-surface/85 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.16)] backdrop-blur-xl dark:bg-tg-surface/75"
       >
-        {items.map(({ id, label, icon: Icon }) => {
+        {items.map(({ id, labelKey, icon: Icon }) => {
           const active = tab === id
+          const label = t(labelKey)
           return (
             <button
               key={id}

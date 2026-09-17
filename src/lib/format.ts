@@ -1,4 +1,6 @@
-/** Форматирование чисел и времени (RU) */
+/** Форматирование чисел и времени */
+
+import type { Lang } from '@/lib/i18n'
 
 export function formatCount(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace('.0', '') + 'M'
@@ -7,17 +9,23 @@ export function formatCount(n: number): string {
   return String(n)
 }
 
-export function timeAgoRu(iso: string): string {
+export function timeAgo(iso: string, lang: Lang = 'ru'): string {
   const diff = Date.now() - new Date(iso).getTime()
   const m = Math.floor(diff / 60000)
-  if (m < 1) return 'только что'
-  if (m < 60) return `${m} мин`
+  if (m < 1) return lang === 'en' ? 'just now' : 'только что'
+  if (m < 60) return `${m} ${lang === 'en' ? 'min' : 'мин'}`
   const h = Math.floor(m / 60)
-  if (h < 24) return `${h} ч`
+  if (h < 24) return `${h} ${lang === 'en' ? 'h' : 'ч'}`
   const d = Math.floor(h / 24)
-  if (d < 7) return `${d} дн`
-  return new Date(iso).toLocaleDateString('ru-RU', { day: 'numeric', month: 'short' })
+  if (d < 7) return `${d} ${lang === 'en' ? 'd' : 'дн'}`
+  return new Date(iso).toLocaleDateString(lang === 'en' ? 'en-US' : 'ru-RU', {
+    day: 'numeric',
+    month: 'short',
+  })
 }
+
+/** Совместимость: компактное русское «5 мин назад»-стиль */
+export const timeAgoRu = (iso: string): string => timeAgo(iso, 'ru')
 
 export function pluralRu(n: number, one: string, few: string, many: string): string {
   const mod10 = n % 10

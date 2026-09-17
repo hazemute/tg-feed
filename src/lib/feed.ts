@@ -38,7 +38,13 @@ export async function buildFeedScope(userId: string, category: string) {
     // «Интересное»: категории, в которых пользователь ВОВЛЕЧЁН больше всего
     // (просмотры + лайки + закладки), плюс пара неизведанных — чтобы лента
     // продолжала открывать новое, а не замыкалась на привычном.
-    const [views, likes, bookmarks] = await Promise.all([
+    /*
+     * Batch-транзакция вместо Promise.all: при connection_limit=1 (pgbouncer)
+     * параллельные запросы конкурируют за единственное соединение и ловят
+     * P2024 (таймаут пула). Транзакция выполняет их последовательно в одном
+     * соединении — чуть медленнее, но стабильно.
+     */
+    const [views, likes, bookmarks] = await db.$transaction([
       db.postView.findMany({
         where: { userId },
         select: { post: { select: { channel: { select: { categoryId: true } } } } },
@@ -124,34 +130,58 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   const cached = affinityCache.get(userId)
   if (cached && cached.exp > Date.now()) return cached.data
 
-  const [views, likes, bookmarks, subs] = await Promise.all([
-    db.postView.findMany({
-      where: { userId },
-      select: { postId: true, post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
-      orderBy: { createdAt: 'desc' },
-      take: 500,
-    }),
-    db.like.findMany({
-      where: { userId },
-      select: { post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
-      orderBy: { createdAt: 'desc' },
-      take: 300,
-    }),
-    db.bookmark.findMany({
-      where: { userId },
-      select: { post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-    }),
-    db.subscription.findMany({
-      where: { userId },
-      select: { channelId: true },
-    }),
-  ])
+  /*
+   * Batch-транзакция (см. комментарий в buildFeedScope): одно соединение,
+   * последовательное выполнение — устраняет P2024 «Timed out fetching a new
+   * connection from the connection pool» при connection_limit=1.
+   */
+  let views: Array<{ postId: string; post: { channelId: string; channel: { categoryId: string | null } } }>
+  let likes: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
+  let bookmarks: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
+  let subs: Array<{ channelId: string }>
+  try {
+    ;[views, likes, bookmarks, subs] = await db.$transaction([
+      db.postView.findMany({
+        where: { userId },
+        select: { postId: true, post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 500,
+      }),
+      db.like.findMany({
+        where: { userId },
+        select: { post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 300,
+      }),
+      db.bookmark.findMany({
+        where: { userId },
+        select: { post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      }),
+      db.subscription.findMany({
+        where: { userId },
+        select: { channelId: true },
+      }),
+    ])
+  } catch {
+    /*
+     * Деградация: пул перегружен (бёрст трафика, дальний регион Supabase) —
+     * отдаём ленту без персонализации, не роняя 500-й. Ошибку кэшируем на
+     * 2 секунды, чтобы не долбить пул каждой прокруткой.
+     */
+    const empty: PersonalSignals = {
+      affinity: { channels: new Map(), categories: new Map() },
+      viewedIds: new Set(),
+      subscribedIds: new Set(),
+    }
+    affinityCache.set(userId, { data: empty, exp: Date.now() + 2_000 })
+    return empty
+  }
 
   const affinity: AffinityMap = { channels: new Map(), categories: new Map() }
   const bump = (
-    row: { post?: { channelId?: string; channel?: { categoryId?: string } } | null },
+    row: { post?: { channelId?: string; channel?: { categoryId?: string | null } } | null },
     w: number,
   ) => {
     const ch = row.post?.channelId

@@ -390,12 +390,13 @@ export async function runParser(
 
   let processed = 0
   let truncated = false
-  for (const target of targets) {
-    // тайм-бюджет (серверлес-лимиты): дообработаем остальные каналы следующим прогоном
-    if (deadlineMs > 0 && processed > 0 && Date.now() > deadlineMs) {
-      truncated = true
-      break
-    }
+
+  /*
+   * Обработка одного канала целиком: сетевой фетч t.me/s (доминирует по времени),
+   * аватарка/подписчики (Bot API) и фаза записи в БД. Вынесена из
+   * последовательного цикла для параллельного пула ниже.
+   */
+  const parseOneChannel = async (target: string): Promise<void> => {
     try {
       const channel = await db.channel.findUnique({ where: { username: target } })
       if (!channel) {
@@ -403,7 +404,7 @@ export async function runParser(
         const r = { username: target, added: 0, error: 'канал не найден в базе' }
         results.push(r)
         report(r, target, processed)
-        continue
+        return
       }
 
       if (!isValidChannelUsername(target)) {
@@ -411,7 +412,7 @@ export async function runParser(
         const r = { username: target, added: 0, error: 'недопустимый username канала' }
         results.push(r)
         report(r, channel.title, processed)
-        continue
+        return
       }
 
       const res = await fetch(`https://t.me/s/${target}`, {
@@ -599,6 +600,29 @@ export async function runParser(
       report(r, target, processed)
     }
   }
+
+  /*
+   * Пул параллельности: основной расход времени — сетевые фетчи t.me и Bot API
+   * (по 1–3с на канал, последовательный тик из 8 каналов ≈ 65с). Параллелим
+   * по 3 канала: фазы БД внутри каждого канала последовательны и коротки,
+   * поэтому очереди пула Supabase (connection_limit=1) успевают — P2024 нет.
+   */
+  const CONCURRENCY = 3
+  let cursor = 0
+  const worker = async (): Promise<void> => {
+    while (true) {
+      const i = cursor
+      if (i >= targets.length) return
+      // тайм-бюджет (серверлес-лимиты): дообработаем остальные каналы следующим прогоном
+      if (deadlineMs > 0 && processed > 0 && Date.now() > deadlineMs) {
+        truncated = true
+        return
+      }
+      cursor++
+      await parseOneChannel(targets[i])
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker()))
 
   const result = { ok: true as const, results, newPosts, truncated, totalTargets: targets.length }
   emitAdminEvent('parse:done', { newPosts: newPosts.length, ms: Date.now() - startedAt })

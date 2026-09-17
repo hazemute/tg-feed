@@ -29,6 +29,8 @@ import type { AdminStatsDTO, PostDTO, ProfileStatsResponse, SubscriptionDTO } fr
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ThemeGallery } from '@/components/tg/ThemeGallery'
+import { LANG_LIST, useT } from '@/lib/i18n'
+import { APP_VERSION } from '@/lib/version'
 import { Onboarding } from '@/components/tg/Onboarding'
 import { PromoteSheet } from '@/components/tabs/PromoteSheet'
 import { THEMES, themeName } from '@/lib/themes'
@@ -43,7 +45,8 @@ type BookmarkItem = PostDTO & { readAt: string | null }
  * мои категории, подписки, настройки. Плюс «Мой канал» и закладки.
  */
 export function ProfileTab() {
-  const { user, theme, fontScale, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
+  const { user, theme, fontScale, lang, setLang, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
+  const t = useT()
   const [profile, setProfile] = useState<{
     stats: { likes: number; subscriptions: number; views: number; bookmarks: number }
   } | null>(null)
@@ -439,7 +442,7 @@ export function ProfileTab() {
             </span>
           </button>
           <Segmented
-            label="Размер шрифта постов"
+            label={t('settings.font')}
             value={fontScale}
             onChange={(v) => setFontScale(v as typeof fontScale)}
             options={[
@@ -447,6 +450,12 @@ export function ProfileTab() {
               { value: 'md', label: 'A', big: true },
               { value: 'lg', label: 'A', big: true },
             ]}
+          />
+          <Segmented
+            label={t('profile.language')}
+            value={lang}
+            onChange={(v) => setLang(v as typeof lang)}
+            options={LANG_LIST.map((l) => ({ value: l.id, label: l.native }))}
           />
         </div>
       </BottomSheet>
@@ -458,7 +467,7 @@ export function ProfileTab() {
         subtitle="Умная лента открытых Telegram-каналов"
       >
         <div className="space-y-2.5 text-snippet text-tg-text2">
-          <Row label="Версия" value="4.9.0" />
+          <Row label="Версия" value={APP_VERSION} />
           <Row label="Источник контента" value="открытые TG-каналы" />
           <Row label="Ранжирование" value="взвешенный скоринг" />
           <Row label="Подписка" value="в один тап [+]" />

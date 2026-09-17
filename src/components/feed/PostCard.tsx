@@ -5,8 +5,9 @@ import { Eye, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
+import { useT } from '@/lib/i18n'
 import { api } from '@/lib/api'
-import { formatCount, timeAgoRu } from '@/lib/format'
+import { formatCount, timeAgo } from '@/lib/format'
 import { haptic, openTelegram, sharePost } from '@/lib/tg'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
@@ -78,6 +79,7 @@ function LikeRailButton({ count, active, onClick }: { count: number; active: boo
 
 /** CTA тизера: читатель должен стать подписчиком оригинального канала */
 function TeaserCta({ post }: { post: PostDTO }) {
+  const t = useT()
   return (
     <div className="mt-2.5">
       <button
@@ -90,10 +92,10 @@ function TeaserCta({ post }: { post: PostDTO }) {
         className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-tg-link/10 text-[14px] font-semibold text-tg-link transition active:scale-[0.98]"
       >
         <Send className="h-4 w-4" aria-hidden />
-        Читать полностью в Telegram
+        {t('post.readInTg')}
       </button>
       <p className="mt-1.5 text-center text-[11.5px] leading-snug text-tg-hint">
-        Автор показывает полный текст только подписчикам канала
+        {t('post.teaserHint')}
       </p>
     </div>
   )
@@ -121,6 +123,7 @@ function PostText({
   onSummary?: () => void
   onOpenMore?: () => void
 }) {
+  const t = useT()
   const innerRef = useRef<HTMLDivElement>(null)
   // Высота 3 строк в px — из фактического измерения (корректно при любом fontScale)
   const [clamp, setClamp] = useState<{ collapsed: number } | null>(null)
@@ -176,14 +179,14 @@ function PostText({
               haptic('light')
               onOpenMore?.()
             }}
-            aria-label="Читать пост полностью"
+            aria-label={t('post.readMore')}
             className="absolute bottom-0 right-0 bg-tg-bg pl-2 text-post font-medium text-tg-hint active:opacity-70"
           >
             <span
               aria-hidden
               className="absolute right-full top-0 h-full w-10 bg-gradient-to-r from-transparent to-tg-bg"
             />
-            ...еще
+            {t('post.more')}
           </button>
         )}
       </div>
@@ -194,7 +197,7 @@ function PostText({
           className="mt-2 inline-flex items-center gap-1.5 text-[14px] font-semibold text-tg-link active:opacity-60"
         >
           <Sparkle className="h-4 w-4" />
-          Краткое содержание
+          {t('post.summary')}
         </button>
       )}
       {/* Перевод поста на родной язык читателя (как в Twitter) */}
@@ -265,6 +268,8 @@ export function PostCard({
   const viewedRef = useRef(false)
   const openChannel = useApp((s) => s.openChannel)
   const openPost = useApp((s) => s.openPost)
+  const t = useT()
+  const lang = useApp((s) => s.lang)
   const ch = post.channel
   /** «...еще» → полный экран поста */
   const openFullPost = () => openPost(post)
@@ -344,21 +349,21 @@ export function PostCard({
               {ch.isPremium && (
                 <Star
                   className="h-3.5 w-3.5 shrink-0 fill-tg-star text-tg-star"
-                  aria-label="Продвинутый канал"
+                  aria-label={t('post.featuredAria')}
                 />
               )}
             </span>
             <span className="mt-0.5 block truncate text-[13.5px] leading-tight text-tg-hint">
-              {formatCount(ch.subscribersCount)} подписчиков
+              {formatCount(ch.subscribersCount)} {t('post.subscribers')}
             </span>
           </span>
         </button>
         <time
           dateTime={post.publishedAt}
           className="shrink-0 text-[12.5px] text-tg-hint"
-          title={new Date(post.publishedAt).toLocaleString('ru-RU')}
+          title={new Date(post.publishedAt).toLocaleString(lang === 'en' ? 'en-US' : 'ru-RU')}
         >
-          {timeAgoRu(post.publishedAt)}
+          {timeAgo(post.publishedAt, lang)}
         </time>
         <SubscribeCircle subscribed={ch.subscribed} onClick={onSubscribe} />
       </div>
@@ -381,18 +386,18 @@ export function PostCard({
             </div>
           )}
         </div>
-        <div className="flex w-10 shrink-0 flex-col items-center gap-4 pt-0.5" aria-label="Действия">
+        <div className="flex w-10 shrink-0 flex-col items-center gap-4 pt-0.5" aria-label={t('card.actions')}>
           <LikeRailButton count={post.likesCount} active={post.liked} onClick={onLike} />
           <RailButton
             icon={Sparkle}
-            label="Сохранить"
+            label={t('post.save')}
             count={post.bookmarksCount}
             active={post.bookmarked}
             onClick={onBookmark}
           />
           <RailButton
             icon={Forward}
-            label="Поделиться"
+            label={t('post.share')}
             onClick={() => sharePost(post.link, ch.title)}
           />
         </div>
@@ -421,7 +426,7 @@ export function PostCard({
         <Eye className="h-3.5 w-3.5" aria-hidden />
         <span className="tabular-nums">
           {formatCount(post.viewsCount)}
-          {post.viewsTg != null ? ' в канале' : ' просмотров'}
+          {post.viewsTg != null ? ` ${t('card.inChannel')}` : ` ${t('card.views')}`}
         </span>
         {post.text && <ListenButton postId={post.id} text={post.text} className="ml-1" />}
         {!post.text && !teaser && (
@@ -430,7 +435,7 @@ export function PostCard({
             onClick={onSummary}
             className="ml-auto inline-flex items-center gap-1 font-medium text-tg-link active:opacity-60"
           >
-            <Sparkle className="h-3.5 w-3.5" /> Краткое содержание
+            <Sparkle className="h-3.5 w-3.5" /> {t('post.summary')}
           </button>
         )}
       </div>

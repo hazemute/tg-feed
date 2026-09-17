@@ -134,16 +134,13 @@ export async function GET(request: Request) {
     const postIds = slice.map((s) => s.id)
     const channelIds = [...new Set(slice.map((s) => s.channelId))]
 
-    const [likes, bookmarks] = await Promise.all([
-      postIds.length
-        ? db.like.findMany({ where: { userId, postId: { in: postIds } }, select: { postId: true } })
-        : Promise.resolve([]),
-      postIds.length
-        ? db.bookmark.findMany({
-            where: { userId, postId: { in: postIds } },
-            select: { postId: true },
-          })
-        : Promise.resolve([]),
+    // $transaction: одно соединение вместо двух параллельных (пул connection_limit=1)
+    const [likes, bookmarks] = await db.$transaction([
+      db.like.findMany({ where: { userId, postId: { in: postIds } }, select: { postId: true } }),
+      db.bookmark.findMany({
+        where: { userId, postId: { in: postIds } },
+        select: { postId: true },
+      }),
     ])
 
     const likeSet = new Set(likes.map((l) => l.postId))

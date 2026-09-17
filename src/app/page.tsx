@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { api, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
+import type { Lang } from '@/lib/i18n'
 import { getDeviceId } from '@/lib/user-id'
 import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
 import { THEME_BY_ID } from '@/lib/themes'
@@ -31,7 +32,7 @@ const tabVariants = {
 }
 
 export default function Home() {
-  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, setUser, setAuthReady, setCategories, setTheme, setFontScale, setMaintenance, goToTab } =
+  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, goToTab } =
     useApp()
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
   // Сплэш живёт минимум 1.35с — влёт самолётика (1.15с) всегда доигрывает
@@ -44,13 +45,15 @@ export default function Home() {
     return () => clearTimeout(t)
   }, [])
 
-  // Восстановление настроек интерфейса (тема/шрифт)
+  // Восстановление настроек интерфейса (тема/шрифт/язык)
   useEffect(() => {
     const savedTheme = (localStorage.getItem('tgfeed_theme') as ThemeMode | null) ?? null
     const savedFont = (localStorage.getItem('tgfeed_font') as FontScale | null) ?? null
+    const savedLang = localStorage.getItem('tgfeed_lang') as Lang | null
     const inTg = !!tg()
     setTheme(savedTheme ?? (inTg ? 'auto' : 'light'))
     setFontScale(savedFont ?? 'md')
+    if (savedLang === 'ru' || savedLang === 'en') setLang(savedLang)
 
   }, [])
 

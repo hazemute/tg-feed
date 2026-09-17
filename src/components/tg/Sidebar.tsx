@@ -4,16 +4,17 @@ import { Heart, Home, Radio, Search, UserRound, Flame } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
+import { useT } from '@/lib/i18n'
 import { haptic } from '@/lib/tg'
 import { APP_VERSION } from '@/lib/version'
 import type { Tab } from '@/lib/types'
 
-const items: { id: Tab; label: string; icon: typeof Home }[] = [
-  { id: 'feed', label: 'Лента', icon: Home },
-  { id: 'trending', label: 'Тренды', icon: Flame },
-  { id: 'search', label: 'Поиск', icon: Search },
-  { id: 'mychannel', label: 'Мой канал', icon: Radio },
-  { id: 'profile', label: 'Профиль', icon: UserRound },
+const items: { id: Tab; labelKey: 'nav.feed' | 'nav.trending' | 'nav.search' | 'nav.mychannel' | 'nav.profile'; icon: typeof Home }[] = [
+  { id: 'feed', labelKey: 'nav.feed', icon: Home },
+  { id: 'trending', labelKey: 'nav.trending', icon: Flame },
+  { id: 'search', labelKey: 'nav.search', icon: Search },
+  { id: 'mychannel', labelKey: 'nav.mychannel', icon: Radio },
+  { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]
 
 /**
@@ -22,11 +23,12 @@ const items: { id: Tab; label: string; icon: typeof Home }[] = [
  */
 export function Sidebar() {
   const { tab, goToTab, user } = useApp()
+  const t = useT()
 
   return (
     <aside
       className="hidden w-[228px] shrink-0 flex-col border-r border-tg-sep bg-tg-bg/60 px-3 pb-5 pt-6 lg:flex"
-      aria-label="Основная навигация"
+      aria-label={t('nav.main')}
     >
       {/* Воркмарк */}
       <div className="mb-8 flex items-center gap-2.5 px-2">
@@ -37,13 +39,14 @@ export function Sidebar() {
         </span>
         <span>
           <span className="block text-[16px] font-bold leading-tight text-tg-text">Tg Swipe</span>
-          <span className="block text-[11.5px] leading-tight text-tg-hint">лента Telegram-каналов</span>
+          <span className="block text-[11.5px] leading-tight text-tg-hint">{t('nav.tagline')}</span>
         </span>
       </div>
 
       <nav className="flex flex-col gap-1">
-        {items.map(({ id, label, icon: Icon }) => {
+        {items.map(({ id, labelKey, icon: Icon }) => {
           const active = tab === id
+          const label = t(labelKey)
           return (
             <button
               key={id}
@@ -82,7 +85,7 @@ export function Sidebar() {
               {(user.firstName ?? '?').slice(0, 1).toUpperCase()}
             </span>
             <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-tg-text2">
-              {user.firstName ?? user.username ?? 'Читатель'}
+              {user.firstName ?? user.username ?? t('nav.reader')}
             </span>
             <Heart className="h-3.5 w-3.5 text-tg-like" aria-hidden />
           </div>
