@@ -61,3 +61,5 @@ server.log
 /prompt
 /.zscripts/
 local-deploy-secrets.env
+
+/upload/
