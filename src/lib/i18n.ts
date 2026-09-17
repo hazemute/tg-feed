@@ -60,6 +60,7 @@ const DICT = {
   'card.views': ['просмотров', 'views'],
   'card.actions': ['Действия', 'Actions'],
   'tts.listen': ['Слушать', 'Listen'],
+  'tts.generating': ['Генерируем…', 'Generating…'],
   'tts.playing': ['Играет', 'Playing'],
   'tts.pause': ['Пауза', 'Pause'],
   'tts.aria': ['Слушать пост', 'Listen to post'],

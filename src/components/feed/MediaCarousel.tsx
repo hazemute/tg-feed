@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Heart, Play, Volume2, VolumeX } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { MediaItemDTO } from '@/lib/types'
+import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
 
 /**
  * Ширина «выглядывания» соседних слайдов в peek-макете, px (~12–16).
@@ -12,6 +13,57 @@ import type { MediaItemDTO } from '@/lib/types'
  * у скролл-контейнера — единый источник геометрии peek-областей.
  */
 const PEEK_PX = 14
+
+/** Слайд карусели: видео/гиф — автоплеем, остальное — картинкой. Ошибка загрузки скрывает слайд */
+function SlideVisual({
+  item,
+  alt,
+  i,
+  onHide,
+}: {
+  item: MediaItemDTO
+  alt: string
+  i: number
+  onHide: React.Dispatch<React.SetStateAction<Set<number>>>
+}) {
+  const hide = () =>
+    onHide((h) => {
+      const n = new Set(h)
+      n.add(i)
+      return n
+    })
+  if (item.kind === 'video' || item.kind === 'gif') {
+    return (
+      <video
+        src={item.url}
+        poster={item.poster}
+        aria-label={`${alt} — видео ${i + 1}`}
+        muted
+        loop
+        autoPlay
+        playsInline
+        preload="metadata"
+        onError={hide}
+        className="mx-auto aspect-[4/5] max-h-[54dvh] w-full rounded-[14px] bg-tg-surface object-cover"
+      />
+    )
+  }
+  return (
+    <img
+      src={item.url}
+      alt={`${alt} — изображение ${i + 1}`}
+      loading="lazy"
+      onError={hide}
+      className={cn(
+        'mx-auto max-h-[54dvh] w-full rounded-[14px]',
+        item.kind === 'sticker'
+          ? 'max-h-[44dvh] max-w-[300px] bg-transparent object-contain'
+          : 'aspect-[4/5] bg-tg-surface object-cover',
+      )}
+      draggable={false}
+    />
+  )
+}
 
 /**
  * Медиаблок: картинка или горизонтальный swiper с лаконичными точками.
@@ -122,51 +174,18 @@ export function MediaCarousel({
               style={peek ? { width: `calc(100% - ${PEEK_PX * 2}px)` } : undefined}
             >
               <div
-                className="transition-transform duration-300 ease-out"
+                className="relative transition-transform duration-300 ease-out"
                 style={{
                   transform: `scale(${activeIdx === i ? 1 : 0.94})`,
                   opacity: activeIdx === i ? 1 : 0.75,
                 }}
               >
-                {item.kind === 'video' || item.kind === 'gif' ? (
-                  <video
-                    src={item.url}
-                    poster={item.poster}
-                    aria-label={`${alt} — видео ${i + 1}`}
-                    muted
-                    loop
-                    autoPlay
-                    playsInline
-                    preload="metadata"
-                    onError={() =>
-                      setHidden((h) => {
-                        const n = new Set(h)
-                        n.add(i)
-                        return n
-                      })
-                    }
-                    className="mx-auto aspect-[4/5] max-h-[54dvh] w-full rounded-[14px] bg-tg-surface object-cover"
-                  />
+                {item.spoiler ? (
+                  <MediaSpoiler>
+                    <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} />
+                  </MediaSpoiler>
                 ) : (
-                  <img
-                    src={item.url}
-                    alt={`${alt} — изображение ${i + 1}`}
-                    loading="lazy"
-                    onError={() =>
-                      setHidden((h) => {
-                        const n = new Set(h)
-                        n.add(i)
-                        return n
-                      })
-                    }
-                    className={cn(
-                      'mx-auto max-h-[54dvh] w-full rounded-[14px]',
-                      item.kind === 'sticker'
-                        ? 'max-h-[44dvh] max-w-[300px] bg-transparent object-contain'
-                        : 'aspect-[4/5] bg-tg-surface object-cover',
-                    )}
-                    draggable={false}
-                  />
+                  <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} />
                 )}
               </div>
             </div>

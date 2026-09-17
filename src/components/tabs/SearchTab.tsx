@@ -7,6 +7,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
+import { stripMarkdown } from '@/lib/markdown'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
 import { haptic } from '@/lib/tg'
 import {
@@ -466,7 +467,7 @@ export function SearchTab() {
                     </span>
                   </span>
                   <span className="mt-0.5 line-clamp-2 text-[14px] leading-snug text-tg-hint">
-                    {p.text || 'медиа-пост'}
+                    {p.text ? stripMarkdown(p.text) || 'медиа-пост' : 'медиа-пост'}
                   </span>
                 </span>
               </button>

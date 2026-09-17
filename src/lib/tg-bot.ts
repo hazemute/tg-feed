@@ -377,6 +377,43 @@ async function callMethod(method: string, body: Record<string, unknown>): Promis
   }
 }
 
+/** Информация о кастомном эмодзи: анимированный видео-стикер + file_id файла */
+export type CustomEmojiInfo = { video: boolean; fileId: string | null }
+
+/**
+ * Премиум-эмодзи через Bot API getCustomEmojiStickers (до 200 id за вызов).
+ * Возвращает map: custom_emoji_id → информация о стикере. Анимированные
+ * видео-стикеры (is_video) рендерятся миниаппом как <video> через /api/emoji/[id];
+ * Lottie-наборы (.tgs) не рендерим без плеера — остаются статичные картинки.
+ */
+export async function getCustomEmojiStickers(ids: string[]): Promise<Map<string, CustomEmojiInfo>> {
+  const out = new Map<string, CustomEmojiInfo>()
+  if (!botEnabled() || ids.length === 0) return out
+  for (let i = 0; i < ids.length; i += 200) {
+    const chunk = ids.slice(i, i + 200)
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getCustomEmojiStickers`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ custom_emoji_ids: chunk }),
+        signal: AbortSignal.timeout(10_000),
+      })
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean
+        result?: Array<{ custom_emoji_id?: string; is_video?: boolean; file?: { file_id?: string } }>
+      } | null
+      for (const s of data?.result ?? []) {
+        if (s.custom_emoji_id) {
+          out.set(s.custom_emoji_id, { video: s.is_video === true, fileId: s.file?.file_id ?? null })
+        }
+      }
+    } catch {
+      // битый чанк не роняет прогон — эмодзи останутся статичными до следующего тика
+    }
+  }
+  return out
+}
+
 export function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }

@@ -37,7 +37,11 @@ export async function POST(request: Request) {
         where: { id: postId },
         data: { likesCount: { decrement: 1 } },
       })
-      return NextResponse.json({ liked: false, likesCount: Math.max(0, updated.likesCount) })
+      // Показываем сумму: реакции исходного поста + локальные лайки
+      return NextResponse.json({
+        liked: false,
+        likesCount: Math.max(0, updated.reactionsTg + updated.likesCount),
+      })
     }
 
     await db.like.create({ data: { userId, postId } })
@@ -45,7 +49,7 @@ export async function POST(request: Request) {
       where: { id: postId },
       data: { likesCount: { increment: 1 } },
     })
-    return NextResponse.json({ liked: true, likesCount: updated.likesCount })
+    return NextResponse.json({ liked: true, likesCount: updated.reactionsTg + updated.likesCount })
   } catch (e) {
     console.error('[like]', e)
     return err('like failed', 500)

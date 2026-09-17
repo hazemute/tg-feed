@@ -114,6 +114,9 @@ export function toPostDTO(
   // Просмотры для показа: приоритет у оригинального канала (t.me/s),
   // локальные просмотра миниаппа — фолбэк и добавка
   const viewsCount = Math.max(p.viewsTg ?? 0, p.viewsCount)
+  // Лайки для показа: сумма ВСЕХ реакций исходного поста (t.me/s) + локальные
+  // лайки миниаппа — сердечко остаётся интерактивным поверх реального числа
+  const likesCount = p.reactionsTg + p.likesCount
 
   return {
     id: p.id,
@@ -125,7 +128,7 @@ export function toPostDTO(
     link: p.link,
     viewsCount,
     viewsTg: p.viewsTg,
-    likesCount: p.likesCount,
+    likesCount,
     bookmarksCount,
     publishedAt: p.publishedAt.toISOString(),
     liked: flags.liked,

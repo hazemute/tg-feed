@@ -2,7 +2,7 @@ import { db } from '@/lib/db'
 import { isValidChannelUsername } from '@/lib/server'
 import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
-import { botEnabled, getChatPhotoFileId, getChatMemberCount } from '@/lib/tg-bot'
+import { botEnabled, getChatPhotoFileId, getChatMemberCount, getCustomEmojiStickers } from '@/lib/tg-bot'
 import type { NotifiablePost } from '@/lib/tg-bot'
 import { htmlToMarkdownLite } from '@/lib/markdown'
 
@@ -80,6 +80,7 @@ type ParsedPost = {
   media: MediaItem | null // основное медиа
   gallery: MediaItem[] // дополнительные фото/медиа
   viewsTg: number | null
+  reactionsTg: number // сумма всех реакций исходного поста
   publishedAt: Date
 }
 
@@ -303,15 +304,77 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
     const viewsRaw = block.match(/tgme_widget_message_views[^>]*>([\s\S]*?)</)?.[1] ?? ''
     const viewsTg = parseTgViews(stripTags(viewsRaw))
 
+    /* ---------- Реакции исходного поста: сумма всех перечисленных видов ----------
+        <span class="tgme_reaction"><i class="emoji">❤</i>85</span> — счётчик идёт
+        после эмодзи; бывают краткие «1.2K» — парсим тем же parseTgViews */
+    const reactionsRaw = block.match(/tgme_widget_message_reactions[^>]*>([\s\S]*?)<\/div>/)?.[1] ?? ''
+    let reactionsTg = 0
+    if (reactionsRaw) {
+      for (const r of reactionsRaw.matchAll(/<span class="tgme_reaction[^"]*">([\s\S]*?)<\/span>/g)) {
+        const tail = stripTags(r[1]).replace(/^[^\d]*/, '')
+        const n = parseTgViews(tail)
+        if (n != null && n > 0) reactionsTg += n
+      }
+    }
+
     const timeMatch = block.match(/<time[^>]*datetime="([^"]+)"/)
     const publishedAt = timeMatch ? new Date(timeMatch[1]) : new Date()
     if (isNaN(publishedAt.getTime())) continue
 
     if (!text && !media && gallery.length === 0) continue
-    out.push({ tgKey: key.replace('/', ':'), text, media, gallery, viewsTg, publishedAt })
+    out.push({ tgKey: key.replace('/', ':'), text, media, gallery, viewsTg, reactionsTg, publishedAt })
   }
 
   return out
+}
+
+/**
+ * Премиум-эмодзи: посты несут маркеры ![e:ID](thumb). Резолвим Bot API, какие
+ * ID — анимированные видео-стикеры (кэш в таблице CustomEmoji навсегда),
+ * и переписываем их маркеры в ![ev:ID](…) — клиент рендерит <video>.
+ * Первый проход по каналу: 1 getCustomEmojiStickers + N getFile на НОВЫЕ id;
+ * дальше всё берётся из таблицы — ноль Bot API вызовов.
+ */
+async function upgradeCustomEmoji(posts: ParsedPost[]): Promise<ParsedPost[]> {
+  if (!botEnabled()) return posts
+  const ids = new Set<string>()
+  for (const p of posts) {
+    for (const m of p.text.matchAll(/!\[e:(\d+)\]\(/g)) ids.add(m[1])
+  }
+  if (ids.size === 0) return posts
+  try {
+    const known = await db.customEmoji.findMany({ where: { id: { in: [...ids] } } })
+    const knownMap = new Map(known.map((r) => [r.id, r]))
+    const missing = [...ids].filter((id) => !knownMap.has(id))
+    if (missing.length > 0) {
+      const stickers = await getCustomEmojiStickers(missing)
+      for (const id of missing) {
+        const s = stickers.get(id)
+        const row = {
+          id,
+          kind: s?.video ? 'video' : 'static',
+          fileId: s?.video && s.fileId ? s.fileId : null,
+        }
+        await db.customEmoji
+          .upsert({ where: { id: row.id }, create: row, update: { kind: row.kind, fileId: row.fileId } })
+          .catch(() => {})
+        knownMap.set(id, { ...row, fetchedAt: new Date() })
+      }
+    }
+    const animated = new Set(
+      [...knownMap.values()].filter((r) => r.kind === 'video' && r.fileId).map((r) => r.id),
+    )
+    if (animated.size === 0) return posts
+    for (const p of posts) {
+      if (!p.text.includes('![e:')) continue
+      p.text = p.text.replace(/!\[e:(\d+)\]\(/g, (full, id: string) =>
+        animated.has(id) ? `![ev:${id}](` : full,
+      )
+    }
+  } catch {
+    // резолвер не должен ронять парсинг — эмодзи остаются статичными
+  }
+  return posts
 }
 
 /**
@@ -427,6 +490,8 @@ export async function runParser(
 
       const html = await res.text()
       let parsed = parseChannelHtml(html, target)
+      // Премиум-эмодзи: помечаем анимированные видео-стикеры (Bot API, кэш в БД)
+      parsed = await upgradeCustomEmoji(parsed)
 
       /* ---------- История канала: ?before=<id> пагинация ---------- */
       const maxPages = Math.max(1, Math.min(6, Math.floor(pages)))
@@ -516,7 +581,7 @@ export async function runParser(
       // один SELECT по ключам перед вставками → точечные UPDATE только где изменилось
       const existing = await db.post.findMany({
         where: { channelId: channel.id, tgKey: { in: queue.map((p) => p.tgKey) } },
-        select: { tgKey: true, viewsTg: true, text: true, mediaUrl: true, mediaType: true, gallery: true },
+        select: { tgKey: true, viewsTg: true, reactionsTg: true, text: true, mediaUrl: true, mediaType: true, gallery: true },
       })
       const existingMap = new Map(existing.map((p) => [p.tgKey, p]))
 
@@ -539,6 +604,7 @@ export async function runParser(
           gallery: p.gallery.length > 0 ? JSON.stringify(p.gallery) : null,
           link: `https://t.me/${p.tgKey.replace(':', '/')}`,
           viewsTg: p.viewsTg,
+          reactionsTg: p.reactionsTg,
           publishedAt: p.publishedAt,
         }
 
@@ -547,18 +613,20 @@ export async function runParser(
         if (existingMap.has(p.tgKey)) {
           const old = existingMap.get(p.tgKey)
           const viewsChanged = p.viewsTg != null && old?.viewsTg !== p.viewsTg
+          const reactionsChanged = p.reactionsTg > 0 && old?.reactionsTg !== p.reactionsTg
           const textChanged = p.text.length > 0 && p.text !== old?.text // markdown-апгрейд/зачистка
           // Бэкфилл медиа: старый парсер часто не доставал фото/галереи
           const mediaChanged =
             !!old &&
             ((p.media?.url && !old.mediaUrl) ||
               (p.gallery.length > 0 && !old.gallery))
-          if (viewsChanged || textChanged || mediaChanged) {
+          if (viewsChanged || reactionsChanged || textChanged || mediaChanged) {
             await db.post
               .update({
                 where: { tgKey: p.tgKey },
                 data: {
                   ...(viewsChanged ? { viewsTg: p.viewsTg } : {}),
+                  ...(reactionsChanged ? { reactionsTg: p.reactionsTg } : {}),
                   ...(textChanged ? { text: p.text } : {}),
                   ...(mediaChanged
                     ? {

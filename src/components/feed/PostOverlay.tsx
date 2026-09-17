@@ -14,7 +14,7 @@ import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { RichText } from '@/components/feed/RichText'
 import { PostMedia } from '@/components/feed/PostMedia'
-import { TranslateButton } from '@/components/feed/TranslateButton'
+import { TranslateControl, translatedText, useTranslation } from '@/components/feed/TranslateButton'
 import { ListenButton } from '@/components/feed/TTSButton'
 import { SummarySheet } from '@/components/feed/SummarySheet'
 
@@ -35,6 +35,30 @@ export function emitPostUpdated(patch: {
   bookmarksCount?: number
 }) {
   window.dispatchEvent(new CustomEvent('tgfeed:post-updated', { detail: patch }))
+}
+
+/**
+ * Текст поста в полном экране + перевод на месте (Twitter-style).
+ * Ключ по id поста: при свайпе ←/→ компонент пересоздаётся —
+ * перевод предыдущего поста не «переехает» на следующий.
+ */
+function OverlayText({
+  post,
+  teaser,
+  teaserText,
+}: {
+  post: PostDTO
+  teaser: boolean
+  teaserText: string
+}) {
+  const tr = useTranslation(post.id, post.text)
+  const shown = teaser ? teaserText : translatedText(tr, post.text)
+  return (
+    <div className="px-4 pt-3">
+      <RichText text={shown} />
+      {!teaser && <TranslateControl tr={tr} />}
+    </div>
+  )
 }
 
 export function PostOverlay() {
@@ -284,7 +308,7 @@ export function PostOverlay() {
             {/* Медиа (все типы: фото/видео/гиф/стикер/файл/аудио/опрос/линк) */}
             <PostMedia post={current} onDoubleTap={onLike} />
 
-            {/* Текст (тизер или полностью) */}
+            {/* Текст (тизер или полностью; перевод замещает текст на месте) */}
             {current.text &&
               (teaser && chTeaser?.teaserMode === 'blur' ? (
                 <div className="px-4 pt-3">
@@ -293,11 +317,12 @@ export function PostOverlay() {
                   </div>
                 </div>
               ) : (
-                <div className="px-4 pt-3">
-                  <RichText text={teaser ? teaserText : current.text} />
-                  {/* Перевод поста (как в Twitter) — без тизера */}
-                  {!teaser && <TranslateButton postId={current.id} text={current.text} />}
-                </div>
+                <OverlayText
+                  key={current.id}
+                  post={current}
+                  teaser={!!teaser}
+                  teaserText={teaserText}
+                />
               ))}
 
             {/* CTA тизера: конвертация читателя в подписчика канала */}

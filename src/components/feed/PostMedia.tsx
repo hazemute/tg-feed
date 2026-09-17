@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { haptic, openExternal, openTelegram } from '@/lib/tg'
 import type { MediaItemDTO, PostDTO } from '@/lib/types'
 import { MediaCarousel, VideoPlayer } from '@/components/feed/MediaCarousel'
+import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
 
 /**
  * Универсальный медиаблок поста — поддерживает все типы контента Telegram,
@@ -228,6 +229,19 @@ function CardView({ item, tgLink }: { item: MediaItemDTO; tgLink: string | null 
 /* ------------------------------------------------------------------ */
 
 function SingleVisual({
+  item,
+  alt,
+  onDoubleTap,
+}: {
+  item: MediaItemDTO
+  alt: string
+  onDoubleTap?: () => void
+}) {
+  const inner = <SingleVisualInner item={item} alt={alt} onDoubleTap={onDoubleTap} />
+  return item.spoiler ? <MediaSpoiler>{inner}</MediaSpoiler> : inner
+}
+
+function SingleVisualInner({
   item,
   alt,
   onDoubleTap,

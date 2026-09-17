@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils'
 
 const HASHTAG_RE = /#[\wа-яё]{2,30}/gu
 
-function HashtagText({ text }: { text: string }) {
+function HashtagText({ text, nested }: { text: string; nested?: boolean }) {
   const openSearchWith = useApp((s) => s.openSearchWith)
   const parts: Array<string | { tag: string }> = []
   let last = 0
@@ -28,18 +28,23 @@ function HashtagText({ text }: { text: string }) {
   }
   if (last < text.length) parts.push(text.slice(last))
 
+  // Вложенные спаны (внутри ссылки/спойлера) не могут быть <button> —
+  // HTML запрещает button в button; span с role="button" внутри другой кнопки,
+  // клик не перехватываем — важнее поведение внешней ссылки
+  const Tag = nested ? 'span' : 'button'
   return (
     <>
       {parts.map((part, i) =>
         typeof part === 'string' ? (
           part
         ) : (
-          <button
+          <Tag
             key={i}
-            type="button"
+            {...(nested ? { role: 'button' } : { type: 'button' as const })}
             aria-label={`Найти по теме ${part.tag}`}
             onClick={(e) => {
               e.stopPropagation()
+              if (nested) return
               haptic('light')
               api('/api/hashtags/click', {
                 method: 'POST',
@@ -50,19 +55,29 @@ function HashtagText({ text }: { text: string }) {
             className="text-tg-link active:opacity-60"
           >
             {part.tag}
-          </button>
+          </Tag>
         ),
       )}
     </>
   )
 }
 
-/** Спойлер: скрыт размытием, тап раскрывает (как в Telegram) */
-function Spoiler({ v }: { v: string }) {
+/** Спойлер: скрыт размытием, тап раскрывает (как в Telegram).
+ *  nested — внутри другой кнопки: рендерим span вместо button (button в button запрещён) */
+function Spoiler({
+  v,
+  kids,
+  nested,
+}: {
+  v: string
+  kids?: React.ReactNode
+  nested?: boolean
+}) {
   const [open, setOpen] = useState(false)
+  const Tag = nested ? 'span' : 'button'
   return (
-    <button
-      type="button"
+    <Tag
+      {...(nested ? { role: 'button' } : { type: 'button' as const })}
       onClick={(e) => {
         e.stopPropagation()
         if (!open) {
@@ -78,21 +93,67 @@ function Spoiler({ v }: { v: string }) {
       )}
       style={open ? undefined : { textShadow: '0 0 6px rgba(0,0,0,0.35)', filter: 'blur(5px)' }}
     >
-      {v}
-    </button>
+      {kids ?? v}
+    </Tag>
   )
 }
 
-function SpanView({ span }: { span: Span }) {
+/** Инлайн-эмодзи Telegram: анимированный видео-стикер (Bot API) или статичная картинка */
+function EmojiSpan({ url, id, animated }: { url: string; id?: string; animated?: boolean }) {
+  const [broken, setBroken] = useState(false)
+  const cls =
+    'mx-[1px] inline-block h-[1.35em] w-[1.35em] -translate-y-[0.18em] select-none object-contain'
+  if (animated && id && !broken) {
+    return (
+      <video
+        src={`/api/emoji/${id}`}
+        autoPlay
+        muted
+        loop
+        playsInline
+        aria-label="эмодзи"
+        draggable={false}
+        className={cls}
+        onError={() => setBroken(true)}
+      />
+    )
+  }
+  return (
+    <img
+      src={url}
+      alt="эмодзи"
+      loading="lazy"
+      className={cls}
+      draggable={false}
+      onError={(e) => {
+        // картинка не загрузилась — прячем, остаётся соседний текст
+        e.currentTarget.style.display = 'none'
+      }}
+    />
+  )
+}
+
+function SpanView({ span, nested }: { span: Span; nested?: boolean }) {
+  // Вложенная разметка внутри стилевых спанов (ссылка внутри жирного и т.п.).
+  // nested=true — интерактивные элементы становятся span (button в button запрещён)
+  const kids =
+    'kids' in span && span.kids && span.kids.length > 0 ? (
+      <>{span.kids.map((s, i) => (
+        <SpanView key={i} span={s} nested={nested ?? true} />
+      ))}</>
+    ) : null
+
   switch (span.t) {
     case 'plain':
-      return <HashtagText text={span.v} />
+      return <HashtagText text={span.v} nested={nested} />
     case 'bold':
-      return <b className="font-bold">{span.v}</b>
+      return <b className="font-bold">{kids ?? span.v}</b>
     case 'italic':
-      return <i>{span.v}</i>
+      return <i>{kids ?? span.v}</i>
     case 'strike':
-      return <s className="opacity-70">{span.v}</s>
+      return <s className="opacity-70">{kids ?? span.v}</s>
+    case 'underline':
+      return <span className="underline underline-offset-2">{kids ?? span.v}</span>
     case 'code':
       return (
         <code className="rounded bg-tg-sep/70 px-1 py-0.5 font-mono text-[0.92em] text-tg-text">
@@ -100,23 +161,18 @@ function SpanView({ span }: { span: Span }) {
         </code>
       )
     case 'spoiler':
-      return <Spoiler v={span.v} />
+      return <Spoiler v={span.v} kids={kids} nested={nested} />
     case 'emoji':
-      // Премиум-эмодзи Telegram (инлайн-картинка из веб-превью)
-      return (
-        <img
-          src={span.url}
-          alt="эмодзи"
-          loading="lazy"
-          className="mx-[1px] inline-block h-[1.35em] w-auto -translate-y-[0.18em] select-none"
-          draggable={false}
-          onError={(e) => {
-            // картинка не загрузилась — прячем, остаётся соседний текст
-            e.currentTarget.style.display = 'none'
-          }}
-        />
-      )
+      // Премиум-эмодзи Telegram (статика или анимированный видео-стикер)
+      return <EmojiSpan url={span.url} id={span.id} animated={span.animated} />
     case 'link':
+      if (nested) {
+        return (
+          <span role="link" className="text-tg-link underline decoration-tg-link/30 underline-offset-2">
+            {kids ?? span.v}
+          </span>
+        )
+      }
       return (
         <button
           type="button"
@@ -134,7 +190,7 @@ function SpanView({ span }: { span: Span }) {
           }}
           className="text-tg-link underline decoration-tg-link/30 underline-offset-2 active:opacity-60"
         >
-          {span.v}
+          {kids ?? span.v}
         </button>
       )
   }

@@ -22,8 +22,15 @@ const INLINE_MARKS: Record<string, string> = {
   s: '~~',
   del: '~~',
   strike: '~~',
+  u: '^^',
+  ins: '^^',
   code: '`',
   'tg-spoiler': '||',
+}
+
+/** '//telegram.org/…' → 'https://telegram.org/…' (протокол-относительные URL превью) */
+function absolutizeUrl(u: string): string {
+  return u.startsWith('//') ? `https:${u}` : u
 }
 
 type Mark =
@@ -86,8 +93,29 @@ export function htmlToMarkdownLite(html: string): string {
     if (close === -1) return false
     const urlMatch = cls.match(/url\((['"]?)([^)'"]+)\1\)/)
     const inner = decodeEntities(html.slice(pos, close).replace(/<[^>]+>/g, '')).trim()
-    out.push(urlMatch ? `![e](${decodeEntities(urlMatch[2].trim())})` : inner)
+    const url = urlMatch ? absolutizeUrl(decodeEntities(urlMatch[2].trim())) : null
+    out.push(url ? `![e](${url})` : inner)
     pos = close + 4
+    return true
+  }
+
+  /** Премиум-эмодзи современного превью: <tg-emoji emoji-id="ID">…статичный фолбэк…</tg-emoji>
+   *  → маркер ![e:ID](thumb) — ID нужен клиенту для анимированной версии
+   *  (Bot API getCustomEmojiStickers → webm через /api/emoji/[id]). */
+  const tryTgEmoji = (): boolean => {
+    if (!m) return false
+    if (m[1].toLowerCase() !== 'tg-emoji') return false
+    const id = (m[2] ?? '').match(/emoji-id="([^"]+)"/)?.[1] ?? ''
+    const close = html.indexOf('</tg-emoji>', pos)
+    if (close === -1) return false
+    const inner = html.slice(pos, close)
+    const bg = inner.match(/background-image:\s*url\((['"]?)([^)'"]+)\1\)/)?.[2]
+    const fallback = decodeEntities(inner.replace(/<[^>]+>/g, '')).trim()
+    const url = bg ? absolutizeUrl(decodeEntities(bg.trim())) : null
+    if (id && url) out.push(`![e:${id}](${url})`)
+    else if (url) out.push(`![e](${url})`)
+    else out.push(fallback)
+    pos = close + '</tg-emoji>'.length
     return true
   }
 
@@ -126,6 +154,7 @@ export function htmlToMarkdownLite(html: string): string {
     }
     pushText(html.slice(pos, m.index))
     if (tryInlineEmoji()) continue
+    if (tryTgEmoji()) continue
     const [full, rawTag, attrs] = m
     const tag = rawTag.toLowerCase()
     pos = m.index + full.length
@@ -198,35 +227,32 @@ export function htmlToMarkdownLite(html: string): string {
 
   // Битая разметка: маркер с нечётным числом вхождений не имеет пары —
   // убираем такие маркеры полностью, пост остаётся читабельным текстом
-  for (const mark of ['**', '~~', '||', '__']) {
+  for (const mark of ['**', '~~', '||', '^^', '__']) {
     const count = result.split(mark).length - 1
     if (count % 2 === 1) result = result.split(mark).join('')
   }
 
-  // Вложенные обёртки вокруг эмодзи/символов (**__🔥__**) → чистый символ:
-  // контент без букв/цифр — это декор, стили ему не нужны
-  result = result.replace(
-    /(\*\*|__){1,2}([^*_\wа-яёА-ЯЁ0-9\s]{1,6})(\*\*|__){1,2}/gu,
-    '$2',
-  )
+  // Вложенные обёртки вокруг эмодзи/символов (**__🔥__**) → чистый символ
+  result = normalizeDecorations(result)
 
   return result.trim()
 }
 
 /**
- * Схлопывает декоративные обёртки вокруг эмодзи/символов прямо на клиенте:
- * __**👍**__ → 👍, **⚡** → ⚡. Старые посты в БД сохранены с вложенной
- * разметкой — серверная зачистка сработает только при ре-парсинге, поэтому
- * нормализация дублируется на рендере (рекурсивно — по одному слою за итерацию).
+ * Схлопывание декоративных обёрток вокруг эмодзи/символов прямо на клиенте:
+ * __**👍**__ → 👍, **__**‼️**__** → ‼️ (вложенность любой глубины).
+ * Контент обёртки — только маркеры и не-буквы/цифры/пробелы (эмодзи, пунктуация);
+ * настоящие выделения слов (**15%**, **Объективный**, __слово__) не трогаются.
+ * Рекурсивно по слоям — за один проход снимается внешний слой, до 5 проходов.
  */
 export function normalizeDecorations(text: string): string {
-  const re = /(\*\*|__|~~|\|\|)([^*_~|\wа-яёА-ЯЁ0-9\s]{1,6}?)\1/gu
+  const re = /(\*\*|__|~~|\|\|)((?:\*\*|__|~~|\|\||[^а-яёА-ЯЁa-zA-Z0-9\s])+?)\1/g
   let out = text
-  let prev = text
-  do {
-    prev = out
-    out = out.replace(re, '$2')
-  } while (out !== prev)
+  for (let i = 0; i < 5; i++) {
+    const next = out.replace(re, '$2')
+    if (next === out) break
+    out = next
+  }
   return out
 }
 
@@ -235,10 +261,12 @@ export function stripMarkdown(text: string): string {
   const cleaned = text
     .replace(/<br\s*\/?>/gi, ' ') // легаси-HTML старых постов
     .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/!\[e(?:v)?(?::\d+)?\]\([^)]*\)/g, '') // инлайн-картинки эмодзи — не текст
     .replace(/\*\*([^*]*)\*\*/g, '$1')
     .replace(/__([^_]*)__/g, '$1')
     .replace(/~~([^~]*)~~/g, '$1')
     .replace(/\|\|([^|]*)\|\|/g, '$1')
+    .replace(/\^\^([^^]*)\^\^/g, '$1')
     .replace(/`([^`]*)`/g, '$1')
     .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1')
     .replace(/^>\s?/gm, '')
@@ -253,50 +281,102 @@ export function stripMarkdown(text: string): string {
 
 export type Span =
   | { t: 'plain'; v: string }
-  | { t: 'bold'; v: string }
-  | { t: 'italic'; v: string }
-  | { t: 'strike'; v: string }
+  | { t: 'bold'; v: string; kids?: Span[] }
+  | { t: 'italic'; v: string; kids?: Span[] }
+  | { t: 'strike'; v: string; kids?: Span[] }
+  | { t: 'underline'; v: string; kids?: Span[] }
   | { t: 'code'; v: string }
-  | { t: 'spoiler'; v: string }
-  | { t: 'link'; v: string; href: string }
-  | { t: 'emoji'; url: string }
+  | { t: 'spoiler'; v: string; kids?: Span[] }
+  | { t: 'link'; v: string; href: string; kids?: Span[] }
+  | { t: 'emoji'; url: string; id?: string; animated?: boolean }
 
 export type Block =
   | { type: 'p'; spans: Span[] }
   | { type: 'quote'; spans: Span[] }
   | { type: 'code'; v: string }
 
-/** Регэксп спанов markdown-lite: жирный, курсив, зачёркнутый, инлайн-код, спойлер, ссылка */
+/**
+ * Регэксп спанов markdown-lite: премиум-эмодзи, жирный, курсив, зачёркнутый,
+ * underline, инлайн-код, спойлер, ссылка, url, @упоминание.
+ *
+ * Маркеры **…**, __…__, ~~…~~, ||…||, ^^…^^ могут пересекать перенос строки
+ * внутри абзаца — в Telegram жирный/курсив часто накрывает несколько строк
+ * (<b>…<br/>…</b>); раньше маркеры парились только внутри одной строки и
+ * литералы ** оставались на экране.
+ *
+ * Группы (target ES2017 — без именованных): 1 emoji, 2 bold, 3 italic,
+ * 4 strike, 5 code, 6 spoiler, 7 underline, 8 link, 9 url, 10 mention.
+ */
 const SPAN_RE =
-  /(\*\*([^*\n]+)\*\*)|(__[^_\n]+__)|(~~[^~\n]+~~)|(`[^`\n]+`)|(\|\|[^|\n]+\|\|)|(\[[^\]\n]+\]\([^)\s]+\))|(!\[e\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:]|@[a-zA-Z][a-zA-Z0-9_]{3,})/g
+  /(!\[e(?:v)?(?::\d+)?\]\([^)\s]+\))|(\*\*(?:[^*]+)\*\*)|(__(?:[^_]+)__)|(~~(?:[^~]+)~~)|(`[^`\n]+`)|(\|\|(?:[^|]+)\|\|)|(\^\^(?:[^^]+)\^\^)|(\[[^\]\n]+\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:])|(@[a-zA-Z][a-zA-Z0-9_]{3,})/g
 
-/** Разбирает строку (внутри абзаца/цитаты) на стилизованные спаны */
-export function spansOf(line: string): Span[] {
+const MAX_SPAN_DEPTH = 3
+
+/** plain-спан: срезаем сиротские маркеры (непарные после парсинга) — это мусор разметки */
+function plainClean(v: string): Span[] {
+  return [{ t: 'plain', v: v.replace(/\*\*|__|~~|\|\||\^\^/g, '') }]
+}
+
+/** Разбирает строку (внутри абзаца/цитаты) на стилизованные спаны.
+ *  Контент стилевых спанов парсится рекурсивно — внутри жирного/спойлера/
+ *  текста ссылки могут быть свои ссылки, эмодзи и прочая разметка. */
+export function spansOf(line: string, depth = 0): Span[] {
   const spans: Span[] = []
   let last = 0
+  const pushPlain = (v: string) => {
+    if (v) spans.push(...plainClean(v))
+  }
   for (const m of line.matchAll(SPAN_RE)) {
     const i = m.index ?? 0
-    if (i > last) spans.push({ t: 'plain', v: line.slice(last, i) })
-    if (m[2] !== undefined) spans.push({ t: 'bold', v: m[2] })
-    else if (m[3] !== undefined) spans.push({ t: 'italic', v: m[3].slice(2, -2) })
-    else if (m[4] !== undefined) spans.push({ t: 'strike', v: m[4].slice(2, -2) })
-    else if (m[5] !== undefined) spans.push({ t: 'code', v: m[5].slice(1, -1) })
-    else if (m[6] !== undefined) spans.push({ t: 'spoiler', v: m[6].slice(2, -2) })
-    else if (m[7] !== undefined) {
-      const label = m[7].slice(1, m[7].indexOf(']'))
-      const href = m[7].slice(m[7].indexOf('(') + 1, -1)
-      spans.push({ t: 'link', v: label || href, href })
+    pushPlain(line.slice(last, i))
+    // Группы: 1 emoji, 2 bold, 3 italic, 4 strike, 5 code, 6 spoiler,
+    // 7 underline, 8 link, 9 url, 10 mention (см. комментарий над SPAN_RE)
+    if (m[2] !== undefined) {
+      const v = m[2].slice(2, -2)
+      spans.push({ t: 'bold', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
+    } else if (m[3] !== undefined) {
+      const v = m[3].slice(2, -2)
+      spans.push({ t: 'italic', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
+    } else if (m[4] !== undefined) {
+      const v = m[4].slice(2, -2)
+      spans.push({ t: 'strike', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
+    } else if (m[7] !== undefined) {
+      const v = m[7].slice(2, -2)
+      spans.push({ t: 'underline', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
+    } else if (m[5] !== undefined) {
+      spans.push({ t: 'code', v: m[5].slice(1, -1) })
+    } else if (m[6] !== undefined) {
+      const v = m[6].slice(2, -2)
+      spans.push({ t: 'spoiler', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
     } else if (m[8] !== undefined) {
-      // ![e](url) — премиум-эмодзи из Telegram (инлайн-картинка)
-      spans.push({ t: 'emoji', url: m[8].slice(5, -1) })
+      const label = m[8].slice(1, m[8].indexOf(']'))
+      const href = m[8].slice(m[8].indexOf('(') + 1, -1)
+      spans.push({
+        t: 'link',
+        v: label || href,
+        href,
+        kids: depth < MAX_SPAN_DEPTH ? spansOf(label, depth + 1) : undefined,
+      })
+    } else if (m[1] !== undefined) {
+      // ![e](url) / ![e:ID](url) / ![ev:ID](url) — премиум-эмодзи Telegram;
+      // animated=true — Bot API подтвердил видео-стикер, рендерим <video> с /api/emoji/ID
+      const em = m[1].match(/^!\[e(v)?(?::(\d+))?\]\(([^)\s]+)\)$/)
+      if (em) {
+        spans.push({
+          t: 'emoji',
+          url: em[3],
+          ...(em[2] ? { id: em[2] } : {}),
+          ...(em[1] ? { animated: true } : {}),
+        })
+      }
     } else if (m[9] !== undefined) {
-      const v = m[9]
-      if (v.startsWith('@')) spans.push({ t: 'link', v, href: `https://t.me/${v.slice(1)}` })
-      else spans.push({ t: 'link', v, href: v })
+      spans.push({ t: 'link', v: m[9], href: m[9] })
+    } else if (m[10] !== undefined) {
+      spans.push({ t: 'link', v: m[10], href: `https://t.me/${m[10].slice(1)}` })
     }
     last = i + m[0].length
   }
-  if (last < line.length) spans.push({ t: 'plain', v: line.slice(last) })
+  pushPlain(line.slice(last))
   return spans
 }
 

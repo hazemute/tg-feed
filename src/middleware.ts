@@ -32,6 +32,7 @@ const LIMITS: Array<{ prefix: string; limit: number }> = [
   { prefix: '/api/panel/login', limit: 10 },
   { prefix: '/api/parse', limit: 20 },
   { prefix: '/api/avatar', limit: 90 },
+  { prefix: '/api/emoji', limit: 120 },
   { prefix: '/api/search', limit: 60 },
   { prefix: '/api/hashtag', limit: 60 },
   { prefix: '/api/translate', limit: 20 },

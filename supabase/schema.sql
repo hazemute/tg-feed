@@ -282,3 +282,13 @@ CREATE INDEX IF NOT EXISTS "Post_channelId_publishedAt_idx" ON "Post" ("channelI
 CREATE INDEX IF NOT EXISTS "Like_userId_idx"     ON "Like" ("userId");
 CREATE INDEX IF NOT EXISTS "Bookmark_userId_idx" ON "Bookmark" ("userId");
 CREATE INDEX IF NOT EXISTS "Channel_status_idx"  ON "Channel" ("status");
+
+-- v4.12: реакции исходного поста (сумма всех реакций) + резолвер премиум-эмодзи
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "reactionsTg" INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS "CustomEmoji" (
+  "id"        TEXT PRIMARY KEY,
+  "kind"      TEXT NOT NULL DEFAULT 'static',
+  "fileId"    TEXT,
+  "fetchedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);

@@ -13,7 +13,7 @@ import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { RichText } from '@/components/feed/RichText'
 import { PostMedia } from '@/components/feed/PostMedia'
-import { TranslateButton } from '@/components/feed/TranslateButton'
+import { translatedText, TranslateControl, useTranslation } from '@/components/feed/TranslateButton'
 import { ListenButton } from '@/components/feed/TTSButton'
 import { RailButton, SubscribeCircle } from '@/components/feed/actions'
 
@@ -156,6 +156,9 @@ function PostText({
   }, [])
 
   const long = text.length > 400
+  // Перевод замещает текст на месте (Twitter-style), контрол — строкой под постом
+  const tr = useTranslation(postId, text)
+  const shown = translatedText(tr, text)
 
   return (
     <div className="mt-3">
@@ -168,7 +171,7 @@ function PostText({
         }}
       >
         <div ref={innerRef}>
-          <RichText text={text} />
+          <RichText text={shown} />
         </div>
         {/* Оверлей «...еще» на третьей строке → полный экран поста.
             Градиент слева растворяет обрезанный текст под кнопкой */}
@@ -194,14 +197,14 @@ function PostText({
         <button
           type="button"
           onClick={onSummary}
-          className="mt-2 inline-flex items-center gap-1.5 text-[14px] font-semibold text-tg-link active:opacity-60"
+          className="mt-2 flex w-fit items-center gap-1.5 text-[14px] font-semibold text-tg-link active:opacity-60"
         >
           <Sparkle className="h-4 w-4" />
           {t('post.summary')}
         </button>
       )}
-      {/* Перевод поста на родной язык читателя (как в Twitter) */}
-      <TranslateButton postId={postId} text={text} />
+      {/* Перевод: замещает текст на месте + строка-контрол (Twitter-style) */}
+      <TranslateControl tr={tr} />
     </div>
   )
 }
@@ -429,15 +432,6 @@ export function PostCard({
           {post.viewsTg != null ? ` ${t('card.inChannel')}` : ` ${t('card.views')}`}
         </span>
         {post.text && <ListenButton postId={post.id} text={post.text} className="ml-1" />}
-        {!post.text && !teaser && (
-          <button
-            type="button"
-            onClick={onSummary}
-            className="ml-auto inline-flex items-center gap-1 font-medium text-tg-link active:opacity-60"
-          >
-            <Sparkle className="h-3.5 w-3.5" /> {t('post.summary')}
-          </button>
-        )}
       </div>
     </>
   )

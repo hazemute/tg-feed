@@ -47,6 +47,9 @@ export function useTTS(postId: string, text: string) {
   const toggle = useCallback(async () => {
     const audio = getAudio()
 
+    // Генерация уже идёт — повторные тапы не дублируют запрос (и не бьют лимит)
+    if (status === 'loading') return
+
     // Повторный тап по играющему — пауза/плей без запросов
     if (sharedPostId === postId && (status === 'playing' || status === 'ready')) {
       haptic('light')
@@ -91,7 +94,7 @@ export function useTTS(postId: string, text: string) {
       setStatus('idle')
       toast.error(t('tts.error'))
     }
-  }, [postId, status])
+  }, [postId, status, t])
 
   return { status, toggle }
 }
@@ -134,7 +137,11 @@ export function ListenButton({
       ) : (
         <Volume2 className="h-3.5 w-3.5" aria-hidden />
       )}
-      {status === 'playing' ? t('tts.playing') : t('tts.listen')}
+      {status === 'playing'
+        ? t('tts.playing')
+        : status === 'loading'
+          ? t('tts.generating')
+          : t('tts.listen')}
     </button>
   )
 }

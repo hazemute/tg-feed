@@ -150,11 +150,28 @@ export function FeedView() {
           `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}`,
         )
         setItems((prev) => {
-          if (replace) return data.items
+          if (replace) {
+            // replace — тоже дедуп: ранк может вернуть один пост дважды в одной странице
+            const uniq: typeof data.items = []
+            const once = new Set<string>()
+            for (const p of data.items) {
+              if (once.has(p.id)) continue
+              once.add(p.id)
+              uniq.push(p)
+            }
+            return uniq
+          }
           // дедуп при аппенде: пока листаем страницы, шедулер вставляет новые
-          // посты — окно пагинации съезжает и присылает уже виденные
+          // посты — окно пагинации съезжает и присылает уже виденные; плюс
+          // сам ответ может содержать дубли — seen пополняется по ходу цикла
           const seen = new Set(prev.map((p) => p.id))
-          return [...prev, ...data.items.filter((p) => !seen.has(p.id))]
+          const fresh: typeof data.items = []
+          for (const p of data.items) {
+            if (seen.has(p.id)) continue
+            seen.add(p.id)
+            fresh.push(p)
+          }
+          return [...prev, ...fresh]
         })
         // Запоминаем новейший пост (для пилюли «N новых постов») — только если он новее текущего
         const times = data.items.map((x) => x.publishedAt).sort()
@@ -367,11 +384,19 @@ export function FeedView() {
         `/api/feed/fresh?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&after=${encodeURIComponent(latestTimeRef.current)}`,
       )
       if (r.items.length > 0) {
-        const freshIds = new Set(r.items.map((x) => x.id))
-        setItems((prev) => [...r.items.filter((x) => !prev.some((p) => p.id === x.id)), ...prev])
+        // дедуп и против уже виденных, и против дубликатов внутри самого ответа
+        setItems((prev) => {
+          const seen = new Set(prev.map((p) => p.id))
+          const fresh: typeof r.items = []
+          for (const x of r.items) {
+            if (seen.has(x.id)) continue
+            seen.add(x.id)
+            fresh.push(x)
+          }
+          return [...fresh, ...prev]
+        })
         const mx = r.items.map((x) => x.publishedAt).sort().pop()
         if (mx && mx > latestTimeRef.current) latestTimeRef.current = mx
-        void freshIds
       }
       setFreshCount(0)
       haptic('light')

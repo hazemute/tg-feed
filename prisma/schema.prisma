@@ -101,6 +101,7 @@ model Post {
   link        String? // original t.me link
   viewsCount  Int      @default(0)
   viewsTg     Int? // просмотры из оригинального канала Telegram (t.me/s) — обновляются при парсинге
+  reactionsTg Int      @default(0) // сумма всех реакций исходного поста (t.me/s) — обновляются при парсинге
   likesCount  Int      @default(0)
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
   translations String? // кэш переводов: {"en":{"text":"…","at":"ISO"}}
@@ -298,4 +299,15 @@ model SystemSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+// Премиум-эмодзи Telegram (custom emoji): резолвер Bot API.
+// id — custom_emoji_id из разметки t.me/s (<tg-emoji emoji-id="…">);
+// fileId — файл анимированного видео-стикера (webm) для /api/emoji/[id].
+// kind: 'video' (анимированный webm) | 'static' (только статичная картинка)
+model CustomEmoji {
+  id        String   @id
+  kind      String   @default("static")
+  fileId    String?
+  fetchedAt DateTime @updatedAt
 }

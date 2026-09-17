@@ -23,6 +23,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
+import { stripMarkdown } from '@/lib/markdown'
 import { formatCount, pluralRu } from '@/lib/format'
 import { haptic, userAvatarUrl } from '@/lib/tg'
 import type { AdminStatsDTO, PostDTO, ProfileStatsResponse, SubscriptionDTO } from '@/lib/types'
@@ -348,7 +349,7 @@ export function ProfileTab() {
                         unread ? 'text-tg-text/80' : 'text-tg-hint',
                       )}
                     >
-                      {p.text || 'медиа-пост'}
+                      {p.text ? stripMarkdown(p.text) || 'медиа-пост' : 'медиа-пост'}
                     </span>
                     {unread && (
                       <span className="mt-1 inline-flex items-center rounded-full bg-tg-link/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-tg-link">
