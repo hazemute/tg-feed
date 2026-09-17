@@ -65,13 +65,14 @@ export async function GET(request: Request) {
 
     const versions: Record<string, number> = {}
     if (redis) {
-      for (const f of CACHE_FAMILIES) {
-        try {
-          const v = await redis.get<number>(`ver:${f}`)
-          versions[f] = typeof v === 'number' ? v : 0
-        } catch {
-          versions[f] = -1
-        }
+      // один MGET вместо пяти GET (экономия команд Upstash)
+      try {
+        const vals = await redis.mget<number[]>(...CACHE_FAMILIES.map((f) => `ver:${f}`))
+        CACHE_FAMILIES.forEach((f, i) => {
+          versions[f] = typeof vals[i] === 'number' ? (vals[i] as number) : 0
+        })
+      } catch {
+        for (const f of CACHE_FAMILIES) versions[f] = -1
       }
     }
 

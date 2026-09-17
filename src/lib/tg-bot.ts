@@ -12,7 +12,47 @@ import { cacheGet, cacheSet } from '@/lib/redis'
  *  - очередь с интервалом 50 мс (≤20 msg/s, ниже лимита 30 msg/s);
  *  - HTML-экранирование текста постов, ограничение длины;
  *  - Post.notifiedAt защищает от повторной отправки.
+ *
+ * ЭКОНОМИЯ КОМАНД: резолвы Bot API (file_id→URL, фото, счётчики) кэшируются
+ * в памяти процесса ПОВЕРХ Redis-кэша — в рамках инстанса Redis не тратится
+ * вовсе (Upstash тарифицирует каждую команду).
  */
+
+// ---------------- Память-кэш (L0) поверх Redis ----------------
+
+type MemEntry = { v: string | null; exp: number }
+const mem = new Map<string, MemEntry>()
+const MEM_MAX = 600
+
+/** undefined — нет записи; null — закэшированный «нет данных» */
+function memGet(key: string): string | null | undefined {
+  const e = mem.get(key)
+  if (!e) return undefined
+  if (e.exp <= Date.now()) {
+    mem.delete(key)
+    return undefined
+  }
+  return e.v
+}
+
+function memSet(key: string, v: string | null, ttlMs: number): void {
+  const now = Date.now()
+  if (mem.size >= MEM_MAX) {
+    let removed = 0
+    for (const [k, e] of mem) {
+      if (e.exp <= now) {
+        mem.delete(k)
+        removed++
+        if (removed >= MEM_MAX / 10) break
+      }
+    }
+    if (mem.size >= MEM_MAX) {
+      const first = mem.keys().next().value
+      if (first !== undefined) mem.delete(first)
+    }
+  }
+  mem.set(key, { v, exp: now + ttlMs })
+}
 
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
 
@@ -70,16 +110,24 @@ export async function getChatPhotoFileId(username: string): Promise<string | nul
 
 /**
  * Реальное число подписчиков публичного канала через Bot API getChatMemberCount.
- * Redis-кэш 24ч («нет данных» тоже кэшим сентинелом none, чтобы не молотить
- * Bot API на каждый запрос). Для закрытых/несуществующих каналов — null.
+ * Кэш: память 1ч → Redis 24ч («нет данных» тоже кэшим сентинелом none, чтобы
+ * не молотить Bot API на каждый запрос). Для закрытых/несуществующих — null.
  */
 export async function getChatMemberCount(username: string): Promise<number | null> {
   if (!botEnabled()) return null
   const clean = username.replace(/^@/, '')
 
+  const mk = `mc:${clean}`
+  const local = memGet(mk)
+  if (local !== undefined) return local === null ? null : Number(local)
+
   const ck = `tgmembers:${clean}`
   const cached = await cacheGet<string>(ck)
-  if (cached !== null) return cached === 'none' ? null : Number(cached)
+  if (cached !== null) {
+    const v = cached === 'none' ? null : Number(cached)
+    memSet(mk, v === null ? null : String(v), 60 * 60_000)
+    return v
+  }
 
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMemberCount`, {
@@ -91,9 +139,11 @@ export async function getChatMemberCount(username: string): Promise<number | nul
     const data = (await res.json()) as { ok?: boolean; result?: number }
     if (data?.ok && typeof data.result === 'number' && data.result >= 0) {
       await cacheSet(ck, String(data.result), 24 * 60 * 60)
+      memSet(mk, String(data.result), 60 * 60_000)
       return data.result
     }
     await cacheSet(ck, 'none', 60 * 60)
+    memSet(mk, null, 10 * 60_000)
     return null
   } catch {
     return null
@@ -109,11 +159,18 @@ export async function getChatMemberCount(username: string): Promise<number | nul
 export async function getUserPhotoFileId(tgUserId: number): Promise<string | null> {
   if (!botEnabled()) return null
 
-  // Redis-кэш 24ч: file_id вечен, «нет фото» тоже кэшим (сентинел none),
-  // чтобы не дёргать Bot API на каждый вход пользователя.
+  // Кэш: память 6ч → Redis 24ч: file_id вечен, «нет фото» тоже кэшим
+  // (сентинел none), чтобы не дёргать Bot API на каждый вход пользователя.
+  const mk = `up:${tgUserId}`
+  const local = memGet(mk)
+  if (local !== undefined) return local === 'none' ? null : local
+
   const ck = `tgphoto:${tgUserId}`
   const cached = await cacheGet<string>(ck)
-  if (cached !== null) return cached === 'none' ? null : cached
+  if (cached !== null) {
+    memSet(mk, cached, 6 * 60 * 60_000)
+    return cached === 'none' ? null : cached
+  }
 
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getUserProfilePhotos`, {
@@ -129,11 +186,13 @@ export async function getUserPhotoFileId(tgUserId: number): Promise<string | nul
     const photos = data?.ok ? data.result?.photos : undefined
     if (!photos || photos.length === 0) {
       await cacheSet(ck, 'none', 24 * 60 * 60)
+      memSet(mk, 'none', 60 * 60_000)
       return null
     }
     const sizes = photos[0]
     if (!sizes || sizes.length === 0) {
       await cacheSet(ck, 'none', 24 * 60 * 60)
+      memSet(mk, 'none', 60 * 60_000)
       return null
     }
     // Самый большой размер последним (Telegram отдаёт по возрастанию)
@@ -141,7 +200,10 @@ export async function getUserPhotoFileId(tgUserId: number): Promise<string | nul
       .sort((a, b) => (a.width ?? 0) * (a.height ?? 0) - (b.width ?? 0) * (b.height ?? 0))
       .pop()
     const fileId = best?.file_id && typeof best.file_id === 'string' ? best.file_id : null
-    if (fileId) await cacheSet(ck, fileId, 24 * 60 * 60)
+    if (fileId) {
+      await cacheSet(ck, fileId, 24 * 60 * 60)
+      memSet(mk, fileId, 6 * 60 * 60_000)
+    }
     return fileId
   } catch {
     return null
@@ -149,14 +211,22 @@ export async function getUserPhotoFileId(tgUserId: number): Promise<string | nul
 }
 
 // --- getFile: file_id → временный CDN-URL ---
-// Redis-кэш 45 минут (URL живёт ~1 час), общий для всех инстансов —
-// аватары не дёргают Bot API на каждый запрос.
+// Кэш: память 40мин → Redis 45мин (URL живёт ~1 час), общий для всех инстансов —
+// аватары не дёргают ни Bot API, ни Redis на каждый запрос.
 const FILE_URL_TTL_SEC = 45 * 60
+const FILE_URL_MEM_TTL_MS = 40 * 60_000
 
 export async function resolveTelegramFileUrl(fileId: string): Promise<string | null> {
+  const mk = `fu:${fileId}`
+  const local = memGet(mk)
+  if (local !== undefined) return local === 'none' ? null : local
+
   const ck = `tgfile:${fileId}`
   const cached = await cacheGet<string>(ck)
-  if (cached) return cached
+  if (cached) {
+    memSet(mk, cached, FILE_URL_MEM_TTL_MS)
+    return cached
+  }
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getFile`, {
       method: 'POST',
@@ -169,6 +239,7 @@ export async function resolveTelegramFileUrl(fileId: string): Promise<string | n
     if (!path) return null
     const url = `https://api.telegram.org/file/bot${BOT_TOKEN()}/${path}`
     await cacheSet(ck, url, FILE_URL_TTL_SEC)
+    memSet(mk, url, FILE_URL_MEM_TTL_MS)
     return url
   } catch {
     return null

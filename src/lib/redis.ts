@@ -4,10 +4,13 @@ import { Redis } from '@upstash/redis'
  * Redis-слой (Upstash REST): L2-кэш поверх PostgreSQL для горячих чтений,
  * глобальные счётчики версий для инвалидации, health-check.
  *
- * Архитектура кэша (cache-aside, две ступени):
- *   L1 — память процесса (секунды, нулевая цена, защищает от повторных
- *        запросов в рамках инстанса);
- *   L2 — Upstash Redis (общий для всех инстансов/функций Vercel).
+ * Архитектура кэша (cache-aside, три ступени, МАКСИМАЛЬНАЯ ЭКОНОМИЯ КОМАНД —
+ * Upstash тарифицирует каждую команду):
+ *   L0 — память процесса, fresh-окно (2–15с): ноль команд;
+ *   L1 — та же память в stale-режиме до истечения TTL L2-ключа: ответ
+ *        мгновенный, фоновая ревалидация single-flight (один GET на всех);
+ *   L2 — Upstash Redis (общий для всех инстансов/функций Vercel): ~1 GET
+ *        на ttlSec ключа + 1 GET версии семейства раз в 60с.
  *
  * Правила безопасности:
  *  - Redis НЕ доступен → все операции тихо деградируют (мимо кэша),
@@ -72,27 +75,40 @@ export async function cacheExpire(key: string, ttlSec: number): Promise<void> {
 
 // ------------------------- cache-aside с L1 -------------------------
 
-type L1Entry = { v: unknown; exp: number }
+/**
+ * ЭКОНОМИКА КОМАНД (v2):
+ *  - fresh-окно (memoryTtlMs) — мгновенный ответ из памяти, ноль команд;
+ *  - после fresh до hardExp (ровно столько, сколько живёт L2-ключ) — отдаём
+ *    локальную копию и один раз запускаем ФОНОВУЮ ревалидацию (single-flight:
+ *    сколько бы запросов ни пришло, Redis получит один GET);
+ *  - полный промах — синхронный путь, тоже single-flight: burst N запросов
+ *    после холодного старта делает ровно один GET и один SET вместо N пар.
+ *
+ * Итог: Redis трогается ~раз в ttlSec на ключ (минимально возможная частота
+ * при cache-aside) плюс один GET версии семейства раз в VERSION_TTL_MS.
+ */
+
+type L1Entry = { v: unknown; freshExp: number; hardExp: number }
 const l1 = new Map<string, L1Entry>()
 const L1_MAX_ENTRIES = 300
 
-function l1Get<T>(key: string): T | null {
-  const e = l1.get(key)
-  if (!e) return null
-  if (e.exp <= Date.now()) {
-    l1.delete(key)
-    return null
-  }
-  return e.v as T
+/** одновременные промахи/ревалидации одного ключа дедуплицируются */
+const inflight = new Map<string, Promise<unknown>>()
+
+type CacheAsideOpts<T> = {
+  key: string
+  ttlSec: number
+  memoryTtlMs?: number
+  fetcher: () => Promise<T>
 }
 
-function l1Set(key: string, v: unknown, ttlMs: number): void {
+function l1Store(key: string, v: unknown, memTtlMs: number, hardTtlMs: number): void {
+  const now = Date.now()
   if (l1.size >= L1_MAX_ENTRIES) {
-    // простая чистка: удаляем первые протухшие, иначе — самые старые
-    const now = Date.now()
+    // чистка: сначала протухшие по hardExp, иначе — самые старые записи
     let removed = 0
     for (const [k, e] of l1) {
-      if (e.exp <= now) {
+      if (e.hardExp <= now) {
         l1.delete(k)
         removed++
         if (removed >= L1_MAX_ENTRIES / 10) break
@@ -103,35 +119,58 @@ function l1Set(key: string, v: unknown, ttlMs: number): void {
       if (first !== undefined) l1.delete(first)
     }
   }
-  l1.set(key, { v, exp: Date.now() + ttlMs })
+  l1.set(key, { v, freshExp: now + memTtlMs, hardExp: now + hardTtlMs })
+}
+
+/** Общий путь «Redis GET → при промахе fetcher → Redis SET», с дедупликацией */
+function loadThrough<T>(opts: CacheAsideOpts<T>, memTtlMs: number, hardTtlMs: number): Promise<T> {
+  const existing = inflight.get(opts.key)
+  if (existing) return existing as Promise<T>
+
+  const p = (async (): Promise<T> => {
+    const remote = await cacheGet<T>(opts.key) // 1 GET
+    if (remote !== null) {
+      l1Store(opts.key, remote, memTtlMs, hardTtlMs)
+      return remote
+    }
+    const fresh = await opts.fetcher()
+    l1Store(opts.key, fresh, memTtlMs, hardTtlMs)
+    await cacheSet(opts.key, fresh, opts.ttlSec) // 1 SET (только при промахе)
+    return fresh
+  })()
+
+  inflight.set(
+    opts.key,
+    p.catch(() => null), // фон-ревалидации не должны копить unhandled rejections
+  )
+  void p
+    .catch(() => undefined)
+    .finally(() => {
+      if (inflight.get(opts.key)) inflight.delete(opts.key)
+    })
+  return p
 }
 
 /**
- * Cache-aside: L1 память → L2 Redis → fetcher.
+ * Cache-aside: L1 память (fresh → stale) → L2 Redis → fetcher.
  * Требование: значение fetcher должно быть JSON-сериализуемым.
  */
-export async function cacheAside<T>(opts: {
-  key: string
-  ttlSec: number
-  /** TTL L1; по умолчанию min(ttlSec*1000, 5000) */
-  memoryTtlMs?: number
-  fetcher: () => Promise<T>
-}): Promise<T> {
+export async function cacheAside<T>(opts: CacheAsideOpts<T>): Promise<T> {
   const memTtl = opts.memoryTtlMs ?? Math.min(opts.ttlSec * 1000, 5000)
+  // hard-окно совпадает с жизнью L2-ключа: пока локальная копия жива,
+  // Redis-значение заведомо ещё существует (ревалидация найдёт его одним GET)
+  const hardTtl = Math.max(opts.ttlSec * 1000, memTtl)
 
-  const local = l1Get<T>(opts.key)
-  if (local !== null) return local
-
-  const remote = await cacheGet<T>(opts.key)
-  if (remote !== null) {
-    l1Set(opts.key, remote, memTtl)
-    return remote
+  const e = l1.get(opts.key)
+  const now = Date.now()
+  if (e && e.hardExp > now) {
+    if (e.freshExp > now) return e.v as T
+    // stale, но в пределах hardExp: одна фоновая ревалидация, ответ из памяти
+    void loadThrough(opts, memTtl, hardTtl).catch(() => undefined)
+    return e.v as T
   }
 
-  const fresh = await opts.fetcher()
-  l1Set(opts.key, fresh, memTtl)
-  await cacheSet(opts.key, fresh, opts.ttlSec)
-  return fresh
+  return loadThrough(opts, memTtl, hardTtl)
 }
 
 // ---------------- Версии семейств (инвалидация, O(1)) ----------------
@@ -143,14 +182,15 @@ export async function cacheAside<T>(opts: {
  *
  * ЭКОНОМИЯ КОМАНД (Upstash тарифицирует каждую команду):
  * версия кэшируется в памяти процесса на VERSION_TTL_MS — Redis-GET версии
- * делается не на каждый запрос, а раз в 30с на семейство. bump обновляет
- * локальную копию мгновенно (свой инстанс видит инвалидацию сразу,
- * соседние — максимум через 30с, что сопоставимо с самими TTL).
+ * делается не на каждый запрос, а раз в 60с на семейство (сами TTL данных
+ * 25–120с — задержка инвалидации соседних инстансов им сопоставима).
+ * bump обновляет локальную копию мгновенно (свой инстанс видит инвалидацию
+ * сразу) и пайплайнит все INCR в один REST-запрос.
  */
 export const CACHE_FAMILIES = ['feed', 'tr', 'ch', 'ct', 'sr'] as const
 export type CacheFamily = (typeof CACHE_FAMILIES)[number]
 
-const VERSION_TTL_MS = 30_000
+const VERSION_TTL_MS = 60_000
 const memVersions = new Map<CacheFamily, { v: number; exp: number }>()
 
 async function familyVersionUncached(f: CacheFamily): Promise<number> {
@@ -170,9 +210,18 @@ export async function familyVersion(f: CacheFamily): Promise<number> {
 }
 
 export async function bumpCache(families: CacheFamily[]): Promise<void> {
+  // все INCR одним pipeline-запросом (один RTT вместо N)
+  if (redis && families.length > 0) {
+    const pipe = redis.pipeline()
+    for (const f of families) pipe.incr(`ver:${f}`)
+    try {
+      await withTimeout(pipe.exec(), undefined as never)
+    } catch {
+      /* соседние инстансы обновятся по TTL ключей — не критично */
+    }
+  }
+  // локальная копия — сразу актуальная (без GET)
   for (const f of families) {
-    if (redis) await withTimeout(redis.incr(`ver:${f}`), undefined as never)
-    // локальная копия — сразу актуальная (без GET)
     const cur = memVersions.get(f)
     const v = cur && cur.exp > Date.now() ? cur.v + 1 : 0 // 0 = «неизвестно», перекэшируем из Redis при следующем чтении
     memVersions.set(f, { v, exp: Date.now() + VERSION_TTL_MS })
@@ -187,19 +236,20 @@ export async function famKey(f: CacheFamily, suffix: string): Promise<string> {
 
 // ------------------------- Health -------------------------
 
-/** Результат health-проверки кэшируется в памяти — не чаще раза в 60с */
+/** Результат health-проверки кэшируется в памяти — не чаще раза в 5 минут */
 let healthCache: { v: 'upstash' | 'memory-only' | 'down'; exp: number } | null = null
+const HEALTH_MEM_TTL_MS = 300_000
 
 /** Проверка Redis для /api/health (не бросает исключений, экономит команды) */
 export async function redisHealth(): Promise<'upstash' | 'memory-only' | 'down'> {
   if (!redis) return 'memory-only'
   if (healthCache && healthCache.exp > Date.now()) return healthCache.v
   try {
-    await redis.set('health:ping', Date.now(), { ex: 120 })
-    healthCache = { v: 'upstash', exp: Date.now() + 60_000 }
+    await redis.set('health:ping', Date.now(), { ex: 600 })
+    healthCache = { v: 'upstash', exp: Date.now() + HEALTH_MEM_TTL_MS }
     return 'upstash'
   } catch {
-    healthCache = { v: 'down', exp: Date.now() + 60_000 }
+    healthCache = { v: 'down', exp: Date.now() + HEALTH_MEM_TTL_MS }
     return 'down'
   }
 }

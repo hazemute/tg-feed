@@ -36,6 +36,37 @@ const LIMITS: Array<{ prefix: string; limit: number }> = [
   { prefix: '/api/hashtag', limit: 60 },
 ]
 
+/**
+ * ЭКОНОМИЯ КОМАНД: локальный предфильтр Redis-лимитов. Пока IP не израсходовал
+ * SOFT_FACTOR от лимита НА ЭТОМ ИНСТАНСЕ, Redis не трогаем вообще — типичный
+ * пользователь никогда не дойдёт до Redis даже на аватарках (самый массовый путь).
+ * После порога — авторитетный Redis-INCR (единый на все инстансы), флуд
+ * до этого отсекает слой 0. Цена: при N инстансах до порога пропускаем до
+ * N×SOFT_FACTOR — для защитного лимита это несущественно.
+ */
+const SOFT_FACTOR = 0.6
+
+type SoftEntry = { count: number; windowStart: number }
+const soft = new Map<string, SoftEntry>()
+
+function softCountAndIncr(key: string): number {
+  const now = Date.now()
+  const e = soft.get(key)
+  if (!e || now - e.windowStart >= WINDOW_SEC * 1000) {
+    soft.set(key, { count: 1, windowStart: now })
+    return 0 // предыдущих хитов в этом окне не было
+  }
+  const prev = e.count
+  e.count += 1
+  // амортизированная чистка одноразовых IP
+  if (soft.size > 3000 && e.count % 2048 === 0) {
+    for (const [k, v] of soft) {
+      if (now - v.windowStart > WINDOW_SEC * 2000) soft.delete(k)
+    }
+  }
+  return prev
+}
+
 // ----------------- Слой 0: in-memory анти-флуд (без Redis) -----------------
 
 const FLOOD_LIMIT = 300 // req/мин с одного IP на инстанс
@@ -97,6 +128,31 @@ async function maintenanceOn(): Promise<boolean> {
   return v
 }
 
+/**
+ * ЭКОНОМИЯ КОМАНД: белый список кэшируется SMEMBERS-ом раз в 30с — во время
+ * техработ каждый запрос больше не делает SISMEMBER. Задержка отзыва допуска
+ * ≤ 30с (для защитного режима это несущественно).
+ */
+let passCache: { set: Set<string>; exp: number } | null = null
+const PASS_MEM_TTL_MS = 30_000
+
+async function maintenanceAllowed(uid: string): Promise<boolean> {
+  if (!redis) return false
+  const now = Date.now()
+  if (!passCache || passCache.exp <= now) {
+    try {
+      const members = await redis.smembers<string[]>(MAINT_PASS_SET)
+      passCache = {
+        set: new Set(Array.isArray(members) ? members : []),
+        exp: now + PASS_MEM_TTL_MS,
+      }
+    } catch {
+      return false // Redis недоступен при техработах — не пропускаем
+    }
+  }
+  return passCache.set.has(uid)
+}
+
 function adminUids(): string[] {
   return (process.env.ADMIN_TG_IDS ?? '')
     .split(',')
@@ -134,21 +190,28 @@ export async function middleware(request: NextRequest) {
   }
 
   // --- Слой 1: Redis-лимиты чувствительных эндпоинтов (единый на инстансы) ---
+  // Локальный предфильтр: до SOFT_FACTOR лимита Redis не тратится.
   const rule = LIMITS.find((r) => path === r.prefix || path.startsWith(`${r.prefix}/`))
   if (redis && rule) {
     const bucket = Math.floor(Date.now() / 1000 / WINDOW_SEC)
-    const key = `rl:${rule.prefix}:${ip}:${bucket}`
-    try {
-      const hits = await redis.incr(key)
-      if (hits === 1) await redis.expire(key, WINDOW_SEC + 5)
-      if (hits > rule.limit) {
-        return NextResponse.json(
-          { error: 'too many requests' },
-          { status: 429, headers: { 'Retry-After': String(WINDOW_SEC) } },
-        )
+    const softKey = `${rule.prefix}:${ip}:${bucket}`
+    const softLimit = Math.floor(rule.limit * SOFT_FACTOR)
+    const prevHits = softCountAndIncr(softKey)
+    if (prevHits >= softLimit) {
+      // порог локального счётчика пройден — дальше проверяем в Redis (авторитетно)
+      try {
+        const key = `rl:${rule.prefix}:${ip}:${bucket}`
+        const hits = await redis.incr(key)
+        if (hits === 1) await redis.expire(key, WINDOW_SEC + 5)
+        if (hits > rule.limit) {
+          return NextResponse.json(
+            { error: 'too many requests' },
+            { status: 429, headers: { 'Retry-After': String(WINDOW_SEC) } },
+          )
+        }
+      } catch {
+        // Redis недоступен — пропускаем (слои 0 и 2 продолжают работать)
       }
-    } catch {
-      // Redis недоступен — пропускаем (слои 0 и 2 продолжают работать)
     }
   }
 
@@ -157,12 +220,7 @@ export async function middleware(request: NextRequest) {
     const session = await verifySessionEdge(bearerToken(request))
     let allowed = session !== null && adminUids().includes(session.uid)
     if (!allowed && session) {
-      try {
-        const r = await redis.sismember(MAINT_PASS_SET, session.uid)
-        allowed = r === 1
-      } catch {
-        allowed = false
-      }
+      allowed = await maintenanceAllowed(session.uid)
     }
     if (!allowed) {
       return NextResponse.json(
