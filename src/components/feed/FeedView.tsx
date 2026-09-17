@@ -554,8 +554,9 @@ export function FeedView() {
   return (
     <div className="relative flex h-full flex-col">
       {/* Вкладки категорий — крупные, активная жирная с синей чертой (макет);
-          справа — колокольчик уведомлений с бейджем новых постов */}
-      <header className="shrink-0 bg-tg-bg" data-noswipe>
+          справа — колокольчик уведомлений с бейджем новых постов.
+          relative z-20 — пилюля «N новых» (z-10) выползает ИЗ-ПОД этой панели */}
+      <header className="relative z-20 shrink-0 bg-tg-bg" data-noswipe>
         <div className="flex items-end">
           <div
             className="no-scrollbar flex min-w-0 flex-1 items-end gap-6 overflow-x-auto px-4 pb-1 pt-2.5"
@@ -644,24 +645,33 @@ export function FeedView() {
         )}
       </AnimatePresence>
 
-      {/* Пилюля «N новых постов» (как в нативных лентах) */}
-      <AnimatePresence>
-        {freshCount > 0 && !refreshing && (
-          <motion.button
-            type="button"
-            initial={{ opacity: 0, y: -14, scale: 0.9 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -14, scale: 0.9 }}
-            transition={{ type: 'spring', stiffness: 400, damping: 28 }}
-            onClick={() => applyFresh()}
-            aria-label={`Показать: ${freshCount} ${pluralRu(freshCount, 'новый пост', 'новых поста', 'новых постов')}`}
-            className="absolute left-1/2 top-3 z-30 flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-semibold text-white shadow-lg shadow-tg-link/30 transition active:scale-95"
-          >
-            <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
-            {freshCount} {pluralRu(freshCount, 'новый пост', 'новых поста', 'новых постов')}
-          </motion.button>
-        )}
-      </AnimatePresence>
+      {/*
+        Пилюля «N новых постов» — «язычок», выползающий из-под панели тегов:
+        • нулевая обёртка сразу после шапки → статическая позиция ровно под баром;
+        • z-10 ниже шапки (z-20) — в приподнятом состоянии пилюля скрыта ЗА панелью,
+          анимация y:-120% → 0 физически «вытягивает» её вниз из-под тегов;
+        • верх плоский (без скруглений — сливается с баром), низ — полный полукруг;
+        • top-[-1px] перекрывает волосную линию шапки — нет щели.
+      */}
+      <div className="relative z-10 h-0">
+        <AnimatePresence>
+          {freshCount > 0 && !refreshing && (
+            <motion.button
+              type="button"
+              initial={{ y: '-120%' }}
+              animate={{ y: '0%' }}
+              exit={{ y: '-120%' }}
+              transition={{ type: 'spring', stiffness: 380, damping: 32 }}
+              onClick={() => applyFresh()}
+              aria-label={`Показать: ${freshCount} ${pluralRu(freshCount, 'новый пост', 'новых поста', 'новых постов')}`}
+              className="absolute left-1/2 top-[-1px] flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-b-full bg-tg-link px-4 pt-1 text-[13.5px] font-semibold text-white shadow-[0_12px_24px_-8px_rgba(0,0,0,0.4)] transition-[scale] active:scale-95"
+            >
+              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
+              {freshCount} {pluralRu(freshCount, 'новый пост', 'новых поста', 'новых постов')}
+            </motion.button>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* Сама лента — естественный скролл + pull-to-refresh */}
       <div
@@ -741,6 +751,10 @@ export function FeedView() {
                 />
                 {(i + 1) % 10 === 0 && ads.length > 0 && (
                   <AdCard ad={ads[Math.floor(i / 10) % ads.length]} />
+                )}
+                {/* Волосной разделитель между постами — структура ленты как в нативных клиентах */}
+                {i < items.length - 1 && (
+                  <div className="mx-4 h-px bg-tg-sep/40" aria-hidden />
                 )}
               </Fragment>
             ))}

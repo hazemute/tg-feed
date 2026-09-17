@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Check, Plus, Sparkle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -79,6 +79,10 @@ export function SubscribeCircle({
 /**
  * Текст поста: 3 строки с «...еще» в правом нижнем углу (как в макете),
  * раскрытие с плавной анимацией; у длинных постов — ссылка на AI-саммари.
+ *
+ * Кнопка — absolute в правом нижнем углу ОБРЕЗАННОГО контейнера (float-вариант
+ * уходил под отсечку overflow:hidden и пропадал). Слева — градиент под фон,
+ * растворяющий текст. Высота строки — из computed style (реальный line-height).
  */
 export function ExpandableText({ text, onSummary }: { text: string; onSummary?: () => void }) {
   const innerRef = useRef<HTMLParagraphElement>(null)
@@ -87,31 +91,40 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
 
   const measure = () => {
     const el = innerRef.current
-    if (!el || expanded) return
-    const fs = parseFloat(getComputedStyle(el).fontSize)
-    const collapsed = Math.round(fs * 1.42 * 3) // 3 строки, как в макете
+    if (!el) return
+    const cs = getComputedStyle(el)
+    const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5
+    const collapsed = Math.round(line * 3) // ровно 3 строки, как в макете
     const full = el.scrollHeight
-    if (full > collapsed + 10) setClamp({ full, collapsed })
-    else setClamp(null)
+    const over = full > collapsed + 4
+    // Идемпотентно (см. PostText) — ResizeObserver не должен провоцировать рендеры
+    setClamp((prev) => {
+      const next = over ? { full, collapsed } : null
+      if (
+        prev === next ||
+        (prev && next && prev.full === next.full && prev.collapsed === next.collapsed)
+      )
+        return prev
+      return next
+    })
   }
 
-  useLayoutEffect(measure, [text, expanded])
-
+  // ResizeObserver на абзаце: монтирование / смена текста / шрифты / поворот экрана.
+  // Замер не зависит от expanded: scrollHeight абзаца всегда полная (клип — на родителе)
   useEffect(() => {
-    const t = setTimeout(measure, 250)
-    window.addEventListener('resize', measure)
-    return () => {
-      clearTimeout(t)
-      window.removeEventListener('resize', measure)
-    }
-     
-  }, [text])
+    const el = innerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const long = text.length > 400
 
   return (
     <div className="mt-3">
       <div
+        className="relative"
         style={{
           maxHeight: expanded ? (clamp?.full ?? 9999) : (clamp?.collapsed ?? 9999),
           overflow: 'hidden',
@@ -129,8 +142,13 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
               setExpanded(true)
               haptic('light')
             }}
-            className="float-right -mt-[19px] bg-tg-bg pl-1.5 text-[16px] font-medium text-tg-hint"
+            aria-label="Развернуть текст"
+            className="absolute bottom-0 right-0 bg-tg-bg pl-2 text-post font-medium text-tg-hint active:opacity-70"
           >
+            <span
+              aria-hidden
+              className="absolute right-full top-0 h-full w-10 bg-gradient-to-r from-transparent to-tg-bg"
+            />
             ...еще
           </button>
         )}

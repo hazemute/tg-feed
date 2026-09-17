@@ -1,7 +1,7 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { Forward, Heart, Sparkle, Star } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Eye, Forward, Heart, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -90,11 +90,17 @@ function LikeRailButton({ count, active, onClick }: { count: number; active: boo
 }
 
 /**
- * Текст поста ленты: clamp по высоте 3 строки, кнопка «...еще» открывает
- * полный экран поста (PostOverlay) — с полным текстом и всеми картинками.
+ * Текст поста ленты: clamp ровно 3 строки, кнопка «...еще» в правом нижнем углу
+ * обрезанного блока открывает полный экран поста (PostOverlay) — с полным текстом
+ * и всеми картинками.
+ *
+ * Почему absolute, а не float: кнопка-float стоит ПОСЛЕ абзаца с полным текстом —
+ * при обрезке overflow:hidden она попадает под линию отсечки и становится невидимой.
+ * Абсолютная кнопка привязана к НИЗУ обрезанного контейнера (низ = конец 3-й строки)
+ * и всегда видима. Слева от кнопки — градиент под цвет фона, текст под ней
+ * растворяется без жёсткого края.
  * Хэштег — inline-кнопка с унаследованными текстовыми метриками, поэтому
- * высотный clamp не ломается. Каналы (ChannelSheet) используют исходный
- * ExpandableText — хэштеги только в ленте.
+ * высотный clamp не ломается. Каналы (ChannelSheet) используют ExpandableText.
  */
 function PostText({
   text,
@@ -113,22 +119,31 @@ function PostText({
   const measure = () => {
     const el = innerRef.current
     if (!el) return
-    const fs = parseFloat(getComputedStyle(el).fontSize)
-    const collapsed = Math.round(fs * 1.42 * 3) // 3 строки, как в макете
-    if (el.scrollHeight > collapsed + 10) setClamp({ collapsed })
-    else setClamp(null)
+    const cs = getComputedStyle(el)
+    // Реальная высота строки из computed style (было жёстко 1.42 при фактических 1.5 —
+    // из-за этого отсечение врезалось в 3-ю строку, а «...еще» оставалось под обрезкой)
+    const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5
+    const collapsed = Math.round(line * 3) // ровно 3 строки, как в макете
+    const over = el.scrollHeight > collapsed + 4
+    // Идемпотентно: не создаём новый объект без изменений — иначе ResizeObserver
+    // зациклится на перерендерах
+    setClamp((prev) => {
+      const next = over ? { collapsed } : null
+      if (prev === next || (prev && next && prev.collapsed === next.collapsed)) return prev
+      return next
+    })
   }
 
-  useLayoutEffect(measure, [text])
-
+  // ResizeObserver на абзаце: срабатывает и при монтировании, и при смене текста,
+  // поздней загрузке шрифта и повороте экрана (p лежит внутри clip-контейнера,
+  // поэтому его собственная высота — всегда полная, не обрезанная)
   useEffect(() => {
-    const t = setTimeout(measure, 250)
-    window.addEventListener('resize', measure)
-    return () => {
-      clearTimeout(t)
-      window.removeEventListener('resize', measure)
-    }
-  }, [text])
+    const el = innerRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(measure)
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
 
   const long = text.length > 400
 
@@ -140,6 +155,7 @@ function PostText({
   return (
     <div className="mt-3">
       <div
+        className="relative"
         style={{
           maxHeight: clamp ? clamp.collapsed : 9999,
           overflow: 'hidden',
@@ -172,7 +188,8 @@ function PostText({
             ),
           )}
         </p>
-        {/* Оверлей «...еще» на третьей строке → полный экран поста */}
+        {/* Оверлей «...еще» на третьей строке → полный экран поста.
+            Градиент слева растворяет обрезанный текст под кнопкой */}
         {clamp && (
           <button
             type="button"
@@ -181,8 +198,12 @@ function PostText({
               onOpenMore?.()
             }}
             aria-label="Читать пост полностью"
-            className="float-right -mt-[19px] bg-tg-bg pl-1.5 text-[16px] font-medium text-tg-hint"
+            className="absolute bottom-0 right-0 bg-tg-bg pl-2 text-post font-medium text-tg-hint active:opacity-70"
           >
+            <span
+              aria-hidden
+              className="absolute right-full top-0 h-full w-10 bg-gradient-to-r from-transparent to-tg-bg"
+            />
             ...еще
           </button>
         )}
@@ -287,7 +308,10 @@ export function PostCard({
             name={ch.title}
             color={ch.avatarColor}
             size={50}
-            className="ring-1 ring-tg-sep/70"
+            className={cn(
+              'ring-1',
+              ch.isPremium ? 'ring-tg-star/50' : 'ring-tg-sep/70',
+            )}
           />
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-1">
@@ -372,7 +396,7 @@ export function PostCard({
           post.text ? 'mt-2' : 'mt-3',
         )}
       >
-        <span aria-hidden>·</span>
+        <Eye className="h-3.5 w-3.5" aria-hidden />
         <span className="tabular-nums">{formatCount(post.viewsCount)} просмотров</span>
         {!post.text && (
           <button
