@@ -14,14 +14,21 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
-  // Security-заголовки на все ответы (в т.ч. статику)
+  // Security-заголовки на все ответы (в т.ч. статику).
+  // ВАЖНО: X-Frame-Options НЕ ставим — мини-апп работает в iframe Telegram Web
+  // (web.telegram.org). Вместо него — CSP frame-ancestors с allowlist Telegram.
   async headers() {
+    const frameAncestors =
+      "frame-ancestors 'self' https://web.telegram.org https://webk.telegram.org https://webz.telegram.org https://telegram.org https://*.telegram.org https://localhost:8080 http://localhost:8080;";
     return [
       {
         source: "/:path*",
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
-          { key: "X-Frame-Options", value: "DENY" },
+          {
+            key: "Content-Security-Policy",
+            value: frameAncestors,
+          },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           {
             key: "Permissions-Policy",
@@ -29,6 +36,20 @@ const nextConfig: NextConfig = {
           },
           { key: "X-DNS-Prefetch-Control", value: "off" },
           { key: "Origin-Agent-Cluster", value: "?1" },
+          {
+            key: "Strict-Transport-Security",
+            value: "max-age=63072000; includeSubDomains",
+          },
+        ],
+      },
+      {
+        // Админ-панель: фреймить извне нельзя никому (кроме самого приложения)
+        source: "/admin/:path*",
+        headers: [
+          {
+            key: "Content-Security-Policy",
+            value: "frame-ancestors 'self';",
+          },
         ],
       },
     ];

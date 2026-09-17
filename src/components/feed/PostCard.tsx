@@ -27,7 +27,7 @@ import { RailButton, SubscribeCircle } from '@/components/feed/actions'
 const HASHTAG_RE = /#[\wа-яё]{2,30}/gu
 
 /** Разбивает текст поста на обычные фрагменты и хэштеги (для инлайн-рендера) */
-function tokenizeHashtags(text: string): Array<string | { tag: string }> {
+export function tokenizeHashtags(text: string): Array<string | { tag: string }> {
   const parts: Array<string | { tag: string }> = []
   let last = 0
   for (const m of text.matchAll(HASHTAG_RE)) {
@@ -90,29 +90,36 @@ function LikeRailButton({ count, active, onClick }: { count: number; active: boo
 }
 
 /**
- * Текст поста ленты: логика ExpandableText (clamp по высоте 3 строки, «...еще»,
- * раскрытие, AI-саммари у длинных) с кликабельными #хэштегами.
- * Хэштег — inline-кнопка с унаследованными текстовыми метриками (preflight Tailwind
- * наследует шрифт/размер/межстрочку), поэтому высотный clamp не ломается.
- * Каналы (ChannelSheet) используют исходный ExpandableText — хэштеги только в ленте.
+ * Текст поста ленты: clamp по высоте 3 строки, кнопка «...еще» открывает
+ * полный экран поста (PostOverlay) — с полным текстом и всеми картинками.
+ * Хэштег — inline-кнопка с унаследованными текстовыми метриками, поэтому
+ * высотный clamp не ломается. Каналы (ChannelSheet) используют исходный
+ * ExpandableText — хэштеги только в ленте.
  */
-function PostText({ text, onSummary }: { text: string; onSummary?: () => void }) {
+function PostText({
+  text,
+  onSummary,
+  onOpenMore,
+}: {
+  text: string
+  onSummary?: () => void
+  onOpenMore?: () => void
+}) {
   const innerRef = useRef<HTMLParagraphElement>(null)
-  const [expanded, setExpanded] = useState(false)
-  const [clamp, setClamp] = useState<{ full: number; collapsed: number } | null>(null)
+  // Высота 3 строк в px — из фактического измерения (корректно при любом fontScale)
+  const [clamp, setClamp] = useState<{ collapsed: number } | null>(null)
   const openSearchWith = useApp((s) => s.openSearchWith)
 
   const measure = () => {
     const el = innerRef.current
-    if (!el || expanded) return
+    if (!el) return
     const fs = parseFloat(getComputedStyle(el).fontSize)
     const collapsed = Math.round(fs * 1.42 * 3) // 3 строки, как в макете
-    const full = el.scrollHeight
-    if (full > collapsed + 10) setClamp({ full, collapsed })
+    if (el.scrollHeight > collapsed + 10) setClamp({ collapsed })
     else setClamp(null)
   }
 
-  useLayoutEffect(measure, [text, expanded])
+  useLayoutEffect(measure, [text])
 
   useEffect(() => {
     const t = setTimeout(measure, 250)
@@ -125,16 +132,16 @@ function PostText({ text, onSummary }: { text: string; onSummary?: () => void })
 
   const long = text.length > 400
 
-  // Токенизация по ПОЛНОМУ тексту: «...еще» считается по высоте (maxHeight +
-  // overflow hidden), а не обрезкой строки, поэтому кликабельность хэштегов
-  // работает одинаково в свёрнутом и раскрытом виде.
+  // Токенизация по ПОЛНОМУ тексту: видимость «...еще» считается по высоте
+  // (maxHeight + overflow hidden), а не обрезкой строки, поэтому кликабельность
+  // хэштегов работает одинаково в свёрнутом и раскрытом виде.
   const parts = tokenizeHashtags(text)
 
   return (
     <div className="mt-3">
       <div
         style={{
-          maxHeight: expanded ? (clamp?.full ?? 9999) : (clamp?.collapsed ?? 9999),
+          maxHeight: clamp ? clamp.collapsed : 9999,
           overflow: 'hidden',
           transition: 'max-height 320ms ease',
         }}
@@ -165,30 +172,22 @@ function PostText({ text, onSummary }: { text: string; onSummary?: () => void })
             ),
           )}
         </p>
-        {/* Оверлей «...еще» на третьей строке */}
-        {clamp && !expanded && (
+        {/* Оверлей «...еще» на третьей строке → полный экран поста */}
+        {clamp && (
           <button
             type="button"
             onClick={() => {
-              setExpanded(true)
               haptic('light')
+              onOpenMore?.()
             }}
+            aria-label="Читать пост полностью"
             className="float-right -mt-[19px] bg-tg-bg pl-1.5 text-[16px] font-medium text-tg-hint"
           >
             ...еще
           </button>
         )}
       </div>
-      {clamp && expanded && (
-        <button
-          type="button"
-          onClick={() => setExpanded(false)}
-          className="mt-1 text-[15px] font-medium text-tg-hint active:opacity-60"
-        >
-          Свернуть
-        </button>
-      )}
-      {expanded && long && onSummary && (
+      {long && onSummary && (
         <button
           type="button"
           onClick={onSummary}
@@ -228,7 +227,11 @@ export function PostCard({
   const rootRef = useRef<HTMLElement>(null)
   const viewedRef = useRef(false)
   const openChannel = useApp((s) => s.openChannel)
+  const openPost = useApp((s) => s.openPost)
   const ch = post.channel
+
+  /** «...еще» → полный экран поста */
+  const openFullPost = () => openPost(post)
 
   // Просмотр засчитывается, когда пост показался на экране
   useEffect(() => {
@@ -334,7 +337,7 @@ export function PostCard({
           {/* Текст поста без медиа — в одну колонку с рельсом */}
           {post.text && images.length === 0 && !(post.mediaType === 'video' && post.mediaUrl) && (
             <div className="pt-1">
-              <PostText text={post.text} onSummary={onSummary} />
+              <PostText text={post.text} onSummary={onSummary} onOpenMore={openFullPost} />
             </div>
           )}
         </div>
@@ -358,7 +361,7 @@ export function PostCard({
       {/* Текст поста с медиа — на всю ширину под медиа */}
       {post.text && (images.length > 0 || (post.mediaType === 'video' && post.mediaUrl)) && (
         <div className="px-4">
-          <PostText text={post.text} onSummary={onSummary} />
+          <PostText text={post.text} onSummary={onSummary} onOpenMore={openFullPost} />
         </div>
       )}
 

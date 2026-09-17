@@ -13,6 +13,7 @@ import { BottomNav } from '@/components/tg/BottomNav'
 import { Onboarding } from '@/components/tg/Onboarding'
 import { FeedView } from '@/components/feed/FeedView'
 import { ChannelSheet } from '@/components/feed/ChannelSheet'
+import { PostOverlay } from '@/components/feed/PostOverlay'
 import { TrendingTab } from '@/components/tabs/TrendingTab'
 import { SearchTab } from '@/components/tabs/SearchTab'
 import { ProfileTab } from '@/components/tabs/ProfileTab'
@@ -179,6 +180,8 @@ export default function Home() {
         <Onboarding open={needsOnboarding} mode="onboarding" onClose={() => {}} />
         {/* Экран канала внутри приложения */}
         <ChannelSheet />
+        {/* Полный экран поста (открывается из «...еще») */}
+        <PostOverlay />
       </div>
     </div>
   )

@@ -49,9 +49,14 @@ export function isValidChannelUsername(username: string): boolean {
 }
 
 /** Безопасный парсинг JSON-тела запроса (без исключений) */
+/** Максимальный размер JSON-тела (байт) — защита от memory-абуза */
+const MAX_JSON_BYTES = 1_000_000
+
 export async function readJson<T = Record<string, unknown>>(request: Request): Promise<T> {
   try {
-    return (await request.json()) as T
+    const text = await request.text()
+    if (text.length > MAX_JSON_BYTES) return {} as T
+    return JSON.parse(text) as T
   } catch {
     return {} as T
   }

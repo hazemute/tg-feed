@@ -173,6 +173,190 @@
   --tg-star: #f5a623;
 }
 
+/* --- Светлые палитры галереи тем --- */
+
+[data-theme='sepia'] {
+  --tg-bg: #f7f1e4;
+  --tg-surface: #efe6d2;
+  --tg-surface2: #e5d9bf;
+  --tg-text: #3a2e21;
+  --tg-text2: #5d4d38;
+  --tg-hint: #9c8a70;
+  --tg-link: #a8732f;
+  --tg-button: #a8732f;
+  --tg-sep: rgba(58, 46, 33, 0.14);
+  --tg-like: #c05f4a;
+  --tg-green: #6d9b4d;
+  --tg-star: #c78f3d;
+}
+
+[data-theme='sand'] {
+  --tg-bg: #faf6ee;
+  --tg-surface: #f0e9da;
+  --tg-surface2: #e4dbC5;
+  --tg-text: #4a4234;
+  --tg-text2: #66594a;
+  --tg-hint: #a09480;
+  --tg-link: #c08a3e;
+  --tg-button: #c08a3e;
+  --tg-sep: rgba(74, 66, 52, 0.13);
+  --tg-like: #c0563e;
+  --tg-green: #7aa055;
+  --tg-star: #d1a04c;
+}
+
+[data-theme='rose'] {
+  --tg-bg: #fdf2f4;
+  --tg-surface: #f7e3e8;
+  --tg-surface2: #efd3da;
+  --tg-text: #3d2229;
+  --tg-text2: #5f3c45;
+  --tg-hint: #a8828c;
+  --tg-link: #d4547a;
+  --tg-button: #d4547a;
+  --tg-sep: rgba(61, 34, 41, 0.12);
+  --tg-like: #d4547a;
+  --tg-green: #4fa06b;
+  --tg-star: #d99b3e;
+}
+
+[data-theme='mint'] {
+  --tg-bg: #effaf3;
+  --tg-surface: #ddefe3;
+  --tg-surface2: #cce2d5;
+  --tg-text: #1e3a2a;
+  --tg-text2: #375443;
+  --tg-hint: #7f9a8a;
+  --tg-link: #2e9e63;
+  --tg-button: #2e9e63;
+  --tg-sep: rgba(30, 58, 42, 0.13);
+  --tg-like: #2e9e63;
+  --tg-green: #2e9e63;
+  --tg-star: #c9a13c;
+}
+
+[data-theme='lavender'] {
+  --tg-bg: #f6f2fc;
+  --tg-surface: #eae2f7;
+  --tg-surface2: #ddd2ef;
+  --tg-text: #2c2440;
+  --tg-text2: #4a4066;
+  --tg-hint: #8f86a8;
+  --tg-link: #8b5cf6;
+  --tg-button: #8b5cf6;
+  --tg-sep: rgba(44, 36, 64, 0.13);
+  --tg-like: #a855f7;
+  --tg-green: #52a87a;
+  --tg-star: #d9a441;
+}
+
+/* --- Тёмные палитры галереи тем --- */
+
+[data-theme='mono'] {
+  --tg-bg: #101010;
+  --tg-surface: #1c1c1c;
+  --tg-surface2: #2a2a2a;
+  --tg-text: #f2f2f2;
+  --tg-text2: #cfcfcf;
+  --tg-hint: #8a8a8a;
+  --tg-link: #d4d4d4;
+  --tg-button: #d4d4d4;
+  --tg-sep: rgba(255, 255, 255, 0.09);
+  --tg-like: #ffffff;
+  --tg-green: #9e9e9e;
+  --tg-star: #bdbdbd;
+}
+
+[data-theme='forest'] {
+  --tg-bg: #0f1a12;
+  --tg-surface: #17251a;
+  --tg-surface2: #213325;
+  --tg-text: #e6f0e8;
+  --tg-text2: #c2d4c6;
+  --tg-hint: #7e9484;
+  --tg-link: #58b368;
+  --tg-button: #58b368;
+  --tg-sep: rgba(255, 255, 255, 0.08);
+  --tg-like: #58b368;
+  --tg-green: #58b368;
+  --tg-star: #d1a83e;
+}
+
+[data-theme='ocean'] {
+  --tg-bg: #0b1a20;
+  --tg-surface: #13242c;
+  --tg-surface2: #1b313a;
+  --tg-text: #e3f0f4;
+  --tg-text2: #bdd3da;
+  --tg-hint: #7a959e;
+  --tg-link: #3ab5ae;
+  --tg-button: #3ab5ae;
+  --tg-sep: rgba(255, 255, 255, 0.08);
+  --tg-like: #3ab5ae;
+  --tg-green: #43b98a;
+  --tg-star: #d8b04a;
+}
+
+[data-theme='midnight'] {
+  --tg-bg: #0d1017;
+  --tg-surface: #161a28;
+  --tg-surface2: #1f2438;
+  --tg-text: #e8eaf2;
+  --tg-text2: #c3c7da;
+  --tg-hint: #8088a5;
+  --tg-link: #7d8cff;
+  --tg-button: #7d8cff;
+  --tg-sep: rgba(255, 255, 255, 0.08);
+  --tg-like: #9aa4ff;
+  --tg-green: #5cc08e;
+  --tg-star: #d8ae45;
+}
+
+[data-theme='plum'] {
+  --tg-bg: #170f1a;
+  --tg-surface: #231828;
+  --tg-surface2: #2f2035;
+  --tg-text: #f2e8f4;
+  --tg-text2: #d2bed8;
+  --tg-hint: #94809c;
+  --tg-link: #c26bd9;
+  --tg-button: #c26bd9;
+  --tg-sep: rgba(255, 255, 255, 0.08);
+  --tg-like: #d97ae8;
+  --tg-green: #5cb87e;
+  --tg-star: #d3a944;
+}
+
+[data-theme='coffee'] {
+  --tg-bg: #17110d;
+  --tg-surface: #251b14;
+  --tg-surface2: #33251b;
+  --tg-text: #f2eae2;
+  --tg-text2: #d3c3b4;
+  --tg-hint: #96857a;
+  --tg-link: #c98f5f;
+  --tg-button: #c98f5f;
+  --tg-sep: rgba(255, 255, 255, 0.08);
+  --tg-like: #d97b52;
+  --tg-green: #6ba763;
+  --tg-star: #cf9f45;
+}
+
+[data-theme='sunset'] {
+  --tg-bg: #1a0f0d;
+  --tg-surface: #271715;
+  --tg-surface2: #341f1c;
+  --tg-text: #f6e8e4;
+  --tg-text2: #d9c0b9;
+  --tg-hint: #9d827b;
+  --tg-link: #f2764a;
+  --tg-button: #f2764a;
+  --tg-sep: rgba(255, 255, 255, 0.09);
+  --tg-like: #f2764a;
+  --tg-green: #6fae62;
+  --tg-star: #e0a33e;
+}
+
 @theme {
   --color-tg-bg: var(--tg-bg);
   --color-tg-surface: var(--tg-surface);

@@ -1,7 +1,7 @@
 'use client'
 
 import { create } from 'zustand'
-import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
+import type { CategoryDTO, FontScale, PostDTO, Tab, ThemeMode, UserDTO } from '@/lib/types'
 
 interface AppState {
   user: UserDTO | null
@@ -15,6 +15,7 @@ interface AppState {
   theme: ThemeMode
   fontScale: FontScale
   channelUsername: string | null // открытый экран канала (внутренний)
+  post: PostDTO | null // открытый полный экран поста (внутренний)
   searchSeed: string | null // внешний поисковый запрос (тап по хэштегу в ленте); null — запроса нет
   setUser: (u: UserDTO | null) => void
   setAuthReady: (v: boolean) => void
@@ -28,6 +29,8 @@ interface AppState {
   setFontScale: (f: FontScale) => void
   openChannel: (username: string) => void
   closeChannel: () => void
+  openPost: (post: PostDTO) => void
+  closePost: () => void
   openSearchWith: (query: string) => void
   clearSearchSeed: () => void
 }
@@ -46,6 +49,7 @@ export const useApp = create<AppState>((set, get) => ({
   theme: 'light',
   fontScale: 'md',
   channelUsername: null,
+  post: null,
   searchSeed: null,
   setUser: (user) => set({ user, interests: user?.categories ?? [] }),
   setAuthReady: (authReady) => set({ authReady }),
@@ -74,6 +78,10 @@ export const useApp = create<AppState>((set, get) => ({
   },
   openChannel: (username) => set({ channelUsername: username.replace(/^@/, '') }),
   closeChannel: () => set({ channelUsername: null }),
+  // Полный экран поста («...еще» в ленте): храним снимок поста — оверлей рендерит
+  // его мгновенно без запроса; лайки/закладки оверлей обновляет локально
+  openPost: (post) => set({ post }),
+  closePost: () => set({ post: null }),
   // Внешний запуск поиска (тап по хэштегу в ленте, «Открыть поиск» из пустой ленты):
   // кладём запрос в searchSeed и переходим на вкладку поиска через goToTab
   // (сохраняет направление анимации перехода; если уже на поиске — no-op).

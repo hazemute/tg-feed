@@ -31,6 +31,21 @@ function bool(v: unknown): boolean {
   return v === true
 }
 
+/** photoUrl приходит с клиента — принимаем только https и доверенные хосты Telegram */
+const PHOTO_HOST_RE = /^(?:t\.me|(?:[a-z0-9-]+\.)?telegram\.org|(?:[a-z0-9-]+\.)?telesco\.pe)$/i
+
+function safePhotoUrl(v: unknown): string | null {
+  const raw = str(v, 512)
+  if (!raw) return null
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'https:' || !PHOTO_HOST_RE.test(u.hostname)) return null
+    return raw
+  } catch {
+    return null
+  }
+}
+
 /**
  * POST /api/auth
  * body: { initData?: string, tgUser?: {...}, deviceId?: string }
@@ -73,7 +88,7 @@ export async function POST(request: Request) {
         username = str(u.username, 64)
         firstName = str(u.first_name, 128)
         lastName = str(u.last_name, 128)
-        photoUrl = str(u.photo_url, 512)
+        photoUrl = safePhotoUrl(u.photo_url)
         isPremium = u.is_premium === true
         languageCode = str(u.language_code, 10)
         verified = true
@@ -84,7 +99,7 @@ export async function POST(request: Request) {
       username = str(tgUser.username, 64)
       firstName = str(tgUser.first_name, 128)
       lastName = str(tgUser.last_name, 128)
-      photoUrl = str(tgUser.photo_url, 512)
+      photoUrl = safePhotoUrl(tgUser.photo_url)
       isPremium = bool(tgUser.is_premium)
       languageCode = str(tgUser.language_code, 10)
       verified = false

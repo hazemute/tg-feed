@@ -41,7 +41,7 @@ export async function GET(request: Request) {
       items = await cacheAside({
         key: await famKey('ch', category || 'all'),
         ttlSec: 60,
-        memoryTtlMs: 4000,
+        memoryTtlMs: 10000,
         fetcher: () => loadChannels(category, ''),
       })
     }

@@ -139,26 +139,43 @@ export async function cacheAside<T>(opts: {
 /**
  * Инвалидация через версии: ключ кэша содержит номер версии семейства.
  * bumpCache инкрементирует счётчик — старые ключи становятся недостижимыми
- * и истекают по TTL. Работает одинаково во всех инстансах (счётчик в Redis),
- * при недоступном Redis — локальная память процесса.
+ * и истекают по TTL.
+ *
+ * ЭКОНОМИЯ КОМАНД (Upstash тарифицирует каждую команду):
+ * версия кэшируется в памяти процесса на VERSION_TTL_MS — Redis-GET версии
+ * делается не на каждый запрос, а раз в 30с на семейство. bump обновляет
+ * локальную копию мгновенно (свой инстанс видит инвалидацию сразу,
+ * соседние — максимум через 30с, что сопоставимо с самими TTL).
  */
 export const CACHE_FAMILIES = ['feed', 'tr', 'ch', 'ct', 'sr'] as const
 export type CacheFamily = (typeof CACHE_FAMILIES)[number]
 
-const memVersions = new Map<CacheFamily, number>()
+const VERSION_TTL_MS = 30_000
+const memVersions = new Map<CacheFamily, { v: number; exp: number }>()
 
-export async function familyVersion(f: CacheFamily): Promise<number> {
+async function familyVersionUncached(f: CacheFamily): Promise<number> {
   if (redis) {
     const v = await withTimeout(redis.get<number>(`ver:${f}`), null)
     if (typeof v === 'number') return v
   }
-  return memVersions.get(f) ?? 0
+  return 0
+}
+
+export async function familyVersion(f: CacheFamily): Promise<number> {
+  const cached = memVersions.get(f)
+  if (cached && cached.exp > Date.now()) return cached.v
+  const v = await familyVersionUncached(f)
+  memVersions.set(f, { v, exp: Date.now() + VERSION_TTL_MS })
+  return v
 }
 
 export async function bumpCache(families: CacheFamily[]): Promise<void> {
   for (const f of families) {
-    memVersions.set(f, (memVersions.get(f) ?? 0) + 1)
     if (redis) await withTimeout(redis.incr(`ver:${f}`), undefined as never)
+    // локальная копия — сразу актуальная (без GET)
+    const cur = memVersions.get(f)
+    const v = cur && cur.exp > Date.now() ? cur.v + 1 : 0 // 0 = «неизвестно», перекэшируем из Redis при следующем чтении
+    memVersions.set(f, { v, exp: Date.now() + VERSION_TTL_MS })
   }
 }
 
@@ -170,13 +187,19 @@ export async function famKey(f: CacheFamily, suffix: string): Promise<string> {
 
 // ------------------------- Health -------------------------
 
-/** Проверка Redis для /api/health (не бросает исключений) */
+/** Результат health-проверки кэшируется в памяти — не чаще раза в 60с */
+let healthCache: { v: 'upstash' | 'memory-only' | 'down'; exp: number } | null = null
+
+/** Проверка Redis для /api/health (не бросает исключений, экономит команды) */
 export async function redisHealth(): Promise<'upstash' | 'memory-only' | 'down'> {
   if (!redis) return 'memory-only'
+  if (healthCache && healthCache.exp > Date.now()) return healthCache.v
   try {
-    await redis.set('health:ping', Date.now(), { ex: 60 })
+    await redis.set('health:ping', Date.now(), { ex: 120 })
+    healthCache = { v: 'upstash', exp: Date.now() + 60_000 }
     return 'upstash'
   } catch {
+    healthCache = { v: 'down', exp: Date.now() + 60_000 }
     return 'down'
   }
 }

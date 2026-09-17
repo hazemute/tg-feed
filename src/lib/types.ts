@@ -104,7 +104,22 @@ export type ProfileResponse = {
   stats: { likes: number; subscriptions: number; views: number; bookmarks: number }
 }
 
-export type ThemeMode = 'auto' | 'dark' | 'light'
+export type ThemeMode =
+  | 'auto'
+  | 'light'
+  | 'dark'
+  | 'sepia'
+  | 'sand'
+  | 'rose'
+  | 'mint'
+  | 'lavender'
+  | 'mono'
+  | 'forest'
+  | 'ocean'
+  | 'midnight'
+  | 'plum'
+  | 'coffee'
+  | 'sunset'
 export type FontScale = 'sm' | 'md' | 'lg'
 
 export type Tab = 'feed' | 'trending' | 'search' | 'profile'

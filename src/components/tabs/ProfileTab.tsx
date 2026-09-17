@@ -28,8 +28,10 @@ import { haptic, userAvatarUrl } from '@/lib/tg'
 import type { AdminStatsDTO, PostDTO, ProfileStatsResponse, SubscriptionDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
+import { ThemeGallery } from '@/components/tg/ThemeGallery'
 import { Onboarding } from '@/components/tg/Onboarding'
 import { PromoteSheet } from '@/components/tabs/PromoteSheet'
+import { THEMES, themeName } from '@/lib/themes'
 
 const CREATOR = 'tgfeed_creator'
 
@@ -41,7 +43,7 @@ type BookmarkItem = PostDTO & { readAt: string | null }
  * мои категории, подписки, настройки. Плюс «Мой канал» и закладки.
  */
 export function ProfileTab() {
-  const { user, theme, setTheme, fontScale, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
+  const { user, theme, fontScale, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
   const [profile, setProfile] = useState<{
     stats: { likes: number; subscriptions: number; views: number; bookmarks: number }
   } | null>(null)
@@ -49,6 +51,7 @@ export function ProfileTab() {
   const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(null)
   const [editOpen, setEditOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [themesOpen, setThemesOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [privacyOpen, setPrivacyOpen] = useState(false)
   const [notify, setNotify] = useState(true)
@@ -388,17 +391,14 @@ export function ProfileTab() {
           />
           <SettingRow
             icon={<Settings className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label="Тёмная тема"
+            label="Тема оформления"
             right={
-              <Switch
-                checked={theme === 'dark'}
-                onChange={(v) => {
-                  setTheme(v ? 'dark' : 'light')
-                  haptic('light')
-                }}
-                label="Тёмная тема"
-              />
+              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
+                {themeName(theme)}
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
             }
+            onClick={() => setThemesOpen(true)}
           />
           <SettingRow
             icon={<ShieldCheck className="h-[22px] w-[22px]" strokeWidth={1.7} />}
@@ -424,16 +424,20 @@ export function ProfileTab() {
         subtitle="Оформление и размер текста"
       >
         <div className="space-y-4">
-          <Segmented
-            label="Тема"
-            value={theme}
-            onChange={(v) => setTheme(v as typeof theme)}
-            options={[
-              { value: 'auto', label: 'Авто' },
-              { value: 'light', label: 'Светлая' },
-              { value: 'dark', label: 'Тёмная' },
-            ]}
-          />
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false)
+              setThemesOpen(true)
+            }}
+            className="w-full rounded-2xl bg-tg-surface p-3.5 text-left active:opacity-80"
+          >
+            <span className="block text-[13px] font-medium text-tg-hint">Тема</span>
+            <span className="mt-0.5 flex items-center justify-between">
+              <span className="text-[16px] font-semibold text-tg-text">{themeName(theme)}</span>
+              <span className="text-[14px] font-medium text-tg-link">Все темы ({THEMES.length})</span>
+            </span>
+          </button>
           <Segmented
             label="Размер шрифта постов"
             value={fontScale}
@@ -484,6 +488,8 @@ export function ProfileTab() {
       </BottomSheet>
 
       <Onboarding open={editOpen} mode="edit" onClose={() => setEditOpen(false)} />
+      {/* Галерея тем оформления */}
+      <ThemeGallery open={themesOpen} onClose={() => setThemesOpen(false)} />
     </div>
   )
 }

@@ -43,7 +43,7 @@ export async function GET(request: Request) {
     const core = await cacheAside({
       key: await famKey('tr', 'core'),
       ttlSec: 45,
-      memoryTtlMs: 3000,
+      memoryTtlMs: 5000,
       fetcher: computeCore,
     })
 

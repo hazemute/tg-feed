@@ -13,10 +13,26 @@ export const dynamic = 'force-dynamic'
  *
  * Источники photoUrl:
  *  - "tgfile:<file_id>" — файл из Bot API → getFile → отдаём байты
- *    (file_url временный, кэшируется на сервере 45 мин);
- *  - http(s):// — редирект на CDN-URL (демо-режим без bot-токена);
+ *    (file_url временный, кэшируется в Redis 45 мин);
+ *  - http(s):// — редирект на CDN-URL ТОЛЬКО доверенных хостов Telegram
+ *    (photoUrl демо-пользователя приходит с клиента — редирект на
+ *    произвольный URL запрещён: open-redirect/phishing);
  *  - иначе 404 → клиент рисует инициалы.
  */
+
+/** Доверенные хосты аватарок Telegram (redirect только на них) */
+const AVATAR_HOST_RE = /^(?:t\.me|(?:[a-z0-9-]+\.)?telegram\.org|(?:[a-z0-9-]+\.)?telesco\.pe)$/i
+
+function isSafePhotoUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw)
+    if (u.protocol !== 'https:') return false
+    return AVATAR_HOST_RE.test(u.hostname)
+  } catch {
+    return false
+  }
+}
+
 export async function GET(request: Request, ctx: { params: Promise<{ uid: string }> }) {
   const ip = guardIp(request, { limit: 60, windowMs: 60_000, bucket: 'avatar' })
   if (!ip.ok) return ip.res
@@ -30,6 +46,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
     if (!photo) return new NextResponse('not found', { status: 404 })
 
     if (photo.startsWith('http')) {
+      if (!isSafePhotoUrl(photo)) return new NextResponse('not found', { status: 404 })
       return NextResponse.redirect(photo, {
         headers: { 'Cache-Control': 'public, max-age=600, stale-while-revalidate=3600' },
       })

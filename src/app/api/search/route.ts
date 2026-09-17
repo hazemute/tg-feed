@@ -40,7 +40,7 @@ export async function GET(request: Request) {
     const items = await cacheAside({
       key: await famKey('sr', shortHash(needle)),
       ttlSec: 90,
-      memoryTtlMs: 3000,
+      memoryTtlMs: 8000,
       fetcher: async (): Promise<PostDTO[]> => {
         const posts = await db.post.findMany({
           where: { channel: { status: 'active' } },

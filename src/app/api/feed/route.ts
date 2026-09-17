@@ -78,7 +78,7 @@ export async function GET(request: Request) {
     }
 
     const index: RankedIndex = indexKey
-      ? await cacheAside({ key: indexKey, ttlSec: 25, memoryTtlMs: 2000, fetcher: loadIndex })
+      ? await cacheAside({ key: indexKey, ttlSec: 25, memoryTtlMs: 3000, fetcher: loadIndex })
       : await loadIndex()
 
     /* ---------- Страница: свежие посты по id из индекса ---------- */

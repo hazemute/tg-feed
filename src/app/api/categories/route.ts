@@ -28,7 +28,7 @@ export async function GET(request: Request) {
     const items = await cacheAside({
       key: await famKey('ct', 'all'),
       ttlSec: 120,
-      memoryTtlMs: 5000,
+      memoryTtlMs: 15000,
       fetcher: async (): Promise<CategoryItem[]> => {
         const cats = await db.category.findMany({
           where: { slug: { not: 'other' } },

@@ -420,6 +420,19 @@ export function FeedView() {
     setItems((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)))
   }, [])
 
+  // Лайк/закладка из полного экрана поста (PostOverlay) синхронизируются
+  // с лентой точечно, без рефетча и потери скролла
+  useEffect(() => {
+    const onPostUpdated = (e: Event) => {
+      const d = (e as CustomEvent).detail as { postId: string } & Partial<PostDTO>
+      if (!d?.postId) return
+      const { postId, ...patch } = d
+      updatePost(postId, patch)
+    }
+    window.addEventListener('tgfeed:post-updated', onPostUpdated)
+    return () => window.removeEventListener('tgfeed:post-updated', onPostUpdated)
+  }, [updatePost])
+
   const onLike = useCallback(
     async (post: PostDTO) => {
       if (!user) return
