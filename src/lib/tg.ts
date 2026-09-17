@@ -202,17 +202,17 @@ export function userAvatarUrl(userId: string, photoUrl?: string | null): string 
 
 /** Репост поста: в Telegram — нативный шаринг, иначе navigator.share / буфер обмена */
 export async function sharePost(link: string | null, title: string) {
-  const url = link || 'https://t.me/tgfeed_app'
+  const url = link || 'https://t.me/tgswipe_bot'
   const w = tg()
   try {
     if (w?.openTelegramLink) {
       w.openTelegramLink(
-        `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(`Пост из канала «${title}» — смотрел в TG-Feed`)}`,
+        `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(`Пост из канала «${title}» — смотрел в Tg Swipe`)}`,
       )
       return
     }
     if (typeof navigator !== 'undefined' && navigator.share) {
-      await navigator.share({ title: `TG-Feed · ${title}`, url })
+      await navigator.share({ title: `Tg Swipe · ${title}`, url })
       return
     }
     await navigator.clipboard.writeText(url)

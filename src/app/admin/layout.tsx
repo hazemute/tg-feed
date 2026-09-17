@@ -4,9 +4,9 @@ import { Toaster } from '@/components/ui/sonner'
 import { ThemeController } from './components/bits'
 
 export const metadata: Metadata = {
-  title: 'TG-Feed · Админ-панель',
+  title: 'Tg Swipe · Админ-панель',
   description:
-    'Локальная панель управления TG-Feed: обзор, каналы, модерация, пользователи, реклама, инструменты.',
+    'Локальная панель управления Tg Swipe: обзор, каналы, модерация, пользователи, реклама, инструменты.',
   robots: { index: false, follow: false },
 }
 

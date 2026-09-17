@@ -175,7 +175,7 @@ export default function AdminPage() {
         <div className="mx-auto flex h-14 w-full max-w-7xl items-center gap-3 px-4 md:px-6">
           <img src="/logo.svg" alt="" className="h-7 w-7" />
           <h1 className="truncate text-sm font-semibold text-slate-100 md:text-base">
-            TG-Feed · Админ-панель
+            Tg Swipe · Админ-панель
           </h1>
           <Badge
             variant="outline"
@@ -275,7 +275,7 @@ export default function AdminPage() {
 
       <footer className="mx-auto flex max-w-7xl items-center justify-between px-4 pb-6 text-xs text-slate-600 md:px-6">
         <span>
-          TG-Feed{apiVersion ? ` · API v${apiVersion}` : ''} · локальная админ-панель
+          Tg Swipe{apiVersion ? ` · API v${apiVersion}` : ''} · локальная админ-панель
         </span>
         <span className={cn(panelCard, 'rounded border px-2 py-0.5')}>sessionStorage: tgfeed_admin_key</span>
       </footer>

@@ -56,7 +56,7 @@ export async function POST(request: Request) {
       return err(
         existing.status === 'moderation'
           ? 'Этот канал уже добавлен и ожидает модерации'
-          : 'Этот канал уже в ленте TG-Feed',
+          : 'Этот канал уже в ленте Tg Swipe',
         409,
       )
     }

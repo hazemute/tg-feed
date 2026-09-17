@@ -1,4 +1,4 @@
-// Общие типы TG-Feed (клиент + сервер)
+// Общие типы Tg Swipe (клиент + сервер)
 
 export type CategoryDTO = {
   id: string

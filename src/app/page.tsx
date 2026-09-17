@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { api, setSessionToken } from '@/lib/api'
@@ -31,6 +31,15 @@ export default function Home() {
   const { user, authReady, tab, tabDir, theme, fontScale, setUser, setAuthReady, setCategories, setTheme, setFontScale, goToTab } =
     useApp()
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
+  // Сплэш живёт минимум 1.35с — влёт самолётика (1.15с) всегда доигрывает
+  // до конца, даже когда API отвечает мгновенно. Иначе на проде анимацию
+  // срезает на середине и загрузка выглядит дёргано.
+  const [splashMinDone, setSplashMinDone] = useState(false)
+
+  useEffect(() => {
+    const t = setTimeout(() => setSplashMinDone(true), 1350)
+    return () => clearTimeout(t)
+  }, [])
 
   // Восстановление настроек интерфейса (тема/шрифт)
   useEffect(() => {
@@ -168,7 +177,7 @@ export default function Home() {
     }
   }
 
-  if (!authReady || !user) {
+  if (!authReady || !user || !splashMinDone) {
     return <Splash />
   }
 

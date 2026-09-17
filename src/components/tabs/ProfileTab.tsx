@@ -454,11 +454,11 @@ export function ProfileTab() {
       <BottomSheet
         open={aboutOpen}
         onClose={() => setAboutOpen(false)}
-        title="TG-Feed"
+        title="Tg Swipe"
         subtitle="Умная лента открытых Telegram-каналов"
       >
         <div className="space-y-2.5 text-snippet text-tg-text2">
-          <Row label="Версия" value="4.8.3" />
+          <Row label="Версия" value="4.8.5" />
           <Row label="Источник контента" value="открытые TG-каналы" />
           <Row label="Ранжирование" value="взвешенный скоринг" />
           <Row label="Подписка" value="в один тап [+]" />

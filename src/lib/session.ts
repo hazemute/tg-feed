@@ -1,7 +1,7 @@
 import crypto from 'crypto'
 
 /**
- * Сессии TG-Feed: компактный JWT (HS256) без внешних зависимостей.
+ * Сессии Tg Swipe: компактный JWT (HS256) без внешних зависимостей.
  *
  * Поток: POST /api/auth проверяет Telegram initData (HMAC по спецификации
  * Telegram) либо гостевой deviceId → выдаёт токен сессии. Клиент хранит токен

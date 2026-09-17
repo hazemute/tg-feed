@@ -24,10 +24,10 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: 'TG-Feed — умная лента Telegram-каналов',
+  title: 'Tg Swipe — умная лента Telegram-каналов',
   description:
     'Telegram Mini App: бесконечная лента постов из открытых Telegram-каналов по вашим интересам. Подписка в один тап, AI-саммари, закладки.',
-  keywords: ['Telegram', 'Mini App', 'лента', 'каналы', 'TG-Feed'],
+  keywords: ['Telegram', 'Mini App', 'лента', 'каналы', 'Tg Swipe'],
   icons: { icon: '/logo.svg' },
 }
 

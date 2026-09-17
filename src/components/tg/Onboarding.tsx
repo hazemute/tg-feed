@@ -93,7 +93,7 @@ export function Onboarding({
 
       <div className="px-6 pt-5 text-center">
         <h1 className="text-[24px] font-bold tracking-tight text-tg-text">
-          {mode === 'onboarding' ? 'Добро пожаловать в TG-Feed' : 'Ваши интересы'}
+          {mode === 'onboarding' ? 'Добро пожаловать в Tg Swipe' : 'Ваши интересы'}
         </h1>
         <p className="mt-2 text-snippet text-tg-hint">
           {mode === 'onboarding'
