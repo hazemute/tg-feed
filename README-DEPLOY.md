@@ -1,7 +1,8 @@
 # TG-Feed — деплой на Supabase (Postgres) + Vercel
 
 Пошаговая инструкция продакшн-деплоя. Локальная разработка остаётся на SQLite
-(`prisma/schema.prisma`, `file:./db/custom.db`) — ничего в ней не меняется.
+(`prisma/schema.local.prisma`, `file:…/db/custom.db`) — ничего в ней не меняется.
+Каноническая схема проекта — Postgres: `prisma/schema.prisma`.
 
 Архитектура: **Vercel** (Next.js 16, serverless-функции + статика `public/`)
 → **Supabase Postgres** (через Transaction Pooler PgBouncer :6543)
@@ -42,16 +43,16 @@ Supabase → **Project Settings → Database → Connection string** (или к�
 
 1. Push репозитория в GitHub → Vercel → **Add New… → Project** → Import.
 2. Framework Preset: **Next.js** (по умолчанию). `output: "standalone"` уже включён в `next.config.ts` — Vercel его поддерживает нативно, дополнительных настроек не требует.
-3. **Build Command** — переопределите, чтобы сгенерировался клиент ПОСТГРЕС-схемы:
+3. **Build Command** — переопределите, чтобы клиент сгенерировался из канонической Postgres-схемы:
    ```
-   prisma generate --schema prisma/schema.postgres.prisma && next build
+   prisma generate && next build
    ```
-   (в противном случае Vercel соберёт дефолт `next build` без генерации, а дефолтная схема — SQLite).
+   (дефолтная `prisma/schema.prisma` — уже PostgreSQL/Supabase, отдельного флага не нужно).
 4. **Environment Variables** (Production + Preview):
    | Имя | Значение |
    |---|---|
    | `DATABASE_URL` | pooler-строка :6543 + `?pgbouncer=true&connection_limit=1&sslmode=require` |
-   | `DIRECT_DATABASE_URL` | прямая/session-строка :5432 |
+   | `DIRECT_URL` | прямая/session-строка :5432 (для `prisma db push`/migrate; в рантайме не используется) |
    | `AUTH_SECRET` | `openssl rand -hex 32` — подпись JWT-сессий |
    | `CRON_SECRET` | `openssl rand -hex 24` — авторизация вызовов `/api/parse` из cron |
    | `ADMIN_KEY` | (опц.) ключ админ-панели `/admin` |
@@ -65,12 +66,12 @@ Supabase → **Project Settings → Database → Connection string** (или к�
   ```json
   { "crons": [ { "path": "/api/parse", "schedule": "0 * * * *" } ] }
   ```
-  Vercel ежечасно шлёт **GET** `/api/parse` с заголовком `Authorization: Bearer $CRON_SECRET` автоматически, если переменная `CRON_SECRET` задана в Vercel. Примечание: роут `/api/parse` сейчас принимает POST — GET-хэндлер для cron добавляется отдельной задачей координатора; до этого Vercel Cron будет получать 405.
+  Vercel ежечасно шлёт **GET** `/api/parse` с заголовком `Authorization: Bearer $CRON_SECRET` автоматически, если переменная `CRON_SECRET` задана в Vercel (GET-хэндлер у роута уже есть).
 - **Вариант B: supabase/cron.sql.** pg_cron внутри Supabase дёргает POST `https://<домен>/api/parse` через pg_net (см. инструкции в файле; тогда удалите/игнорируйте `vercel.json`, чтобы не гонять парсер дважды).
 
 ## Шаг 5. Ограничения serverless (важно понимать)
 
-- **SQLite на Vercel НЕ работает** (read-only ФС в лямбдах) — поэтому прод живёт на Supabase Postgres; локально SQLite продолжает работать через `schema.prisma`.
+- **SQLite на Vercel НЕ работает** (read-only ФС в лямбдах) — поэтому прод живёт на Supabase Postgres; локально SQLite продолжает работать через `prisma/schema.local.prisma`.
 - **In-memory rate-limit не шарится** между инстансами serverless — лимиты (auth/мутации/парсер) считаются на каждый тёплый инстанс отдельно. Для MVP допустимо; при необходимости вынести в Upstash/Supabase.
 - **SSE-шина (`/api/events`) не шарится** между инстансами — событие `posts:new` получат только клиенты, прицепившиеся к тому же инстансу, что и парсер. Фолбэк уже реализован: клиентский поллинг `/api/feed/fresh` + бейдж уведомлений (45 c) догоняет всё пропущенное.
 - `public/media` уезжает вместе с деплоем (статика Vercel) — картинки/видео сид-постов доступны по `https://<домен>/media/...`, отдельный CDN не нужен.
@@ -88,4 +89,4 @@ Supabase → **Project Settings → Database → Connection string** (или к�
 
 - `supabase/README.md` — детали по скриптам и строкам подключения.
 - `.env.example` — все переменные с комментариями.
-- `prisma/schema.postgres.prisma` + скрипты `bun run db:pg:generate` / `bun run db:pg:push` — работа со схемой Prisma для Postgres (последующие изменения моделей).
+- `prisma/schema.prisma` — каноническая Postgres-схема; скрипты `bun run db:pg:generate` / `bun run db:pg:push` — последующие изменения моделей. Локальная SQLite-схема — `prisma/schema.local.prisma` (модели держать идентичными).

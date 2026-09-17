@@ -1,14 +1,14 @@
 # TG-Feed — Supabase (PostgreSQL)
 
-SQL-скрипты для продакшн-базы проекта на Supabase. Локальная разработка продолжает
-использовать SQLite (`prisma/schema.prisma` + `file:./db/custom.db`) — этот каталог
-нужен только для облака (Supabase + Vercel).
+SQL-скрипты для продакшн-базы проекта на Supabase. Локальная разработка в песочнице
+продолжает использовать SQLite (`prisma/schema.local.prisma` + `file:…/db/custom.db`);
+каноническая схема проекта — `prisma/schema.prisma` (PostgreSQL).
 
 ## Состав каталога
 
 | Файл | Назначение |
 |---|---|
-| `schema.sql` | DDL: 10 таблиц, FK, уникальные и обычные индексы. Зеркало `prisma/schema.prisma` (quoted PascalCase-таблицы, camelCase-колонки — как генерирует Prisma в Postgres). |
+| `schema.sql` | DDL: 10 таблиц, FK, уникальные и обычные индексы (в т.ч. FK-индексы). Зеркало `prisma/schema.prisma` (quoted PascalCase-таблицы, camelCase-колонки — как генерирует Prisma в Postgres). |
 | `policies.sql` | RLS: включён на всех 10 таблицах, политик нет (всё закрыто для публичного anon-API Supabase). Внизу — закомментированные read-only примеры. |
 | `seed.sql` | Демо-данные, бит-в-бит зеркало `prisma/seed.ts`: 9 категорий, 18 каналов, 58 постов, 3 рекламы. Идемпотентный. |
 | `cron.sql` | ОПЦИОНАЛЬНО: pg_cron + pg_net — ежечасный вызов `/api/parse` из Supabase (альтернатива Vercel Cron; выберите одно). |
@@ -64,8 +64,8 @@ postgresql://postgres.<PROJECT_REF>:<DB_PASSWORD>@aws-0-<REGION>.pooler.supabase
 ```
 
 (либо вкладка «Direct connection» с хостом `db.<PROJECT_REF>.supabase.co:5432`).
-Это значение идёт в `DIRECT_DATABASE_URL` — его использует `prisma db push`/`migrate`
-через `directUrl` в `prisma/schema.postgres.prisma`.
+Это значение идёт в `DIRECT_URL` — его использует `prisma db push`/`migrate`
+через `directUrl` в `prisma/schema.prisma`.
 
 - `<PROJECT_REF>` — Settings → General → Reference ID.
 - `<DB_PASSWORD>` — пароль базы, заданный при создании проекта (если забыли: Database → Reset database password).
@@ -78,7 +78,7 @@ Project Settings → Environment Variables (можно для Production + Previ
 | Имя | Значение | Обязательна |
 |---|---|---|
 | `DATABASE_URL` | pooler-строка **:6543** + `?pgbouncer=true&connection_limit=1&sslmode=require` | да |
-| `DIRECT_DATABASE_URL` | прямая/session-строка **:5432** (для `prisma db push`, локального прогонa `db:pg:*`) | да |
+| `DIRECT_URL` | прямая/session-строка **:5432** (для `prisma db push`, локального прогонa `db:pg:*`) | да |
 | `AUTH_SECRET` | длинная случайная строка (`openssl rand -hex 32`) — подпись JWT-сессий | да |
 | `CRON_SECRET` | случайная строка — авторизация cron-вызовов `/api/parse` (Vercel Cron и `supabase/cron.sql` шлют `Authorization: Bearer <CRON_SECRET>`) | да |
 | `TELEGRAM_BOT_TOKEN` | токен бота от @BotFather — включает строгую проверку initData и push-уведомления | опционально |
@@ -86,12 +86,12 @@ Project Settings → Environment Variables (можно для Production + Previ
 
 ## Схема Prisma для Postgres
 
-`prisma/schema.postgres.prisma` — копия `prisma/schema.prisma` с `provider = "postgresql"`,
-`url = env("DATABASE_URL")` и `directUrl = env("DIRECT_DATABASE_URL")`. Скрипты:
+Каноническая `prisma/schema.prisma` уже PostgreSQL: `url = env("DATABASE_URL")`,
+`directUrl = env("DIRECT_URL")`. Скрипты:
 
 ```bash
-bun run db:pg:generate   # prisma generate для Postgres-схемы
-bun run db:pg:push       # prisma db push (использует DIRECT_DATABASE_URL)
+bun run db:pg:generate   # prisma generate (клиент Postgres-схемы)
+bun run db:pg:push       # prisma db push (использует DIRECT_URL)
 ```
 
 Поскольку `supabase/schema.sql` уже создаёт структуру, `db push` после SQL-скриптов
@@ -102,13 +102,16 @@ bun run db:pg:push       # prisma db push (использует DIRECT_DATABASE_
 `schema.sql` использован `timestamptz` (рекомендация Supabase). Рантайм-клиент
 работает с обоими типами одинаково корректно; при желании полного паритета
 выполните `bun run db:pg:push` (Prisma приведёт типы, данные не теряются) или
-добавьте `@db.Timestamptz` к полям дат в `schema.postgres.prisma`.
+добавьте `@db.Timestamptz` к полям дат в `prisma/schema.prisma`.
 
 ## Ограничения и заметки
 
-- Локально проект продолжает жить на SQLite: `schema.prisma` не тронут, `.env`
-  с `file:./db/custom.db` актуален. Postgres-схема подключается только явно
-  (`--schema prisma/schema.postgres.prisma`).
+- Локально проект продолжает жить на SQLite: клиент рантайма генерится из
+  `prisma/schema.local.prisma` (`bun run db:generate` / `db:push`), `.env`
+  с `file:…/db/custom.db` актуален. Postgres-схема подключается только явно
+  (`--schema prisma/schema.prisma`).
+- После изменения моделей обновляйте ОБЕ схемы (каноническую и local) — модели
+  в них должны оставаться идентичными, иначе типы клиента разъедутся.
 - `public/media` (картинки/видео постов) уезжает вместе с деплоем на Vercel —
   отдельный CDN не нужен.
 - SQLite-файл **не работает** на Vercel (read-only ФС в serverless) — потому и Supabase.

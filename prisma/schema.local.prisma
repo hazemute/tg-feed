@@ -1,19 +1,16 @@
-// TG-Feed — Prisma schema (PostgreSQL / Supabase)
-// Точная копия prisma/schema.prisma, но: provider = postgresql и directUrl.
-// Локальная разработка остаётся на SQLite (prisma/schema.prisma) — эта схема
-// используется ТОЛЬКО явно: bun run db:pg:generate / db:pg:push
-// (флаги --schema prisma/schema.postgres.prisma).
-// Структура таблиц в облаке уже создана скриптом supabase/schema.sql —
-// db push нужен только при последующих изменениях моделей.
+// TG-Feed — Prisma schema (SQLite) — ТОЛЬКО для локальной разработки в песочнице.
+// Каноническая схема проекта (Supabase/PostgreSQL) — prisma/schema.prisma;
+// модели в двух файлах должны оставаться идентичными (сверка при изменениях).
+// Клиент для локального рантайма генерится из ЭТОГО файла: bun run db:generate
+// Note: SQLite has no native arrays/enums → JSON strings + status fields.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")
-  directUrl = env("DIRECT_DATABASE_URL")
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
 }
 
 // Telegram user (id from initData) or demo user (id from deviceId)
