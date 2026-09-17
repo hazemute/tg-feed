@@ -41,7 +41,7 @@ else
   CREATED="$(api -X POST "$API/v1/projects" -d "{\"org_id\":\"$ORG\",\"name\":\"$NAME\",\"db_pass\":\"$DB_PASS\",\"region\":\"$REGION\",\"plan\":\"free\",\"confirm_reset_image\":false}")"
   REF="$(echo "$CREATED" | jq -r '.id // empty')"
   [ -n "$REF" ] || { echo "✗ создание не удалось: $(echo "$CREATED" | jq -r '.message? // .error? // "unknown"')"; exit 1; }
-  mkdir -p "$(dirname "$SECRETS")"; grep -q '^DB_PASSWORD=' "$SECRETS" 2>/dev/null || echo "DB_PASSWORD=$DB_PASS" >> "$SECRETS"
+  mkdir -p "$(dirname "$SECRETS")"; grep -q '^DB_PASSWORD=' "$SECRETS" 2>/dev/null || echo "DB_PASSWORD=\"$DB_PASS\"" >> "$SECRETS"
   echo "✓ проект создан: $REF (регион $REGION, пароль базы в $SECRETS)"
 fi
 
@@ -84,10 +84,10 @@ RUNTIME="postgresql://postgres.$REF:$(python3 -c "import urllib.parse,sys;print(
 DIRECT="postgresql://postgres.$REF:$(python3 -c "import urllib.parse,sys;print(urllib.parse.quote(sys.argv[1],safe=''))" "$DB_PASS")@$HOST:5432/postgres?sslmode=require"
 
 {
-  echo "DB_PASSWORD=$DB_PASS"
-  echo "SUPABASE_REF=$REF"
-  echo "DATABASE_URL=$RUNTIME"
-  echo "DIRECT_URL=$DIRECT"
+  echo "DB_PASSWORD=\"$DB_PASS\""
+  echo "SUPABASE_REF=\"$REF\""
+  echo "DATABASE_URL=\"$RUNTIME\""
+  echo "DIRECT_URL=\"$DIRECT\""
 } > "$SECRETS"
 chmod 600 "$SECRETS"
 

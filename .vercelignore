@@ -1,0 +1,17 @@
+.env
+.env.*
+!.env.example
+local-deploy-secrets.env
+worklog.md
+dev.log
+server.log
+db/
+.next/
+.vercel/
+tool-results/
+download/
+tests/
+.zscripts/
+prompt/
+qa/
+agent-ctx/

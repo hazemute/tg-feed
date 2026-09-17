@@ -72,12 +72,17 @@ set_env CRON_SECRET  "$CRON_SECRET"
 set_env ADMIN_KEY    "$ADMIN_KEY"
 
 # 4. сохранить/обновить secrets-файл
+# ВАЖНО: сначала во временный файл — редирект `> "$SECRETS"` обрезал бы его
+# ДО того, как grep успеет прочитать прежнее содержимое.
+# Значения пишем В КАВЫЧКАХ: URL содержат `&`, который без кавычек рвёт source.
+TMP_SECRETS="$(mktemp)"
 {
   grep -vE '^(AUTH_SECRET|CRON_SECRET|ADMIN_KEY)=' "$SECRETS" 2>/dev/null || true
-  echo "AUTH_SECRET=$AUTH_SECRET"
-  echo "CRON_SECRET=$CRON_SECRET"
-  echo "ADMIN_KEY=$ADMIN_KEY"
-} > "$SECRETS"
+  echo "AUTH_SECRET=\"$AUTH_SECRET\""
+  echo "CRON_SECRET=\"$CRON_SECRET\""
+  echo "ADMIN_KEY=\"$ADMIN_KEY\""
+} > "$TMP_SECRETS"
+mv "$TMP_SECRETS" "$SECRETS"
 chmod 600 "$SECRETS"
 
 # 5. деплой прод-версии (CLI из корня репо)

@@ -81,12 +81,12 @@ Supabase → **Project Settings → Database → Connection string** (или к�
 
 ## Шаг 4. Cron: обновление ленты — выберите ОДИН вариант
 
-- **Вариант A (рекомендуется): Vercel Cron.** В корне уже лежит `vercel.json`:
+- **Вариант A (рекомендуется): pg_cron внутри Supabase** — `supabase/cron.sql`. На HOBBY-тарифе Vercel это единственный способ ЕЖЕЧАСНОГО обновления ленты: Vercel Cron на Hobby запускает задачу не чаще раза в сутки. Замените в скрипте плейсхолдеры `<APP_DOMAIN>` и `<CRON_SECRET>`, раскомментируйте блок «Расписание» и выполните в SQL Editor (или через Management API). pg_cron ежечасно дёргает POST `https://<домен>/api/parse` через pg_net с заголовком `Authorization: Bearer <CRON_SECRET>`.
+- **Вариант B: Vercel Cron** — часовое расписание требует тарифа Pro+; на Hobby допустим только ежедневный (`0 6 * * *`). Создайте `vercel.json` в корне:
   ```json
   { "crons": [ { "path": "/api/parse", "schedule": "0 * * * *" } ] }
   ```
-  Vercel ежечасно шлёт **GET** `/api/parse` с заголовком `Authorization: Bearer $CRON_SECRET` автоматически, если переменная `CRON_SECRET` задана в Vercel (GET-хэндлер у роута уже есть).
-- **Вариант B: supabase/cron.sql.** pg_cron внутри Supabase дёргает POST `https://<домен>/api/parse` через pg_net (см. инструкции в файле; тогда удалите/игнорируйте `vercel.json`, чтобы не гонять парсер дважды).
+  Vercel шлёт **GET** `/api/parse` с заголовком `Authorization: Bearer $CRON_SECRET` автоматически, если переменная `CRON_SECRET` задана в Vercel (GET-хэндлер у роута уже есть). Тогда cron.sql не применяйте.
 
 ## Шаг 5. Ограничения serverless (важно понимать)
 
