@@ -45,7 +45,7 @@ const FIRST_TICK_DELAY_MS = 15 * 1000
 const CRON_SECRET = (process.env.CRON_SECRET ?? '').trim()
 
 /** Ритм с засыпанием: индекс — число подряд «пустых» тиков (сек до следующего) */
-const RHYTHM_SEC = [60, 60, 90, 150, 240, 420, 600]
+const RHYTHM_SEC = [60, 60, 90, 120, 180, 240]
 let rhythmIdx = 0 // 0 — быстрый режим
 let timer: ReturnType<typeof setTimeout> | null = null
 

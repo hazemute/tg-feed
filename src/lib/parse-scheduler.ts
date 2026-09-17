@@ -16,8 +16,8 @@ import { bgImageOf } from '@/lib/parse-engine'
  */
 
 const POINTER_KEY = 'parse:pointer'
-const BATCH_SIZE = 6
-const HOT_SLOTS = 2 // слоты для горячих каналов поверх ротации
+const BATCH_SIZE = 8
+const HOT_SLOTS = 3 // слоты для горячих каналов поверх ротации
 const ENRICH_PER_TICK = 2
 
 /** Следующая партия каналов: ротация по всем активным + горячие слоты */
