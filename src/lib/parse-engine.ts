@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { isValidChannelUsername } from '@/lib/server'
-import { emitAppEvent } from '@/lib/events'
+import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import type { NotifiablePost } from '@/lib/tg-bot'
 
 /**
@@ -111,11 +111,11 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
       .split('/')[0]
     // SSRF-защита: в URL https://t.me/s/<username> попадают только [A-Za-z0-9_]
     if (!isValidChannelUsername(norm)) {
-      return {
-        ok: true,
-        results: [{ username: singleUsername, added: 0, error: 'недопустимый username канала' }],
-        newPosts: [],
-      }
+      const r = { username: singleUsername, added: 0, error: 'недопустимый username канала' }
+      emitAdminEvent('parse:start', { total: 1 })
+      emitAdminEvent('parse:progress', { current: 1, total: 1, username: r.username, title: r.username, added: 0, error: r.error })
+      emitAdminEvent('parse:done', { newPosts: 0, ms: 0 })
+      return { ok: true, results: [r], newPosts: [] }
     }
     targets = [norm]
   } else {
@@ -129,17 +129,37 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
 
   const results: ParseChannelResult[] = []
   const newPosts: NotifiablePost[] = []
+  const startedAt = Date.now()
+  emitAdminEvent('parse:start', { total: targets.length })
 
+  const report = (r: ParseChannelResult, title: string, current: number) => {
+    emitAdminEvent('parse:progress', {
+      current,
+      total: targets.length,
+      username: r.username,
+      title,
+      added: r.added,
+      ...(r.error ? { error: r.error } : {}),
+    })
+  }
+
+  let processed = 0
   for (const target of targets) {
     try {
       const channel = await db.channel.findUnique({ where: { username: target } })
       if (!channel) {
-        results.push({ username: target, added: 0, error: 'канал не найден в базе' })
+        processed++
+        const r = { username: target, added: 0, error: 'канал не найден в базе' }
+        results.push(r)
+        report(r, target, processed)
         continue
       }
 
       if (!isValidChannelUsername(target)) {
-        results.push({ username: target, added: 0, error: 'недопустимый username канала' })
+        processed++
+        const r = { username: target, added: 0, error: 'недопустимый username канала' }
+        results.push(r)
+        report(r, channel.title, processed)
         continue
       }
 
@@ -187,12 +207,18 @@ export async function runParser(perChannel: number, singleUsername?: string): Pr
         }
       }
       results.push({ username: target, added })
+      processed++
+      report(results[results.length - 1], channel.title, processed)
     } catch (e) {
-      results.push({ username: target, added: 0, error: String((e as Error)?.message ?? e) })
+      processed++
+      const r = { username: target, added: 0, error: String((e as Error)?.message ?? e) }
+      results.push(r)
+      report(r, target, processed)
     }
   }
 
   const result = { ok: true as const, results, newPosts }
+  emitAdminEvent('parse:done', { newPosts: newPosts.length, ms: Date.now() - startedAt })
 
   // Живое событие для SSE-подписчиков (/api/events): пилюля «N новых» и
   // бейдж уведомлений обновятся без ожидания ближайшего поллинга

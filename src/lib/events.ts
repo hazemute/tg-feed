@@ -12,9 +12,26 @@ export type AppEventMap = {
   'posts:new': { total: number; usernames: string[] }
 }
 
+/** События админ-панели (/admin) — отдельная шина, чтобы не светить их в пользовательском SSE */
+export type AdminEventMap = {
+  /** Парсер начал прогон */
+  'parse:start': { total: number }
+  /** Обработан очередной канал */
+  'parse:progress': {
+    current: number
+    total: number
+    username: string
+    title: string
+    added: number
+    error?: string
+  }
+  /** Прогон завершён */
+  'parse:done': { newPosts: number; ms: number }
+}
+
 type Bus = EventEmitter & { on?: never }
 
-const g = globalThis as unknown as { __tgfeedBus?: EventEmitter }
+const g = globalThis as unknown as { __tgfeedBus?: EventEmitter; __tgfeedAdminBus?: EventEmitter }
 
 export function appBus(): EventEmitter {
   if (!g.__tgfeedBus) {
@@ -25,10 +42,30 @@ export function appBus(): EventEmitter {
   return g.__tgfeedBus
 }
 
+export function adminBus(): EventEmitter {
+  if (!g.__tgfeedAdminBus) {
+    const b = new EventEmitter()
+    b.setMaxListeners(50) // слушателей мало: несколько открытых вкладок /admin
+    g.__tgfeedAdminBus = b
+  }
+  return g.__tgfeedAdminBus
+}
+
 /** Опубликовать событие (безопасно: ошибки слушателей не роняют издателя) */
 export function emitAppEvent<E extends keyof AppEventMap>(name: E, payload: AppEventMap[E]): void {
   try {
     appBus().emit(name, payload)
+  } catch {
+    // события не критичны — молча
+  }
+}
+
+export function emitAdminEvent<E extends keyof AdminEventMap>(
+  name: E,
+  payload: AdminEventMap[E],
+): void {
+  try {
+    adminBus().emit(name, payload)
   } catch {
     // события не критичны — молча
   }

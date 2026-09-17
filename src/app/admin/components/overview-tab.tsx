@@ -17,6 +17,9 @@ import {
   Users,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
+
+import { useAdminSSE } from './admin-sse'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -60,6 +63,12 @@ export function OverviewTab({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [localTick, setLocalTick] = useState(0)
+  const [botLive, setBotLive] = useState<boolean | null>(null)
+
+  // Live-статус: подключение к общей SSE-шине панели + флаг бота из heartbeat
+  const { connected } = useAdminSSE((e) => {
+    if (e.name === 'status') setBotLive(e.data.bot)
+  })
 
   useEffect(() => {
     let alive = true
@@ -134,6 +143,30 @@ export function OverviewTab({
 
   return (
     <motion.div variants={staggerContainer} initial="hidden" animate="show" className="space-y-4">
+      {/* Live-статус панели (SSE) */}
+      <motion.div
+        variants={fadeUp}
+        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-white/[0.08] bg-[#131c26] px-4 py-2.5"
+        role="status"
+        aria-live="off"
+      >
+        <span className="flex items-center gap-2 text-xs text-slate-300">
+          <span
+            aria-hidden
+            className={cn(
+              'size-2 rounded-full',
+              connected ? 'animate-pulse bg-emerald-400' : 'bg-slate-600',
+            )}
+          />
+          {connected ? 'Live-поток подключён' : 'Live-поток недоступен'}
+        </span>
+        {botLive !== null && (
+          <span className={cn('text-xs', botLive ? 'text-emerald-400' : 'text-slate-500')}>
+            бот: {botLive ? 'вкл' : 'выкл'}
+          </span>
+        )}
+      </motion.div>
+
       {/* Метрики */}
       <motion.div
         variants={staggerContainer}

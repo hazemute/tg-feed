@@ -1,14 +1,15 @@
 'use client'
 
-import { useState, type ReactNode } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { HeartPulse, Loader2, Play } from 'lucide-react'
+import { CheckCircle2, HeartPulse, Loader2, Play } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Progress } from '@/components/ui/progress'
 import {
   Select,
   SelectContent,
@@ -25,6 +26,8 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+
+import { useAdminSSE } from './admin-sse'
 
 import {
   fmtNum,
@@ -47,6 +50,18 @@ import {
 
 const PER_CHANNEL_OPTIONS = ['3', '5', '10', '20']
 
+/** Строка живого лога (один обработанный канал) */
+type LiveLine = { username: string; title: string; added: number; error?: string }
+type LiveState = {
+  phase: 'running' | 'done'
+  current: number
+  total: number
+  lines: LiveLine[]
+  ms: number | null
+}
+
+const MAX_LINES = 12
+
 export function ToolsTab({
   health,
   onRecheck,
@@ -60,6 +75,44 @@ export function ToolsTab({
   const [username, setUsername] = useState('')
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState<ParseResult | null>(null)
+  const [live, setLive] = useState<LiveState | null>(null)
+  const liveRef = useRef<LiveState | null>(null)
+
+  const applyLive = (next: LiveState | null) => {
+    liveRef.current = next
+    setLive(next)
+  }
+
+  // Живой прогресс парсера: работает и для запусков из этой вкладки,
+  // и для запусков из другой вкладки/крона (одна SSE-шина)
+  const { connected } = useAdminSSE((e) => {
+    if (e.name === 'parse:start') {
+      applyLive({ phase: 'running', current: 0, total: e.data.total, lines: [], ms: null })
+      setRunning(true)
+    } else if (e.name === 'parse:progress') {
+      const prev = liveRef.current
+      const line: LiveLine = {
+        username: e.data.username,
+        title: e.data.title,
+        added: e.data.added,
+        ...(e.data.error ? { error: e.data.error } : {}),
+      }
+      applyLive({
+        phase: 'running',
+        current: e.data.current,
+        total: e.data.total,
+        lines: [line, ...(prev?.lines ?? [])].slice(0, MAX_LINES),
+        ms: null,
+      })
+    } else if (e.name === 'parse:done') {
+      setRunning(false)
+      applyLive(
+        liveRef.current
+          ? { ...liveRef.current, phase: 'done', ms: e.data.ms }
+          : { phase: 'done', current: 0, total: 0, lines: [], ms: e.data.ms },
+      )
+    }
+  })
 
   const runParser = async () => {
     if (running) return
@@ -139,6 +192,57 @@ export function ToolsTab({
             </Button>
           </div>
 
+          {/* Живой прогресс (SSE) */}
+          {live && (
+            <div
+              className="space-y-2.5 rounded-md border border-white/[0.08] bg-white/[0.02] px-3 py-3"
+              role="status"
+              aria-live="polite"
+            >
+              <div className="flex items-center justify-between gap-2 text-xs">
+                <span className="flex items-center gap-1.5 text-slate-300">
+                  {live.phase === 'running' ? (
+                    <Loader2 className="size-3.5 animate-spin text-emerald-300" aria-hidden />
+                  ) : (
+                    <CheckCircle2 className="size-3.5 text-emerald-300" aria-hidden />
+                  )}
+                  {live.phase === 'running' ? 'Идёт парсинг…' : 'Готово'}
+                  <span className="text-slate-500">
+                    · обработано {fmtNum(live.current)} из {fmtNum(live.total)}
+                  </span>
+                </span>
+                {live.ms !== null && <span className="tabular-nums text-slate-500">{(live.ms / 1000).toFixed(1)} с</span>}
+              </div>
+              <Progress
+                value={live.total > 0 ? (live.current / live.total) * 100 : live.phase === 'done' ? 100 : 0}
+                className="h-1.5 bg-white/[0.06]"
+                aria-label="Прогресс парсинга"
+              />
+              {live.lines.length > 0 && (
+                <ul className="admin-scroll max-h-40 space-y-1 overflow-auto pr-1">
+                  {live.lines.map((l, i) => (
+                    <li key={`${l.username}-${i}`} className="flex items-center gap-2 text-xs">
+                      <span className="w-16 shrink-0 truncate font-mono text-slate-400">@{l.username}</span>
+                      <span className="min-w-0 flex-1 truncate text-slate-300">{l.title}</span>
+                      {l.error ? (
+                        <span className="shrink-0 text-red-300">{l.error}</span>
+                      ) : (
+                        <span
+                          className={cn(
+                            'shrink-0 tabular-nums',
+                            l.added > 0 ? 'font-medium text-emerald-300' : 'text-slate-500',
+                          )}
+                        >
+                          +{fmtNum(l.added)}
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+
           {result ? (
             <div className="space-y-3">
               <div className="rounded-md border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2 text-xs text-emerald-200">
@@ -188,8 +292,17 @@ export function ToolsTab({
                 <HeartPulse className="size-4 text-emerald-300" aria-hidden />
                 Состояние системы
               </CardTitle>
-              <CardDescription className="text-xs text-slate-500">
-                Ответ GET /api/panel/health
+              <CardDescription className="flex items-center gap-1.5 text-xs text-slate-500">
+                <span
+                  aria-hidden
+                  className={cn(
+                    'inline-block size-1.5 rounded-full',
+                    connected ? 'animate-pulse bg-emerald-400' : 'bg-slate-600',
+                  )}
+                />
+                <span className={connected ? 'text-emerald-300/80' : 'text-slate-500'}>
+                  Ответ GET /api/panel/health · live {connected ? 'онлайн' : 'оффлайн'}
+                </span>
               </CardDescription>
             </div>
             <Button

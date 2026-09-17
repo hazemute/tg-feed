@@ -73,7 +73,14 @@ export function guardAdmin(request: Request, rl: RL = { limit: 120, windowMs: 60
   const headerKey = (request.headers.get('x-admin-key') ?? '').trim()
   const auth = request.headers.get('authorization') ?? ''
   const bearerKey = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : ''
-  const provided = headerKey || bearerKey
+  // ?key= — фолбэк для EventSource/SSE: он не умеет кастомные заголовки
+  let queryKey = ''
+  try {
+    queryKey = (new URL(request.url).searchParams.get('key') ?? '').trim()
+  } catch {
+    // невалидный url — игнорируем
+  }
+  const provided = headerKey || bearerKey || queryKey
 
   const a = Buffer.from(provided)
   const b = Buffer.from(configured)
