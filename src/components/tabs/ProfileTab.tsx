@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Bell,
   ChevronRight,
-  Crown,
+  Megaphone,
   Info,
   Loader2,
   MousePointerClick,
@@ -37,7 +37,7 @@ type BookmarkItem = PostDTO & { readAt: string | null }
 
 /**
  * Экран «Профиль» по макету: шапка пользователя, статистика,
- * мои категории, подписки, настройки. Плюс кабинет админа и закладки.
+ * мои категории, подписки, настройки. Плюс «Мой канал» и закладки.
  */
 export function ProfileTab() {
   const { user, theme, setTheme, fontScale, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
@@ -394,7 +394,7 @@ export function ProfileTab() {
         </div>
       </section>
 
-      <AdminZone />
+      <MyChannelZone />
 
       {/* Шиты */}
       <BottomSheet
@@ -587,11 +587,18 @@ function ActivityCard({ userId }: { userId: string }) {
   )
 }
 
-/* ---------- Кабинет админа (для админов: добавление канала, статистика) ---------- */
+/* ---------- «Мой канал»: авторская секция (добавить канал, статистика, продвижение).
+ * Никакой модерации здесь нет — парсинг/одобрение/отклонение живут только в /admin. ---------- */
 
-function AdminZone() {
+const STATUS_LABEL: Record<string, string> = {
+  active: 'активен',
+  moderation: 'на модерации',
+  rejected: 'отклонён модератором',
+}
+
+function MyChannelZone() {
   const { user } = useApp()
-  const [isAdmin, setIsAdmin] = useState(false)
+  const [expanded, setExpanded] = useState(false)
   const [stats, setStats] = useState<AdminStatsDTO[] | null>(null)
   const [promoteOpen, setPromoteOpen] = useState(false)
   const [username, setUsername] = useState('')
@@ -605,9 +612,9 @@ function AdminZone() {
   }
 
   useEffect(() => {
-    if (isAdmin) loadAdmin()
+    if (expanded) loadAdmin()
      
-  }, [isAdmin, user?.id])
+  }, [expanded, user?.id])
 
   const myChannels = useMemo(() => stats ?? [], [stats])
 
@@ -638,24 +645,24 @@ function AdminZone() {
         <button
           type="button"
           role="switch"
-          aria-checked={isAdmin}
+          aria-checked={expanded}
           onClick={() => {
             haptic('light')
-            setIsAdmin((v) => !v)
+            setExpanded((v) => !v)
           }}
           className="flex w-full items-center gap-3 border-t border-tg-sep/60 py-4 text-left"
         >
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-tg-star/15">
-            <Crown className="h-[18px] w-[18px] text-tg-star" />
+          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-tg-link/10">
+            <Megaphone className="h-[18px] w-[18px] text-tg-link" />
           </span>
-          <span className="flex-1 text-[16.5px] font-medium text-tg-text">Для админов каналов</span>
+          <span className="flex-1 text-[16.5px] font-medium text-tg-text">Мой канал</span>
           <ChevronRight
-            className={cn('h-5 w-5 text-tg-hint transition-transform', isAdmin && 'rotate-90')}
+            className={cn('h-5 w-5 text-tg-hint transition-transform', expanded && 'rotate-90')}
           />
         </button>
       </div>
 
-      {isAdmin && (
+      {expanded && (
         <div className="px-4 pb-2">
           {/* Дашборд */}
           {stats === null ? (
@@ -679,7 +686,7 @@ function AdminZone() {
                       </div>
                       <div className="text-[12px] text-tg-hint">
                         {c.posts} {pluralRu(c.posts, 'пост', 'поста', 'постов')} ·{' '}
-                        {c.status === 'moderation' ? 'на модерации' : 'активен'}
+                        {STATUS_LABEL[c.status] ?? 'активен'}
                       </div>
                     </div>
                   </div>
