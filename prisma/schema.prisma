@@ -1,9 +1,7 @@
 // TG-Feed — каноническая Prisma-схема (PostgreSQL / Supabase).
-// Локальная разработка в песочнице — prisma/schema.local.prisma (SQLite):
-//   bun run db:generate / db:push (клиент для рантайма генерится из local-схемы)
-// Прод-структура в облаке создаётся скриптом supabase/schema.sql;
-// db push по этой схеме — только при последующих изменениях моделей:
-//   bun run db:pg:push
+// Единственная БД для локальной разработки и прода: Supabase Postgres.
+// Изменение моделей: bun run db:push (db push по этой схеме) и обновить
+// supabase/schema.sql — структура облачной БД должна совпадать.
 
 generator client {
   provider = "prisma-client-js"
