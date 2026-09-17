@@ -132,10 +132,10 @@ function extractInnerBalanced(html: string, startIdx: number): string | null {
   return null
 }
 
-/** Значение CSS background-image: url('…') из фрагмента */
-function bgImageOf(fragment: string): string | null {
-  const m = fragment.match(/background-image:\s*url\('([^']+)'\)/)
-  return m ? decodeEntities(m[1]) : null
+/** Значение CSS background-image: url('…') или url("…") из фрагмента (оба вида кавычек) */
+export function bgImageOf(fragment: string): string | null {
+  const m = fragment.match(/background-image:\s*url\((['"]?)([^)'"]+)\1\)/)
+  return m ? decodeEntities(m[2].trim()) : null
 }
 /** «2.1K» / «1 234» / «1,2M» → число просмотров оригинального канала */
 export function parseTgViews(raw: string): number | null {
@@ -195,9 +195,13 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
     const gallery: MediaItem[] = []
     let media: MediaItem | null = null
 
-    /* ---------- Фото (возможно альбом: несколько photo_wrap в одном посте) ---------- */
-    for (const m of block.matchAll(/tgme_widget_message_photo_wrap[^>]*style="[^"]*background-image:\s*url\('([^']+)'/g)) {
-      gallery.push({ kind: 'image', url: decodeEntities(m[1]) })
+    /* ---------- Фото (возможно альбом: несколько photo_wrap в одном посте) ----------
+        Атрибуты и кавычки в разметке t.me/s варьируются — ищем класс,
+        затем url() в ближайших 600 символах (надёжнее одного регэкспа) */
+    for (const m of block.matchAll(/tgme_widget_message_photo_wrap/g)) {
+      const scope = block.slice(m.index ?? 0, (m.index ?? 0) + 600)
+      const url = bgImageOf(scope)
+      if (url) gallery.push({ kind: 'image', url })
     }
 
     /* ---------- Видео / GIF (прямые <video src>) ---------- */
@@ -310,6 +314,8 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
  *   после дедлайна цикл останавливается, truncated=true — продолжите новым запуском.
  * @param pages — страниц истории на канал (1 = только свежие; 4 = углубление
  *   в архив через t.me/s?before=<id>). Крупные прогоны истории — pages=4.
+ * @param only — явный список каналов (адаптивный шедулер): парсить только их,
+ *   игнорируя maxChannels из базы.
  */
 export async function runParser(
   perChannel: number,
@@ -317,13 +323,20 @@ export async function runParser(
   maxChannels = 20,
   deadlineMs = 0,
   pages = 1,
+  only?: string[],
 ): Promise<ParseResult> {
   // Нормализация лимита: некорректное/нулевое значение → дефолт 5 (как в cron-режиме)
   const per =
     Number.isFinite(perChannel) && perChannel > 0 ? Math.min(50, Math.floor(perChannel)) : 5
 
   let targets: string[]
-  if (singleUsername) {
+  if (only && only.length > 0) {
+    // адаптивный батч: только валидные имена (SSRF-защита)
+    targets = only
+      .map((u) => String(u).replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '').split('/')[0])
+      .filter((u) => isValidChannelUsername(u))
+      .slice(0, 50)
+  } else if (singleUsername) {
     const norm = singleUsername
       .replace(/^@/, '')
       .replace(/^https?:\/\/t\.me\//, '')
@@ -473,11 +486,11 @@ export async function runParser(
         (a, b) => b.publishedAt.getTime() - a.publishedAt.getTime(),
       )
 
-      // Просмотры и текст (markdown-апгрейд) обновляются и у уже существующих постов:
+      // Просмотры/текст/медиа обновляются и у уже существующих постов:
       // один SELECT по ключам перед вставками → точечные UPDATE только где изменилось
       const existing = await db.post.findMany({
         where: { channelId: channel.id, tgKey: { in: queue.map((p) => p.tgKey) } },
-        select: { tgKey: true, viewsTg: true, text: true },
+        select: { tgKey: true, viewsTg: true, text: true, mediaUrl: true, mediaType: true, gallery: true },
       })
       const existingMap = new Map(existing.map((p) => [p.tgKey, p]))
 
@@ -502,6 +515,39 @@ export async function runParser(
           viewsTg: p.viewsTg,
           publishedAt: p.publishedAt,
         }
+
+        // Дубликат заранее известен по карте существующих — сразу апдейт без
+        // выброса исключения (тише и быстрее: Prisma не печатает стек ошибки)
+        if (existingMap.has(p.tgKey)) {
+          const old = existingMap.get(p.tgKey)
+          const viewsChanged = p.viewsTg != null && old?.viewsTg !== p.viewsTg
+          const textChanged = p.text.length > 0 && p.text !== old?.text // markdown-апгрейд/зачистка
+          // Бэкфилл медиа: старый парсер часто не доставал фото/галереи
+          const mediaChanged =
+            !!old &&
+            ((p.media?.url && !old.mediaUrl) ||
+              (p.gallery.length > 0 && !old.gallery))
+          if (viewsChanged || textChanged || mediaChanged) {
+            await db.post
+              .update({
+                where: { tgKey: p.tgKey },
+                data: {
+                  ...(viewsChanged ? { viewsTg: p.viewsTg } : {}),
+                  ...(textChanged ? { text: p.text } : {}),
+                  ...(mediaChanged
+                    ? {
+                        mediaUrl: p.media?.url ?? null,
+                        mediaType: p.media?.kind ?? 'none',
+                        gallery: p.gallery.length > 0 ? JSON.stringify(p.gallery) : null,
+                      }
+                    : {}),
+                },
+              })
+              .catch(() => {})
+          }
+          continue
+        }
+
         try {
           const created = await db.post.create({
             data,
@@ -515,21 +561,7 @@ export async function runParser(
             channel: { username: channel.username, title: channel.title },
           })
         } catch {
-          // дубликат (unique tgKey) — обновляем просмотры/текст, только если изменились
-          const old = existingMap.get(p.tgKey)
-          const viewsChanged = p.viewsTg != null && old?.viewsTg !== p.viewsTg
-          const textChanged = p.text.length > 0 && p.text !== old?.text // markdown-апгрейд/зачистка старых постов
-          if (viewsChanged || textChanged) {
-            await db.post
-              .update({
-                where: { tgKey: p.tgKey },
-                data: {
-                  ...(viewsChanged ? { viewsTg: p.viewsTg } : {}),
-                  ...(textChanged ? { text: p.text } : {}),
-                },
-              })
-              .catch(() => {})
-          }
+          // гонка с другим инстансом — дубликат, пропускаем
         }
       }
       results.push({ username: target, added })

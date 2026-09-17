@@ -101,6 +101,21 @@ function SpanView({ span }: { span: Span }) {
       )
     case 'spoiler':
       return <Spoiler v={span.v} />
+    case 'emoji':
+      // Премиум-эмодзи Telegram (инлайн-картинка из веб-превью)
+      return (
+        <img
+          src={span.url}
+          alt="эмодзи"
+          loading="lazy"
+          className="mx-[1px] inline-block h-[1.35em] w-auto -translate-y-[0.18em] select-none"
+          draggable={false}
+          onError={(e) => {
+            // картинка не загрузилась — прячем, остаётся соседний текст
+            e.currentTarget.style.display = 'none'
+          }}
+        />
+      )
     case 'link':
       return (
         <button

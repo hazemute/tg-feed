@@ -1,0 +1,94 @@
+'use client'
+
+import { Heart, Home, Radio, Search, UserRound, Flame } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { cn } from '@/lib/utils'
+import { useApp } from '@/lib/store'
+import { haptic } from '@/lib/tg'
+import { APP_VERSION } from '@/lib/version'
+import type { Tab } from '@/lib/types'
+
+const items: { id: Tab; label: string; icon: typeof Home }[] = [
+  { id: 'feed', label: 'Лента', icon: Home },
+  { id: 'trending', label: 'Тренды', icon: Flame },
+  { id: 'search', label: 'Поиск', icon: Search },
+  { id: 'mychannel', label: 'Мой канал', icon: Radio },
+  { id: 'profile', label: 'Профиль', icon: UserRound },
+]
+
+/**
+ * Навигация для десктопа (lg+): вертикальный сайдбар слева вместо плавающей
+ * нижней капсулы. Контент остаётся в читабельной колонке по центру.
+ */
+export function Sidebar() {
+  const { tab, goToTab, user } = useApp()
+
+  return (
+    <aside
+      className="hidden w-[228px] shrink-0 flex-col border-r border-tg-sep bg-tg-bg/60 px-3 pb-5 pt-6 lg:flex"
+      aria-label="Основная навигация"
+    >
+      {/* Воркмарк */}
+      <div className="mb-8 flex items-center gap-2.5 px-2">
+        <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-tg-link/10">
+          <svg viewBox="0 0 24 24" className="h-5 w-5 fill-tg-link" aria-hidden>
+            <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161-1.86 8.766c-.14.62-.51.772-1.032.48l-2.85-2.1-1.376 1.324c-.152.152-.28.28-.574.28l.204-2.9 5.286-4.774c.23-.204-.05-.318-.354-.114l-6.534 4.112-2.814-.88c-.612-.192-.624-.612.128-.906l11.004-4.244c.51-.192.956.114.772.956z" />
+          </svg>
+        </span>
+        <span>
+          <span className="block text-[16px] font-bold leading-tight text-tg-text">Tg Swipe</span>
+          <span className="block text-[11.5px] leading-tight text-tg-hint">лента Telegram-каналов</span>
+        </span>
+      </div>
+
+      <nav className="flex flex-col gap-1">
+        {items.map(({ id, label, icon: Icon }) => {
+          const active = tab === id
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => {
+                if (!active) {
+                  haptic('light')
+                  goToTab(id)
+                }
+              }}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'relative flex h-11 items-center gap-3 rounded-xl px-3.5 text-[14.5px] font-medium transition',
+                active ? 'text-tg-link' : 'text-tg-hint hover:bg-tg-surface hover:text-tg-text2',
+              )}
+            >
+              {active && (
+                <motion.span
+                  layoutId="sidebar-pill"
+                  transition={{ type: 'spring', stiffness: 480, damping: 36 }}
+                  aria-hidden
+                  className="absolute inset-0 rounded-xl bg-tg-link/10"
+                />
+              )}
+              <Icon className="relative z-10 h-[19px] w-[19px]" strokeWidth={active ? 2.3 : 1.9} />
+              <span className="relative z-10">{label}</span>
+            </button>
+          )
+        })}
+      </nav>
+
+      <div className="mt-auto px-2">
+        {user && (
+          <div className="mb-3 flex items-center gap-2 rounded-xl bg-tg-surface/70 p-2.5">
+            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-tg-link/15 text-[11px] font-bold text-tg-link">
+              {(user.firstName ?? '?').slice(0, 1).toUpperCase()}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-tg-text2">
+              {user.firstName ?? user.username ?? 'Читатель'}
+            </span>
+            <Heart className="h-3.5 w-3.5 text-tg-like" aria-hidden />
+          </div>
+        )}
+        <p className="text-[11px] leading-snug text-tg-hint/80">Tg Swipe · v{APP_VERSION}</p>
+      </div>
+    </aside>
+  )
+}

@@ -82,6 +82,8 @@ model Channel {
   posts            Post[]
   subscriptions    Subscription[]
   campaigns        AdCampaign[]
+
+  @@index([status])
 }
 
 model Post {
@@ -101,12 +103,17 @@ model Post {
   likesCount  Int      @default(0)
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
   translations String? // кэш переводов: {"en":{"text":"…","at":"ISO"}}
+  ttsAudio     String? // озвучка поста (base64 mp3, кэш; генерируется по запросу)
+  ttsAt        DateTime? // когда сгенерирована озвучка (для инвалидации при смене текста)
   publishedAt DateTime
   notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
 
+  embedTried  Boolean  @default(false) // бэкфилл медиа через t.me/<u>/<id>?embed=1 уже пробовали
   likedBy     Like[]
   viewedBy    PostView[]
   bookmarkedBy Bookmark[]
+
+  @@index([channelId, publishedAt])
 }
 
 model Like {
@@ -119,6 +126,7 @@ model Like {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  @@index([userId])
 }
 
 model PostView {
@@ -158,6 +166,7 @@ model Bookmark {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  @@index([userId])
 }
 
 model Ad {

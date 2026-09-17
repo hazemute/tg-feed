@@ -143,7 +143,13 @@ export function FeedView() {
         const data = await api<FeedResponse>(
           `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}`,
         )
-        setItems((prev) => (replace ? data.items : [...prev, ...data.items]))
+        setItems((prev) => {
+          if (replace) return data.items
+          // дедуп при аппенде: пока листаем страницы, шедулер вставляет новые
+          // посты — окно пагинации съезжает и присылает уже виденные
+          const seen = new Set(prev.map((p) => p.id))
+          return [...prev, ...data.items.filter((p) => !seen.has(p.id))]
+        })
         // Запоминаем новейший пост (для пилюли «N новых постов») — только если он новее текущего
         const times = data.items.map((x) => x.publishedAt).sort()
         const mx = times[times.length - 1]
@@ -681,12 +687,20 @@ export function FeedView() {
       {/* Сама лента — естественный скролл + pull-to-refresh */}
       <div
         ref={scrollRef}
-        className="no-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain pb-24"
+        className="no-scrollbar relative min-h-0 flex-1 overflow-y-auto overscroll-contain pb-24"
         aria-label="Лента постов"
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
+        {/* Мягкая подложка под пилюлей «N новых»: контент под язычком растворяется,
+            текст каналов не просвечивает сквозь плашку (фикс наложения на скрине) */}
+        {freshCount > 0 && !refreshing && (
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-16 bg-gradient-to-b from-tg-bg via-tg-bg/85 to-transparent"
+          />
+        )}
         {/* Индикатор pull-to-refresh */}
         <motion.div
           initial={false}
@@ -744,6 +758,7 @@ export function FeedView() {
           </div>
         ) : (
           <>
+            <div className="mx-auto w-full max-w-[600px] lg:border-x lg:border-tg-sep/40">
             {items.map((p, i) => (
               <Fragment key={p.id}>
                 <PostCard
@@ -765,6 +780,7 @@ export function FeedView() {
             ))}
 
             <div ref={sentinelRef} className="h-2" aria-hidden />
+            </div>
 
             {loading && (
               <div className="flex justify-center py-6">

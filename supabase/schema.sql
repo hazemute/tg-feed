@@ -196,6 +196,8 @@ CREATE TABLE IF NOT EXISTS "SystemSetting" (
 ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "mediaMeta" text;
 ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "viewsTg" integer;
 ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "translations" text;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "ttsAudio" text;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "ttsAt" timestamptz;
 
 ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "claimedById" text;
 ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "claimedAt" timestamptz;
@@ -270,3 +272,13 @@ CREATE INDEX IF NOT EXISTS "AdCampaign_ownerId_idx"    ON "AdCampaign" ("ownerId
 CREATE INDEX IF NOT EXISTS "AdCampaign_channelId_idx"  ON "AdCampaign" ("channelId");
 CREATE INDEX IF NOT EXISTS "CampaignStat_day_idx"      ON "CampaignStat" ("day");
 CREATE INDEX IF NOT EXISTS "TranslationLog_postId_idx" ON "TranslationLog" ("postId");
+
+-- v4.10.1: озвучка постов (TTS-кэш) + бэкфилл медиа + индексы производительности
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "ttsAudio" text;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "ttsAt" timestamptz;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "embedTried" boolean NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS "Post_channelId_publishedAt_idx" ON "Post" ("channelId", "publishedAt");
+CREATE INDEX IF NOT EXISTS "Like_userId_idx"     ON "Like" ("userId");
+CREATE INDEX IF NOT EXISTS "Bookmark_userId_idx" ON "Bookmark" ("userId");
+CREATE INDEX IF NOT EXISTS "Channel_status_idx"  ON "Channel" ("status");

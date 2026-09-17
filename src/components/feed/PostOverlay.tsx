@@ -14,6 +14,7 @@ import { Avatar } from '@/components/tg/Avatar'
 import { RichText } from '@/components/feed/RichText'
 import { PostMedia } from '@/components/feed/PostMedia'
 import { TranslateButton } from '@/components/feed/TranslateButton'
+import { ListenButton } from '@/components/feed/TTSButton'
 import { SummarySheet } from '@/components/feed/SummarySheet'
 
 /**
@@ -217,6 +218,16 @@ export function PostOverlay() {
                 </>
               )}
             </div>
+            {/* Озвучка поста — крупная кнопка под статистикой */}
+            {current.text && (
+              <div className="mt-3 px-4">
+                <ListenButton
+                  postId={current.id}
+                  text={current.text}
+                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-surface text-[14px] font-semibold text-tg-link"
+                />
+              </div>
+            )}
             {/* Краткое содержание доступно и из полного экрана — у любого длинного текста без тизера */}
             {current.text && current.text.length > 400 && !teaser && (
               <button

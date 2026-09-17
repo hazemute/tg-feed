@@ -25,7 +25,7 @@ export function BottomNav() {
 
   return (
     <nav
-      className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center pb-[calc(env(safe-area-inset-bottom)+10px)]"
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center pb-[calc(env(safe-area-inset-bottom)+10px)] lg:hidden"
       aria-label="Основная навигация"
     >
       <div

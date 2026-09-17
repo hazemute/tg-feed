@@ -13,6 +13,7 @@ import { Avatar } from '@/components/tg/Avatar'
 import { RichText } from '@/components/feed/RichText'
 import { PostMedia } from '@/components/feed/PostMedia'
 import { TranslateButton } from '@/components/feed/TranslateButton'
+import { ListenButton } from '@/components/feed/TTSButton'
 import { RailButton, SubscribeCircle } from '@/components/feed/actions'
 
 /**
@@ -202,6 +203,41 @@ function PostText({
   )
 }
 
+/** Тело поста: текст/тизер + CTA (общее для постов с медиа и без) */
+function PostBody({
+  post,
+  teaser,
+  teaserText,
+  onSummary,
+  onOpenMore,
+}: {
+  post: PostDTO
+  teaser: boolean
+  teaserText: string
+  onSummary: () => void
+  onOpenMore: () => void
+}) {
+  const ch = post.channel
+  return teaser && ch.teaserMode === 'blur' ? (
+    <div className="mt-2">
+      <div className="pointer-events-none select-none blur-[7px]" aria-hidden>
+        <RichText text={post.text} />
+      </div>
+      <TeaserCta post={post} />
+    </div>
+  ) : (
+    <div className="mt-0.5">
+      <PostText
+        text={teaser && ch.teaserMode === 'cut' ? teaserText : post.text}
+        postId={post.id}
+        onSummary={teaser ? undefined : onSummary}
+        onOpenMore={teaser ? undefined : onOpenMore}
+      />
+      {teaser && <TeaserCta post={post} />}
+    </div>
+  )
+}
+
 export function PostCard({
   post,
   onLike,
@@ -238,6 +274,9 @@ export function PostCard({
     !ch.subscribed && ch.teaserMode !== 'none' && post.text.length > ch.teaserLimit
   const teaserText =
     ch.teaserMode === 'cut' ? post.text.slice(0, Math.max(60, ch.teaserLimit)).trimEnd() + '…' : post.text
+  const hasMedia =
+    (post.media != null && (post.media.url || post.media.name || post.media.question || post.media.link)) ||
+    post.gallery.length > 0
 
   // Просмотр засчитывается, когда пост показался на экране
   useEffect(() => {
@@ -324,10 +363,23 @@ export function PostCard({
         <SubscribeCircle subscribed={ch.subscribed} onClick={onSubscribe} />
       </div>
 
-      {/* Медиа + правая панель действий */}
+      {/* Медиа + правая панель действий. У текстовых постов без медиа текст стоит
+          рядом с рельсом (компактно), у постов с медиа — на всю ширину под медиа */}
       <div className="mt-3.5 flex items-start gap-1.5 px-4">
         <div className="min-w-0 flex-1">
-          <PostMedia post={post} onDoubleTap={onMediaDoubleTap} />
+          {hasMedia && <PostMedia post={post} onDoubleTap={onMediaDoubleTap} />}
+          {/* Текст поста без медиа — в одну колонку с рельсом */}
+          {post.text && !hasMedia && (
+            <div className="pt-0.5">
+              <PostBody
+                post={post}
+                teaser={teaser}
+                teaserText={teaserText}
+                onSummary={onSummary}
+                onOpenMore={openFullPost}
+              />
+            </div>
+          )}
         </div>
         <div className="flex w-10 shrink-0 flex-col items-center gap-4 pt-0.5" aria-label="Действия">
           <LikeRailButton count={post.likesCount} active={post.liked} onClick={onLike} />
@@ -346,27 +398,16 @@ export function PostCard({
         </div>
       </div>
 
-      {/* Текст поста */}
-      {post.text && (
+      {/* Текст поста с медиа — на всю ширину под медиа */}
+      {post.text && hasMedia && (
         <div className="px-4">
-          {teaser && ch.teaserMode === 'blur' ? (
-            <div className="mt-3">
-              <div className="pointer-events-none select-none blur-[7px]" aria-hidden>
-                <RichText text={post.text} />
-              </div>
-              <TeaserCta post={post} />
-            </div>
-          ) : (
-            <div className="mt-1">
-              <PostText
-                text={teaser && ch.teaserMode === 'cut' ? teaserText : post.text}
-                postId={post.id}
-                onSummary={teaser ? undefined : onSummary}
-                onOpenMore={teaser ? undefined : openFullPost}
-              />
-              {teaser && <TeaserCta post={post} />}
-            </div>
-          )}
+          <PostBody
+            post={post}
+            teaser={teaser}
+            teaserText={teaserText}
+            onSummary={onSummary}
+            onOpenMore={openFullPost}
+          />
         </div>
       )}
 
@@ -382,6 +423,7 @@ export function PostCard({
           {formatCount(post.viewsCount)}
           {post.viewsTg != null ? ' в канале' : ' просмотров'}
         </span>
+        {post.text && <ListenButton postId={post.id} text={post.text} className="ml-1" />}
         {!post.text && !teaser && (
           <button
             type="button"

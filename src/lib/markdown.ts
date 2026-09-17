@@ -73,6 +73,24 @@ export function htmlToMarkdownLite(html: string): string {
     if (raw) out.push(decodeEntities(raw).replace(/[ \t]+/g, ' '))
   }
 
+  /** Инлайн премиум-эмодзи: <i class="tgme_widget_message_inline_emoji" style="…url('…')">😀</i>
+   *  → маркер ![e](url); без фоновой картинки остаётся символ-фолбэк.
+   *  Перехватываем ВСЕ такие <i> — иначе вложенная разметка ломает markdown. */
+  const tryInlineEmoji = (): boolean => {
+    if (!m) return false
+    const [, rawTag, attrs] = m
+    if (rawTag.toLowerCase() !== 'i') return false
+    const cls = attrs ?? ''
+    if (!cls.includes('tgme_widget_message_inline_emoji')) return false
+    const close = html.indexOf('</i>', pos)
+    if (close === -1) return false
+    const urlMatch = cls.match(/url\((['"]?)([^)'"]+)\1\)/)
+    const inner = decodeEntities(html.slice(pos, close).replace(/<[^>]+>/g, '')).trim()
+    out.push(urlMatch ? `![e](${decodeEntities(urlMatch[2].trim())})` : inner)
+    pos = close + 4
+    return true
+  }
+
   /** Закрывает маркер i и все открытые поверх него (некорректная вложенность) */
   const closeMark = (i: number) => {
     while (stack.length > i) {
@@ -107,6 +125,7 @@ export function htmlToMarkdownLite(html: string): string {
       break
     }
     pushText(html.slice(pos, m.index))
+    if (tryInlineEmoji()) continue
     const [full, rawTag, attrs] = m
     const tag = rawTag.toLowerCase()
     pos = m.index + full.length
@@ -177,6 +196,13 @@ export function htmlToMarkdownLite(html: string): string {
     if (count % 2 === 1) result = result.split(mark).join('')
   }
 
+  // Вложенные обёртки вокруг эмодзи/символов (**__🔥__**) → чистый символ:
+  // контент без букв/цифр — это декор, стили ему не нужны
+  result = result.replace(
+    /(\*\*|__){1,2}([^*_\wа-яёА-ЯЁ0-9\s]{1,6})(\*\*|__){1,2}/gu,
+    '$2',
+  )
+
   return result.trim()
 }
 
@@ -205,6 +231,7 @@ export type Span =
   | { t: 'code'; v: string }
   | { t: 'spoiler'; v: string }
   | { t: 'link'; v: string; href: string }
+  | { t: 'emoji'; url: string }
 
 export type Block =
   | { type: 'p'; spans: Span[] }
@@ -213,7 +240,7 @@ export type Block =
 
 /** Регэксп спанов markdown-lite: жирный, курсив, зачёркнутый, инлайн-код, спойлер, ссылка */
 const SPAN_RE =
-  /(\*\*([^*\n]+)\*\*)|(__[^_\n]+__)|(~~[^~\n]+~~)|(`[^`\n]+`)|(\|\|[^|\n]+\|\|)|(\[[^\]\n]+\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:]|@[a-zA-Z][a-zA-Z0-9_]{3,})/g
+  /(\*\*([^*\n]+)\*\*)|(__[^_\n]+__)|(~~[^~\n]+~~)|(`[^`\n]+`)|(\|\|[^|\n]+\|\|)|(\[[^\]\n]+\]\([^)\s]+\))|(!\[e\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:]|@[a-zA-Z][a-zA-Z0-9_]{3,})/g
 
 /** Разбирает строку (внутри абзаца/цитаты) на стилизованные спаны */
 export function spansOf(line: string): Span[] {
@@ -232,7 +259,10 @@ export function spansOf(line: string): Span[] {
       const href = m[7].slice(m[7].indexOf('(') + 1, -1)
       spans.push({ t: 'link', v: label || href, href })
     } else if (m[8] !== undefined) {
-      const v = m[8]
+      // ![e](url) — премиум-эмодзи из Telegram (инлайн-картинка)
+      spans.push({ t: 'emoji', url: m[8].slice(5, -1) })
+    } else if (m[9] !== undefined) {
+      const v = m[9]
       if (v.startsWith('@')) spans.push({ t: 'link', v, href: `https://t.me/${v.slice(1)}` })
       else spans.push({ t: 'link', v, href: v })
     }

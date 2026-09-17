@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
+import { APP_VERSION } from '@/lib/version'
 
-/** Версия API (видна в /api/health, /api/panel/* и админ-панели) */
-export const APP_VERSION = '4.10.0'
+export { APP_VERSION }
 
 export function err(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status })

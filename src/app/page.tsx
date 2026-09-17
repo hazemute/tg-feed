@@ -10,6 +10,7 @@ import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@
 import { THEME_BY_ID } from '@/lib/themes'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
+import { Sidebar } from '@/components/tg/Sidebar'
 import { Splash } from '@/components/tg/Splash'
 import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
 import { FeedView } from '@/components/feed/FeedView'
@@ -212,32 +213,36 @@ export default function Home() {
 
   return (
     <div className="flex h-dvh justify-center bg-tg-bg">
-      <div className="relative flex h-full w-full max-w-[430px] flex-col overflow-hidden bg-tg-bg md:border-x md:border-tg-sep md:shadow-xl">
-        <AnimatePresence initial={false} custom={tabDir} mode="popLayout">
-          <motion.main
-            key={tab}
-            custom={tabDir}
-            variants={tabVariants}
-            initial="enter"
-            animate="center"
-            exit="exit"
-            transition={{ duration: 0.22, ease: 'easeOut' }}
-            className="min-h-0 flex-1"
-            onTouchStart={onTouchStart}
-            onTouchEnd={onTouchEnd}
-          >
-            {tab === 'feed' && <FeedView />}
-            {tab === 'trending' && <TrendingTab />}
-            {tab === 'search' && <SearchTab />}
-            {tab === 'mychannel' && <MyChannelTab />}
-            {tab === 'profile' && <ProfileTab />}
-          </motion.main>
-        </AnimatePresence>
-        <BottomNav />
-        {/* Экран канала внутри приложения */}
-        <ChannelSheet />
-        {/* Полный экран поста (открывается из «...еще») */}
-        <PostOverlay />
+      {/* Десктоп: сайдбар-навигация слева (lg+), мобильный — нижняя капсула */}
+      <div className="flex h-full w-full max-w-[1120px]">
+        <Sidebar />
+        <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-tg-bg lg:rounded-l-2xl lg:border lg:border-tg-sep lg:shadow-xl">
+          <AnimatePresence initial={false} custom={tabDir} mode="popLayout">
+            <motion.main
+              key={tab}
+              custom={tabDir}
+              variants={tabVariants}
+              initial="enter"
+              animate="center"
+              exit="exit"
+              transition={{ duration: 0.22, ease: 'easeOut' }}
+              className="min-h-0 flex-1"
+              onTouchStart={onTouchStart}
+              onTouchEnd={onTouchEnd}
+            >
+              {tab === 'feed' && <FeedView />}
+              {tab === 'trending' && <TrendingTab />}
+              {tab === 'search' && <SearchTab />}
+              {tab === 'mychannel' && <MyChannelTab />}
+              {tab === 'profile' && <ProfileTab />}
+            </motion.main>
+          </AnimatePresence>
+          <BottomNav />
+          {/* Экран канала внутри приложения */}
+          <ChannelSheet />
+          {/* Полный экран поста (открывается из «...еще») */}
+          <PostOverlay />
+        </div>
       </div>
     </div>
   )
