@@ -111,10 +111,10 @@ export function StatusBadge({ status }: { status: ChannelStatus }) {
   )
 }
 
-export function UserKindBadge({ isDemo }: { isDemo: boolean }) {
-  return isDemo ? (
+export function UserKindBadge({ isGuest }: { isGuest: boolean }) {
+  return isGuest ? (
     <Badge variant="outline" className="border-slate-200 bg-slate-100 text-slate-500">
-      Демо
+      Гость
     </Badge>
   ) : (
     <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700">

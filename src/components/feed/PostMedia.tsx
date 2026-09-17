@@ -8,6 +8,7 @@ import { haptic, openExternal, openTelegram } from '@/lib/tg'
 import type { MediaItemDTO, PostDTO } from '@/lib/types'
 import { MediaCarousel, VideoPlayer } from '@/components/feed/MediaCarousel'
 import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
+import { MediaLightbox } from '@/components/feed/MediaLightbox'
 
 /**
  * Универсальный медиаблок поста — поддерживает все типы контента Telegram,
@@ -19,22 +20,37 @@ import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
  * под визуалом, как в Telegram. Двойной тап по визуалу — лайк с сердцем.
  */
 
-/** Сердце при двойном тапе по одиночному визуалу */
+/** Сердце при двойном тапе по одиночному визуалу; одиночный тап — открыть просмотр */
 function DoubleTapHeart({
   children,
   onDoubleTap,
+  onSingleTap,
   className,
 }: {
   children: React.ReactNode
   onDoubleTap?: () => void
+  onSingleTap?: () => void
   className?: string
 }) {
   const [popKey, setPopKey] = useState(0)
+  const timer = useRef<number | null>(null)
   return (
     <div
       className={cn('relative select-none', className)}
       data-noswipe
+      onClick={() => {
+        if (!onSingleTap) return
+        if (timer.current) return
+        timer.current = window.setTimeout(() => {
+          timer.current = null
+          onSingleTap()
+        }, 260)
+      }}
       onDoubleClick={() => {
+        if (timer.current) {
+          window.clearTimeout(timer.current)
+          timer.current = null
+        }
         setPopKey((k) => k + 1)
         onDoubleTap?.()
       }}
@@ -192,7 +208,7 @@ function CardView({ item, tgLink }: { item: MediaItemDTO; tgLink: string | null 
               src={item.url}
               alt={item.title ?? 'Превью ссылки'}
               loading="lazy"
-              className="h-44 w-full object-cover"
+              className="max-h-[54dvh] w-full object-cover"
               onError={(e) => {
                 e.currentTarget.style.display = 'none'
               }}
@@ -232,12 +248,14 @@ function SingleVisual({
   item,
   alt,
   onDoubleTap,
+  onOpen,
 }: {
   item: MediaItemDTO
   alt: string
   onDoubleTap?: () => void
+  onOpen?: () => void
 }) {
-  const inner = <SingleVisualInner item={item} alt={alt} onDoubleTap={onDoubleTap} />
+  const inner = <SingleVisualInner item={item} alt={alt} onDoubleTap={onDoubleTap} onOpen={onOpen} />
   return item.spoiler ? <MediaSpoiler>{inner}</MediaSpoiler> : inner
 }
 
@@ -245,17 +263,24 @@ function SingleVisualInner({
   item,
   alt,
   onDoubleTap,
+  onOpen,
 }: {
   item: MediaItemDTO
   alt: string
   onDoubleTap?: () => void
+  onOpen?: () => void
 }) {
   if (item.kind === 'video' && item.url) {
-    return <VideoPlayer src={item.url} alt={alt} onDoubleTap={onDoubleTap} />
+    return <VideoPlayer src={item.url} alt={alt} onDoubleTap={onDoubleTap} onOpen={onOpen} />
   }
   if (item.kind === 'gif' && item.url) {
     return (
-      <div className="relative select-none" data-noswipe onDoubleClick={onDoubleTap}>
+      <div
+        className="relative select-none"
+        data-noswipe
+        onDoubleClick={onDoubleTap}
+        onClick={() => onOpen?.()}
+      >
         <video
           src={item.url}
           poster={item.poster}
@@ -276,7 +301,7 @@ function SingleVisualInner({
   if (item.kind === 'sticker' && item.url) {
     const isVideoSticker = item.url.endsWith('.webm') || item.url.endsWith('.mp4')
     return (
-      <DoubleTapHeart onDoubleTap={onDoubleTap} className="flex items-center justify-center py-2">
+      <DoubleTapHeart onDoubleTap={onDoubleTap} onSingleTap={onOpen} className="flex items-center justify-center py-2">
         {isVideoSticker ? (
           <video
             src={item.url}
@@ -305,13 +330,13 @@ function SingleVisualInner({
   // image
   if (item.url) {
     return (
-      <DoubleTapHeart onDoubleTap={onDoubleTap}>
+      <DoubleTapHeart onDoubleTap={onDoubleTap} onSingleTap={onOpen}>
         <img
           src={item.url}
           alt={alt}
           loading="lazy"
           draggable={false}
-          className="mx-auto aspect-[4/5] max-h-[54dvh] w-full rounded-[14px] bg-tg-surface object-cover"
+          className="mx-auto aspect-[4/5] max-h-[54dvh] w-full cursor-zoom-in rounded-[14px] bg-tg-surface object-cover"
           onError={(e) => {
             e.currentTarget.closest('[data-noswipe]')?.setAttribute('style', 'display:none')
           }}
@@ -347,6 +372,7 @@ export function PostMedia({
   onDoubleTap?: () => void
 }) {
   const items = postMediaItems(post)
+  const [lbIndex, setLbIndex] = useState<number | null>(null)
   if (items.length === 0) return null
 
   const visual = items.filter((x) => VISUAL_KINDS.has(x.kind) && x.url)
@@ -355,11 +381,19 @@ export function PostMedia({
 
   return (
     <div className="space-y-2.5">
-      {visual.length === 1 && <SingleVisual item={visual[0]} alt={alt} onDoubleTap={onDoubleTap} />}
-      {visual.length > 1 && <MediaCarousel items={visual} alt={alt} onDoubleTap={onDoubleTap} />}
+      {visual.length === 1 && (
+        <SingleVisual item={visual[0]} alt={alt} onDoubleTap={onDoubleTap} onOpen={() => setLbIndex(0)} />
+      )}
+      {visual.length > 1 && (
+        <MediaCarousel items={visual} alt={alt} onDoubleTap={onDoubleTap} onOpenIndex={(idx) => setLbIndex(idx)} />
+      )}
       {cards.map((c, i) => (
         <CardView key={i} item={c} tgLink={c.link ?? post.link} />
       ))}
+      {/* Полноэкранный просмотр + скачивание (как в Telegram) */}
+      {lbIndex != null && (
+        <MediaLightbox items={visual} index={lbIndex} onClose={() => setLbIndex(null)} />
+      )}
     </div>
   )
 }

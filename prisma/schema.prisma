@@ -15,12 +15,12 @@ datasource db {
 
 // Telegram user (id from initData) or demo user (id from deviceId)
 model User {
-  id            String   @id // "tg_<uid>" | "demo_<deviceId>"
+  id            String   @id // "tg_<uid>" | "guest_<deviceId>"
   username      String?
   firstName     String?
   lastName      String?
   photoUrl      String? // http URL или tgfile:<file_id> (аватар через /api/avatar)
-  isDemo        Boolean  @default(true)
+  isGuest       Boolean  @default(true) @map("isDemo")
   isPremium     Boolean  @default(false) // Telegram Premium (из initData)
   languageCode  String? // язык клиента Telegram (IETF-код)
   categories    String   @default("[]") // JSON array of category slugs (interests)
@@ -310,4 +310,21 @@ model CustomEmoji {
   kind      String   @default("static")
   fileId    String?
   fetchedAt DateTime @updatedAt
+}
+
+// Заготовка эквайринга ЮKassa: платёж, созданный рекламодателем.
+// После подключения эквайринга здесь появится providerPaymentId и
+// confirmationUrl, а статус поведёт вебхук ЮKassa (pending → succeeded).
+model PendingPayment {
+  id                String   @id @default(cuid())
+  userId            String
+  amountKop         Int
+  status            String   @default("pending") // pending | succeeded | canceled
+  provider          String   @default("yookassa")
+  providerPaymentId String?
+  confirmationUrl   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId, createdAt])
 }

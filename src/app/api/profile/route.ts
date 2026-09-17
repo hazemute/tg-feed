@@ -33,7 +33,7 @@ export async function GET(request: Request) {
         firstName: user.firstName,
         lastName: user.lastName,
         photoUrl: user.photoUrl,
-        isDemo: user.isDemo,
+        isGuest: user.isGuest,
         isPremium: user.isPremium,
         languageCode: user.languageCode,
         categories: parseJsonArray(user.categories),

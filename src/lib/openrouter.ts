@@ -11,10 +11,12 @@
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
-/** Цепочка моделей: первая доступная отвечает. Переопределяется env OPENROUTER_MODELS */
+/** Цепочка моделей: первая доступная отвечает. Приоритет — СКОРОСТЬ при копеечной цене.
+ *  Переопределяется env OPENROUTER_MODELS */
 const DEFAULT_MODELS = [
-  'mistralai/mistral-nemo', // 12B — дешевле всех ($0.019/M): ~0.0002₽ за перевод поста
-  'meta-llama/llama-3.1-8b-instruct', // платный фолбэк той же ценовой категории
+  'google/gemini-2.5-flash-lite', // самая быстрая из дешёвых (~$0.1/M): перевод за ~1с
+  'mistralai/mistral-nemo', // 12B, предельно дешёвая ($0.019/M) — фолбэк
+  'meta-llama/llama-3.1-8b-instruct', // быстрый платный фолбэк
   'google/gemma-4-26b-a4b-it:free', // бесплатный фолбэк на случай исчерпания кредита
 ]
 
@@ -53,7 +55,7 @@ export async function chatSimple(
           Authorization: `Bearer ${key}`,
           'Content-Type': 'application/json',
           // OpenRouter просит атрибуцию приложения
-          'HTTP-Referer': process.env.APP_URL ?? 'https://tg-feed.vercel.app',
+          'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
           'X-Title': 'Tg Swipe',
         },
         body: JSON.stringify({

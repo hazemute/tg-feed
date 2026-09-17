@@ -10,7 +10,7 @@ import { haptic, openTelegram } from '@/lib/tg'
 import { formatCount } from '@/lib/format'
 import type { AdminStatsDTO, AdsPlatformStats } from '@/lib/types'
 
-const CREATOR = 'tgfeed_creator'
+const CREATOR = 'tgswipe_bot'
 
 /**
  * Форматы продвижения. Ключевая ценность для рекламодателя — не «покажемся»,

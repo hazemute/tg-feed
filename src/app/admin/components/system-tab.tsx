@@ -391,7 +391,7 @@ function AllowListCard({
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="truncate text-sm font-medium text-slate-800">{displayName(u)}</span>
-                    <UserKindBadge isDemo={u.isDemo} />
+                    <UserKindBadge isGuest={u.isGuest} />
                   </div>
                   <span className="block truncate font-mono text-[11px] text-slate-500">{u.id}</span>
                 </div>
@@ -465,7 +465,7 @@ function AllowListCard({
                           <span className="truncate text-sm text-slate-800">
                             {[u.firstName, u.lastName].filter(Boolean).join(' ') || (u.username ? `@${u.username}` : u.id)}
                           </span>
-                          <UserKindBadge isDemo={u.isDemo} />
+                          <UserKindBadge isGuest={u.isGuest} />
                           {added && (
                             <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">
                               <Check className="size-3" aria-hidden /> в списке

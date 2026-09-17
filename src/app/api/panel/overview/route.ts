@@ -25,7 +25,7 @@ export async function GET(request: Request) {
     const [
       users,
       usersTelegram,
-      usersDemo,
+      usersGuest,
       channelsActive,
       channelsModeration,
       channelsRejected,
@@ -43,8 +43,8 @@ export async function GET(request: Request) {
       subs24h,
     ] = await db.$transaction([
       db.user.count(),
-      db.user.count({ where: { isDemo: false } }),
-      db.user.count({ where: { isDemo: true } }),
+      db.user.count({ where: { isGuest: false } }),
+      db.user.count({ where: { isGuest: true } }),
       db.channel.count({ where: { status: 'active' } }),
       db.channel.count({ where: { status: 'moderation' } }),
       db.channel.count({ where: { status: 'rejected' } }),
@@ -83,7 +83,7 @@ export async function GET(request: Request) {
       db.user.findMany({
         orderBy: { createdAt: 'desc' },
         take: 8,
-        select: { id: true, username: true, firstName: true, isDemo: true, createdAt: true },
+        select: { id: true, username: true, firstName: true, isGuest: true, createdAt: true },
       }),
       db.channel.findMany({
         orderBy: { subscribersCount: 'desc' },
@@ -120,7 +120,7 @@ export async function GET(request: Request) {
       counts: {
         users,
         usersTelegram,
-        usersDemo,
+        usersGuest,
         channelsActive,
         channelsModeration,
         channelsRejected,
@@ -157,7 +157,7 @@ export async function GET(request: Request) {
         id: u.id,
         username: u.username,
         firstName: u.firstName,
-        isDemo: u.isDemo,
+        isGuest: u.isGuest,
         createdAt: u.createdAt.toISOString(),
       })),
       topChannels: topChannels.map((c) => ({

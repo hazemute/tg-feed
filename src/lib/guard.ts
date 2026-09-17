@@ -10,7 +10,7 @@ import { unauthorized, tooMany } from '@/lib/server'
  * значения из query/body игнорируются — подмена личности невозможна.
  */
 
-export type Authed = { ok: true; uid: string; demo: boolean }
+export type Authed = { ok: true; uid: string; guest: boolean }
 export type Rejected = { ok: false; res: NextResponse }
 export type GuardResult = Authed | Rejected
 
@@ -27,7 +27,7 @@ export function guardAuth(request: Request, rl: RL = { limit: 60, windowMs: 60_0
   const limited = rateLimit(`u:${session.uid}:${rl.bucket ?? 'default'}`, rl.limit, rl.windowMs)
   if (!limited.ok) return { ok: false, res: tooMany(limited.retryAfterSec) }
 
-  return { ok: true, uid: session.uid, demo: session.demo }
+  return { ok: true, uid: session.uid, guest: session.guest }
 }
 
 /**
@@ -37,12 +37,12 @@ export function guardAuth(request: Request, rl: RL = { limit: 60, windowMs: 60_0
 export function guardPublic(
   request: Request,
   rl?: RL,
-): { ok: true; uid: string | null; demo: boolean } | Rejected {
+): { ok: true; uid: string | null; guest: boolean } | Rejected {
   const session = getSession(request)
   const key = session ? `u:${session.uid}` : `ip:${clientIp(request)}`
   const limited = rateLimit(`${key}:${rl?.bucket ?? 'public'}`, rl?.limit ?? 120, rl?.windowMs ?? 60_000)
   if (!limited.ok) return { ok: false, res: tooMany(limited.retryAfterSec) }
-  return { ok: true, uid: session?.uid ?? null, demo: session?.demo ?? true }
+  return { ok: true, uid: session?.uid ?? null, guest: session?.guest ?? true }
 }
 
 /** Анонимный доступ (auth, cron-парсер): rate limit строго по IP */
@@ -90,7 +90,7 @@ export function guardAdmin(request: Request, rl: RL = { limit: 120, windowMs: 60
   const limited = rateLimit(`ip:${clientIp(request)}:${rl.bucket ?? 'admin'}`, rl.limit, rl.windowMs)
   if (!limited.ok) return { ok: false, res: tooMany(limited.retryAfterSec) }
 
-  return { ok: true, uid: 'admin', demo: false }
+  return { ok: true, uid: 'admin', guest: false }
 }
 
 /** Проверка CRON-секрета в постоянном времени */

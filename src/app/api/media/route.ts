@@ -23,6 +23,7 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url)
   const raw = searchParams.get('u')
+  const asDownload = searchParams.get('dl') === '1'
   if (!raw || !isTrustedMediaUrl(raw)) {
     return new NextResponse('bad url', { status: 400 })
   }
@@ -53,6 +54,11 @@ export async function GET(request: Request) {
     copy('content-length')
     copy('content-range')
     headers.set('accept-ranges', 'bytes')
+    // Скачивание: content-disposition — файл сохранится вместо показа
+    if (asDownload) {
+      const ext = (raw.split('.').pop() ?? 'jpg').split('?')[0].slice(0, 5).replace(/[^a-z0-9]/gi, '')
+      headers.set('Content-Disposition', `attachment; filename="tgswipe-media.${ext || 'jpg'}"`)
+    }
     // Кэш: браузер — сутки, CDN Vercel — 7 дней (медиа Telegram неизменяемо по URL)
     headers.set(
       'Cache-Control',

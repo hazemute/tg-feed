@@ -10,7 +10,7 @@
 
 export type EdgeSession = {
   uid: string
-  demo: boolean
+  guest: boolean
   exp: number
 }
 
@@ -89,13 +89,18 @@ export async function verifySessionEdge(
     const parsed = JSON.parse(new TextDecoder().decode(fromB64url(payload))) as {
       uid?: unknown
       demo?: unknown
+      guest?: unknown
       exp?: unknown
       iat?: unknown
     }
     if (typeof parsed.uid !== 'string' || !parsed.uid) return null
     if (typeof parsed.exp !== 'number' || parsed.exp < Math.floor(Date.now() / 1000)) return null
     if (typeof parsed.iat !== 'number') return null
-    return { uid: parsed.uid, demo: parsed.demo === true, exp: parsed.exp }
+    return {
+      uid: String(parsed.uid),
+      guest: parsed.guest === true || parsed.demo === true,
+      exp: typeof parsed.exp === 'number' ? parsed.exp : 0,
+    }
   } catch {
     return null
   }

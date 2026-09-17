@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Bell,
   ChevronRight,
-  Megaphone,
   Info,
   Loader2,
   MousePointerClick,
@@ -26,17 +25,15 @@ import { useApp } from '@/lib/store'
 import { stripMarkdown } from '@/lib/markdown'
 import { formatCount, pluralRu } from '@/lib/format'
 import { haptic, userAvatarUrl } from '@/lib/tg'
-import type { AdminStatsDTO, PostDTO, ProfileStatsResponse, SubscriptionDTO } from '@/lib/types'
+import type { PostDTO, ProfileStatsResponse, SubscriptionDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ThemeGallery } from '@/components/tg/ThemeGallery'
 import { LANG_LIST, useT } from '@/lib/i18n'
 import { APP_VERSION } from '@/lib/version'
 import { Onboarding } from '@/components/tg/Onboarding'
-import { PromoteSheet } from '@/components/tabs/PromoteSheet'
 import { THEMES, themeName } from '@/lib/themes'
 
-const CREATOR = 'tgfeed_creator'
 
 /** Элемент списка закладок — приходит из /api/bookmarks с отметкой прочтения */
 type BookmarkItem = PostDTO & { readAt: string | null }
@@ -161,9 +158,9 @@ export function ProfileTab() {
             )}
           </div>
           <div className="mt-0.5 truncate text-[15.5px] text-tg-hint">
-            {user.username ? `@${user.username}` : user.isDemo ? 'Гость · демо-режим' : 'Без username'}
+            {user.username ? `@${user.username}` : user.isGuest ? 'Гость' : 'Без username'}
           </div>
-          {!user.isDemo && (
+          {!user.isGuest && (
             <div className="mt-1 flex items-center gap-1 text-[12px] font-medium text-tg-link">
               <ShieldCheck className="h-3.5 w-3.5" />
               Telegram аккаунт подтверждён
@@ -418,8 +415,6 @@ export function ProfileTab() {
         </div>
       </section>
 
-      <MyChannelZone />
-
       {/* Шиты */}
       <BottomSheet
         open={settingsOpen}
@@ -619,187 +614,6 @@ function ActivityCard({ userId }: { userId: string }) {
           </p>
         </div>
       )}
-    </section>
-  )
-}
-
-/* ---------- «Мой канал»: авторская секция (добавить канал, статистика, продвижение).
- * Никакой модерации здесь нет — парсинг/одобрение/отклонение живут только в /admin. ---------- */
-
-const STATUS_LABEL: Record<string, string> = {
-  active: 'активен',
-  moderation: 'на модерации',
-  rejected: 'отклонён модератором',
-}
-
-function MyChannelZone() {
-  const { user } = useApp()
-  const [expanded, setExpanded] = useState(false)
-  const [stats, setStats] = useState<AdminStatsDTO[] | null>(null)
-  const [promoteOpen, setPromoteOpen] = useState(false)
-  const [username, setUsername] = useState('')
-  const [submitting, setSubmitting] = useState(false)
-
-  const loadAdmin = () => {
-    if (!user) return
-    api<{ items: AdminStatsDTO[] }>(`/api/admin/stats?userId=${encodeURIComponent(user.id)}`)
-      .then((d) => setStats(d.items))
-      .catch(() => setStats([]))
-  }
-
-  useEffect(() => {
-    if (expanded) loadAdmin()
-     
-  }, [expanded, user?.id])
-
-  const myChannels = useMemo(() => stats ?? [], [stats])
-
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    if (!user || !username.trim() || submitting) return
-    setSubmitting(true)
-    try {
-      await api('/api/admin/add_channel', {
-        method: 'POST',
-        body: JSON.stringify({ userId: user.id, username }),
-      })
-      setUsername('')
-      loadAdmin()
-      haptic('success')
-      toast.success('Канал отправлен на модерацию')
-    } catch (err) {
-      toast.error((err as Error).message || 'Не удалось добавить канал')
-      haptic('error')
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
-  return (
-    <section className="pt-7">
-      <div className="mx-4">
-        <button
-          type="button"
-          role="switch"
-          aria-checked={expanded}
-          onClick={() => {
-            haptic('light')
-            setExpanded((v) => !v)
-          }}
-          className="flex w-full items-center gap-3 border-t border-tg-sep/60 py-4 text-left"
-        >
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-tg-link/10">
-            <Megaphone className="h-[18px] w-[18px] text-tg-link" />
-          </span>
-          <span className="flex-1 text-[16.5px] font-medium text-tg-text">Мой канал</span>
-          <ChevronRight
-            className={cn('h-5 w-5 text-tg-hint transition-transform', expanded && 'rotate-90')}
-          />
-        </button>
-      </div>
-
-      {expanded && (
-        <div className="px-4 pb-2">
-          {/* Дашборд */}
-          {stats === null ? (
-            <div className="flex justify-center py-4">
-              <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
-            </div>
-          ) : myChannels.length === 0 ? (
-            <p className="text-snippet leading-relaxed text-tg-hint">
-              Добавьте свой канал — здесь появится статистика: просмотры в ленте, клики по [+] и
-              CTR.
-            </p>
-          ) : (
-            <div className="space-y-3">
-              {myChannels.map((c) => (
-                <div key={c.channelId} className="rounded-2xl bg-tg-surface p-4">
-                  <div className="flex items-center gap-2.5">
-                    <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={36} />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[14.5px] font-semibold text-tg-text">
-                        {c.title}
-                      </div>
-                      <div className="text-[12px] text-tg-hint">
-                        {c.posts} {pluralRu(c.posts, 'пост', 'поста', 'постов')} ·{' '}
-                        {STATUS_LABEL[c.status] ?? 'активен'}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2 text-center">
-                    <div className="rounded-xl bg-tg-bg py-2.5">
-                      <Eye className="mx-auto h-4 w-4 text-tg-hint" />
-                      <div className="mt-1 text-[15px] font-bold leading-none text-tg-text">
-                        {formatCount(c.views)}
-                      </div>
-                      <div className="mt-1 text-[10px] text-tg-hint">просмотры</div>
-                    </div>
-                    <div className="rounded-xl bg-tg-bg py-2.5">
-                      <MousePointerClick className="mx-auto h-4 w-4 text-tg-hint" />
-                      <div className="mt-1 text-[15px] font-bold leading-none text-tg-text">
-                        {formatCount(c.clicks)}
-                      </div>
-                      <div className="mt-1 text-[10px] text-tg-hint">клики [+]</div>
-                    </div>
-                    <div className="rounded-xl bg-tg-bg py-2.5">
-                      <BarChart3 className="mx-auto h-4 w-4 text-tg-hint" />
-                      <div className="mt-1 text-[15px] font-bold leading-none text-tg-text">
-                        {c.ctr}%
-                      </div>
-                      <div className="mt-1 text-[10px] text-tg-hint">CTR</div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Продвижение / реклама своего канала */}
-          <button
-            type="button"
-            onClick={() => {
-              haptic('light')
-              setPromoteOpen(true)
-            }}
-            className="mt-3.5 h-12 w-full rounded-full bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
-          >
-            Реклама и продвижение
-          </button>
-
-          {/* Добавление канала */}
-          <form onSubmit={submit} className="pt-4">
-            <div className="text-[14px] font-semibold text-tg-text">Добавить свой канал</div>
-            <div className="mt-2 flex gap-2">
-              <input
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="@my_channel"
-                aria-label="Юзернейм канала"
-                className="h-11 min-w-0 flex-1 rounded-xl border border-tg-sep bg-tg-bg px-3.5 text-snippet text-tg-text outline-none placeholder:text-tg-hint focus:border-tg-link"
-              />
-              <button
-                type="submit"
-                disabled={submitting || !username.trim()}
-                className={cn(
-                  'flex h-11 shrink-0 items-center gap-1.5 rounded-full px-4 text-[14px] font-semibold transition active:scale-95',
-                  submitting || !username.trim()
-                    ? 'cursor-not-allowed bg-tg-surface text-tg-hint'
-                    : 'bg-tg-link text-white',
-                )}
-              >
-                {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                Отправить
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      <PromoteSheet
-        open={promoteOpen}
-        onClose={() => setPromoteOpen(false)}
-        channels={myChannels.filter((c) => c.status === 'active')}
-      />
     </section>
   )
 }

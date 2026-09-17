@@ -6,7 +6,7 @@ import { cacheGet, cacheSet } from '@/lib/redis'
  *
  * Правила безопасности/надёжности:
  *  - сообщения отправляются ТОЛЬКО проверенным пользователям (id = tg_<num>,
- *    isDemo=false — т.е. initData прошёл HMAC-проверку);
+ *    isGuest=false — т.е. initData прошёл HMAC-проверку);
  *  - chat_id пользователя = его Telegram id (бот может писать тем, кто
  *    открывал Mini App);
  *  - очередь с интервалом 50 мс (≤20 msg/s, ниже лимита 30 msg/s);
@@ -460,7 +460,7 @@ export async function notifyNewPosts(posts: NotifiablePost[]): Promise<NotifyRes
     where: {
       notify: true,
       channelId: { in: [...channelIdByUsername.values()] },
-      user: { isDemo: false, id: { startsWith: 'tg_' } },
+      user: { isGuest: false, id: { startsWith: 'tg_' } },
     },
     select: { userId: true, channelId: true },
   })

@@ -1,66 +1,63 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  ArrowUpRight,
   BarChart3,
+  Check,
+  Copy,
+  Crown,
   Eye,
+  EyeOff,
+  FileText,
   Heart,
+  Link2,
   Loader2,
   Megaphone,
+  Pause,
+  Play,
+  Plus,
   Radio,
-  RefreshCw,
-  ShieldCheck,
-  Sparkle,
+  Scissors,
+  Send,
+  Sparkles,
+  Users,
   Wallet,
+  X,
 } from 'lucide-react'
-import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { haptic, openTelegram } from '@/lib/tg'
 import { formatCount } from '@/lib/format'
-import type {
-  CategoryDTO,
-  MyChannelDTO,
-  MyChannelResponse,
-  PostDTO,
-} from '@/lib/types'
+import { haptic, openTelegram } from '@/lib/tg'
 import { Avatar } from '@/components/tg/Avatar'
+import { BottomSheet } from '@/components/tg/BottomSheet'
+import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
 
-const CREATOR = 'tgfeed_creator'
+/**
+ * «Мой канал» — кабинет автора: привязка канала по кодовому слову,
+ * живая статистика, гибкие настройки показа в ленте и рекламный
+ * кабинет (CPA с эскроу-балансом, пополнение через заготовку ЮKassa).
+ */
 
-/** Копейки → «350 ₽» (без дробной части, когда она нулевая) */
 function formatKop(kop: number): string {
   const rub = kop / 100
-  return Number.isInteger(rub) ? `${formatCount(rub)} ₽` : `${rub.toFixed(2).replace('.', ',')} ₽`
+  return rub % 1 === 0 ? `${formatCount(rub)} ₽` : `${rub.toFixed(2)} ₽`
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  moderation: 'На модерации',
-  active: 'Крутится',
-  paused: 'Пауза',
-  completed: 'Завершена',
-  rejected: 'Отклонена',
-}
-
-const STATUS_STYLE: Record<string, string> = {
-  moderation: 'bg-amber-500/15 text-amber-700 dark:text-amber-300',
-  active: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-300',
-  paused: 'bg-tg-sep text-tg-hint',
-  completed: 'bg-tg-sep text-tg-hint',
-  rejected: 'bg-red-500/15 text-red-700 dark:text-red-300',
-}
-
-type Tab = 'stats' | 'display' | 'ads'
+const DISPLAY_MODES = [
+  { id: 'none', label: 'Полностью', icon: FileText, hint: 'посты видны целиком' },
+  { id: 'cut', label: 'Обрезка', icon: Scissors, hint: 'начало текста + «Читать в канале»' },
+  { id: 'blur', label: 'Блюр', icon: EyeOff, hint: 'весь текст размыт до подписки' },
+] as const
 
 export function MyChannelTab() {
-  const user = useApp((s) => s.user)
-  const categories = useApp((s) => s.categories)
+  const { user } = useApp()
   const [data, setData] = useState<MyChannelResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [section, setSection] = useState<Tab>('stats')
 
   const load = useCallback(async () => {
     try {
@@ -68,55 +65,44 @@ export function MyChannelTab() {
       setData(r)
       setActiveId((prev) => prev ?? r.channels[0]?.id ?? null)
     } catch {
-      toast.error('Не удалось загрузить канал')
+      setData({ channels: [], advertiser: { balanceKop: 0, topupsTotalKop: 0, spentTotalKop: 0 } })
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    load()
-  }, [load])
+    if (user) void load()
+  }, [user, load])
 
-  const active = data?.channels.find((c) => c.id === activeId) ?? data?.channels[0] ?? null
+  const channel = useMemo(
+    () => data?.channels.find((c) => c.id === activeId) ?? data?.channels[0] ?? null,
+    [data, activeId],
+  )
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain pb-28">
-      {/* Шапка вкладки */}
-      <header className="px-4 pb-3 pt-[max(1rem,env(safe-area-inset-top))]">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-[22px] font-bold leading-tight text-tg-text">Мой канал</h1>
-            <p className="mt-0.5 text-[13px] leading-snug text-tg-hint">
-              Статистика, показ постов и реклама вашего канала
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => {
-              haptic('light')
-              setLoading(true)
-              load()
-            }}
-            aria-label="Обновить"
-            className="flex h-10 w-10 items-center justify-center rounded-full text-tg-hint active:bg-tg-surface"
-          >
-            <RefreshCw className={cn('h-5 w-5', loading && 'animate-spin')} />
-          </button>
-        </div>
-      </header>
+    <div className="mx-auto w-full max-w-[600px] px-4 pb-28 pt-5 lg:pt-7">
+      {/* Заголовок */}
+      <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+        <h1 className="text-[26px] font-bold leading-tight text-tg-text">Мой канал</h1>
+        <p className="mt-0.5 text-[13.5px] text-tg-hint">
+          Привязка, статистика, показ в ленте и реклама — всё в одном месте
+        </p>
+      </motion.div>
 
       {loading ? (
-        <div className="flex justify-center py-16">
-          <Loader2 className="h-6 w-6 animate-spin text-tg-hint" />
+        <div className="mt-6 space-y-3">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-28 animate-pulse rounded-3xl bg-tg-surface" />
+          ))}
         </div>
-      ) : !active ? (
+      ) : !data || data.channels.length === 0 ? (
         <ClaimCard onDone={load} />
       ) : (
-        <>
+        <div className="mt-5 space-y-4">
           {/* Переключатель каналов (если привязано несколько) */}
-          {data && data.channels.length > 1 && (
-            <div className="no-scrollbar mb-3 flex gap-2 overflow-x-auto px-4">
+          {data.channels.length > 1 && (
+            <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
               {data.channels.map((c) => (
                 <button
                   key={c.id}
@@ -126,68 +112,31 @@ export function MyChannelTab() {
                     setActiveId(c.id)
                   }}
                   className={cn(
-                    'flex shrink-0 items-center gap-2 rounded-full px-3 py-1.5 text-[13px] font-medium transition active:scale-95',
-                    c.id === active.id ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text2',
+                    'flex shrink-0 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3.5 text-[13.5px] font-semibold transition',
+                    c.id === channel?.id
+                      ? 'bg-tg-link text-white'
+                      : 'bg-tg-surface text-tg-text2 active:scale-95',
                   )}
                 >
-                  <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={20} />
+                  <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={26} />
                   {c.title}
                 </button>
               ))}
             </div>
           )}
 
-          {/* Секции: Статистика · Показ · Реклама */}
-          <div className="mx-4 flex rounded-xl bg-tg-surface p-1">
-            {(
-              [
-                ['stats', 'Статистика'],
-                ['display', 'Показ'],
-                ['ads', 'Реклама'],
-              ] as Array<[Tab, string]>
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                onClick={() => {
-                  haptic('light')
-                  setSection(id)
-                }}
-                className={cn(
-                  'relative flex-1 rounded-lg py-2 text-[13.5px] font-semibold transition',
-                  section === id ? 'text-tg-text' : 'text-tg-hint',
-                )}
-              >
-                {section === id && (
-                  <motion.span
-                    layoutId="mychannel-segment"
-                    className="absolute inset-0 rounded-lg bg-tg-bg shadow-sm"
-                    transition={{ type: 'spring', stiffness: 500, damping: 38 }}
-                  />
-                )}
-                <span className="relative z-10">{label}</span>
-              </button>
-            ))}
-          </div>
-
-          <div className="mt-3 px-4">
-            {section === 'stats' && <StatsSection channel={active} />}
-            {section === 'display' && (
-              <DisplaySection channel={active} categories={categories} onSaved={load} />
-            )}
-            {section === 'ads' && (
-              <AdsSection channel={active} data={data!} reload={load} />
-            )}
-          </div>
-        </>
+          <ChannelHero channel={channel!} onReload={load} />
+          <StatsGrid channel={channel!} />
+          <DisplaySection channel={channel!} onSaved={load} />
+          <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />
+        </div>
       )}
-      {!user && <div className="h-10" />}
     </div>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Привязка канала: код-слово вместо ручной модерации                  */
+/* Привязка канала                                                     */
 /* ------------------------------------------------------------------ */
 
 function ClaimCard({ onDone }: { onDone: () => void }) {
@@ -196,12 +145,11 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
   const [stage, setStage] = useState<'input' | 'code'>('input')
   const [code, setCode] = useState('')
   const [title, setTitle] = useState('')
+  const [copied, setCopied] = useState(false)
 
-  const start = async () => {
-    if (username.trim().length < 3) {
-      toast.error('Введите ссылку на канал или @username')
-      return
-    }
+  const start = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!username.trim() || busy) return
     setBusy(true)
     try {
       const r = await api<{ ok: boolean; code: string; title: string }>('/api/mychannel', {
@@ -212,14 +160,16 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
       setTitle(r.title)
       setStage('code')
       haptic('success')
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не получилось — проверьте ссылку')
+    } catch (err) {
+      toast.error((err as Error).message || 'Не удалось найти канал')
+      haptic('error')
     } finally {
       setBusy(false)
     }
   }
 
   const verify = async () => {
+    if (busy) return
     setBusy(true)
     try {
       await api('/api/mychannel', {
@@ -227,190 +177,232 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
         body: JSON.stringify({ action: 'claimVerify', username: username.trim(), code }),
       })
       haptic('success')
-      toast.success('Канал привязан')
       onDone()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Код не найден — попробуйте ещё раз')
+    } catch (err) {
+      toast.error((err as Error).message || 'Код пока не найден в канале')
+      haptic('error')
     } finally {
       setBusy(false)
     }
   }
 
-  return (
-    <div className="px-4">
-      <div className="rounded-2xl bg-tg-surface p-4">
-        <span className="flex h-11 w-11 items-center justify-center rounded-full bg-tg-link/10 text-tg-link">
-          <Radio className="h-5.5 w-5.5" />
-        </span>
-        <h2 className="mt-3 text-[17px] font-bold text-tg-text">Привяжите свой канал</h2>
-        <p className="mt-1 text-[13.5px] leading-snug text-tg-text2">
-          Подключите канал к Tg Swipe и получите статистику читателей, гибкие настройки
-          показа постов и рекламный кабинет с оплатой за результат.
-        </p>
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(code)
+      setCopied(true)
+      haptic('light')
+      setTimeout(() => setCopied(false), 1600)
+    } catch {
+      // clipboard недоступен
+    }
+  }
 
-        <AnimatePresence mode="wait">
-          {stage === 'input' ? (
-            <motion.div
-              key="input"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="mt-4"
-            >
-              <label htmlFor="claim-username" className="mb-1.5 block text-[12px] font-medium text-tg-hint">
-                Ссылка на канал
-              </label>
-              <input
-                id="claim-username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="@durov или t.me/durov"
-                autoComplete="off"
-                spellCheck={false}
-                className="h-11 w-full rounded-xl bg-tg-bg px-3.5 text-[15px] text-tg-text outline-none ring-1 ring-tg-sep placeholder:text-tg-hint/70 focus:ring-tg-link"
-              />
-              <button
-                type="button"
-                onClick={start}
-                disabled={busy}
-                className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
-              >
-                {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : null}
-                Получить код-слово
-              </button>
-            </motion.div>
-          ) : (
-            <motion.div
-              key="code"
-              initial={{ opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -6 }}
-              className="mt-4"
-            >
-              <div className="rounded-xl bg-tg-bg p-3.5 ring-1 ring-tg-sep">
-                <div className="text-[12px] font-medium text-tg-hint">
-                  Шаг 1. Опубликуйте этот код постом в канале{title ? ` «${title}»` : ''}
-                </div>
-                <div className="mt-1.5 select-all text-center text-[20px] font-bold tracking-wide text-tg-link">
-                  {code}
-                </div>
-                <div className="mt-1.5 text-[12px] leading-snug text-tg-hint">
-                  Шаг 2. Вернитесь сюда и нажмите «Проверить». Код проверяется по последним
-                  постам канала — постить может только владелец. После проверки пост с кодом
-                  можно удалить.
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={verify}
-                disabled={busy}
-                className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
-              >
-                {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <ShieldCheck className="h-4.5 w-4.5" />}
-                Проверить
-              </button>
-            </motion.div>
-          )}
-        </AnimatePresence>
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="mt-6 overflow-hidden rounded-3xl border border-tg-sep/60 bg-gradient-to-b from-tg-link/[0.07] to-transparent"
+    >
+      <div className="flex items-center gap-3 px-5 pt-5">
+        <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-tg-link/15">
+          <Radio className="h-6 w-6 text-tg-link" />
+        </span>
+        <div>
+          <div className="text-[17px] font-bold text-tg-text">Привяжите канал</div>
+          <div className="text-[13px] text-tg-hint">Без модерации и ожидания — за 2 минуты</div>
+        </div>
       </div>
-    </div>
+
+      {stage === 'input' ? (
+        <>
+          <div className="mt-4 space-y-2.5 px-5">
+            {[
+              'Укажите @юзернейм публичного канала',
+              'Опубликуйте код-слово постом в канале',
+              'Подтвердите — статистика и реклама откроются',
+            ].map((t, i) => (
+              <div key={i} className="flex items-center gap-2.5 text-[13.5px] text-tg-text2">
+                <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-tg-link/12 text-[11px] font-bold text-tg-link">
+                  {i + 1}
+                </span>
+                {t}
+              </div>
+            ))}
+          </div>
+          <form onSubmit={start} className="mt-4 flex gap-2 px-5 pb-5">
+            <input
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="@my_channel"
+              aria-label="Юзернейм канала"
+              autoComplete="off"
+              className="h-12 min-w-0 flex-1 rounded-2xl border border-tg-sep bg-tg-bg px-4 text-[15px] text-tg-text outline-none placeholder:text-tg-hint focus:border-tg-link"
+            />
+            <button
+              type="submit"
+              disabled={busy || !username.trim()}
+              className={cn(
+                'flex h-12 shrink-0 items-center gap-1.5 rounded-2xl px-5 text-[14.5px] font-semibold transition active:scale-95',
+                busy || !username.trim()
+                  ? 'cursor-not-allowed bg-tg-surface text-tg-hint'
+                  : 'bg-tg-link text-white shadow-[0_4px_16px_rgba(10,132,255,0.3)]',
+              )}
+            >
+              {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Link2 className="h-4.5 w-4.5" />}
+              Привязать
+            </button>
+          </form>
+        </>
+      ) : (
+        <>
+          <div className="mt-4 px-5">
+            <p className="text-[13.5px] leading-relaxed text-tg-text2">
+              Опубликуйте этот код постом в канале{' '}
+              <span className="font-semibold text-tg-text">{title}</span> — это подтверждает, что
+              канал ваш:
+            </p>
+            <button
+              type="button"
+              onClick={copy}
+              className="mt-3 flex w-full items-center justify-between gap-3 rounded-2xl border border-dashed border-tg-link/50 bg-tg-link/[0.06] px-4 py-3.5 text-left transition active:scale-[0.99]"
+            >
+              <span className="truncate font-mono text-[15px] font-bold tracking-wide text-tg-link">
+                {code}
+              </span>
+              <span className="flex shrink-0 items-center gap-1 text-[12px] font-semibold text-tg-hint">
+                {copied ? <Check className="h-4 w-4 text-tg-link" /> : <Copy className="h-4 w-4" />}
+                {copied ? 'Скопировано' : 'Копировать'}
+              </span>
+            </button>
+          </div>
+          <div className="mt-4 flex gap-2 px-5 pb-5">
+            <button
+              type="button"
+              onClick={verify}
+              disabled={busy}
+              className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
+            >
+              {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Check className="h-4.5 w-4.5" />}
+              Я опубликовал код
+            </button>
+            <button
+              type="button"
+              onClick={() => setStage('input')}
+              className="h-12 rounded-2xl bg-tg-surface px-4 text-[14px] font-semibold text-tg-text2 active:scale-95"
+            >
+              Назад
+            </button>
+          </div>
+        </>
+      )}
+    </motion.div>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Статистика канала                                                   */
+/* Шапка канала                                                        */
 /* ------------------------------------------------------------------ */
 
-function StatsSection({ channel }: { channel: MyChannelDTO }) {
-  const s = channel.stats
+function ChannelHero({ channel, onReload }: { channel: MyChannelDTO; onReload: () => void }) {
+  const [syncing, setSyncing] = useState(false)
+  const sync = () => {
+    if (syncing) return
+    setSyncing(true)
+    onReload()
+    setTimeout(() => setSyncing(false), 1200)
+  }
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-3 rounded-2xl bg-tg-surface p-4">
-        <Avatar name={channel.title} color={channel.avatarColor} src={channel.avatarUrl} size={54} />
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[16px] font-bold text-tg-text">{channel.title}</div>
-          <div className="mt-0.5 truncate text-[13px] text-tg-hint">
-            @{channel.username} · {formatCount(channel.subscribersCount)} подписчиков
+    <motion.section
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="relative overflow-hidden rounded-3xl border border-tg-sep/50"
+    >
+      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-tg-link/[0.10] via-transparent to-tg-star/[0.08]" aria-hidden />
+      <div className="relative p-5">
+        <div className="flex items-center gap-3.5">
+          <Avatar
+            name={channel.title}
+            color={channel.avatarColor}
+            src={channel.avatarUrl}
+            size={58}
+            className="ring-2 ring-tg-link/30"
+          />
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-[17px] font-bold leading-tight text-tg-text">
+                {channel.title}
+              </span>
+              <Check className="h-4 w-4 shrink-0 text-tg-link" aria-label="Владение подтверждено" />
+            </div>
+            <div className="mt-0.5 truncate text-[13px] text-tg-hint">
+              @{channel.username} · {channel.categoryTitle}
+            </div>
           </div>
         </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-2.5">
-        <StatCard icon={<Radio className="h-4 w-4" />} value={formatCount(s.posts)} label="постов в ленте" />
-        <StatCard
-          icon={<Eye className="h-4 w-4" />}
-          value={formatCount(channel.subscribersCount)}
-          label="читателей в Telegram"
-        />
-        <StatCard icon={<BarChart3 className="h-4 w-4" />} value={formatCount(s.views24h)} label="просмотров / 24ч" />
-        <StatCard icon={<Heart className="h-4 w-4" />} value={formatCount(s.likes)} label="лайков" />
-      </div>
-
-      <div className="rounded-2xl bg-tg-surface p-4">
-        <div className="text-[12px] font-semibold uppercase tracking-wide text-tg-hint">
-          Что дают эти цифры
+        <div className="mt-4 flex gap-2">
+          <button
+            type="button"
+            onClick={() => openTelegram(`https://t.me/${channel.username}`)}
+            className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-tg-link text-[13.5px] font-semibold text-white transition active:scale-[0.98]"
+          >
+            <Send className="h-4 w-4" />
+            Открыть в Telegram
+          </button>
+          <button
+            type="button"
+            onClick={sync}
+            aria-label="Обновить статистику"
+            className="flex h-10 w-10 items-center justify-center rounded-xl bg-tg-surface text-tg-text2 transition active:scale-95"
+          >
+            {syncing ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowUpRight className="h-4.5 w-4.5" />}
+          </button>
         </div>
-        <p className="mt-1.5 text-[13px] leading-snug text-tg-text2">
-          Просмотры за 24 часа — это читатели, которые видели ваши посты в Tg Swipe.
-          Настройте показ постов во вкладке «Показ»: обрезка с призывом подписаться
-          превращает читателей в подписчиков канала.
-        </p>
       </div>
-    </div>
+    </motion.section>
   )
 }
 
-function StatCard({ icon, value, label }: { icon: React.ReactNode; value: string; label: string }) {
+/* ------------------------------------------------------------------ */
+/* Статистика                                                          */
+/* ------------------------------------------------------------------ */
+
+function StatsGrid({ channel }: { channel: MyChannelDTO }) {
+  const tiles = [
+    { icon: FileText, value: formatCount(channel.stats.posts), label: 'постов', tint: 'bg-tg-link/12 text-tg-link' },
+    { icon: Users, value: formatCount(channel.subscribersCount), label: 'читателей', tint: 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400' },
+    { icon: Eye, value: formatCount(channel.stats.views24h), label: 'просмотров за 24ч', tint: 'bg-amber-500/12 text-amber-600 dark:text-amber-400' },
+    { icon: Heart, value: formatCount(channel.stats.likes), label: 'лайков', tint: 'bg-rose-500/12 text-rose-500' },
+  ]
   return (
-    <div className="rounded-2xl bg-tg-surface p-3.5">
-      <span className="flex h-8 w-8 items-center justify-center rounded-full bg-tg-link/10 text-tg-link">
-        {icon}
-      </span>
-      <div className="mt-2 text-[19px] font-bold leading-none text-tg-text">{value}</div>
-      <div className="mt-1 text-[11.5px] leading-tight text-tg-hint">{label}</div>
-    </div>
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04 }}>
+      <SectionTitle icon={BarChart3}>Статистика</SectionTitle>
+      <div className="grid grid-cols-2 gap-2.5">
+        {tiles.map((t) => (
+          <div key={t.label} className="rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-3.5">
+            <span className={cn('flex h-8 w-8 items-center justify-center rounded-xl', t.tint)}>
+              <t.icon className="h-4 w-4" />
+            </span>
+            <div className="mt-2.5 text-[20px] font-bold leading-none tabular-nums text-tg-text">{t.value}</div>
+            <div className="mt-1 text-[12px] leading-tight text-tg-hint">{t.label}</div>
+          </div>
+        ))}
+      </div>
+    </motion.section>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Настройки показа: тизер постов                                      */
+/* Настройки показа в ленте                                            */
 /* ------------------------------------------------------------------ */
 
-const TEASER_OPTIONS: Array<{ id: 'none' | 'cut' | 'blur'; title: string; note: string }> = [
-  {
-    id: 'none',
-    title: 'Показывать полностью',
-    note: 'читатель видит весь текст прямо в ленте — удобно, но подписываться незачем',
-  },
-  {
-    id: 'cut',
-    title: 'Обрезать с призывом',
-    note: 'первые абзацы в ленте, полный текст — в вашем канале. Лучший баланс',
-  },
-  {
-    id: 'blur',
-    title: 'Размытый текст',
-    note: 'жёсткий вариант: текст виден, но размыт. Максимальная конверсия в подписку',
-  },
-]
-
-function DisplaySection({
-  channel,
-  categories,
-  onSaved,
-}: {
-  channel: MyChannelDTO
-  categories: CategoryDTO[]
-  onSaved: () => void
-}) {
+function DisplaySection({ channel, onSaved }: { channel: MyChannelDTO; onSaved: () => void }) {
   const [mode, setMode] = useState(channel.teaserMode)
   const [limit, setLimit] = useState(channel.teaserLimit)
-  const [categorySlug, setCategorySlug] = useState(channel.categorySlug)
   const [busy, setBusy] = useState(false)
-
-  const dirty = mode !== channel.teaserMode || limit !== channel.teaserLimit || categorySlug !== channel.categorySlug
+  const dirty = mode !== channel.teaserMode || limit !== channel.teaserLimit
 
   const save = async () => {
+    if (busy || !dirty) return
     setBusy(true)
     try {
       await api('/api/mychannel', {
@@ -420,218 +412,280 @@ function DisplaySection({
           channelId: channel.id,
           teaserMode: mode,
           teaserLimit: limit,
-          categorySlug,
         }),
       })
       haptic('success')
-      toast.success('Настройки сохранены')
       onSaved()
-    } catch {
-      toast.error('Не удалось сохранить')
+    } catch (err) {
+      toast.error((err as Error).message || 'Не удалось сохранить')
+      haptic('error')
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <div className="space-y-3">
-      <div className="rounded-2xl bg-tg-surface p-4">
-        <div className="text-[15.5px] font-bold text-tg-text">Как показывать посты в ленте</div>
-        <div className="mt-3 space-y-2.5">
-          {TEASER_OPTIONS.map((o) => (
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}>
+      <SectionTitle icon={Eye}>Показ в ленте</SectionTitle>
+      <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+        <p className="text-[12.5px] leading-relaxed text-tg-hint">
+          Управляйте тем, сколько поста видят не-подписчики: полный текст, обрезка с призывом
+          читать в канале или размытие.
+        </p>
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {DISPLAY_MODES.map((m) => (
             <button
-              key={o.id}
+              key={m.id}
               type="button"
               onClick={() => {
                 haptic('light')
-                setMode(o.id)
+                setMode(m.id)
               }}
               className={cn(
-                'flex w-full items-start gap-3 rounded-xl border p-3.5 text-left transition',
-                mode === o.id ? 'border-tg-link bg-tg-link/5' : 'border-tg-sep bg-tg-bg',
+                'flex flex-col items-center gap-1.5 rounded-2xl border px-2 py-3 text-[12.5px] font-semibold transition active:scale-95',
+                mode === m.id
+                  ? 'border-tg-link bg-tg-link/10 text-tg-link'
+                  : 'border-tg-sep/60 bg-tg-bg text-tg-text2',
               )}
             >
-              <span
-                className={cn(
-                  'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border-2',
-                  mode === o.id ? 'border-tg-link' : 'border-tg-sep',
-                )}
-              >
-                {mode === o.id && <span className="h-2.5 w-2.5 rounded-full bg-tg-link" />}
-              </span>
-              <span>
-                <span className="block text-[14.5px] font-semibold text-tg-text">{o.title}</span>
-                <span className="mt-0.5 block text-[12.5px] leading-snug text-tg-hint">{o.note}</span>
-              </span>
+              <m.icon className="h-4.5 w-4.5" />
+              {m.label}
             </button>
           ))}
         </div>
 
-        {mode === 'cut' && (
-          <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="mt-4">
-            <div className="flex items-baseline justify-between">
-              <label htmlFor="teaser-limit" className="text-[13px] font-medium text-tg-text2">
-                Сколько символов показывать
-              </label>
-              <span className="text-[13px] font-bold text-tg-link tabular-nums">{limit}</span>
+        {mode !== 'none' && (
+          <div className="mt-4">
+            <div className="flex items-center justify-between text-[12.5px] font-medium text-tg-text2">
+              <span>Порог обрезки</span>
+              <span className="tabular-nums text-tg-hint">{limit} симв.</span>
             </div>
             <input
-              id="teaser-limit"
               type="range"
               min={60}
               max={600}
               step={20}
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value))}
-              className="mt-2 w-full accent-tg-link"
+              className="mt-2 w-full accent-[var(--tg-link, #0a84ff)]"
+              aria-label="Порог обрезки текста"
             />
-          </motion.div>
+            {/* Живое превью */}
+            <div className="mt-2 rounded-xl bg-tg-bg px-3 py-2.5">
+              <div className="text-[12px] font-semibold uppercase tracking-wide text-tg-hint">Как увидят читатели</div>
+              <div className={cn('mt-1 text-[13px] text-tg-text2', mode === 'blur' && 'blur-[5px] select-none')}>
+                Тизер показывает первые {limit} символов поста и ведёт читателя в канал…
+              </div>
+            </div>
+          </div>
         )}
-      </div>
 
-      <div className="rounded-2xl bg-tg-surface p-4">
-        <div className="text-[15.5px] font-bold text-tg-text">Категория в каталоге</div>
-        <div className="mt-2.5 flex flex-wrap gap-2">
-          {categories.map((c) => (
-            <button
-              key={c.slug}
-              type="button"
-              onClick={() => {
-                haptic('light')
-                setCategorySlug(c.slug)
-              }}
-              className={cn(
-                'rounded-full px-3.5 py-2 text-[13px] font-medium transition active:scale-95',
-                categorySlug === c.slug ? 'bg-tg-link text-white' : 'bg-tg-bg text-tg-text2',
-              )}
-            >
-              {c.title}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          onClick={save}
+          disabled={busy || !dirty}
+          className={cn(
+            'mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-[14px] font-semibold transition active:scale-[0.98]',
+            dirty ? 'bg-tg-link text-white' : 'cursor-default bg-tg-sep/50 text-tg-hint',
+          )}
+        >
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+          {dirty ? 'Сохранить настройки' : 'Сохранено'}
+        </button>
       </div>
-
-      <button
-        type="button"
-        onClick={save}
-        disabled={busy || !dirty}
-        className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-bold text-white transition active:scale-[0.98] disabled:opacity-50"
-      >
-        {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : null}
-        Сохранить
-      </button>
-    </div>
+    </motion.section>
   )
 }
 
 /* ------------------------------------------------------------------ */
-/* Реклама: эскроу-баланс, CPA-кампании                                */
+/* Рекламный кабинет                                                   */
 /* ------------------------------------------------------------------ */
 
 function AdsSection({
   channel,
-  data,
-  reload,
+  advertiser,
+  onReload,
 }: {
   channel: MyChannelDTO
-  data: MyChannelResponse
-  reload: () => void
+  advertiser: MyChannelResponse['advertiser']
+  onReload: () => void
 }) {
-  const [creating, setCreating] = useState(false)
-  const balance = data.advertiser.balanceKop
+  const [topUpOpen, setTopUpOpen] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
+  const active = channel.campaigns.filter((c) => c.status === 'active' || c.status === 'moderation' || c.status === 'paused')
+  const finished = channel.campaigns.filter((c) => c.status === 'completed' || c.status === 'rejected' || c.status === 'canceled')
 
   return (
-    <div className="space-y-3">
-      {/* Баланс эскроу */}
-      <div className="rounded-2xl bg-tg-surface p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-tg-star/15 text-tg-star">
-              <Wallet className="h-4.5 w-4.5" />
-            </span>
-            <div>
-              <div className="text-[12px] font-medium text-tg-hint">Рекламный баланс</div>
-              <div className="text-[20px] font-bold leading-tight text-tg-text">
-                {formatKop(balance)}
-              </div>
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
+      <SectionTitle icon={Megaphone}>Реклама</SectionTitle>
+      <div className="space-y-3">
+        {/* Баланс */}
+        <div className="flex items-center gap-4 rounded-3xl border border-tg-sep/50 bg-gradient-to-r from-tg-star/[0.09] to-transparent p-4">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-tg-star/15">
+            <Wallet className="h-6 w-6 text-tg-star" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[12px] font-semibold uppercase tracking-wide text-tg-hint">Эскроу-баланс</div>
+            <div className="text-[22px] font-bold leading-tight tabular-nums text-tg-text">
+              {formatKop(advertiser.balanceKop)}
+            </div>
+            <div className="text-[11.5px] text-tg-hint">
+              потрачено {formatKop(advertiser.spentTotalKop)} · пополнено {formatKop(advertiser.topupsTotalKop)}
             </div>
           </div>
-          <TopUpButton />
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light')
+              setTopUpOpen(true)
+            }}
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-tg-star px-4 text-[13.5px] font-bold text-white transition active:scale-95"
+          >
+            <Plus className="h-4 w-4" />
+            Пополнить
+          </button>
         </div>
-        <p className="mt-2.5 text-[12.5px] leading-snug text-tg-text2">
-          Бюджет кампании списывается с баланса сразу и крутится до последнего перехода:
-          платите за уникальных читателей, а не за «показы из воздуха».
-        </p>
-      </div>
 
-      {/* Кнопка создания + форма */}
-      {creating ? (
-        <CampaignForm
-          channel={channel}
-          onCancel={() => setCreating(false)}
-          onCreated={() => {
-            setCreating(false)
-            reload()
-          }}
-        />
-      ) : (
+        {/* Кампании */}
+        {active.length === 0 && finished.length === 0 ? (
+          <div className="rounded-3xl border border-dashed border-tg-sep bg-tg-surface/50 p-5 text-center">
+            <Sparkles className="mx-auto h-6 w-6 text-tg-hint" />
+            <p className="mt-2 text-[13.5px] leading-relaxed text-tg-hint">
+              Запустите кампанию — посты канала поднимутся в первые ряды ленты, платите только за
+              уникальных читателей.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {channel.campaigns.map((c) => (
+              <CampaignCard key={c.id} campaign={c} reload={onReload} />
+            ))}
+          </div>
+        )}
+
         <button
           type="button"
           onClick={() => {
             haptic('light')
-            setCreating(true)
+            setFormOpen(true)
           }}
-          className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-bold text-white transition active:scale-[0.98]"
+          className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
         >
-          <Megaphone className="h-4.5 w-4.5" />
-          Создать кампанию
+          <Plus className="h-4.5 w-4.5" />
+          Новая кампания
         </button>
-      )}
+      </div>
 
-      {/* Список кампаний */}
-      {channel.campaigns.length === 0 ? (
-        <div className="rounded-2xl bg-tg-surface p-4 text-center">
-          <Sparkle className="mx-auto h-5 w-5 text-tg-hint" />
-          <p className="mt-2 text-[13px] leading-snug text-tg-text2">
-            Кампаний пока нет. Создайте первую — карточка вашего канала появится в лентах
-            читателей, а платёж спишется только за реальных людей.
+      {/* Шит пополнения (заготовка ЮKassa) */}
+      <TopUpSheet open={topUpOpen} onClose={() => setTopUpOpen(false)} onReload={onReload} />
+      {/* Форма кампании */}
+      <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} title="Новая кампания">
+        <CampaignForm channel={channel} onDone={() => { setFormOpen(false); onReload() }} />
+      </BottomSheet>
+    </motion.section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Пополнение: заготовка ЮKassa                                        */
+/* ------------------------------------------------------------------ */
+
+const TOPUP_PRESETS = [50000, 100000, 300000, 500000] // копейки
+
+function TopUpSheet({ open, onClose, onReload }: { open: boolean; onClose: () => void; onReload: () => void }) {
+  const [amount, setAmount] = useState(100000)
+  const [state, setState] = useState<'idle' | 'busy' | 'created'>('idle')
+  const [paymentId, setPaymentId] = useState<string | null>(null)
+
+  const pay = async () => {
+    if (state === 'busy') return
+    setState('busy')
+    try {
+      const r = await api<{ ok: boolean; paymentId: string; confirmationUrl: string | null }>('/api/payments', {
+        method: 'POST',
+        body: JSON.stringify({ amountKop: amount }),
+      })
+      setPaymentId(r.paymentId)
+      if (r.confirmationUrl) {
+        // после подключения эквайринга — редирект на оплату
+        openTelegram(r.confirmationUrl)
+        onClose()
+        onReload()
+        return
+      }
+      setState('created')
+    } catch (err) {
+      toast.error((err as Error).message || 'Не удалось создать платёж')
+      setState('idle')
+    }
+  }
+
+  return (
+    <BottomSheet open={open} onClose={onClose} title="Пополнить баланс">
+      {state === 'created' ? (
+        <div className="py-2 text-center">
+          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-tg-link/12">
+            <Wallet className="h-7 w-7 text-tg-link" />
+          </span>
+          <div className="mt-3 text-[17px] font-bold text-tg-text">Платёж создан</div>
+          <p className="mx-auto mt-1.5 max-w-[300px] text-[13.5px] leading-relaxed text-tg-hint">
+            Эквайринг ЮKassa подключается — как только оплата пройдёт, баланс пополнится
+            автоматически. Номер платежа: <span className="font-mono text-tg-text2">{paymentId}</span>
           </p>
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-4 h-11 w-full rounded-2xl bg-tg-surface text-[14px] font-semibold text-tg-text active:scale-[0.98]"
+          >
+            Понятно
+          </button>
         </div>
       ) : (
-        <div className="space-y-2.5">
-          {channel.campaigns.map((c) => (
-            <CampaignCard key={c.id} campaign={c} reload={reload} />
-          ))}
-        </div>
+        <>
+          <SheetTitle icon={Wallet} title="Пополнить баланс" subtitle="Оплата через ЮKassa · зачисление после оплаты" />
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            {TOPUP_PRESETS.map((kop) => (
+              <button
+                key={kop}
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  setAmount(kop)
+                }}
+                className={cn(
+                  'rounded-xl border py-2.5 text-[13.5px] font-bold transition active:scale-95',
+                  amount === kop
+                    ? 'border-tg-link bg-tg-link/10 text-tg-link'
+                    : 'border-tg-sep/60 bg-tg-bg text-tg-text2',
+                )}
+              >
+                {formatKop(kop)}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={pay}
+            disabled={state === 'busy'}
+            className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+          >
+            {state === 'busy' ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Wallet className="h-4.5 w-4.5" />}
+            Оплатить {formatKop(amount)} через ЮKassa
+          </button>
+          <p className="mt-2 pb-1 text-center text-[11.5px] leading-snug text-tg-hint">
+            Деньги резервируются на эскроу-счёте и списываются только за уникальных читателей
+          </p>
+        </>
       )}
-    </div>
+    </BottomSheet>
   )
 }
 
-function TopUpButton() {
-  return (
-    <button
-      type="button"
-      onClick={() => {
-        haptic('light')
-        openTelegram(`https://t.me/${CREATOR}`)
-      }}
-      className="rounded-full bg-tg-star/15 px-4 py-2 text-[13px] font-semibold text-tg-star transition active:scale-95"
-    >
-      Пополнить
-    </button>
-  )
-}
+/* ------------------------------------------------------------------ */
+/* Форма кампании                                                      */
+/* ------------------------------------------------------------------ */
 
-function CampaignForm({
-  channel,
-  onCancel,
-  onCreated,
-}: {
-  channel: MyChannelDTO
-  onCancel: () => void
-  onCreated: () => void
-}) {
+function CampaignForm({ channel, onDone }: { channel: MyChannelDTO; onDone: () => void }) {
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
   const [cta, setCta] = useState('Подписаться')
@@ -640,13 +694,9 @@ function CampaignForm({
   const [budget, setBudget] = useState(5000)
   const [busy, setBusy] = useState(false)
 
-  const recommended = channel.subscribersCount > 5000 ? 500 : 300
-
-  const submit = async () => {
-    if (title.trim().length < 4 || body.trim().length < 4) {
-      toast.error('Заполните заголовок и текст карточки')
-      return
-    }
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (busy) return
     setBusy(true)
     try {
       await api('/api/campaigns', {
@@ -662,241 +712,246 @@ function CampaignForm({
         }),
       })
       haptic('success')
-      toast.success('Кампания отправлена на модерацию')
-      onCreated()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не удалось создать кампанию')
+      onDone()
+    } catch (err) {
+      toast.error((err as Error).message || 'Не удалось создать кампанию')
+      haptic('error')
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <div className="rounded-2xl bg-tg-surface p-4">
-      <div className="text-[15.5px] font-bold text-tg-text">Новая кампания</div>
-
+    <form onSubmit={submit} className="pb-2">
+      <SheetTitle icon={Megaphone} title="Новая кампания" subtitle="Посты канала поднимаются в ленте" />
       <div className="mt-3 space-y-3">
-        <Field label="Заголовок карточки">
+        <Field label="Заголовок объявления">
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            maxLength={80}
-            placeholder={channel.title}
-            className={inputCls}
+            placeholder={`Канал «${channel.title}»`}
+            maxLength={60}
+            className={INPUT_CLS}
           />
         </Field>
-        <Field label="Текст карточки">
+        <Field label="Текст">
           <textarea
             value={body}
             onChange={(e) => setBody(e.target.value)}
-            maxLength={200}
+            placeholder="Что читатель получит, подписавшись?"
+            maxLength={140}
             rows={2}
-            placeholder={`Коротко о канале «${channel.title}»: почему стоит подписаться`}
-            className={cn(inputCls, 'h-auto py-2.5')}
+            className={cn(INPUT_CLS, 'resize-none')}
+          />
+        </Field>
+        <Field label="Ссылка (t.me)">
+          <input
+            value={link}
+            onChange={(e) => setLink(e.target.value)}
+            placeholder="https://t.me/channel"
+            className={INPUT_CLS}
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Кнопка">
-            <input value={cta} onChange={(e) => setCta(e.target.value)} maxLength={24} className={inputCls} />
-          </Field>
-          <Field label="Цена за переход">
-            <div className="relative">
-              <input
-                type="number"
-                min={100}
-                max={10000}
-                step={50}
-                value={cpc / 100}
-                onChange={(e) => setCpc(Math.round(Number(e.target.value) * 100))}
-                className={cn(inputCls, 'pr-8')}
-              />
-              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-tg-hint">
-                ₽
-              </span>
-            </div>
-          </Field>
-        </div>
-        <p className="-mt-1 text-[12px] leading-snug text-tg-hint">
-          Рекомендуем {recommended / 100} ₽ — по вашей категории и охвату. Чем выше цена,
-          тем чаще карточка выигрывает ротацию.
-        </p>
-        <Field label="Бюджет кампании">
-          <div className="relative">
+          <Field label="Цена перехода, ₽">
             <input
               type="number"
-              min={50}
-              max={50000}
-              step={50}
-              value={budget / 100}
-              onChange={(e) => setBudget(Math.round(Number(e.target.value) * 100))}
-              className={cn(inputCls, 'pr-8')}
+              min={3}
+              max={100}
+              value={cpc / 100}
+              onChange={(e) => setCpc(Math.max(100, Math.round(Number(e.target.value) * 100)))}
+              className={INPUT_CLS}
             />
-            <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[13px] text-tg-hint">
-              ₽
-            </span>
-          </div>
-        </Field>
-        <p className="-mt-1 text-[12px] leading-snug text-tg-hint">
-          Хватит примерно на {Math.floor(budget / cpc)} переходов · ссылка: {link}
-        </p>
-
-        <div className="flex gap-2.5">
-          <button
-            type="button"
-            onClick={onCancel}
-            className="h-11 flex-1 rounded-xl bg-tg-sep/50 text-[14.5px] font-semibold text-tg-text2 transition active:scale-[0.98]"
-          >
-            Отмена
-          </button>
-          <button
-            type="button"
-            onClick={submit}
-            disabled={busy}
-            className="flex h-11 flex-[1.6] items-center justify-center gap-2 rounded-xl bg-tg-link text-[14.5px] font-bold text-white transition active:scale-[0.98] disabled:opacity-60"
-          >
-            {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : null}
-            Отправить
-          </button>
+          </Field>
+          <Field label="Бюджет, ₽">
+            <input
+              type="number"
+              min={30}
+              value={budget / 100}
+              onChange={(e) => setBudget(Math.max(3000, Math.round(Number(e.target.value) * 100)))}
+              className={INPUT_CLS}
+            />
+          </Field>
         </div>
+        <p className="text-[12px] leading-snug text-tg-hint">
+          Хватит примерно на <span className="font-semibold text-tg-text2">{Math.floor(budget / cpc)}</span>{' '}
+          уникальных переходов · деньги списываются только за реальных читателей
+        </p>
       </div>
-    </div>
+      <button
+        type="submit"
+        disabled={busy || !title.trim() || !body.trim()}
+        className={cn(
+          'mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl text-[15px] font-semibold transition active:scale-[0.98]',
+          busy || !title.trim() || !body.trim()
+            ? 'cursor-not-allowed bg-tg-surface text-tg-hint'
+            : 'bg-tg-link text-white',
+        )}
+      >
+        {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Send className="h-4.5 w-4.5" />}
+        Запустить кампанию
+      </button>
+    </form>
   )
 }
 
-const inputCls =
-  'h-10 w-full rounded-xl bg-tg-bg px-3.5 text-[14.5px] text-tg-text outline-none ring-1 ring-tg-sep placeholder:text-tg-hint/70 focus:ring-tg-link'
+/* ------------------------------------------------------------------ */
+/* Карточка кампании                                                   */
+/* ------------------------------------------------------------------ */
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1 text-[12px] font-medium text-tg-hint">{label}</div>
-      {children}
-    </div>
-  )
+const CAMPAIGN_STATUS: Record<string, { label: string; cls: string }> = {
+  moderation: { label: 'на модерации', cls: 'bg-amber-500/12 text-amber-600 dark:text-amber-400' },
+  active: { label: 'идёт показ', cls: 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400' },
+  paused: { label: 'пауза', cls: 'bg-tg-sep/60 text-tg-hint' },
+  completed: { label: 'завершена', cls: 'bg-tg-sep/60 text-tg-hint' },
+  rejected: { label: 'отклонена', cls: 'bg-rose-500/12 text-rose-500' },
+  canceled: { label: 'отменена', cls: 'bg-tg-sep/60 text-tg-hint' },
 }
 
-function CampaignCard({ campaign, reload }: { campaign: PostCampaignDTO; reload: () => void }) {
+function CampaignCard({ campaign, reload }: { campaign: CampaignDTOView; reload: () => void }) {
   const [busy, setBusy] = useState(false)
-  const ctr = campaign.impressions > 0 ? (campaign.clicks / campaign.impressions) * 100 : 0
-  const progress = campaign.budgetKop > 0 ? Math.min(100, (campaign.spentKop / campaign.budgetKop) * 100) : 0
+  const spent = Math.min(campaign.spentKop, campaign.budgetKop)
+  const progress = campaign.budgetKop > 0 ? Math.round((spent / campaign.budgetKop) * 100) : 0
+  const ctr = campaign.impressions > 0 ? ((campaign.clicks / campaign.impressions) * 100).toFixed(1) : '—'
+  const status = CAMPAIGN_STATUS[campaign.status] ?? CAMPAIGN_STATUS.paused
 
   const act = async (action: 'pause' | 'resume' | 'cancel') => {
-    if (action === 'cancel' && !window.confirm('Завершить кампанию и вернуть остаток бюджета?')) return
+    if (busy) return
     setBusy(true)
     try {
-      await api('/api/campaigns', {
-        method: 'PATCH',
-        body: JSON.stringify({ id: campaign.id, action }),
-      })
+      await api('/api/campaigns', { method: 'PATCH', body: JSON.stringify({ id: campaign.id, action }) })
       haptic('light')
       reload()
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Не получилось')
+    } catch (err) {
+      toast.error((err as Error).message || 'Не удалось')
     } finally {
       setBusy(false)
     }
   }
 
   return (
-    <div className="rounded-2xl bg-tg-surface p-4">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="truncate text-[14.5px] font-bold text-tg-text">{campaign.title}</div>
-          <div className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-tg-hint">
-            {campaign.body}
-          </div>
+    <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+      <div className="flex items-start gap-2.5">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[15px] font-bold text-tg-text">{campaign.title}</div>
+          <div className="mt-0.5 line-clamp-1 text-[12.5px] text-tg-hint">{campaign.body}</div>
         </div>
-        <span
-          className={cn(
-            'shrink-0 rounded-full px-2.5 py-1 text-[11px] font-semibold',
-            STATUS_STYLE[campaign.status] ?? 'bg-tg-sep text-tg-hint',
-          )}
-        >
-          {STATUS_LABEL[campaign.status] ?? campaign.status}
+        <span className={cn('shrink-0 rounded-full px-2.5 py-1 text-[11px] font-bold', status.cls)}>
+          {status.label}
         </span>
       </div>
 
-      {/* Расход бюджета */}
+      {/* Прогресс бюджета */}
       <div className="mt-3">
-        <div className="flex items-baseline justify-between text-[12px] text-tg-hint">
-          <span>
-            {formatKop(campaign.spentKop)} из {formatKop(campaign.budgetKop)} · {campaign.costPerClickKop / 100} ₽ за переход
-          </span>
-          <span className="tabular-nums">{Math.round(progress)}%</span>
-        </div>
-        <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-tg-sep/60">
-          <div
-            className="h-full rounded-full bg-tg-link transition-all"
-            style={{ width: `${progress}%` }}
+        <div className="h-2 overflow-hidden rounded-full bg-tg-sep/50">
+          <motion.div
+            className="h-full rounded-full bg-gradient-to-r from-tg-link to-tg-star"
+            initial={{ width: 0 }}
+            animate={{ width: `${progress}%` }}
+            transition={{ duration: 0.6, ease: 'easeOut' }}
           />
         </div>
+        <div className="mt-1.5 flex justify-between text-[11.5px] tabular-nums text-tg-hint">
+          <span>{formatKop(spent)} из {formatKop(campaign.budgetKop)}</span>
+          <span>{progress}%</span>
+        </div>
       </div>
 
+      {/* Метрики */}
       <div className="mt-3 grid grid-cols-4 gap-1.5 text-center">
-        <Metric v={formatCount(campaign.impressions)} l="показов" />
-        <Metric v={formatCount(campaign.clicks)} l="переходов" />
-        <Metric v={`${ctr.toFixed(1)}%`} l="CTR" />
-        <Metric v={formatCount(campaign.rawClicks - campaign.clicks)} l="повторов" />
+        <Metric value={formatCount(campaign.impressions)} label="показы" />
+        <Metric value={formatCount(campaign.clicks)} label="переходы" />
+        <Metric value={`${ctr}%`} label="CTR" />
+        <Metric value={`${campaign.costPerClickKop / 100}₽`} label="за переход" />
       </div>
 
-      {(campaign.status === 'active' || campaign.status === 'paused') && (
+      {/* Действия */}
+      {(campaign.status === 'active' || campaign.status === 'paused' || campaign.status === 'moderation') && (
         <div className="mt-3 flex gap-2">
           {campaign.status === 'active' ? (
-            <MiniBtn onClick={() => act('pause')} disabled={busy}>
-              Пауза
-            </MiniBtn>
+            <button
+              type="button"
+              onClick={() => act('pause')}
+              disabled={busy}
+              className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-tg-sep/50 text-[13px] font-semibold text-tg-text2 active:scale-95"
+            >
+              <Pause className="h-3.5 w-3.5" /> Пауза
+            </button>
+          ) : campaign.status === 'paused' ? (
+            <button
+              type="button"
+              onClick={() => act('resume')}
+              disabled={busy}
+              className="flex h-9 flex-1 items-center justify-center gap-1.5 rounded-xl bg-tg-link/10 text-[13px] font-semibold text-tg-link active:scale-95"
+            >
+              <Play className="h-3.5 w-3.5" /> Возобновить
+            </button>
           ) : (
-            <MiniBtn onClick={() => act('resume')} disabled={busy}>
-              Возобновить
-            </MiniBtn>
+            <span className="flex h-9 flex-1 items-center justify-center text-[12.5px] text-tg-hint">
+              Проверяем объявление — обычно это быстро
+            </span>
           )}
-          <MiniBtn onClick={() => act('cancel')} disabled={busy} danger>
-            Завершить
-          </MiniBtn>
+          <button
+            type="button"
+            onClick={() => act('cancel')}
+            disabled={busy}
+            aria-label="Отменить кампанию"
+            className="flex h-9 w-9 items-center justify-center rounded-xl bg-tg-sep/50 text-tg-hint active:scale-95"
+          >
+            {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-4 w-4" />}
+          </button>
         </div>
       )}
-      {campaign.status === 'rejected' && campaign.note && (
-        <p className="mt-2.5 rounded-lg bg-tg-bg p-2.5 text-[12px] leading-snug text-tg-hint">
-          Причина: {campaign.note}
-        </p>
-      )}
     </div>
   )
 }
 
-type PostCampaignDTO = MyChannelDTO['campaigns'][number]
-
-function Metric({ v, l }: { v: string; l: string }) {
+function Metric({ value, label }: { value: string; label: string }) {
   return (
-    <div className="rounded-lg bg-tg-bg py-2">
-      <div className="text-[13.5px] font-bold leading-none text-tg-text tabular-nums">{v}</div>
-      <div className="mt-0.5 text-[10px] leading-tight text-tg-hint">{l}</div>
+    <div className="rounded-xl bg-tg-bg py-2">
+      <div className="text-[14px] font-bold leading-none tabular-nums text-tg-text">{value}</div>
+      <div className="mt-1 text-[10.5px] text-tg-hint">{label}</div>
     </div>
   )
 }
 
-function MiniBtn({
-  children,
-  onClick,
-  disabled,
-  danger,
-}: {
-  children: React.ReactNode
-  onClick: () => void
-  disabled?: boolean
-  danger?: boolean
-}) {
+/* ------------------------------------------------------------------ */
+/* Общие мелочи                                                        */
+/* ------------------------------------------------------------------ */
+
+type CampaignDTOView = MyChannelDTO['campaigns'][number]
+
+const INPUT_CLS =
+  'h-11 w-full rounded-xl border border-tg-sep bg-tg-bg px-3.5 text-[14.5px] text-tg-text outline-none placeholder:text-tg-hint focus:border-tg-link'
+
+function SectionTitle({ icon: Icon, children }: { icon: typeof Eye; children: React.ReactNode }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      disabled={disabled}
-      className={cn(
-        'h-9 flex-1 rounded-lg text-[13px] font-semibold transition active:scale-95 disabled:opacity-50',
-        danger ? 'bg-red-500/10 text-red-600 dark:text-red-400' : 'bg-tg-sep/50 text-tg-text2',
-      )}
-    >
+    <div className="mb-2 flex items-center gap-1.5 px-1">
+      <Icon className="h-4 w-4 text-tg-hint" />
+      <span className="text-[13px] font-bold uppercase tracking-wide text-tg-hint">{children}</span>
+    </div>
+  )
+}
+
+function SheetTitle({ icon: Icon, title, subtitle }: { icon: typeof Eye; title: string; subtitle: string }) {
+  return (
+    <div className="flex items-center gap-3">
+      <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-tg-link/12">
+        <Icon className="h-5 w-5 text-tg-link" />
+      </span>
+      <div>
+        <div className="text-[16px] font-bold text-tg-text">{title}</div>
+        <div className="text-[12.5px] text-tg-hint">{subtitle}</div>
+      </div>
+    </div>
+  )
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[12.5px] font-semibold text-tg-text2">{label}</span>
       {children}
-    </button>
+    </label>
   )
 }

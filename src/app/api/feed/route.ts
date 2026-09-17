@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
-import { computeWeight, diversify, personalBoost, rankJitter } from '@/lib/rank'
+import { computeWeight, diversify, personalBoost, rankJitter, shuffleNoise } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
 import { buildFeedScope, loadPersonalSignals } from '@/lib/feed'
 import { guardAuth } from '@/lib/guard'
@@ -11,12 +11,36 @@ import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
+/**
+ * Спонсорские каналы (активные CPA-кампании с бюджетом): channelId → campaignId.
+ * L0-кэш 20с — таблица крошечная, но запрос не нужен на каждую загрузку ленты.
+ */
+let sponsorCache: { map: Map<string, string>; exp: number } | null = null
+async function sponsorChannelIds(): Promise<Map<string, string>> {
+  if (sponsorCache && sponsorCache.exp > Date.now()) return sponsorCache.map
+  const rows = await db.adCampaign.findMany({
+    where: { status: 'active', channelId: { not: null } },
+    select: { id: true, channelId: true, budgetKop: true, spentKop: true },
+  })
+  const map = new Map<string, string>()
+  for (const r of rows) {
+    if (r.channelId && r.spentKop < r.budgetKop && !map.has(r.channelId)) {
+      map.set(r.channelId, r.id)
+    }
+  }
+  sponsorCache = { map, exp: Date.now() + 20_000 }
+  return map
+}
+
 // Валидация query-параметров. userId из query игнорируется —
 // пользователь берётся ТОЛЬКО из Bearer-сессии (защита от подмены личности).
 const querySchema = z.object({
   category: z.string().max(32).regex(/^[a-z0-9_-]+$/).catch('all'),
   page: z.coerce.number().int().min(0).catch(0),
   limit: z.coerce.number().int().min(1).max(20).catch(6),
+  /** Сид перемешивания: клиент меняет его при каждом обновлении ленты —
+   *  при повторном открытии лента показывается в ДРУГОМ порядке */
+  sh: z.string().max(24).optional(),
 })
 
 /**
@@ -93,8 +117,9 @@ export async function GET(request: Request) {
       ? await cacheAside({ key: indexKey, ttlSec: 25, memoryTtlMs: 3000, fetcher: loadIndex })
       : await loadIndex()
 
-    /* ---------- Персональный слой: аффинити + просмотренное ---------- */
+    /* ---------- Персональный слой: аффинити + просмотренное + перемешивание ---------- */
     const signals = await loadPersonalSignals(userId)
+    const shuffleSeed = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
 
     const boosted = index.entries.map((e) => ({
       id: e.i,
@@ -107,12 +132,50 @@ export async function GET(request: Request) {
           subscribed: signals.subscribedIds.has(e.c),
           viewed: signals.viewedIds.has(e.i),
           affinity: signals.affinity,
-        }),
+        }) +
+        shuffleNoise(e.i + shuffleSeed),
     }))
     boosted.sort((a, b) => b.w - a.w)
 
-    // Разнообразие: не более трёх постов одного канала подряд
+    // Разнообразие: посты одного канала не идут подряд (как в нативных лентах)
     const ordered = diversify(boosted, (x) => x.cid)
+
+    /* ---------- Спонсорские каналы: активные CPA-кампании — в первых рядах ----------
+        Посты канала с активной кампанией подмешиваются на первые позиции первой
+        страницы (ещё не просмотренные). Показ кампании засчитывается сразу. */
+    if (page === 0) {
+      const sponsors = await sponsorChannelIds()
+      if (sponsors.size > 0) {
+        const sponsorPosts = await db.post.findMany({
+          where: {
+            channelId: { in: [...sponsors.keys()] },
+            id: { notIn: [...signals.viewedIds] },
+          },
+          orderBy: { publishedAt: 'desc' },
+          take: 12,
+        })
+        // по свежему посту от каждого спонсора, в начало первой страницы
+        const picked = new Map<string, string>()
+        for (const p of sponsorPosts) {
+          if (picked.size >= 3) break
+          if (!picked.has(p.channelId)) picked.set(p.channelId, p.id)
+        }
+        if (picked.size > 0) {
+          const sponIds = [...picked.values()]
+          const sponSet = new Set(sponIds)
+          const rest = ordered.filter((x) => !sponSet.has(x.id))
+          ordered.length = 0
+          ordered.push(...sponIds.map((id) => ({ id, cid: '', w: 0 })), ...rest)
+          // показ кампании: один инкремент на загрузку первой страницы
+          await db.adCampaign
+            .updateMany({
+              where: { id: { in: [...sponsors.values()] }, status: 'active' },
+              data: { impressions: { increment: 1 } },
+            })
+            .catch(() => {})
+        }
+      }
+    }
 
     /* ---------- Страница: посты по id из индекса ---------- */
     const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)

@@ -46,6 +46,7 @@ export function FeedView() {
   const [notifFailed, setNotifFailed] = useState(false)
   // Момент новейшего загруженного поста — для подсчёта «N новых»
   const latestTimeRef = useRef<string>('')
+  const seedRef = useRef<string>('')
 
   // Состояние pull-to-refresh (pull дублируется в ref — замыкания не устаревают)
   const [pull, setPull] = useState(0)
@@ -146,8 +147,11 @@ export function FeedView() {
       busyRef.current = true
       setLoading(true)
       try {
+        // Новый сид перемешивания при каждой полной перезагрузке ленты —
+        // «Обновить» показывает ДРУГИЙ порядок постов; внутри сессии порядок стабилен
+        if (replace || !seedRef.current) seedRef.current = Math.random().toString(36).slice(2, 12)
         const data = await api<FeedResponse>(
-          `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}`,
+          `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}`,
         )
         setItems((prev) => {
           if (replace) {

@@ -45,6 +45,20 @@ export function rankJitter(id: string): number {
   return h % 15
 }
 
+/** Шум перемешивания: при непустом сиде даёт 0..NOISE веса — обновление ленты
+ *  показывает посты в новом порядке. Пустой сид → 0 (стабильный порядок внутри сессии). */
+const SHUFFLE_NOISE = 240
+
+export function shuffleNoise(seed: string): number {
+  if (!seed) return 0
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < seed.length; i++) {
+    h ^= seed.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
+  }
+  return (h % 10000) / 10000 * SHUFFLE_NOISE
+}
+
 /** Аффинити пользователя: счётчики взаимодействий на канал и на категорию */
 export type AffinityMap = {
   channels: Map<string, number>
@@ -86,7 +100,7 @@ export function personalBoost(opts: {
  * чередуются, а не вытесняют друг друга). Полностью однородный список
  * возвращается как есть (лимит снимается, иначе лента пуста).
  */
-const MAX_IN_A_ROW = 3
+const MAX_IN_A_ROW = 1
 
 export function diversify<T>(items: T[], channelIdOf: (item: T) => string): T[] {
   const rest = [...items]

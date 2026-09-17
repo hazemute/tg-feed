@@ -258,7 +258,7 @@ export function normalizeDecorations(text: string): string {
 
 /** Убирает markdown-разметку, оставляя чистый текст (для превью/уведомлений/поиска) */
 export function stripMarkdown(text: string): string {
-  const cleaned = text
+  const cleaned = reorderMarkersAroundLinks(decodeHrefAmpersands(text))
     .replace(/<br\s*\/?>/gi, ' ') // легаси-HTML старых постов
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/!\[e(?:v)?(?::\d+)?\]\([^)]*\)/g, '') // инлайн-картинки эмодзи — не текст
@@ -317,6 +317,22 @@ function plainClean(v: string): Span[] {
   return [{ t: 'plain', v: v.replace(/\*\*|__|~~|\|\||\^\^/g, '') }]
 }
 
+/**
+ * Чинит неверный порядок маркеров из вложенной разметки t.me/s:
+ * `**текст [жирный**](url)` → `**текст [жирный](url)**` — закрывающий маркер,
+ * прилипший к тексту ссылки, переезжает за скобку. Без этого ссылка
+ * рендерится литералом «](https://…)» (жалоба на кривые ссылки).
+ */
+const MARKER_BEFORE_LINK_CLOSE = /(\*\*|__|~~|\|\||\^\^)(\]\([^)\s]+\))/g
+function reorderMarkersAroundLinks(text: string): string {
+  return text.replace(MARKER_BEFORE_LINK_CLOSE, '$2$1')
+}
+
+/** Двойное кодирование амперсандов в URL ссылок (t.me/s: &amp;amp;) → чистый & */
+function decodeHrefAmpersands(text: string): string {
+  return text.replace(/(\]\([^)\s]+)/g, (m) => m.replace(/&amp;/g, '&'))
+}
+
 /** Разбирает строку (внутри абзаца/цитаты) на стилизованные спаны.
  *  Контент стилевых спанов парсится рекурсивно — внутри жирного/спойлера/
  *  текста ссылки могут быть свои ссылки, эмодзи и прочая разметка. */
@@ -350,7 +366,7 @@ export function spansOf(line: string, depth = 0): Span[] {
       spans.push({ t: 'spoiler', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
     } else if (m[8] !== undefined) {
       const label = m[8].slice(1, m[8].indexOf(']'))
-      const href = m[8].slice(m[8].indexOf('(') + 1, -1)
+      const href = m[8].slice(m[8].indexOf('(') + 1, -1).replace(/&amp;/g, '&')
       spans.push({
         t: 'link',
         v: label || href,
@@ -394,7 +410,9 @@ function normalizeLegacyHtml(text: string): string {
 /** Разбирает markdown-lite поста на блоки: абзацы, цитаты, блоки кода */
 export function blocksOf(text: string): Block[] {
   const blocks: Block[] = []
-  const lines = normalizeDecorations(normalizeLegacyHtml(text)).split('\n')
+  const lines = reorderMarkersAroundLinks(
+    decodeHrefAmpersands(normalizeDecorations(normalizeLegacyHtml(text))),
+  ).split('\n')
   let para: string[] = []
   let quote: string[] = []
 

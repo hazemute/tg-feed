@@ -211,7 +211,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                             {u.username ? `@${u.username}` : '—'}
                           </TableCell>
                           <TableCell>
-                            <UserKindBadge isDemo={u.isDemo} />
+                            <UserKindBadge isGuest={u.isGuest} />
                           </TableCell>
                           <TableCell className="text-right tabular-nums text-slate-700">{fmtNum(u.likes)}</TableCell>
                           <TableCell className="text-right tabular-nums text-slate-700">
@@ -248,7 +248,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="truncate text-sm font-medium text-slate-900">{displayName(u)}</span>
-                          <UserKindBadge isDemo={u.isDemo} />
+                          <UserKindBadge isGuest={u.isGuest} />
                         </div>
                         <span className="block truncate font-mono text-[11px] text-slate-500">{u.id}</span>
                       </div>

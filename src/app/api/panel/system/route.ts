@@ -54,7 +54,7 @@ export async function GET(request: Request) {
             username: true,
             firstName: true,
             lastName: true,
-            isDemo: true,
+            isGuest: true,
             bypassMaintenance: true,
           },
         })
@@ -85,7 +85,7 @@ export async function GET(request: Request) {
           username: u.username,
           firstName: u.firstName,
           lastName: u.lastName,
-          isDemo: u.isDemo,
+          isGuest: u.isGuest,
           bypassMaintenance: u.bypassMaintenance,
         })),
         pendingIds: pending,
@@ -130,8 +130,8 @@ export async function POST(request: Request) {
         const uid = `tg_${numeric}`
         await db.user.upsert({
           where: { id: uid },
-          update: { bypassMaintenance: true, isDemo: false },
-          create: { id: uid, isDemo: false, bypassMaintenance: true, categories: '[]' },
+          update: { bypassMaintenance: true, isGuest: false },
+          create: { id: uid, isGuest: false, bypassMaintenance: true, categories: '[]' },
         })
         if (redis) {
           try {

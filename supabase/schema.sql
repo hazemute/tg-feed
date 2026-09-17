@@ -292,3 +292,17 @@ CREATE TABLE IF NOT EXISTS "CustomEmoji" (
   "fileId"    TEXT,
   "fetchedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Заготовка эквайринга ЮKassa
+CREATE TABLE IF NOT EXISTS "PendingPayment" (
+  "id"                TEXT PRIMARY KEY,
+  "userId"            TEXT NOT NULL,
+  "amountKop"         INTEGER NOT NULL,
+  "status"            TEXT NOT NULL DEFAULT 'pending',
+  "provider"          TEXT NOT NULL DEFAULT 'yookassa',
+  "providerPaymentId" TEXT,
+  "confirmationUrl"   TEXT,
+  "createdAt"         TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt"         TIMESTAMP(3) NOT NULL
+);
+CREATE INDEX IF NOT EXISTS "PendingPayment_userId_createdAt_idx" ON "PendingPayment"("userId", "createdAt" DESC);

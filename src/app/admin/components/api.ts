@@ -14,7 +14,7 @@ import { toast } from 'sonner'
 export interface OverviewCounts {
   users: number
   usersTelegram: number
-  usersDemo: number
+  usersGuest: number
   channelsActive: number
   channelsModeration: number
   channelsRejected: number
@@ -46,7 +46,7 @@ export interface RecentUser {
   id: string
   username: string
   firstName: string
-  isDemo: boolean
+  isGuest: boolean
   createdAt: string
 }
 
@@ -123,7 +123,7 @@ export interface PanelUser {
   username: string
   firstName: string
   lastName: string
-  isDemo: boolean
+  isGuest: boolean
   isPremium?: boolean
   bypassMaintenance: boolean
   createdAt: string
@@ -245,7 +245,7 @@ export interface SystemInfo {
       username: string | null
       firstName: string | null
       lastName: string | null
-      isDemo: boolean
+      isGuest: boolean
       bypassMaintenance: boolean
     }>
     pendingIds: string[]

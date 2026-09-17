@@ -220,7 +220,7 @@ export function OverviewTab({
           badges={[
             { text: `+${fmtNum(data.deltas24h.users)} за 24ч`, className: 'bg-emerald-50 text-emerald-700' },
             { text: `TG ${fmtNum(c.usersTelegram)}`, className: 'bg-sky-100 text-sky-700' },
-            { text: `Демо ${fmtNum(c.usersDemo)}`, className: 'bg-slate-100 text-slate-700' },
+            { text: `Гости ${fmtNum(c.usersGuest)}`, className: "bg-slate-100 text-slate-700" },
           ]}
         />
         <MetricCard
@@ -401,7 +401,7 @@ export function OverviewTab({
                         <div className="truncate text-xs text-slate-500">@{u.username}</div>
                       ) : null}
                     </div>
-                    <UserKindBadge isDemo={u.isDemo} />
+                    <UserKindBadge isGuest={u.isGuest} />
                     <span className="w-16 shrink-0 text-right text-[11px] text-slate-500">
                       {fmtAgo(u.createdAt)}
                     </span>

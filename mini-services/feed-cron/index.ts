@@ -14,7 +14,7 @@
  * всё равно обновляются: полный круг по каналам при простое ≈ 1–2 часа.
  *
  * ПРЕДПРОГРЕВ ОЗВУЧКИ: после каждого тика движок просит приложение сгенерировать
- * озвучку пары свежих постов (/api/tts/prewarm) — кэш аудио в общей БД тёплый,
+ * озвучку пары свежих постов (/api/warm) — кэш аудио в общей БД тёплый,
  * пользователи прода слушают посты мгновенно.
  *
  * Авторизация: Authorization: Bearer <CRON_SECRET> из корневого .env.
@@ -107,7 +107,7 @@ async function tick(reason: string): Promise<TickResult> {
 
 async function prewarmTts(): Promise<void> {
   try {
-    const res = await fetch(`${MAIN_APP}/api/tts/prewarm`, {
+    const res = await fetch(`${MAIN_APP}/api/warm`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
@@ -118,10 +118,10 @@ async function prewarmTts(): Promise<void> {
     })
     if (res.ok) {
       const data = (await res.json()) as { generated?: number }
-      if (data.generated) console.log(`[prewarm] +${data.generated} озвучек`)
+      if (data.generated) console.log(`[warm] +${data.generated} озвучек`)
     }
   } catch {
-    // предпрогрев необязателен — пользовательская генерация сработает по запросу
+    // прогрев необязателен — пользовательская генерация сработает по запросу
   }
 }
 

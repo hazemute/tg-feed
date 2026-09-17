@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Heart, Play, Volume2, VolumeX } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { haptic } from '@/lib/tg'
 import type { MediaItemDTO } from '@/lib/types'
 import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
 
@@ -14,17 +15,19 @@ import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
  */
 const PEEK_PX = 14
 
-/** Слайд карусели: видео/гиф — автоплеем, остальное — картинкой. Ошибка загрузки скрывает слайд */
+/** Слайд карусели: видео/гиф — автоплеем, остальное — картинкой. Тап — просмотр, ошибка загрузки скрывает слайд */
 function SlideVisual({
   item,
   alt,
   i,
   onHide,
+  onClick,
 }: {
   item: MediaItemDTO
   alt: string
   i: number
   onHide: React.Dispatch<React.SetStateAction<Set<number>>>
+  onClick?: () => void
 }) {
   const hide = () =>
     onHide((h) => {
@@ -44,7 +47,8 @@ function SlideVisual({
         playsInline
         preload="metadata"
         onError={hide}
-        className="mx-auto aspect-[4/5] max-h-[54dvh] w-full rounded-[14px] bg-tg-surface object-cover"
+        onClick={onClick}
+        className="mx-auto aspect-[4/5] max-h-[54dvh] w-full cursor-zoom-in rounded-[14px] bg-tg-surface object-cover"
       />
     )
   }
@@ -54,8 +58,9 @@ function SlideVisual({
       alt={`${alt} — изображение ${i + 1}`}
       loading="lazy"
       onError={hide}
+      onClick={onClick}
       className={cn(
-        'mx-auto max-h-[54dvh] w-full rounded-[14px]',
+        'mx-auto max-h-[54dvh] w-full cursor-zoom-in rounded-[14px]',
         item.kind === 'sticker'
           ? 'max-h-[44dvh] max-w-[300px] bg-transparent object-contain'
           : 'aspect-[4/5] bg-tg-surface object-cover',
@@ -82,17 +87,21 @@ export function MediaCarousel({
   items,
   alt,
   onDoubleTap,
+  onOpenIndex,
 }: {
   /** Слайды карусели: фото, видео, GIF и стикеры (визуальные типы) */
   items: MediaItemDTO[]
   alt: string
   onDoubleTap?: () => void
+  /** Одиночный тап по слайду — открыть полноэкранный просмотр с этого слайда */
+  onOpenIndex?: (index: number) => void
 }) {
   const list = items.filter((x) => !!x.url)
   const ref = useRef<HTMLDivElement>(null)
   const [idx, setIdx] = useState(0)
   const [hidden, setHidden] = useState<Set<number>>(new Set())
   const [popKey, setPopKey] = useState(0)
+  const tapTimer = useRef<number | null>(null)
 
   const visible = list.map((_, i) => i).filter((i) => !hidden.has(i))
   if (list.length === 0 || visible.length === 0) return null
@@ -150,8 +159,21 @@ export function MediaCarousel({
   }
 
   const handleDouble = () => {
+    if (tapTimer.current) {
+      window.clearTimeout(tapTimer.current)
+      tapTimer.current = null
+    }
     setPopKey((k) => k + 1)
     onDoubleTap?.()
+  }
+
+  /** Одиночный тап — открыть просмотр (двойной успевает отменить таймер) */
+  const handleSingle = (slide: number) => {
+    if (!onOpenIndex || tapTimer.current) return
+    tapTimer.current = window.setTimeout(() => {
+      tapTimer.current = null
+      onOpenIndex(slide)
+    }, 260)
   }
 
   return (
@@ -182,10 +204,10 @@ export function MediaCarousel({
               >
                 {item.spoiler ? (
                   <MediaSpoiler>
-                    <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} />
+                    <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} onClick={() => handleSingle(i)} />
                   </MediaSpoiler>
                 ) : (
-                  <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} />
+                  <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} onClick={() => handleSingle(i)} />
                 )}
               </div>
             </div>
@@ -263,10 +285,13 @@ export function VideoPlayer({
   src,
   alt,
   onDoubleTap,
+  onOpen,
 }: {
   src: string
   alt: string
   onDoubleTap?: () => void
+  /** Одиночный тап — открыть полноэкранный просмотр (как в Telegram) */
+  onOpen?: () => void
 }) {
   const vidRef = useRef<HTMLVideoElement>(null)
   const progressRef = useRef<HTMLDivElement>(null)
@@ -300,13 +325,16 @@ export function VideoPlayer({
     else v.pause()
   }
 
-  // Одиночный тап — плей/пауза (с задержкой), двойной — лайк
+  // Одиночный тап — открыть полный экран (с задержкой, чтобы двойной успел отменить)
   const onClick = () => {
     if (clickTimer.current) return
     clickTimer.current = window.setTimeout(() => {
       clickTimer.current = null
-      togglePlay()
-    }, 240)
+      if (onOpen) {
+        haptic('light')
+        onOpen()
+      } else togglePlay()
+    }, 260)
   }
   const onDoubleClick = () => {
     if (clickTimer.current) {

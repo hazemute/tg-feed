@@ -9,22 +9,22 @@ import { guardIp } from '@/lib/guard'
 import type { UserDTO } from '@/lib/types'
 
 /**
- * Гость стал verified-пользователем: переносим его данные из demo-строки
+ * Гость стал verified-пользователем: переносим его данные из гостевой строки
  * (лайки/закладки/просмотры/подписки/интересы/граница уведомлений), чтобы
- * история, накопленная до HMAC-подтверждения, не потерялась. Demo-строка
+ * история, накопленная до HMAC-подтверждения, не потерялась. Гостевая строка
  * удаляется после переноса. Ошибка миграции НЕ ломает вход (try/catch снаружи).
  */
-async function migrateDemoUserData(demoId: string, targetId: string): Promise<void> {
+async function migrateGuestUserData(guestId: string, targetId: string): Promise<void> {
   try {
-    const demo = await db.user.findUnique({ where: { id: demoId } })
-    if (!demo || demo.id === targetId) return
+    const guest = await db.user.findUnique({ where: { id: guestId } })
+    if (!guest || guest.id === targetId) return
 
     await db.$transaction(async (tx) => {
       const [subs, likes, bookmarks, views] = await Promise.all([
-        tx.subscription.findMany({ where: { userId: demoId } }),
-        tx.like.findMany({ where: { userId: demoId } }),
-        tx.bookmark.findMany({ where: { userId: demoId } }),
-        tx.postView.findMany({ where: { userId: demoId } }),
+        tx.subscription.findMany({ where: { userId: guestId } }),
+        tx.like.findMany({ where: { userId: guestId } }),
+        tx.bookmark.findMany({ where: { userId: guestId } }),
+        tx.postView.findMany({ where: { userId: guestId } }),
       ])
 
       if (subs.length > 0) {
@@ -38,14 +38,14 @@ async function migrateDemoUserData(demoId: string, targetId: string): Promise<vo
           })),
           skipDuplicates: true,
         })
-        await tx.subscription.deleteMany({ where: { userId: demoId } })
+        await tx.subscription.deleteMany({ where: { userId: guestId } })
       }
       if (likes.length > 0) {
         await tx.like.createMany({
           data: likes.map((l) => ({ userId: targetId, postId: l.postId, createdAt: l.createdAt })),
           skipDuplicates: true,
         })
-        await tx.like.deleteMany({ where: { userId: demoId } })
+        await tx.like.deleteMany({ where: { userId: guestId } })
       }
       if (bookmarks.length > 0) {
         await tx.bookmark.createMany({
@@ -57,28 +57,28 @@ async function migrateDemoUserData(demoId: string, targetId: string): Promise<vo
           })),
           skipDuplicates: true,
         })
-        await tx.bookmark.deleteMany({ where: { userId: demoId } })
+        await tx.bookmark.deleteMany({ where: { userId: guestId } })
       }
       if (views.length > 0) {
         await tx.postView.createMany({
           data: views.map((v) => ({ userId: targetId, postId: v.postId, createdAt: v.createdAt })),
           skipDuplicates: true,
         })
-        await tx.postView.deleteMany({ where: { userId: demoId } })
+        await tx.postView.deleteMany({ where: { userId: guestId } })
       }
 
       await tx.user.update({
         where: { id: targetId },
         data: {
-          ...(demo.categories !== '[]' && { categories: demo.categories }),
-          ...(demo.lastSeenNotifiedAt && { lastSeenNotifiedAt: demo.lastSeenNotifiedAt }),
+          ...(guest.categories !== '[]' && { categories: guest.categories }),
+          ...(guest.lastSeenNotifiedAt && { lastSeenNotifiedAt: guest.lastSeenNotifiedAt }),
         },
       })
 
-      await tx.user.delete({ where: { id: demoId } })
+      await tx.user.delete({ where: { id: guestId } })
     })
   } catch (e) {
-    console.error('[auth] demo migration failed (non-fatal)', e)
+    console.error('[auth] guest migration failed (non-fatal)', e)
   }
 }
 
@@ -127,10 +127,10 @@ function safePhotoUrl(v: unknown): string | null {
  *
  * Режимы входа:
  *  1) initData + TELEGRAM_BOT_TOKEN → полная HMAC-проверка Telegram (+ свежесть
- *     auth_date ≤ 24ч) → доверенный пользователь isDemo=false.
+ *     auth_date ≤ 24ч) → доверенный пользователь isGuest=false.
  *  2) initData без bot-токена (песочница/демо) → доверяем initDataUnsafe.user,
- *     помечаем isDemo=true (непроверенный — бот ему не пишет).
- *  3) Ничего нет → гость по deviceId (isDemo=true).
+ *     помечаем isGuest=true (непроверенный — бот ему не пишет).
+ *  3) Ничего нет → гость по deviceId (гостевой аккаунт).
  *
  * Ответ: { user, token, bot } — токен сессии (JWT HS256, 30 дней) клиент
  * обязан присылать заголовком Authorization: Bearer на все API-запросы.
@@ -195,11 +195,11 @@ export async function POST(request: Request) {
     if (!id) {
       const raw = typeof body?.deviceId === 'string' ? body.deviceId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) : ''
       if (!raw) return err('deviceId required')
-      id = `demo_${raw}`
+      id = `guest_${raw}`
       firstName = 'Гость'
     }
 
-    const isDemo = !verified
+    const isGuest = !verified
 
     const user = await db.user.upsert({
       where: { id },
@@ -208,20 +208,20 @@ export async function POST(request: Request) {
         firstName,
         lastName,
         ...(photoUrl ? { photoUrl } : {}),
-        isDemo,
+        isGuest,
         isPremium,
         languageCode,
       },
-      create: { id, username, firstName, lastName, photoUrl, isDemo, isPremium, languageCode, categories: '[]' },
+      create: { id, username, firstName, lastName, photoUrl, isGuest, isPremium, languageCode, categories: '[]' },
     })
 
     // Гость с историей стал verified — переносим его данные в настоящий аккаунт
     if (verified && typeof body?.deviceId === 'string') {
       const rawDevice = body.deviceId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64)
-      if (rawDevice) await migrateDemoUserData(`demo_${rawDevice}`, user.id)
+      if (rawDevice) await migrateGuestUserData(`guest_${rawDevice}`, user.id)
     }
 
-    const token = signSession(user.id, isDemo)
+    const token = signSession(user.id, isGuest)
     const botUsername = await getBotUsername()
 
     // Статус техработ для клиента: экран техработ показывается только тем,
@@ -238,7 +238,7 @@ export async function POST(request: Request) {
       firstName: user.firstName,
       lastName: user.lastName,
       photoUrl: user.photoUrl,
-      isDemo: user.isDemo,
+      isGuest: user.isGuest,
       isPremium: user.isPremium,
       languageCode: user.languageCode,
       categories: parseJsonArray(user.categories),

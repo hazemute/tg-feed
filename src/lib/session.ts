@@ -11,8 +11,8 @@ import crypto from 'crypto'
  */
 
 export type SessionPayload = {
-  uid: string // id пользователя (tg_<tgId> или demo_<deviceId>)
-  demo: boolean // true — гость/непроверенный пользователь (без HMAC-проверки)
+  uid: string // id пользователя (tg_<tgId> или guest_<deviceId>)
+  guest: boolean // true — гость (без HMAC-проверки); в старых JWT поле называлось demo
   iat: number // issued at (unix sec)
   exp: number // expires at (unix sec)
 }
@@ -51,11 +51,11 @@ function hmac(data: string): string {
 }
 
 /** Подпись сессии → JWT-токен (header.payload.signature) */
-export function signSession(uid: string, demo: boolean, ttlSec = SESSION_TTL_SEC): string {
+export function signSession(uid: string, guest: boolean, ttlSec = SESSION_TTL_SEC): string {
   const now = Math.floor(Date.now() / 1000)
   const header = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
   const payload = b64url(
-    JSON.stringify({ uid, demo, iat: now, exp: now + Math.max(60, Math.floor(ttlSec)) }),
+    JSON.stringify({ uid, guest, iat: now, exp: now + Math.max(60, Math.floor(ttlSec)) }),
   )
   const signature = hmac(`${header}.${payload}`)
   return `${header}.${payload}.${signature}`
@@ -74,11 +74,11 @@ export function verifySession(token: string | null | undefined): SessionPayload 
   if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null
 
   try {
-    const parsed = JSON.parse(b64urlDecode(payload).toString('utf8')) as SessionPayload
+    const parsed = JSON.parse(b64urlDecode(payload).toString('utf8')) as SessionPayload & { demo?: unknown }
     if (typeof parsed.uid !== 'string' || !parsed.uid) return null
     if (typeof parsed.exp !== 'number' || parsed.exp < Math.floor(Date.now() / 1000)) return null
     if (typeof parsed.iat !== 'number') return null
-    return { uid: parsed.uid, demo: parsed.demo === true, iat: parsed.iat, exp: parsed.exp }
+    return { uid: parsed.uid, guest: parsed.guest === true || parsed.demo === true, iat: parsed.iat, exp: parsed.exp }
   } catch {
     return null
   }
