@@ -241,12 +241,15 @@ export function htmlToMarkdownLite(html: string): string {
 /**
  * Схлопывание декоративных обёрток вокруг эмодзи/символов прямо на клиенте:
  * __**👍**__ → 👍, **__**‼️**__** → ‼️ (вложенность любой глубины).
- * Контент обёртки — только маркеры и не-буквы/цифры/пробелы (эмодзи, пунктуация);
+ * Контент обёртки — только маркеры и не-буквы/цифры/пробелы/скобки;
  * настоящие выделения слов (**15%**, **Объективный**, __слово__) не трогаются.
+ * Скобки [ ] исключены из контента: «**текст **[**метка**](url)**» — это граница
+ * жирного текста и жирной метки ссылки, а не декоративная обёртка «[»
+ * (прежде схлопывание съедало маркер, и весь абзац рассыпался).
  * Рекурсивно по слоям — за один проход снимается внешний слой, до 5 проходов.
  */
 export function normalizeDecorations(text: string): string {
-  const re = /(\*\*|__|~~|\|\|)((?:\*\*|__|~~|\|\||[^а-яёА-ЯЁa-zA-Z0-9\s])+?)\1/g
+  const re = /(\*\*|__|~~|\|\||\^\^)((?:\*\*|__|~~|\|\||\^\^|[^а-яёА-ЯЁa-zA-Z0-9\s\[\]])+?)\1/g
   let out = text
   for (let i = 0; i < 5; i++) {
     const next = out.replace(re, '$2')
@@ -299,16 +302,25 @@ export type Block =
  * Регэксп спанов markdown-lite: премиум-эмодзи, жирный, курсив, зачёркнутый,
  * underline, инлайн-код, спойлер, ссылка, url, @упоминание.
  *
- * Маркеры **…**, __…__, ~~…~~, ||…||, ^^…^^ могут пересекать перенос строки
- * внутри абзаца — в Telegram жирный/курсив часто накрывает несколько строк
- * (<b>…<br/>…</b>); раньше маркеры парились только внутри одной строки и
- * литералы ** оставались на экране.
+ * Стилевые маркеры допускают внутри себя одиночные символы того же класса
+ * (одиночная «*» внутри жирного, «|» внутри спойлера — «||текст | ещё||»)
+ * и пересекают переносы строк — так пишет Telegram (<b>…<br/>…</b>).
+ * Ленивая свёртка с (?!XX) даёт кратчайшую парную свёртку и не съедает
+ * соседние вхождения того же маркера.
  *
- * Группы (target ES2017 — без именованных): 1 emoji, 2 bold, 3 italic,
- * 4 strike, 5 code, 6 spoiler, 7 underline, 8 link, 9 url, 10 mention.
+ * Инлайн-код `…` может пересекать перенос строки — авторы часто оставляют
+ * закрывающую кавычку на следующей строке (судебные акты, цитаты, код).
+ *
+ * Курсив __…__ не открывается ВНУТРИ слова/идентификатора (lookbehind
+ * (?<![A-Za-z0-9_])): «@user__» и «prod1__» не разворачиваются в курсив
+ * и не склеиваются в пары через абзац.
+ *
+ * Группы: 1 emoji, 2 bold, 3 italic, 4 strike, 5 code, 6 spoiler,
+ * 7 underline, 8 link [[метка]](url) (двойные скобки), 9 link [метка](url)
+ * (метка ≤160 симв., максимум один перенос строки без пустых строк), 10 url, 11 mention.
  */
 const SPAN_RE =
-  /(!\[e(?:v)?(?::\d+)?\]\([^)\s]+\))|(\*\*(?:[^*]+)\*\*)|(__(?:[^_]+)__)|(~~(?:[^~]+)~~)|(`[^`\n]+`)|(\|\|(?:[^|]+)\|\|)|(\^\^(?:[^^]+)\^\^)|(\[[^\]\n]+\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:])|(@[a-zA-Z][a-zA-Z0-9_]{3,})/g
+  /(!\[e(?:v)?(?::\d+)?\]\([^)\s]+\))|(\*\*(?:(?!\*\*)[\s\S])+?\*\*)|((?<![a-zA-Z0-9_])__(?:(?!__)[\s\S])+?__)|(~~(?:(?!~~)[\s\S])+?~~)|(`[^`]+`)|(\|\|(?:(?!\|\|)[\s\S])+?\|\|)|(\^\^(?:(?!\^\^)[\s\S])+?\^\^)|(\[\[[^\]\n]{1,160}\]\]\([^)\s]+\))|(\[(?:[^\]\n]|\n(?!\n)){1,160}\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:])|(@[a-zA-Z][a-zA-Z0-9_]{3,})/g
 
 const MAX_SPAN_DEPTH = 3
 
@@ -320,17 +332,73 @@ function plainClean(v: string): Span[] {
 /**
  * Чинит неверный порядок маркеров из вложенной разметки t.me/s:
  * `**текст [жирный**](url)` → `**текст [жирный](url)**` — закрывающий маркер,
- * прилипший к тексту ссылки, переезжает за скобку. Без этого ссылка
- * рендерится литералом «](https://…)» (жалоба на кривые ссылки).
+ * прилипший к тексту ссылки, переезжает за скобку.
+ *
+ * ВАЖНО (сканирующая реализация вместо слепого регэкспа): маркер переставляется
+ * только если он НЕПАРНЫЙ внутри метки ссылки. Корректные ссылки вида
+ * `[**жирная метка**](url)` (маркер парный внутри метки) больше не ломаются —
+ * прежний слепой swap превращал их в «[**iOS](url)**», после чего жирный
+ * склеивался через «](url)» и весь абзац рассыпался.
  */
-const MARKER_BEFORE_LINK_CLOSE = /(\*\*|__|~~|\|\||\^\^)(\]\([^)\s]+\))/g
+const MARKERS = ['**', '__', '~~', '||', '^^'] as const
+
 function reorderMarkersAroundLinks(text: string): string {
-  return text.replace(MARKER_BEFORE_LINK_CLOSE, '$2$1')
+  const pieces: string[] = []
+  let pos = 0
+  const CLOSE_RE = /\]\([^)\s]+\)/g
+  CLOSE_RE.lastIndex = 0
+  for (let m = CLOSE_RE.exec(text); m; m = CLOSE_RE.exec(text)) {
+    const closeStart = m.index
+    const closeEnd = closeStart + m[0].length
+    // открывающая «[» ближайшая слева (в той же строке, без «]» между)
+    let open = -1
+    for (let i = closeStart - 1; i >= 0 && i >= closeStart - 600; i--) {
+      const ch = text[i]
+      if (ch === '\n' || ch === ']') break
+      if (ch === '[') {
+        open = i
+        break
+      }
+    }
+    if (open === -1) continue
+    let label = text.slice(open + 1, closeStart)
+    const trailing: string[] = []
+    for (const mk of MARKERS) {
+      // считаем парные вхождения маркера в метке
+      let count = 0
+      for (let idx = label.indexOf(mk); idx !== -1; idx = label.indexOf(mk, idx + mk.length)) count++
+      if (count % 2 === 1 && count > 0) {
+        const last = label.lastIndexOf(mk)
+        if (last !== -1) {
+          label = label.slice(0, last) + label.slice(last + mk.length)
+          trailing.push(mk)
+        }
+      }
+    }
+    if (trailing.length > 0) {
+      pieces.push(text.slice(pos, open + 1), label, m[0], ...trailing)
+      pos = closeEnd
+    }
+  }
+  if (pieces.length === 0) return text
+  pieces.push(text.slice(pos))
+  return pieces.join('')
 }
 
-/** Двойное кодирование амперсандов в URL ссылок (t.me/s: &amp;amp;) → чистый & */
+/** Многократное кодирование амперсандов в URL ссылок (t.me/s: &amp;amp;…) → чистый & */
 function decodeHrefAmpersands(text: string): string {
-  return text.replace(/(\]\([^)\s]+)/g, (m) => m.replace(/&amp;/g, '&'))
+  let changed = true
+  let pass = 0
+  while (changed && pass < 4) {
+    changed = false
+    text = text.replace(/(\]\([^)\s]+)/g, (m) => {
+      const dec = m.replace(/&amp;/g, '&')
+      if (dec !== m) changed = true
+      return dec
+    })
+    pass++
+  }
+  return text
 }
 
 /** Разбирает строку (внутри абзаца/цитаты) на стилизованные спаны.
@@ -346,7 +414,7 @@ export function spansOf(line: string, depth = 0): Span[] {
     const i = m.index ?? 0
     pushPlain(line.slice(last, i))
     // Группы: 1 emoji, 2 bold, 3 italic, 4 strike, 5 code, 6 spoiler,
-    // 7 underline, 8 link, 9 url, 10 mention (см. комментарий над SPAN_RE)
+    // 7 underline, 8 link [[..]], 9 link [..], 10 url, 11 mention (см. SPAN_RE)
     if (m[2] !== undefined) {
       const v = m[2].slice(2, -2)
       spans.push({ t: 'bold', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
@@ -365,11 +433,24 @@ export function spansOf(line: string, depth = 0): Span[] {
       const v = m[6].slice(2, -2)
       spans.push({ t: 'spoiler', v: v.trim(), kids: depth < MAX_SPAN_DEPTH ? spansOf(v, depth + 1) : undefined })
     } else if (m[8] !== undefined) {
-      const label = m[8].slice(1, m[8].indexOf(']'))
+      // двойные скобки [[метка]](url) — вложенные «[»/«]» в тексте метки
+      const inner = m[8].slice(2, m[8].indexOf(']'))
       const href = m[8].slice(m[8].indexOf('(') + 1, -1).replace(/&amp;/g, '&')
       spans.push({
         t: 'link',
-        v: label || href,
+        v: inner.replace(/&amp;/g, '&'),
+        href,
+        kids: depth < MAX_SPAN_DEPTH ? spansOf(inner, depth + 1) : undefined,
+      })
+    } else if (m[9] !== undefined) {
+      const label = m[9].slice(1, m[9].indexOf(']'))
+      const href = m[9].slice(m[9].indexOf('(') + 1, -1).replace(/&amp;/g, '&')
+      spans.push({
+        t: 'link',
+        // v — фолбэк без меток разметки и сущностей (реальный рендер идёт по kids)
+        v: (label || href)
+          .replace(/\*\*|__|~~|\|\||\^\^/g, '')
+          .replace(/&amp;/g, '&'),
         href,
         kids: depth < MAX_SPAN_DEPTH ? spansOf(label, depth + 1) : undefined,
       })
@@ -385,10 +466,10 @@ export function spansOf(line: string, depth = 0): Span[] {
           ...(em[1] ? { animated: true } : {}),
         })
       }
-    } else if (m[9] !== undefined) {
-      spans.push({ t: 'link', v: m[9], href: m[9] })
     } else if (m[10] !== undefined) {
-      spans.push({ t: 'link', v: m[10], href: `https://t.me/${m[10].slice(1)}` })
+      spans.push({ t: 'link', v: m[10], href: m[10] })
+    } else if (m[11] !== undefined) {
+      spans.push({ t: 'link', v: m[11], href: `https://t.me/${m[11].slice(1)}` })
     }
     last = i + m[0].length
   }

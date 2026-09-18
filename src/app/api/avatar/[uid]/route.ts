@@ -59,7 +59,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
     if (photo.startsWith('http')) {
       if (!isSafePhotoUrl(photo)) return new NextResponse('not found', { status: 404 })
       return NextResponse.redirect(photo, {
-        headers: { 'Cache-Control': 'public, max-age=600, stale-while-revalidate=3600' },
+        headers: {
+          'Cache-Control': 'public, max-age=600, s-maxage=3600, stale-while-revalidate=86400',
+        },
       })
     }
 

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { cronAuthorized, guardIp } from '@/lib/guard'
 import { runParser } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
-import { nextAdaptiveBatch, enrichMissingMedia } from '@/lib/parse-scheduler'
+import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards } from '@/lib/parse-scheduler'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -51,12 +51,23 @@ async function handle(request: Request) {
       }
     }
 
+    // карточки каналов (аватар + подписчики через Bot API) — в остатке бюджета
+    let cards = { refreshed: 0, scanned: 0 }
+    if (Date.now() - started < 45_000) {
+      try {
+        cards = await refreshChannelCards(12)
+      } catch (e) {
+        console.error('[tick] cards failed', e)
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       batch: batch.length,
       added: result.newPosts.length,
       truncated: result.truncated ?? false,
       enriched,
+      cards,
       notified,
       ms: Date.now() - started,
     })

@@ -155,8 +155,10 @@ function SpanView({ span, nested }: { span: Span; nested?: boolean }) {
     case 'underline':
       return <span className="underline underline-offset-2">{kids ?? span.v}</span>
     case 'code':
+      // whitespace-pre-wrap: инлайн-код может пересекать перенос строки
+      // (судебные акты, цитаты) — разрывы сохраняются внутри <code>
       return (
-        <code className="rounded bg-tg-sep/70 px-1 py-0.5 font-mono text-[0.92em] text-tg-text">
+        <code className="whitespace-pre-wrap rounded bg-tg-sep/70 px-1 py-0.5 font-mono text-[0.92em] text-tg-text">
           {span.v}
         </code>
       )

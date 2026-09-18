@@ -174,6 +174,66 @@ export async function getChatInfo(username: string): Promise<TgChatInfo | null> 
   }
 }
 
+export type ChatCardResult = {
+  /** file_id аватарки (null — у канала нет фото, но сам канал существует) */
+  photoFileId: string | null
+  /** реальное число подписчиков (null — нет данных) */
+  members: number | null
+  /** Bot API ответил 429 (флуд-бан) — пакетную обработку нужно остановить */
+  rateLimited: boolean
+  /** вызовы прошли (не сетевой сбой): можно штамповать fetchedAt */
+  ok: boolean
+}
+
+/**
+ * Карточка канала ОДНИМ параллельным заходом (getChat + getChatMemberCount).
+ * Отличается от «слепых» хелперов тем, что РАЗЛИЧАЕТ «фото нет» и «Bot API
+ * пригрозил баном за частые вызовы»: при 429 пакетный бэкфилл обязан
+ * остановиться и НЕ штамповать время — иначе каналы «выпадут» из обновления
+ * на весь срок TTL.
+ */
+export async function getChatCard(username: string): Promise<ChatCardResult> {
+  const clean = username.replace(/^@/, '')
+  const empty: ChatCardResult = { photoFileId: null, members: null, rateLimited: false, ok: false }
+  if (!botEnabled()) return empty
+  try {
+    const [chatRes, membersRes] = await Promise.all([
+      fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: `@${clean}` }),
+        signal: AbortSignal.timeout(8000),
+      }),
+      fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMemberCount`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: `@${clean}` }),
+        signal: AbortSignal.timeout(8000),
+      }),
+    ])
+    // Флуд-защита: 429 — сигнал остановить всю партию (не штампуем!)
+    if (chatRes.status === 429 || membersRes.status === 429) {
+      const retry = Number(chatRes.headers.get('retry-after') ?? membersRes.headers.get('retry-after') ?? '0')
+      memSet(`cardban:${clean}`, String(retry), Math.min(30, Math.max(1, retry)) * 1000)
+      return { photoFileId: null, members: null, rateLimited: true, ok: false }
+    }
+    const chat = (await chatRes.json().catch(() => null)) as {
+      ok?: boolean
+      result?: { photo?: { big_file_id?: string; small_file_id?: string } }
+    } | null
+    const mc = (await membersRes.json().catch(() => null)) as {
+      ok?: boolean
+      result?: number
+    } | null
+    if (!chatRes.ok && chatRes.status !== 200) return empty
+    const photoFileId = chat?.ok ? (chat.result?.photo?.big_file_id ?? chat.result?.photo?.small_file_id ?? null) : null
+    const members = mc?.ok && typeof mc.result === 'number' ? mc.result : null
+    return { photoFileId, members, rateLimited: false, ok: Boolean(chat?.ok || mc?.ok) }
+  } catch {
+    return empty
+  }
+}
+
 /**
  * Реальное число подписчиков публичного канала через Bot API getChatMemberCount.
  * Кэш: память 1ч → Redis 24ч («нет данных» тоже кэшим сентинелом none, чтобы

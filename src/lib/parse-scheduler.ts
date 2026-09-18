@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { bumpCache } from '@/lib/redis'
 import { bgImageOf } from '@/lib/parse-engine'
+import { getChatCard } from '@/lib/tg-bot'
 
 /**
  * Адаптивный шедулер парсинга — постоянное отслеживание новых постов
@@ -123,4 +124,77 @@ export async function enrichMissingMedia(limit = ENRICH_PER_TICK): Promise<Enric
 
   if (enriched > 0) await bumpCache(['feed', 'ch'])
   return { enriched }
+}
+
+// ------------------------- Карточки каналов (аватар + подписчики) -------------------------
+
+export type CardsResult = { refreshed: number; scanned: number }
+
+/**
+ * Обновление карточек каналов ТОЛЬКО через Bot API (getChat-семейство, без t.me):
+ * аватарка (file_id) и реальное число подписчиков. Приоритет — каналы вовсе без
+ * аватара/счётчика, затем самые «протухшие» (TTL 7 дней). Каждый тик дергает
+ * небольшую партию — 588 каналов выравниваются за ~40-50 тиков без нагрузки.
+ * fetchedAt штампуем всегда: канал без аватара (удалён/запрещён) не будет
+ * долбиться каждый тик, повтор — после TTL.
+ */
+export async function refreshChannelCards(limit = 12): Promise<CardsResult> {
+  let rows: Array<{ id: string; username: string }> = []
+  try {
+    rows = await db.$queryRawUnsafe<Array<{ id: string; username: string }>>(
+      `SELECT c."id", c."username" FROM "Channel" c
+        WHERE c."status" = 'active'
+          AND ( c."photoFileId" IS NULL OR c."membersCount" IS NULL
+                OR c."avatarFetchedAt" IS NULL OR c."membersFetchedAt" IS NULL
+                OR c."avatarFetchedAt" < now() - interval '7 days'
+                OR c."membersFetchedAt" < now() - interval '7 days' )
+        ORDER BY c."avatarFetchedAt" NULLS FIRST, c."membersFetchedAt" NULLS FIRST,
+                 c."subscribersCount" DESC
+        LIMIT $1`,
+      limit,
+    )
+  } catch {
+    return { refreshed: 0, scanned: 0 }
+  }
+
+  // Конкурентная обработка: 6 воркеров × (getChat + getChatMemberCount + UPDATE).
+  // Правило флуд-безопасности: Bot API ответил 429 → вся партия останавливается,
+  // оставшиеся каналы НЕ штампуются (иначе они выпадут из обновления на срок TTL).
+  // Штамп fetchedAt ставится только когда вызовы реально прошли (ok).
+  let refreshed = 0
+  let cursor = 0
+  let banned = false
+  const workers = Array.from({ length: Math.min(6, rows.length) }, async () => {
+    for (;;) {
+      if (banned) return
+      const i = cursor++
+      if (i >= rows.length) return
+      const r = rows[i]
+      try {
+        const card = await getChatCard(r.username)
+        if (card.rateLimited) {
+          banned = true
+          return
+        }
+        if (!card.ok) continue // сетевой сбой — без штампа, повтор на следующем тике
+        const now = new Date()
+        await db.channel.update({
+          where: { id: r.id },
+          data: {
+            ...(card.photoFileId
+              ? { photoFileId: card.photoFileId, avatarFetchedAt: now }
+              : { avatarFetchedAt: now }),
+            ...(card.members != null
+              ? { membersCount: card.members, membersFetchedAt: now }
+              : { membersFetchedAt: now }),
+          },
+        })
+        refreshed++
+      } catch {
+        // БД моргнула — канал останется «без штампа» и попадёт в следующую партию
+      }
+    }
+  })
+  await Promise.all(workers)
+  return { refreshed, scanned: rows.length }
 }

@@ -75,7 +75,7 @@ async function tick(reason: string): Promise<TickResult> {
         ...(CRON_SECRET ? { authorization: `Bearer ${CRON_SECRET}` } : {}),
       },
       body: JSON.stringify({ reason }),
-      signal: AbortSignal.timeout(70_000),
+      signal: AbortSignal.timeout(120_000),
     })
     const data = (await res.json()) as Record<string, unknown>
     lastAdded = typeof data.added === 'number' ? data.added : 0
