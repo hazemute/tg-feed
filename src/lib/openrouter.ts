@@ -43,7 +43,7 @@ export async function chatMessages(
 ): Promise<string> {
   const key = process.env.OPENROUTER_API_KEY
   if (!key) throw new Error('OPENROUTER_API_KEY не задан')
-  const maxTokens = opts?.maxTokens ?? 1200
+  const maxTokens = opts?.maxTokens ?? 800
   const timeoutMs = opts?.timeoutMs ?? 25_000
   const temperature = opts?.temperature ?? 0.2
 

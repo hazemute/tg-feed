@@ -10,7 +10,7 @@ import { chatSimple } from '@/lib/openrouter'
  * (/api/warm) — пользователь получает перевод/саммари мгновенно.
  */
 
-const MAX_TEXT = 3500
+const MAX_TEXT = 1600
 
 const LANG_NAMES: Record<string, string> = {
   ru: 'русском',
@@ -53,7 +53,7 @@ export async function translateText(text: string, lang: string): Promise<string>
   const completion = await chatSimple(
     TRANSLATE_PROMPT(langName),
     text.slice(0, MAX_TEXT),
-    { maxTokens: 1500, timeoutMs: 18_000 },
+    { maxTokens: 1100, timeoutMs: 18_000 },
   )
   const translated = completion.replace(/^["«»"]+|["«»"]+$/g, '').trim()
   if (translated.length < 4 || translated === text) {
@@ -100,10 +100,8 @@ export async function translatePostCached(
 }
 
 const SUMMARY_PROMPT =
-  'Ты редактор Telegram-канала. Тебе дают текст поста на русском языке. ' +
-  'Сделай выжимку ровно из 3 пунктов: каждый — одна законченная мысль до 120 символов, ' +
-  'по-русски, без эмодзи и без markdown. ' +
-  'Ответь СТРОГО JSON-массивом из 3 строк, например: ["пункт 1","пункт 2","пункт 3"]'
+  'Сделай выжимку текста поста ровно из 3 пунктов: одна законченная мысль, до 110 символов, ' +
+  'по-русски, без эмодзи и markdown. Ответь СТРОГО JSON-массивом из 3 строк: ["...","...","..."]'
 
 function parseBullets(raw: string): string[] {
   try {
@@ -154,8 +152,10 @@ export async function summarizePostCached(
   const text = post.text.trim()
   if (text.length < 200) return { items: [], cached: false, tooShort: true }
 
-  const raw = await chatSimple(SUMMARY_PROMPT, text.slice(0, 4000), {
-    maxTokens: 400,
+  // Экономия токенов: 1600 символов входа хватает на 3 пункта (дальше текст
+  // повторяется), 160 на выход — ровно три коротких пункта без «воды»
+  const raw = await chatSimple(SUMMARY_PROMPT, text.slice(0, 1600), {
+    maxTokens: 160,
     timeoutMs: 20_000,
   })
   const items = parseBullets(raw)

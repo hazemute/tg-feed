@@ -43,9 +43,9 @@ function buildPrompt(
   const themes = slugs.map((s) => `"${s.slug}" (${s.title})`).join(', ')
   const list = channels
     .map((c, i) => {
-      const sample = (c.sample ?? '').slice(0, 300).replace(/"/g, "'").replace(/\s+/g, ' ').trim()
+      const sample = (c.sample ?? '').slice(0, 150).replace(/"/g, "'").replace(/\s+/g, ' ').trim()
       return (
-        `${i + 1}. id="${c.id}" название="${c.title}" юзернейм="${c.username}" описание="${(c.description ?? '').slice(0, 200).replace(/"/g, "'")}"` +
+        `${i + 1}. id="${c.id}" название="${c.title}" юзернейм="${c.username}" описание="${(c.description ?? '').slice(0, 100).replace(/"/g, "'")}"` +
         (sample ? ` посты="${sample}"` : '')
       )
     })
@@ -99,7 +99,7 @@ export async function classifyChannelsBatch(
     const raw = await chatSimple(
       'Ты — редактор каталога Telegram-каналов. Отвечай строго JSON-массивом, без markdown-обвязки и пояснений.',
       buildPrompt(slugs, channels),
-      { maxTokens: 900, timeoutMs: 45_000, temperature: 0.1 },
+      { maxTokens: 700, timeoutMs: 45_000, temperature: 0.1 },
     )
     for (const item of parseReply(raw)) {
       if (allowed.has(item.slug)) result.set(item.id, item.slug)

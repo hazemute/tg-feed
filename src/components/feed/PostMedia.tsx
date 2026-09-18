@@ -208,7 +208,9 @@ function CardView({ item, tgLink, eager }: { item: MediaItemDTO; tgLink: string 
             <LazyImage
               src={item.url}
               alt={item.title ?? 'Превью ссылки'}
-              className="max-h-[54dvh] w-full"
+              /* aspect обязателен: img внутри абсолютный, без него контейнер
+                 нулевой высоты и превью-картинка НЕ ВИДНА никогда */
+              className="aspect-[16/9] max-h-[54dvh] w-full"
               eager={eager}
               onError={(e) => {
                 const wrap = e.currentTarget.parentElement
@@ -371,23 +373,36 @@ export function postMediaItems(post: PostDTO): MediaItemDTO[] {
   return items
 }
 
+/** Только визуал (фото/видео/гиф/стикер) — для раскладки рядом с рельсом */
+export function postVisualItems(post: PostDTO): MediaItemDTO[] {
+  return postMediaItems(post).filter((x) => VISUAL_KINDS.has(x.kind) && x.url)
+}
+
 export function PostMedia({
   post,
   onDoubleTap,
   /** Полный экран поста: пользователь уже читает — картинки сразу */
   eager,
+  /** Не рисовать карточки (файл/голос/опрос/ссылка) — их рисует PostMediaCards
+   *  ПОД текстом поста: иначе короткая карточка рядом с высокой рельсов
+   *  действий оставляет дыру-пустоту (жалоба: «огромное пространство между
+   *  текстом поста и каналом») */
+  hideCards,
 }: {
   post: PostDTO
   onDoubleTap?: () => void
   eager?: boolean
+  hideCards?: boolean
 }) {
   const items = postMediaItems(post)
   const [lbIndex, setLbIndex] = useState<number | null>(null)
   if (items.length === 0) return null
 
   const visual = items.filter((x) => VISUAL_KINDS.has(x.kind) && x.url)
-  const cards = items.filter((x) => CARD_KINDS.has(x.kind))
+  const cards = hideCards ? [] : items.filter((x) => CARD_KINDS.has(x.kind))
   const alt = `Пост канала «${post.channel.title}»`
+
+  if (visual.length === 0 && cards.length === 0) return null
 
   return (
     <div className="space-y-2.5">
@@ -404,6 +419,20 @@ export function PostMedia({
       {lbIndex != null && (
         <MediaLightbox items={visual} index={lbIndex} onClose={() => setLbIndex(null)} />
       )}
+    </div>
+  )
+}
+
+/** Карточки контента (файл/голос/аудио/опрос/ссылка) — под текстом поста,
+ *  на всю ширину: как в Telegram линк-превью живёт после текста. */
+export function PostMediaCards({ post, eager }: { post: PostDTO; eager?: boolean }) {
+  const cards = postMediaItems(post).filter((x) => CARD_KINDS.has(x.kind))
+  if (cards.length === 0) return null
+  return (
+    <div className="mt-2.5 space-y-2.5">
+      {cards.map((c, i) => (
+        <CardView key={i} item={c} tgLink={c.link ?? post.link} eager={eager} />
+      ))}
     </div>
   )
 }

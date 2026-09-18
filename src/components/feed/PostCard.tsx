@@ -13,7 +13,7 @@ import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
 import { RichText } from '@/components/feed/RichText'
-import { PostMedia } from '@/components/feed/PostMedia'
+import { PostMedia, PostMediaCards, postVisualItems } from '@/components/feed/PostMedia'
 import { translatedText, TranslateControl, useTranslation } from '@/components/feed/TranslateButton'
 import { ListenButton } from '@/components/feed/TTSButton'
 import { RailButton, SubscribeCircle } from '@/components/feed/actions'
@@ -306,7 +306,11 @@ export function PostCard({
     !ch.subscribed && ch.teaserMode !== 'none' && post.text.length > ch.teaserLimit
   const teaserText =
     ch.teaserMode === 'cut' ? post.text.slice(0, Math.max(60, ch.teaserLimit)).trimEnd() + '…' : post.text
-  const hasMedia =
+  /* Визуал определяет раскладку ряда (высокий блок рядом с рельсов действий);
+     карточки (ссылка/файл/опрос…) рисуем ПОД текстом — иначе короткая карточка
+     рядом с высокой рельсов оставляла огромную пустоту (жалоба владельца). */
+  const hasVisuals = postVisualItems(post).length > 0
+  const hasCards =
     (post.media != null && (post.media.url || post.media.name || post.media.question || post.media.link)) ||
     post.gallery.length > 0
 
@@ -472,9 +476,9 @@ export function PostCard({
           рядом с рельсом (компактно), у постов с медиа — на всю ширину под медиа */}
       <div className="mt-3.5 flex items-start gap-1.5 px-4">
         <div className="min-w-0 flex-1">
-          {hasMedia && <PostMedia post={post} onDoubleTap={onMediaDoubleTap} />}
-          {/* Текст поста без медиа — в одну колонку с рельсом */}
-          {post.text && !hasMedia && (
+          {hasVisuals && <PostMedia post={post} hideCards onDoubleTap={onMediaDoubleTap} />}
+          {/* Текст поста без визуала — в одну колонку с рельсом */}
+          {post.text && !hasVisuals && (
             <div className="pt-0.5">
               <PostBody
                 post={post}
@@ -512,8 +516,8 @@ export function PostCard({
         </div>
       </div>
 
-      {/* Текст поста с медиа — на всю ширину под медиа */}
-      {post.text && hasMedia && (
+      {/* Текст поста с визуалом — на всю ширину под медиа */}
+      {post.text && hasVisuals && (
         <div className="px-4">
           <PostBody
             post={post}
@@ -522,6 +526,14 @@ export function PostCard({
             onSummary={onSummary}
             onOpenMore={openFullPost}
           />
+        </div>
+      )}
+
+      {/* Карточки (ссылка/файл/голос/опрос) — под текстом, на всю ширину:
+          линк-превью после текста как в Telegram, без пустот у рельсы */}
+      {hasCards && (
+        <div className="px-4">
+          <PostMediaCards post={post} />
         </div>
       )}
 

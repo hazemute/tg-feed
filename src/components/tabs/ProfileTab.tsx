@@ -141,7 +141,7 @@ export function ProfileTab() {
   const categoryTitle = (slug: string) => categories.find((c) => c.slug === slug)?.title ?? slug
 
   return (
-    <div className="no-scrollbar mx-auto h-full w-full max-w-[680px] overflow-y-auto overscroll-contain pb-28">
+    <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain pb-28">
       {/* Заголовок */}
       <header className="px-4 pb-2 pt-4">
         <h1 className="text-screen-title text-tg-text">Профиль</h1>

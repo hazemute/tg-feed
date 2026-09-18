@@ -17,7 +17,8 @@ import { cn } from '@/lib/utils'
  * пользователя. Markdown в ответах рендерится тем же RichText'ом, что и посты.
  * Нейросеть дешёвая (gemini-2.5-flash-lite через OpenRouter) и знает
  * устройство приложения; сложные обращения эскалируются сотруднику в
- * админ-панель, ответ приходит в этот же чат (поллинг раз в 5с).
+ * админ-панель, ответ приходит в этот же чат (поллинг раз в 1.5с — почти
+ * мгновенно).
  */
 
 type Msg = { id: string; sender: string; text: string; createdAt: string }
@@ -73,14 +74,15 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
     }
   }, [])
 
-  // Открытие: загрузка + подписка на ответы сотрудника (поллинг)
+  // Открытие: загрузка + подписка на ответы сотрудника (быстрый поллинг 1.5с —
+  // ответы почти мгновенные; запрос лёгкий: один тред по индексу)
   useEffect(() => {
     if (!open) return
     setLoaded(false)
     void load()
     const timer = setInterval(() => {
       if (!sending) void load()
-    }, 5_000)
+    }, 1_500)
     return () => clearInterval(timer)
   }, [open])
 

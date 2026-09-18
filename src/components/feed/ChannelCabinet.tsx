@@ -12,7 +12,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { BarChart3, Clock3, Eye, Flame, Heart, Image as ImageIcon, TrendingUp, Users } from 'lucide-react'
+import { BarChart3, Eye, Flame, Heart, Image as ImageIcon, TrendingUp, Users } from 'lucide-react'
 import { api } from '@/lib/api'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
 import type { ChannelStatsDTO, TopPostDTO } from '@/lib/types'
@@ -71,7 +71,7 @@ function BigCell({
   sub?: string
 }) {
   return (
-    <div className="border-tg-sep/60 px-4 py-3.5 odd:border-r [&:nth-child(n+3)]:border-t">
+    <div className="border-tg-sep/60 px-4 py-3 odd:border-r sm:odd:border-r-0 [&:nth-child(n+3)]:border-t sm:[&:nth-child(n+3)]:border-t-0">
       <div className="text-[22px] font-bold leading-none tracking-tight text-tg-text tabular-nums">
         {value}
       </div>
@@ -210,8 +210,8 @@ export function ChannelCabinet({ username }: { username: string }) {
 
   return (
     <div className="pb-2">
-      {/* ===== Обзор: крупные цифры ===== */}
-      <div className="grid grid-cols-2 border-b border-tg-sep/60">
+      {/* ===== Обзор: крупные цифры (одна строка на sm+) ===== */}
+      <div className="grid grid-cols-2 border-b border-tg-sep/60 sm:grid-cols-4 sm:divide-x sm:divide-tg-sep/60">
         <BigCell label="Просмотры всего" value={formatCount(stats.viewsTotal)} sub={`${stats.posts} постов`} />
         <BigCell label="В среднем на пост" value={formatCount(stats.viewsAvg)} sub={`медиана ${formatCount(stats.viewsMedian)}`} />
         <BigCell label="Реакции" value={formatCount(stats.reactionsTotal)} sub={`≈${formatCount(Math.round(stats.reactionsAvg))} на пост`} />
@@ -240,10 +240,12 @@ export function ChannelCabinet({ username }: { username: string }) {
         </div>
       )}
 
+      {/* ===== Секции в 2 колонки на ПК: страница вдвое короче ===== */}
+      <div className="lg:grid lg:grid-cols-2 lg:items-start lg:gap-x-10">
       {/* ===== Динамика просмотров ===== */}
       {stats.series.length >= 2 && (
         <Section title="Динамика просмотров" hint={`последние ${stats.series.length} постов`} icon={TrendingUp}>
-          <div className="h-[168px]" data-noswipe>
+          <div className="h-[150px]" data-noswipe>
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart data={stats.series} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
                 <defs>
@@ -292,29 +294,26 @@ export function ChannelCabinet({ username }: { username: string }) {
         </Section>
       )}
 
-      {/* ===== Лучшее время публикации ===== */}
-      {stats.bestSlot && (
-        <Section title="Лучшее время публикации" hint="по средним просмотрам" icon={Clock3}>
-          <div className="flex items-center gap-3">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-tg-link/10 text-[15px] font-bold text-tg-link">
+      {/* ===== Когда публикует: лучшее время + дни недели + часы ===== */}
+      <Section
+        title="Активность и лучшее время"
+        hint={stats.bestSlot ? `${DOW_FULL[stats.bestSlot.dow]}, ${hh(stats.bestSlot.hour)}–${hh((stats.bestSlot.hour + 3) % 24)} UTC` : 'постов за всю историю'}
+        icon={BarChart3}
+      >
+        {stats.bestSlot && (
+          <div className="mb-3 flex items-center gap-3 rounded-xl bg-tg-link/[0.06] px-3 py-2.5">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-tg-link/10 text-[13px] font-bold text-tg-link">
               {DOW_SHORT[stats.bestSlot.dow]}
             </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-[14.5px] font-semibold capitalize text-tg-text">
-                {DOW_FULL[stats.bestSlot.dow]}, {hh(stats.bestSlot.hour)}–{hh((stats.bestSlot.hour + 3) % 24)} UTC
-              </p>
-              <p className="mt-0.5 text-[12.5px] text-tg-hint tabular-nums">
-                В среднем {formatCount(stats.bestSlot.viewsAvg)} просмотров · {stats.bestSlot.samples}{' '}
-                {pluralRu(stats.bestSlot.samples, 'пост', 'поста', 'постов')}
-              </p>
-            </div>
+            <p className="min-w-0 text-[12.5px] leading-snug text-tg-text2 tabular-nums">
+              Лучший слот: в среднем{' '}
+              <b className="font-semibold text-tg-text">{formatCount(stats.bestSlot.viewsAvg)}</b> просм. ·{' '}
+              {stats.bestSlot.samples}{' '}
+              {pluralRu(stats.bestSlot.samples, 'пост', 'поста', 'постов')}
+            </p>
           </div>
-        </Section>
-      )}
-
-      {/* ===== Когда публикует: дни недели + тепловая карта часов ===== */}
-      <Section title="Активность по дням" hint="постов за всю историю" icon={BarChart3}>
-        <div className="h-[132px]" data-noswipe>
+        )}
+        <div className="h-[110px]" data-noswipe>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={DOW_ORDER.map((dow) => ({
@@ -333,8 +332,8 @@ export function ChannelCabinet({ username }: { username: string }) {
         </div>
 
         {/* Тепловая карта: часы суток UTC × количество постов */}
-        <p className="mb-2 mt-4 text-[12px] font-medium text-tg-hint">Часы суток (UTC)</p>
-        <div className="h-[104px]" data-noswipe>
+        <p className="mb-2 mt-3 text-[12px] font-medium text-tg-hint">Часы суток (UTC)</p>
+        <div className="h-[88px]" data-noswipe>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart
               data={stats.hours.map((h) => ({ name: String(h.hour), count: h.count }))}
@@ -365,7 +364,7 @@ export function ChannelCabinet({ username }: { username: string }) {
         }
         icon={TrendingUp}
       >
-        <div className="h-[96px]" data-noswipe>
+        <div className="h-[84px]" data-noswipe>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={stats.cadence.map((c) => ({ name: c.date.slice(8), count: c.count }))} margin={{ top: 4, right: 4, left: 0, bottom: 0 }}>
               <XAxis dataKey="name" tick={AXIS_TICK} axisLine={false} tickLine={false} interval={6} />
@@ -412,7 +411,6 @@ export function ChannelCabinet({ username }: { username: string }) {
 
       {/* ===== Контент ===== */}
       <Section title="Контент" hint={`${stats.withTextPct}% постов с текстом`} icon={ImageIcon}>
-        {/* Медиа-микс: одна плоская полоса */}
         <div className="flex h-2 overflow-hidden rounded-full bg-tg-sep">
           {stats.mediaMix.map((m, i) => (
             <div
@@ -448,6 +446,7 @@ export function ChannelCabinet({ username }: { username: string }) {
           {stats.lastAt && <FactRow label="Последний пост" value={timeAgoRu(stats.lastAt)} />}
         </dl>
       </Section>
+      </div>
 
       <p className="border-t border-tg-sep/60 px-4 pb-4 pt-3 text-[11.5px] leading-snug text-tg-hint">
         Просмотры и реакции — данные исходного канала Telegram, обновляются при парсинге.

@@ -116,11 +116,11 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
     void loadList()
   }, [loadList, tick])
 
-  // Открытый диалог обновляется каждые 4с (тихо, без мигания) + список раз в 10с
+  // Открытый диалог обновляется каждые 2с (тихо, без мигания) + список раз в 10с
   useEffect(() => {
     if (!selected) return
     void loadThread(selected, true)
-    const t = setInterval(() => void loadThread(selected, true), 4_000)
+    const t = setInterval(() => void loadThread(selected, true), 2_000)
     const l = setInterval(() => void loadList(), 10_000)
     return () => {
       clearInterval(t)

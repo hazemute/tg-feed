@@ -76,7 +76,7 @@ export function MyChannelTab() {
   )
 
   return (
-    <div className="no-scrollbar mx-auto h-full w-full max-w-[680px] overflow-y-auto overscroll-contain px-4 pb-28 pt-5 lg:max-w-[980px] lg:pt-7">
+    <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain px-4 pb-28 pt-5 lg:px-6 lg:pt-7">
       {/* Заголовок */}
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-[26px] font-bold leading-tight text-tg-text">Мой канал</h1>

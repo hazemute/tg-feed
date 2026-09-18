@@ -179,6 +179,16 @@ export default function Home() {
     return () => window.removeEventListener('tgfeed:maintenance', onMaintenance)
   }, [setMaintenance])
 
+  // Прогрев тяжёлых агрегатов ПОСЛЕ первого рендера ленты: к открытию вкладки
+  // «Тренды» серверный кэш уже тёплый — вкладка открывается мгновенно
+  useEffect(() => {
+    if (!authReady || !user) return
+    const t = window.setTimeout(() => {
+      void api<{ pulse?: unknown }>('/api/trending').catch(() => {})
+    }, 2_500)
+    return () => window.clearTimeout(t)
+  }, [authReady, user])
+
   useEffect(() => {
     let cancelled = false
     ;(async () => {
