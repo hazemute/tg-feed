@@ -74,6 +74,26 @@ export function PromoteSheet({
     }
   }, [open])
 
+  // Esc на сайте закрывает панель (на ПК это центрированный диалог)
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
+  // Esc на сайте закрывает панель (на ПК это центрированный диалог)
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   const activeChannelId = channelId || channels[0]?.channelId || ''
   const activeFormat = useMemo(() => FORMATS.find((f) => f.id === format) ?? FORMATS[0], [format])
 
@@ -87,7 +107,7 @@ export function PromoteSheet({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[60] flex flex-col justify-end"
+          className="fixed inset-0 z-[60] flex flex-col justify-end lg:justify-center lg:px-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -101,9 +121,9 @@ export function PromoteSheet({
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 320 }}
-            className="relative mx-auto max-h-[92vh] w-full max-w-[520px] overflow-y-auto rounded-t-3xl bg-tg-bg p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-[0_-8px_40px_rgba(0,0,0,0.18)]"
+            className="relative mx-auto max-h-[92vh] w-full max-w-[520px] overflow-y-auto rounded-t-3xl bg-tg-bg p-5 pb-[max(1.25rem,env(safe-area-inset-bottom))] shadow-[0_-8px_40px_rgba(0,0,0,0.18)] lg:max-h-[86vh] lg:rounded-3xl lg:pb-6 lg:shadow-[0_24px_80px_rgba(0,0,0,0.28)]"
           >
-            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-tg-sep" aria-hidden />
+            <div className="mx-auto mb-4 h-1 w-10 rounded-full bg-tg-sep lg:hidden" aria-hidden />
 
             <div className="flex items-center gap-2.5">
               <span className="flex h-9 w-9 items-center justify-center rounded-full bg-tg-star/15">

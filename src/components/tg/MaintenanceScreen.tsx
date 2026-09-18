@@ -51,7 +51,7 @@ export function MaintenanceScreen({
 
   return (
     <div className="flex h-dvh justify-center bg-tg-bg" role="status" aria-label="Технические работы">
-      <div className="flex h-full w-full max-w-[430px] flex-col items-center justify-center bg-tg-bg px-8 md:border-x md:border-tg-sep">
+      <div className="flex h-full w-full flex-col items-center justify-center bg-tg-bg px-8">
         {/* Иконка: самолётик «на обслуживании» в мягком кольце */}
         <motion.div
           initial={{ scale: 0.7, opacity: 0 }}

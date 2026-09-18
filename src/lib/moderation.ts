@@ -38,6 +38,12 @@ const NSFW_CHANNEL_RE: RegExp[] = [
   // Казино/беттинг-спам (турецкий и ру): KOD ZAMANI, SOSYAL CASINO, HARLEY и т.п.
   /casino|казино|vavada|joycasino|mostbet|1xb(?:e|x)et|melbet|parimatch|fonbet|betting/i,
   /deneme\s?bonusu|bahis\s?siteleri|slot\s?siteleri|kod\s?zaman|güncel\s?giriş|bonus\s?kodları/i,
+  // Турецкий беттинг-промо в названиях/профилях: SKOR BET, VIP ORAN (KOD ZAMANI DUYURU и клоны)
+  /skor\s?bet|vip\s?oran|iddaa\s?kupon|bahis\s?kodu/i,
+  // Китайскоязычные гемблинг-сети ЮВА: 【2028体育】, 东南亚曝光/悬赏, 影视导航 и клоны
+  /体育.{0,6}(?:平台|台)|玩家首选|信誉平台|娱乐城|博彩|老虎机|六合彩|足彩|棋牌游艺/i,
+  /东南亚.{0,12}(?:曝光|悬赏|博彩|娱乐|大事件)/,
+  /影视导航|网址导航|导航喵/,
 ]
 
 /** Пост-паттерны: спам-текст эскорт/18+ рекламы внутри поста. */
@@ -58,6 +64,12 @@ const NSFW_TEXT_RE: RegExp[] = [
   // Казино/беттинг-реклама в постах (в т.ч. легальные каналы, публикующие спам-посты)
   /(?:онлайн\s?)?казино|casino|mostbet|1xb(?:e|x)et|melbet|vavada|pin-?up\s?(?:casino|bet)/i,
   /deneme\s?bonusu|bahis\s?siteleri|slot\s?siteleri|güncel\s?giriş/i,
+  // Турецкий беттинг-промо в постах: «SKOR BET — VIP ORAN 20», купоны
+  /skor\s?bet|vip\s?oran|iddaa|bahis\s?kupon/i,
+  // Китайскоязычный гемблинг-спам: 玩家首选, 信誉平台, 娱乐城, 六合彩 и т.п.
+  /玩家首选|信誉平台|全网最大信誉|娱乐城|博彩|老虎机|六合彩|足彩|棋牌|线上娱乐|体育.{0,4}投/i,
+  // Подавляюще китайский текст (10+ иероглифов подряд) — сети ЮВА; в ру-ленте таких легитимных нет
+  /[一-鿿「」『』。，！？]{10,}/,
 ]
 
 /* ------------------------- JS-проверки (дёшево) ------------------------- */
@@ -113,6 +125,23 @@ export const NSFW_DB_KEYWORDS = [
   'vavada',
   'deneme bonusu',
   'bahis siteleri',
+  'skor bet',
+  'vip oran',
+  'iddaa',
+  // китайскоязычный гемблинг (ЮВА-сети)
+  '玩家首选',
+  '信誉平台',
+  '娱乐城',
+  '博彩',
+  '老虎机',
+  '六合彩',
+  '棋牌',
+  '线上娱乐',
+  // HYIP-пирамиды (уже опубликованные посты не должны показываться)
+  'guaranteed returns',
+  'investment packages',
+  'forex investment',
+  'daily payouts',
 ] as const
 
 /** Ключевые слова для ПОИСКА КАНДИДАТОВ-КАНАЛОВ (шире постовых — «кизлар»
@@ -204,6 +233,18 @@ const AD_CLICHE_RE: RegExp[] = [
   /инвестируй (?:с|в|через)\s+(?:нами|нас|@|\bt\.me\b)/i,
   /подписывайся на (?:наш|нас)\s*(?:канал|бот)/i,
   /покупай (?:со )?скидк(?:ой|ой до)\s?\d{2,}%/i,
+  // Гемблинг-промо любых языков — реклама по определению, в ленту не проходит:
+  /casino|казино|mostbet|1xb(?:e|x)et|melbet|vavada|pin-?up\s?(?:casino|bet)|fonbet|parimatch/i,
+  /deneme\s?bonusu|bahis\s?siteleri|skor\s?bet|vip\s?oran|iddaa/i,
+  /玩家首选|信誉平台|娱乐城|博彩|老虎机|六合彩|线上娱乐/i,
+  /[一-鿿「」『』。，！？]{10,}/,
+  // HYIP-пирамиды: «Invest 10,000 Birr → Earn 180,000», «guaranteed returns»
+  /invest\s+(?:from\s+)?[\d,]{3,}[^.\n]{0,60}(?:→|->|=>)\s*(?:earn|get|receive|profit)/i,
+  /guaranteed\s+(?:returns?|profit|daily)/i,
+  /earn(?:ing)?\s+(?:up\s+to\s+)?\d{3,}\s*%/i,
+  /\bhyip\b|forex\s+investment|investment\s+(?:packages?|plans?\s+for\s+investors)/i,
+  /daily\s+(?:payouts?|profits?\s+of)/i,
+  /удво(?:ю|им|ить)\s+(?:твои|ваш)(?:и)?\s+деньги|быстрый\s+доход\s+без\s+вложений/i,
 ]
 
 /**

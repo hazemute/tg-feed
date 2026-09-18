@@ -15,7 +15,7 @@ const PLANE_PATH =
 export function Splash() {
   return (
     <div className="flex h-dvh justify-center bg-tg-bg" role="status" aria-label="Загрузка приложения">
-      <div className="flex h-full w-full max-w-[430px] flex-col items-center justify-center bg-tg-bg md:border-x md:border-tg-sep">
+      <div className="flex h-full w-full flex-col items-center justify-center bg-tg-bg px-8">
         {/* Самолётик: мягкий влёт по дуге → полёт на месте (стыка нет:
             покачивание стартует ровно из конечной позы влёта) */}
         <div className="flex h-44 w-64 items-center justify-center">
