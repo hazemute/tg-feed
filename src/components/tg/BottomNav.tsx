@@ -1,6 +1,6 @@
 'use client'
 
-import { Flame, Home, Radio, Search, UserRound } from 'lucide-react'
+import { Flame, Home, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -8,11 +8,12 @@ import { useT } from '@/lib/i18n'
 import { haptic } from '@/lib/tg'
 import type { Tab } from '@/lib/types'
 
-const items: { id: Tab; labelKey: 'nav.feed' | 'nav.trending' | 'nav.search' | 'nav.channel' | 'nav.profile'; icon: typeof Home }[] = [
+/* «Мой канал» убран из навигации (запрос владельца: разгрузка интерфейса) —
+ * строка «Мой канал» переехала в низ профиля. */
+const items: { id: Tab; labelKey: 'nav.feed' | 'nav.trending' | 'nav.search' | 'nav.profile'; icon: typeof Home }[] = [
   { id: 'feed', labelKey: 'nav.feed', icon: Home },
   { id: 'trending', labelKey: 'nav.trending', icon: Flame },
   { id: 'search', labelKey: 'nav.search', icon: Search },
-  { id: 'mychannel', labelKey: 'nav.channel', icon: Radio },
   { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]
 

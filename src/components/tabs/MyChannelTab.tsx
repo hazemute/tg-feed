@@ -29,6 +29,7 @@ import { useApp } from '@/lib/store'
 import { formatCount } from '@/lib/format'
 import { formatSwipes, pluralSwipes } from '@/lib/money'
 import { haptic, openTelegram } from '@/lib/tg'
+import { useT } from '@/lib/i18n'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
@@ -48,11 +49,26 @@ const DISPLAY_MODES = [
   { id: 'blur', label: 'Блюр', icon: EyeOff, hint: 'весь текст размыт до подписки' },
 ] as const
 
+/**
+ * Вкладки кабинета (приказ владельца: «вкладки на странице Мой канал»,
+ * вместо бесконечной простыни): Аналитика · Показ в ленте · Продвижение.
+ * Шапка канала видна всегда, контент — по вкладке; полоса вкладок липкая.
+ */
+const MC_TABS = [
+  { key: 'stats', labelKey: 'mc.tabStats' },
+  { key: 'display', labelKey: 'mc.tabDisplay' },
+  { key: 'ads', labelKey: 'mc.tabAds' },
+] as const
+
+type McTab = (typeof MC_TABS)[number]['key']
+
 export function MyChannelTab() {
   const { user } = useApp()
   const [data, setData] = useState<MyChannelResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeId, setActiveId] = useState<string | null>(null)
+  const [tab, setTab] = useState<McTab>('stats')
+  const t = useT()
 
   const load = useCallback(async () => {
     try {
@@ -123,11 +139,60 @@ export function MyChannelTab() {
           )}
 
           <ChannelHero channel={channel!} onReload={load} />
-          {/* Большой дашборд именно этого канала (просмотры, ER, динамика,
-              лучшее время, ритм, топ постов) — плоский, без карточек */}
-          <ChannelCabinet key={channel!.username} username={channel!.username} />
-          <DisplaySection channel={channel!} onSaved={load} />
-          <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />
+
+          {/* ВКЛАДКИ (приказ владельца): Аналитика / Показ / Продвижение.
+              Липкая полоса — при прокрутке держится у верха кабинета. */}
+          <div className="sticky top-0 z-10 -mx-4 border-b border-tg-sep/60 bg-tg-bg/95 px-4 backdrop-blur lg:-mx-6 lg:px-6">
+            <div className="flex" role="tablist" aria-label={t('mc.tabsAria')}>
+              {MC_TABS.map((tb) => {
+                const active = tab === tb.key
+                return (
+                  <button
+                    key={tb.key}
+                    type="button"
+                    role="tab"
+                    aria-selected={active}
+                    onClick={() => {
+                      if (!active) {
+                        haptic('light')
+                        setTab(tb.key)
+                      }
+                    }}
+                    className={cn(
+                      'relative min-h-[46px] flex-1 px-2 text-[14px] font-semibold transition-colors',
+                      active ? 'text-tg-link' : 'text-tg-hint active:opacity-70',
+                    )}
+                  >
+                    {t(tb.labelKey)}
+                    {active && (
+                      <motion.span
+                        layoutId="mc-tab-underline"
+                        className="absolute inset-x-5 bottom-0 h-[2.5px] rounded-t-full bg-tg-link"
+                        transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                      />
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Контент вкладки (key — чтобы анимация не переезжала между вкладками) */}
+          <motion.div
+            key={tab}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="pt-4"
+          >
+            {tab === 'stats' && (
+              /* Большой дашборд именно этого канала (просмотры, ER, динамика,
+                  лучшее время, ритм, топ постов) — плоский, без карточек */
+              <ChannelCabinet key={channel!.username} username={channel!.username} />
+            )}
+            {tab === 'display' && <DisplaySection channel={channel!} onSaved={load} />}
+            {tab === 'ads' && <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />}
+          </motion.div>
         </div>
       )}
       </div>

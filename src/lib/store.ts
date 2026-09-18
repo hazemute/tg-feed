@@ -36,6 +36,10 @@ interface AppState {
   openComments: (post: PostDTO) => void
   closeComments: () => void
   patchCommentsPost: (postId: string, commentsCount: number) => void
+  shareSheetPost: PostDTO | null // пост для шита «Поделиться» (не сбрасывается при закрытии — нужна анимация выхода)
+  shareSheetOpen: boolean
+  openShareSheet: (post: PostDTO) => void
+  closeShareSheet: () => void
   setUser: (u: UserDTO | null) => void
   setAuthReady: (v: boolean) => void
   setTab: (t: Tab) => void
@@ -55,7 +59,7 @@ interface AppState {
   clearSearchSeed: () => void
 }
 
-const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
+const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'profile']
 
 export const useApp = create<AppState>((set, get) => ({
   user: null,
@@ -96,6 +100,10 @@ export const useApp = create<AppState>((set, get) => ({
         ? { commentsPost: { ...s.commentsPost, commentsCount } }
         : s,
     ),
+  shareSheetPost: null,
+  shareSheetOpen: false,
+  openShareSheet: (post) => set({ shareSheetPost: post, shareSheetOpen: true }),
+  closeShareSheet: () => set({ shareSheetOpen: false }),
   setUser: (user) => set({ user, interests: user?.categories ?? [] }),
   setAuthReady: (authReady) => set({ authReady }),
   setTab: (tab) => set({ tab }),

@@ -1,14 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Camera, Eye, EyeOff, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
+import { Eye, EyeOff, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
 import { api } from '@/lib/api'
 import { formatCount, timeAgo } from '@/lib/format'
-import { haptic, openTelegram, sharePost, sharePostToStory } from '@/lib/tg'
+import { haptic, openTelegram } from '@/lib/tg'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
@@ -219,45 +219,12 @@ function PostBody({
 }
 
 /**
- * Кнопка «В историю»: камера в градиентном кольце (язык Stories, как в
- * Instagram/Telegram) — открывает нативный редактор сторис Telegram
- * со стилизованной картинкой поста (/api/story) и кликабельной ссылкой
- * на бота. Рядом подпись-счётчик не нужна.
- */
-export function StoryButton({ postId, title, onClick }: { postId: string; title: string; onClick?: () => void }) {
-  const t = useT()
-  return (
-    <button
-      type="button"
-      data-noswipe
-      onClick={() => {
-        haptic('light')
-        onClick?.()
-        void sharePostToStory(postId, title)
-      }}
-      aria-label={t('post.storyAria')}
-      title={t('post.storyAria')}
-      className="flex items-center gap-1.5 rounded-xl py-1.5 pr-1.5 transition active:scale-90 active:bg-tg-sep/40"
-    >
-      <span
-        aria-hidden
-        className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-gradient-to-tr from-tg-star to-tg-link p-[2.5px]"
-      >
-        <span className="flex size-full items-center justify-center rounded-full bg-tg-bg">
-          <Camera className="h-[14px] w-[14px] text-tg-link" strokeWidth={2.2} />
-        </span>
-      </span>
-      <span className="text-[13px] font-medium leading-none text-tg-text2">{t('post.story')}</span>
-    </button>
-  )
-}
-
-/**
  * Горизонтальный ряд действий для ТЕКСТОВЫХ постов (без медиа).
  * Жалоба владельца: у коротких постов рядом с высоким вертикальным рельсом
  * оставалось огромное пустое место (рельс ~220px против текста в 1-3 строки).
- * Горизонтальный ряд под текстом (как в X/Telegram) убирает пустоту полностью
- * и добавляет кнопку «В историю».
+ * Горизонтальный ряд под текстом (как в X/Telegram) убирает пустоту полностью.
+ * Кнопка «В историю» уехала в шит «Поделиться» — владелец: она нужна нечасто,
+ * а отдельная кнопка перегружала ряд (бардак из подписей на узких экранах).
  */
 function TextActionsRow({
   post,
@@ -270,6 +237,7 @@ function TextActionsRow({
 }) {
   const t = useT()
   const openComments = useApp((s) => s.openComments)
+  const openShareSheet = useApp((s) => s.openShareSheet)
   return (
     <div className="mt-1 flex items-center justify-between pr-2" aria-label={t('card.actions')}>
     <motion.button
@@ -338,11 +306,13 @@ function TextActionsRow({
           </span>
         )}
       </button>
-      <StoryButton postId={post.id} title={post.channel.title} />
       <button
         type="button"
         data-noswipe
-        onClick={() => sharePost(post.link, post.channel.title, post.id)}
+        onClick={() => {
+          haptic('light')
+          openShareSheet(post)
+        }}
         aria-label={t('post.share')}
         className="flex min-h-[44px] items-center py-1.5"
       >
@@ -417,6 +387,7 @@ export function PostCard({
   const openChannel = useApp((s) => s.openChannel)
   const openPost = useApp((s) => s.openPost)
   const openComments = useApp((s) => s.openComments)
+  const openShareSheet = useApp((s) => s.openShareSheet)
   const t = useT()
   const lang = useApp((s) => s.lang)
   const user = useApp((s) => s.user)
@@ -628,7 +599,7 @@ export function PostCard({
             <RailButton
               icon={Forward}
               label={t('post.share')}
-              onClick={() => sharePost(post.link, ch.title, post.id)}
+              onClick={() => openShareSheet(post)}
             />
           </div>
         </div>

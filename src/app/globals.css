@@ -549,10 +549,17 @@ html[data-platform='web'] .feed-col {
   max-width: 720px;
 }
 
-/* Веб-браузер: аккуратный тонкий скроллбар вместо «жирного» системного */
-html[data-platform='web'] * {
-  scrollbar-width: thin;
-  scrollbar-color: var(--tg-sep, #e6e6e6) transparent;
+/* СКРЫТЫЕ СКРОЛЛБАРЫ ВЕЗДЕ (приказ владельца: «спрячь все скролы, так не красиво»):
+ * прокрутка работает как раньше (колесо/тач/трекпад), но полос не видно.
+ * Firefox — scrollbar-width: none; WebKit/Chromium — display: none. */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 button {
@@ -590,22 +597,5 @@ button {
   animation: tg-shimmer 1.5s ease-in-out infinite;
 }
 
-/* Тонкий тёмный скроллбар для админ-панели (только .admin-scroll, мини-апп не затронут) */
-.admin-scroll {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(148, 163, 184, 0.28) transparent;
-}
-.admin-scroll::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-.admin-scroll::-webkit-scrollbar-track {
-  background: transparent;
-}
-.admin-scroll::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.28);
-  border-radius: 8px;
-}
-.admin-scroll::-webkit-scrollbar-thumb:hover {
-  background: rgba(148, 163, 184, 0.45);
-}
+/* Тонкий тёмный скроллбар админ-панели ОТМЕНЁН: владелец просил прятать
+ * ВСЕ скроллбары — глобальное правило выше перекрывает и админку. */

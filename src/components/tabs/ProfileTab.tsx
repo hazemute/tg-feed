@@ -10,6 +10,7 @@ import {
   Lightbulb,
   Loader2,
   MousePointerClick,
+  Radio,
   Send,
   Settings,
   ShieldCheck,
@@ -61,6 +62,11 @@ export function ProfileTab() {
   const [aboutOpen, setAboutOpen] = useState(false)
   const [privacyOpen, setPrivacyOpen] = useState(false)
   const [termsOpen, setTermsOpen] = useState(false)
+  // Меню-шиты (разгрузка профиля, приказ владельца): вместо пяти отдельных строк
+  // в списке — две обзорные кнопки «Информация» и «Обратная связь», а конкретные
+  // разделы открываются уже внутри них
+  const [infoMenuOpen, setInfoMenuOpen] = useState(false)
+  const [feedbackMenuOpen, setFeedbackMenuOpen] = useState(false)
   // Шит входа глобальный (zustand): открывается и отсюда, и из шторки лайка/закладки
   const loginOpen = useApp((s) => s.loginOpen)
   const setLoginOpen = useApp((s) => s.setLoginOpen)
@@ -439,62 +445,58 @@ export function ProfileTab() {
             }
             onClick={() => setThemesOpen(true)}
           />
+          {/* Одна строка вместо трёх: соглашение/конфиденциальность/о приложении —
+              внутри шита «Информация» (приказ владельца: разгрузить профиль) */}
           <SettingRow
-            icon={<FileText className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label="Пользовательское соглашение"
+            icon={<Info className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label={t('profile.infoRow')}
             right={
               <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
-                валюта и условия
+                {t('profile.infoHint')}
                 <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
               </span>
             }
-            onClick={() => setTermsOpen(true)}
-          />
-          <SettingRow
-            icon={<ShieldCheck className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label="Конфиденциальность"
-            onClick={() => setPrivacyOpen(true)}
-          />
-          <SettingRow
-            icon={<Info className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label="О приложении"
-            onClick={() => setAboutOpen(true)}
+            onClick={() => setInfoMenuOpen(true)}
+            last
           />
         </div>
       </section>
 
-      {/* Поддержка — в самом низу профиля */}
+      {/* Мой канал — из навбара переехал в низ профиля (приказ владельца) */}
+      <section className="pt-7">
+        <h2 className="px-4 text-[19px] font-bold text-tg-text">Каналы</h2>
+        <div className="mt-1">
+          <SettingRow
+            icon={<Radio className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label={t('profile.myChannelRow')}
+            right={
+              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
+                {t('profile.myChannelHint')}
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              haptic('light')
+              setTab('mychannel')
+            }}
+          />
+        </div>
+      </section>
+
+      {/* Обратная связь — одна кнопка вместо двух, разделы внутри шита */}
       <section className="pt-7 pb-6">
-        <h2 className="px-4 text-[19px] font-bold text-tg-text">{t('support.section')}</h2>
+        <h2 className="px-4 text-[19px] font-bold text-tg-text">{t('profile.fbSheet')}</h2>
         <div className="mt-1">
           <SettingRow
             icon={<Headset className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label={t('support.profileRow')}
+            label={t('profile.fbRow')}
             right={
-              <span className="flex items-center gap-1 text-[15px] text-tg-hint">
-                {t('support.profileHint')}
+              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
+                {t('profile.fbHint')}
                 <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
               </span>
             }
-            onClick={() => {
-              haptic('light')
-              setSupportOpen(true)
-            }}
-            last={false}
-          />
-          <SettingRow
-            icon={<Lightbulb className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label={t('feedback.title')}
-            right={
-              <span className="flex items-center gap-1 text-[15px] text-tg-hint">
-                {t('feedback.subtitleIdle')}
-                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
-              </span>
-            }
-            onClick={() => {
-              haptic('light')
-              setFeedbackOpen(true)
-            }}
+            onClick={() => setFeedbackMenuOpen(true)}
             last
           />
         </div>
@@ -619,6 +621,89 @@ export function ProfileTab() {
               у авторов каналов. Скрыть свой канал из ленты можно по обращению в поддержку.
             </p>
           </section>
+        </div>
+      </BottomSheet>
+
+      {/* Меню «Информация»: соглашение, конфиденциальность, о приложении */}
+      <BottomSheet
+        open={infoMenuOpen}
+        onClose={() => setInfoMenuOpen(false)}
+        title={t('profile.infoSheet')}
+        subtitle={t('profile.infoSheetSub')}
+      >
+        <div className="-mx-2">
+          <SettingRow
+            icon={<FileText className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label="Пользовательское соглашение"
+            right={
+              <span className="flex items-center gap-0.5 text-[14px] text-tg-hint">
+                валюта и условия
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              setInfoMenuOpen(false)
+              setTermsOpen(true)
+            }}
+          />
+          <SettingRow
+            icon={<ShieldCheck className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label="Конфиденциальность"
+            onClick={() => {
+              setInfoMenuOpen(false)
+              setPrivacyOpen(true)
+            }}
+          />
+          <SettingRow
+            icon={<Info className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label="О приложении"
+            onClick={() => {
+              setInfoMenuOpen(false)
+              setAboutOpen(true)
+            }}
+            last
+          />
+        </div>
+        <p className="mt-2 px-2 text-[12.5px] text-tg-hint">Tg Swipe · версия {APP_VERSION}</p>
+      </BottomSheet>
+
+      {/* Меню «Обратная связь»: поддержка и предложка/баги */}
+      <BottomSheet
+        open={feedbackMenuOpen}
+        onClose={() => setFeedbackMenuOpen(false)}
+        title={t('profile.fbSheet')}
+        subtitle={t('profile.fbSheetSub')}
+      >
+        <div className="-mx-2">
+          <SettingRow
+            icon={<Headset className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label={t('support.profileRow')}
+            right={
+              <span className="flex items-center gap-0.5 text-[14px] text-tg-hint">
+                {t('support.profileHint')}
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              setFeedbackMenuOpen(false)
+              setSupportOpen(true)
+            }}
+          />
+          <SettingRow
+            icon={<Lightbulb className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label={t('feedback.title')}
+            right={
+              <span className="flex items-center gap-0.5 text-[14px] text-tg-hint">
+                {t('feedback.subtitle')}
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              setFeedbackMenuOpen(false)
+              setFeedbackOpen(true)
+            }}
+            last
+          />
         </div>
       </BottomSheet>
 

@@ -267,12 +267,12 @@ export async function sharePost(link: string | null, title: string, postId?: str
 }
 
 /**
- * ПОДЕЛИТЬСЯ ПОСТОМ В TELEGRAM STORIES (запрос владельца, п.4): генерируем
- * стилизованную картинку поста (/api/story?id=... — PNG 1080×1920 с плашкой
- * Tg Swipe), открываем нативный редактор сторис через WebApp.shareToStory();
- * Telegram вешает на сторис КЛИКАБЕЛЬНУЮ ссылку на бота (widget_link) —
- * друзья переходят в приложение.
- * На старых клиентах без shareToStory — фолбэк: обычный репост ссылкой.
+ * ПОДЕЛИТЬСЯ ПОСТОМ В TELEGRAM STORIES: генерируем стилизованную картинку
+ * поста (/api/story?id=... — PNG 1080×1920 с аватаркой канала, markdown
+ * текста, медиа и плашкой подписки), открываем нативный редактор сторис
+ * через WebApp.shareToStory(). Виджет-ссылка (кликабельная плашка «Подписаться»
+ * под сторис) ведёт на канал владельца t.me/SnapTeamDev; подпись — с той же
+ * ссылкой. На старых клиентах без shareToStory — фолбэк: обычный репост.
  */
 export async function sharePostToStory(postId: string, title: string) {
   const origin = typeof location !== 'undefined' && location.origin.startsWith('http') ? location.origin : 'https://tg-swipe.vercel.app'
@@ -281,8 +281,8 @@ export async function sharePostToStory(postId: string, title: string) {
   if (w?.shareToStory) {
     try {
       w.shareToStory(media, {
-        text: `Пост канала «${title}» в Tg Swipe`,
-        widget_link: { url: 'https://t.me/tgswipe_bot', name: 'Tg Swipe' },
+        text: `🔥 «${title}» — читаю в Tg Swipe\nПодписывайся: https://t.me/SnapTeamDev`,
+        widget_link: { url: 'https://t.me/SnapTeamDev', name: 'SnapTeam · Подписаться' },
       })
       return
     } catch {

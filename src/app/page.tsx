@@ -21,6 +21,7 @@ import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { FeedView } from '@/components/feed/FeedView'
 import { ChannelSheet } from '@/components/feed/ChannelSheet'
 import { PostOverlay } from '@/components/feed/PostOverlay'
+import { ShareSheet } from '@/components/feed/ShareSheet'
 import { TrendingTab } from '@/components/tabs/TrendingTab'
 import { SearchTab } from '@/components/tabs/SearchTab'
 import { MyChannelTab } from '@/components/tabs/MyChannelTab'
@@ -296,6 +297,9 @@ export default function Home() {
           <PostOverlay />
         </div>
       </div>
+      {/* Шит «Поделиться»: Telegram / В историю / Копировать ссылку —
+          глобальный (лента, полный экран поста, экран канала) */}
+      <ShareSheet />
       {/* Ленивая регистрация: шторка «привяжи Telegram» при лайке/закладке гостя
           и глобальный шит входа (открывается из любого места приложения) */}
       <AuthGateSheet />

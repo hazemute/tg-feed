@@ -1,14 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bookmark, Camera, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
+import { ArrowLeft, Bookmark, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { fullDateLocalized, useT } from '@/lib/i18n'
-import { haptic, openTelegram, sharePost, sharePostToStory, useBackButton } from '@/lib/tg'
+import { haptic, openTelegram, useBackButton } from '@/lib/tg'
 import { formatCount, timeAgoRu } from '@/lib/format'
 import { stripMarkdown } from '@/lib/markdown'
 import type { PostDTO } from '@/lib/types'
@@ -121,6 +121,7 @@ export function PostOverlay() {
   const openChannel = useApp((s) => s.openChannel)
   const openAuthGate = useApp((s) => s.openAuthGate)
   const openComments = useApp((s) => s.openComments)
+  const openShareSheet = useApp((s) => s.openShareSheet)
   const user = useApp((s) => s.user)
   const open = !!post
   const t = useT()
@@ -561,46 +562,16 @@ export function PostOverlay() {
               </button>
               <button
                 type="button"
-                onClick={() => sharePost(current.link, ch.title, current.id)}
+                onClick={() => {
+                  haptic('light')
+                  openShareSheet(current)
+                }}
                 aria-label={t('post.shareAria')}
                 className="flex items-center gap-1.5 py-1.5"
               >
                 <Forward className="h-[23px] w-[23px] text-tg-text" strokeWidth={1.7} />
                 <span className="text-[13px] font-medium text-tg-text2">{t('post.share')}</span>
               </button>
-              {/* Поделиться в Telegram Stories: картинка поста + кликабельная ссылка на бота */}
-              <button
-                type="button"
-                onClick={() => {
-                  haptic('light')
-                  void sharePostToStory(current.id, ch.title)
-                }}
-                aria-label={t('post.storyAria')}
-                title={t('post.storyAria')}
-                className="flex items-center gap-1.5 py-1.5"
-              >
-                <span
-                  aria-hidden
-                  className="flex h-[23px] w-[23px] items-center justify-center rounded-full bg-gradient-to-tr from-tg-star to-tg-link p-[2px]"
-                >
-                  <span className="flex size-full items-center justify-center rounded-full bg-tg-bg">
-                    <Camera className="h-[13px] w-[13px] text-tg-link" strokeWidth={2.2} />
-                  </span>
-                </span>
-                <span className="text-[13px] font-medium text-tg-text2">{t('post.story')}</span>
-              </button>
-              <a
-                href={current.link || `https://t.me/${ch.username}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => haptic('light')}
-                className="flex items-center gap-1.5 py-1.5"
-              >
-                <svg viewBox="0 0 24 24" className="h-[22px] w-[22px] fill-tg-link" aria-hidden>
-                  <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.562 8.161-1.86 8.766c-.14.62-.51.772-1.032.48l-2.85-2.1-1.376 1.324c-.152.152-.28.28-.574.28l.204-2.9 5.286-4.774c.23-.204-.05-.318-.354-.114l-6.534 4.112-2.814-.88c-.612-.192-.624-.612.128-.906l11.004-4.244c.51-.192.956.114.772.956z" />
-                </svg>
-                <span className="text-[13px] font-medium text-tg-text2">Telegram</span>
-              </a>
             </div>
           </nav>
         </motion.div>
