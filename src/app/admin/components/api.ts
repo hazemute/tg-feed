@@ -201,6 +201,11 @@ export interface PanelHealth {
   version: string
   uptimeSec: number
   time: string
+  /** Глобальная пауза Bot API после 429 (сек до снятия; 0 — нет) */
+  botBanSec?: number
+  /** Активные каналы без карточки (подписчики/аватар) — прогресс бэкфилла */
+  channelsMissingCards?: number
+  channelsTotal?: number
   env: PanelHealthEnv
 }
 

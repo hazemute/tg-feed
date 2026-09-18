@@ -358,6 +358,35 @@ function healthRows(h: PanelHealth): { label: string; value: ReactNode }[] {
       label: 'Bot username',
       value: h.botUsername ? mono(`@${h.botUsername}`) : <span className="text-xs text-slate-500">—</span>,
     },
+    {
+      label: 'Флуд-бан Bot API',
+      value:
+        h.botBanSec && h.botBanSec > 0 ? (
+          <span className="text-xs font-semibold text-amber-600">
+            пауза {fmtUptime(h.botBanSec)}
+          </span>
+        ) : (
+          <BoolBadge value={true} trueText="нет" falseText="да" />
+        ),
+    },
+    {
+      label: 'Карточки каналов',
+      value:
+        typeof h.channelsMissingCards === 'number' && typeof h.channelsTotal === 'number' ? (
+          <span className="text-xs text-slate-700">
+            {h.channelsMissingCards === 0 ? (
+              <span className="font-semibold text-emerald-600">все заполнены</span>
+            ) : (
+              <>
+                не хватает <b className="font-semibold">{h.channelsMissingCards}</b> из{' '}
+                {h.channelsTotal}
+              </>
+            )}
+          </span>
+        ) : (
+          <span className="text-xs text-slate-500">—</span>
+        ),
+    },
     { label: 'Сессии', value: mono(h.session || '—') },
     { label: 'Версия', value: mono(h.version || '—') },
     { label: 'Uptime', value: <span className="text-xs text-slate-700">{fmtUptime(h.uptimeSec)}</span> },

@@ -33,6 +33,21 @@ export async function GET(request: Request) {
   const bot = botEnabled()
   const botUsername = bot ? await getBotUsername() : null
 
+  // Прогресс бэкфилла карточек: сколько активных каналов ещё без реального
+  // числа подписчиков/аватара (заполняется тиками Bot API)
+  let channelsMissingCards = 0
+  let channelsTotal = 0
+  try {
+    const [miss, tot] = await Promise.all([
+      db.channel.count({ where: { status: 'active', OR: [{ membersCount: null }, { photoFileId: null }] } }),
+      db.channel.count({ where: { status: 'active' } }),
+    ])
+    channelsMissingCards = miss
+    channelsTotal = tot
+  } catch {
+    // БД моргнула — поля останутся 0
+  }
+
   return NextResponse.json(
     {
       ok: dbOk,
@@ -40,6 +55,8 @@ export async function GET(request: Request) {
       bot,
       botUsername,
       botBanSec: await botBanRemainSecAsync(),
+      channelsMissingCards,
+      channelsTotal,
       session: 'jwt',
       version: APP_VERSION,
       uptimeSec: Math.round(process.uptime()),
