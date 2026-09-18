@@ -63,7 +63,7 @@ export async function POST(request: Request, ctx: Ctx) {
     const parsed = replySchema.safeParse(await request.json().catch(() => null))
     if (!parsed.success) return err('text required (1..2000)')
 
-    const thread = await db.supportThread.findUnique({ where: { id }, select: { id: true, status: true } })
+    const thread = await db.supportThread.findUnique({ where: { id }, select: { id: true, status: true, userId: true } })
     if (!thread) return err('thread not found', 404)
 
     const msg = await db.supportMessage.create({
@@ -73,6 +73,19 @@ export async function POST(request: Request, ctx: Ctx) {
       where: { id },
       data: { status: 'human', unreadUser: { increment: 1 }, unreadAdmin: 0, lastMessageAt: new Date() },
     })
+
+    // Уведомление пользователю: поддержка ответила (инбокс «Активность»).
+    // Fire-and-forget: ответ сотруднику не должен ждать запись нотификации.
+    void db.notification
+      .create({
+        data: {
+          userId: thread.userId,
+          type: 'support',
+          title: 'Поддержка',
+          body: parsed.data.text.slice(0, 200),
+        },
+      })
+      .catch((e: unknown) => console.error('[panel/support notify]', e))
 
     return NextResponse.json({
       ok: true,

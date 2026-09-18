@@ -83,10 +83,20 @@ const CHANNEL_BOOST = 22
 const CATEGORY_BOOST = 10
 const SUBSCRIBED_BOOST = 12
 const VIEWED_PENALTY = 5000 // гарантированно вниз, но пост не теряется совсем
+const NOT_INTERESTED_PENALTY = 900 // «Не интересно» у канала — почти вниз, но лента не пустеет
+const EXPLORATION_BONUS = 7 // неизведанная категория — шанс пробиться в ленту (микро-открытия)
 
 /**
  * Персональная прибавка к глобальному весу поста.
  * affinity.categories ключуется по ID категории (null — нейтрально).
+ *
+ * notInterested — канал, который пользователь скрыл кнопкой «Не интересно»:
+ * посты канала не удаляются из ленты совсем (иначе лента скукоживается),
+ * но уходят в самый хвост и возвращаются только когда нового мало.
+ *
+ * Exploration: категория, с которой НЕ было взаимодействий, получает небольшой
+ * бонус — лента периодически приносит что-то новое вместо замыкания на
+ * привычных каналах (эффект «открывашки» TikTok/Дзена, но мягче).
  */
 export function personalBoost(opts: {
   channelId: string
@@ -94,17 +104,34 @@ export function personalBoost(opts: {
   subscribed: boolean
   viewed: boolean
   affinity: AffinityMap
+  notInterested?: boolean
 }): number {
   const channelAff = opts.affinity.channels.get(opts.channelId) ?? 0
   // логарифм: 1-е взаимодействия важны, 100-й просмотр того же канала не должен
   // вытеснить весь остальной контент
   const channelScore = Math.log1p(channelAff) * CHANNEL_BOOST
-  const categoryScore = opts.categoryId
-    ? Math.log1p(opts.affinity.categories.get(opts.categoryId) ?? 0) * CATEGORY_BOOST
+  const categoryAff = opts.categoryId
+    ? (opts.affinity.categories.get(opts.categoryId) ?? 0)
     : 0
+  const categoryScore = Math.log1p(categoryAff) * CATEGORY_BOOST
   const subScore = opts.subscribed ? SUBSCRIBED_BOOST : 0
   const viewedPenalty = opts.viewed ? VIEWED_PENALTY : 0
-  return channelScore + categoryScore + subScore - viewedPenalty
+  const notInterestedPenalty = opts.notInterested ? NOT_INTERESTED_PENALTY : 0
+  // Бонус открытия действует, только когда у пользователя уже есть история:
+  // у новорождённого аккаунта все категории «неизведанные» — бонус не нужен
+  const hasHistory = opts.affinity.channels.size > 0 || opts.affinity.categories.size > 0
+  const exploration =
+    hasHistory && !opts.viewed && categoryAff === 0 && opts.categoryId !== null
+      ? EXPLORATION_BONUS
+      : 0
+  return (
+    channelScore +
+    categoryScore +
+    subScore +
+    exploration -
+    viewedPenalty -
+    notInterestedPenalty
+  )
 }
 
 /**

@@ -526,7 +526,7 @@ function TableView({ block }: { block: Extract<Block, { type: 'table' }> }) {
   )
 }
 
-function BlockView({ block, first }: { block: Block; first: boolean }) {
+function BlockView({ block, first, trailing }: { block: Block; first: boolean; trailing?: React.ReactNode }) {
   const inner = (() => {
     switch (block.type) {
       case 'p':
@@ -535,6 +535,9 @@ function BlockView({ block, first }: { block: Block; first: boolean }) {
             {block.spans.map((s, j) => (
               <SpanView key={j} span={s} />
             ))}
+            {/* Инлайн-кнопка «еще» в конце обрезанного превью — в той же строке,
+                что и последнее слово (как в Telegram), без наложения градиента */}
+            {trailing}
           </div>
         )
       case 'heading':
@@ -558,15 +561,38 @@ function BlockView({ block, first }: { block: Block; first: boolean }) {
 
 /**
  * Полный рендер поста (маркдаун + хэштеги). Контейнер — <div> с измеримой
- * высотой: clamp «...еще» в PostCard меряет scrollHeight этого div.
+ * высотой: clamp «еще» в PostCard меряет высоту этого div.
+ *
+ * trailing — узел, дописываемый В КОНЕЦ последнего абзаца (кнопка «еще»
+ * обрезанного превью стоит сразу за последним словом, на той же строке;
+ * если последний блок не абзац — узел встаёт после блоков, отдельной строкой).
  */
-export function RichText({ text, className }: { text: string; className?: string }) {
+export function RichText({
+  text,
+  className,
+  trailing,
+}: {
+  text: string
+  className?: string
+  trailing?: React.ReactNode
+}) {
   const blocks = blocksOf(text)
+  // Последний абзац — единственное место, где trailing встаёт в ту же строку
+  let trailingAt = -1
+  if (trailing) {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i].type === 'p') {
+        trailingAt = i
+        break
+      }
+    }
+  }
   return (
     <div className={cn('text-post break-words text-tg-text', className)}>
       {blocks.map((b, i) => (
-        <BlockView key={i} block={b} first={i === 0} />
+        <BlockView key={i} block={b} first={i === 0} trailing={i === trailingAt ? trailing : undefined} />
       ))}
+      {trailing && trailingAt === -1 && <div className="mt-1">{trailing}</div>}
     </div>
   )
 }

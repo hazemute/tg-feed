@@ -77,6 +77,8 @@ export function MyChannelTab() {
 
   return (
     <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain px-4 pb-28 pt-5 lg:px-6 lg:pt-7">
+      {/* Центрированная колонка: кабинет не растягивается на весь широкий экран */}
+      <div className="mx-auto w-full max-w-[960px]">
       {/* Заголовок */}
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-[26px] font-bold leading-tight text-tg-text">Мой канал</h1>
@@ -128,6 +130,7 @@ export function MyChannelTab() {
           <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />
         </div>
       )}
+      </div>
     </div>
   )
 }

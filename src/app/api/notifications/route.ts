@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import type { NotificationGroupDTO, NotificationPostDTO } from '@/lib/types'
+import type { NotificationDTO, NotificationGroupDTO, NotificationPostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,7 +39,8 @@ function truncate(s: string, max = PREVIEW_LEN): string {
 }
 
 /**
- * GET /api/notifications — новые посты каналов с включённым колокольчиком.
+ * GET /api/notifications — новые посты каналов с включённым колокольчиком
+ * + инбокс активности (комментарии/поддержка/кампании — таблица Notification).
  * Пользователь берётся из Bearer-сессии; лимит 60 запросов в минуту.
  *
  * Окно «нового»: user.lastSeenNotifiedAt ?? now−48ч.
@@ -60,14 +61,39 @@ export async function GET(request: Request) {
 
     const since = user.lastSeenNotifiedAt ?? new Date(Date.now() - DEFAULT_WINDOW_MS)
 
-    // Каналы пользователя с включённым колокольчиком (JOIN через Subscription)
+    // Активность (инбокс) считается всегда — и для юзеров без подписок тоже:
+    // ответы поддержки не должны зависеть от колокольчиков каналов
     const subs = await db.subscription.findMany({
       where: { userId, notify: true },
       select: { channelId: true },
     })
     const channelIds = subs.map((s) => s.channelId)
+
+    const unreadActivity = await db.notification.count({ where: { userId, readAt: null } })
+    const activityRows = await db.notification.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 20,
+    })
+    const activity: NotificationDTO[] = activityRows.map((n) => ({
+      id: n.id,
+      type: (n.type as NotificationDTO['type']) ?? 'system',
+      title: n.title,
+      body: n.body,
+      postId: n.postId,
+      channelUsername: n.channelUsername,
+      read: n.readAt !== null,
+      createdAt: n.createdAt.toISOString(),
+    }))
+
     if (channelIds.length === 0) {
-      return NextResponse.json({ count: 0, groups: [], since: since.toISOString() })
+      return NextResponse.json({
+        count: 0,
+        groups: [],
+        since: since.toISOString(),
+        activity,
+        unreadActivity,
+      })
     }
 
     const posts = await db.post.findMany({
@@ -115,7 +141,13 @@ export async function GET(request: Request) {
       return b.posts[0].publishedAt.localeCompare(a.posts[0].publishedAt)
     })
 
-    return NextResponse.json({ count: posts.length, groups, since: since.toISOString() })
+    return NextResponse.json({
+      count: posts.length,
+      groups,
+      since: since.toISOString(),
+      activity,
+      unreadActivity,
+    })
   } catch (e) {
     console.error('[notifications]', e)
     return err('notifications failed', 500)

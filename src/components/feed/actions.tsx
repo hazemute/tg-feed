@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { motion } from 'framer-motion'
 import { Check, Plus, Sparkle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
 import { formatCount } from '@/lib/format'
 import { useT } from '@/lib/i18n'
+import { TEASER_LINES, useLineTruncate } from '@/lib/clamp-text'
 import { RichText } from '@/components/feed/RichText'
 import { useIsDesktop } from '@/lib/use-desktop'
 
@@ -80,90 +81,48 @@ export function SubscribeCircle({
 }
 
 /**
- * Текст поста: 3 строки с «...еще» в правом нижнем углу (как в макете),
- * раскрытие с плавной анимацией; у длинных постов — ссылка на AI-саммари.
+ * Текст поста в ленте канала: превью — укороченный до целого слова текст
+ * (5 строк на мобильных) с инлайн-кнопкой «еще» прямо за последним словом,
+ * раскрытие/сворачивание на месте. У длинных постов — ссылка на AI-саммари.
  *
- * Кнопка — absolute в правом нижнем углу ОБРЕЗАННОГО контейнера (float-вариант
- * уходил под отсечку overflow:hidden и пропадал). Слева — градиент под фон,
- * растворяющий текст. Высота строки — из computed style (реальный line-height).
+ * Прежний вариант (клип по maxHeight + absolute-кнопка поверх градиента) резал
+ * текст посреди строки — заменён на useLineTruncate (см. lib/clamp-text.ts).
+ * На ПК (lg+) текст не обрезаем — читаемость важнее компактности.
  */
 export function ExpandableText({ text, onSummary }: { text: string; onSummary?: () => void }) {
   const t = useT()
-  const innerRef = useRef<HTMLParagraphElement>(null)
   const [expanded, setExpanded] = useState(false)
-  const [clamp, setClamp] = useState<{ full: number; collapsed: number } | null>(null)
   // На ПК (lg+) текст не обрезаем — читаемость важнее компактности
   const isDesktop = useIsDesktop()
-
-  const measure = () => {
-    const el = innerRef.current
-    if (!el) return
-    if (isDesktop) {
-      setClamp((prev) => (prev === null ? prev : null))
-      return
-    }
-    const cs = getComputedStyle(el)
-    const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5
-    const collapsed = Math.round(line * 3) // ровно 3 строки, как в макете
-    const full = el.scrollHeight
-    const over = full > collapsed + 4
-    // Идемпотентно (см. PostText) — ResizeObserver не должен провоцировать рендеры
-    setClamp((prev) => {
-      const next = over ? { full, collapsed } : null
-      if (
-        prev === next ||
-        (prev && next && prev.full === next.full && prev.collapsed === next.collapsed)
-      )
-        return prev
-      return next
-    })
-  }
-
-  // ResizeObserver на абзаце: монтирование / смена текста / шрифты / поворот экрана.
-  // Замер не зависит от expanded: scrollHeight абзаца всегда полная (клип — на родителе)
-  useEffect(() => {
-    const el = innerRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-  }, [isDesktop])
+  const { ref, cut } = useLineTruncate(text, TEASER_LINES, !isDesktop && !expanded)
+  const truncated = cut !== null && cut.length < text.length
 
   const long = text.length > 400
 
   return (
     <div className="mt-3">
-      <div
-        className="relative"
-        style={{
-          maxHeight: expanded ? (clamp?.full ?? 9999) : (clamp?.collapsed ?? 9999),
-          overflow: 'hidden',
-          transition: 'max-height 320ms ease',
-        }}
-      >
-        <div ref={innerRef}>
-          <RichText text={text} />
-        </div>
-        {/* Оверлей «...еще» на третьей строке */}
-        {clamp && !expanded && (
-          <button
-            type="button"
-            onClick={() => {
-              setExpanded(true)
-              haptic('light')
-            }}
-            aria-label="Развернуть текст"
-            className="absolute bottom-0 right-0 bg-tg-bg pl-2 text-post font-medium text-tg-hint active:opacity-70"
-          >
-            <span
-              aria-hidden
-              className="absolute right-full top-0 h-full w-10 bg-gradient-to-r from-transparent to-tg-bg"
-            />
-            {t('post.more')}
-          </button>
-        )}
+      <div ref={ref}>
+        <RichText
+          text={expanded ? text : (cut ?? text)}
+          trailing={
+            !expanded &&
+            truncated && (
+              <button
+                type="button"
+                onClick={() => {
+                  setExpanded(true)
+                  haptic('light')
+                }}
+                aria-label="Развернуть текст"
+                className="ml-1.5 inline select-none whitespace-nowrap align-baseline text-post font-medium text-tg-hint active:opacity-60"
+              >
+                {t('post.more')}
+              </button>
+            )
+          }
+        />
       </div>
-      {clamp && expanded && (
+      {expanded && (
         <button
           type="button"
           onClick={() => setExpanded(false)}

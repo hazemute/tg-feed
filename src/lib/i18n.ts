@@ -58,7 +58,7 @@ const DICT = {
     'The author shows the full text to channel subscribers only',
   ],
   'post.summary': ['Краткое содержание', 'Summary'],
-  'post.more': ['...еще', 'more'],
+  'post.more': ['еще', 'more'],
   'post.readMore': ['Читать пост полностью', 'Read full post'],
   'card.inChannel': ['в канале', 'in channel'],
   'card.views': ['просмотров', 'views'],
@@ -131,6 +131,10 @@ const DICT = {
   'feed.unhideToast': ['Вернуть', 'Undo'],
   'feed.notInterested': ['Не интересно — скрыть пост', 'Not interested — hide post'],
   'feed.minRead': ['мин', 'min read'],
+  'feed.reasonHint': [
+    'Пост показан, потому что он вам может понравиться',
+    'Recommended because it may interest you',
+  ],
 
   /* Чат поддержки */
   'support.title': ['Поддержка', 'Support'],
@@ -157,6 +161,26 @@ const DICT = {
 
   // Комментарии под постом
   'comments.title': ['Комментарии', 'Comments'],
+  /* Экран «Уведомления»: вкладки Посты / Активность */
+  'notif.title': ['Уведомления', 'Notifications'],
+  'notif.posts': ['Посты', 'Posts'],
+  'notif.activity': ['Активность', 'Activity'],
+  'notif.emptyPosts': ['Новых постов нет', 'No new posts'],
+  'notif.emptyPostsHint': [
+    'Включите колокольчик у каналов, чтобы не пропустить новое',
+    'Turn on the bell on channels to catch new posts',
+  ],
+  'notif.emptyActivity': ['Событий пока нет', 'Nothing here yet'],
+  'notif.emptyActivityHint': [
+    'Комментарии, ответы поддержки и статусы кампаний появятся здесь',
+    'Comments, support replies and campaign updates will appear here',
+  ],
+  'notif.failed': ['Не удалось загрузить', "Couldn't load"],
+  'notif.failedHint': ['Проверьте соединение и попробуйте ещё раз', 'Check your connection and try again'],
+  'notif.retry': ['Повторить', 'Retry'],
+  'notif.media': ['Медиа', 'Media'],
+  'notif.newPost': ['Новый пост', 'New post'],
+  'notif.unread': ['Непрочитано', 'Unread'],
   'comments.count': ['комментариев', 'comments'],
   'comments.emptyTitle': ['Пока ни одного комментария', 'No comments yet'],
   'comments.emptyHint': ['Будьте первым — скажите, что думаете', 'Be the first to share what you think'],

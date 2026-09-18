@@ -42,6 +42,8 @@ export function TrendingTab() {
 
   return (
     <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain pb-24">
+      {/* Центрированная колонка: на широких мониторах тренды не растягиваются на всю ширину */}
+      <div className="mx-auto w-full max-w-[1000px]">
       {/* Заголовок — как на «Поиске» */}
       <header className="px-4 pb-3 pt-4">
         <h1 className="text-screen-title text-tg-text">Тренды</h1>
@@ -78,6 +80,7 @@ export function TrendingTab() {
           )}
         </>
       )}
+      </div>
     </div>
   )
 }

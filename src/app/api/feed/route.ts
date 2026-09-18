@@ -244,6 +244,7 @@ export async function GET(request: Request) {
           subscribed: signals.subscribedIds.has(e.c),
           viewed: signals.viewedIds.has(e.i),
           affinity: signals.affinity,
+          notInterested: signals.mutedIds.has(e.c),
         }) +
         shuffleNoise(e.i + shuffleSeed),
     }))

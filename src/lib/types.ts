@@ -398,7 +398,22 @@ export type NotificationGroupDTO = {
   posts: NotificationPostDTO[]
 }
 
-/** Ответ GET /api/notifications — новые посты каналов с включённым колокольчиком */
+/** Уведомление-активность (инбокс): событие, привязанное к пользователю */
+export type NotificationDTO = {
+  id: string
+  /** comment — новый комментарий под постом канала; support — ответ поддержки;
+   *  campaign — статус рекламной кампании; system — прочее */
+  type: 'comment' | 'support' | 'campaign' | 'system'
+  title: string
+  body: string | null
+  /** Связанный пост (type=comment) — тап открывает канал */
+  postId: string | null
+  channelUsername: string | null
+  read: boolean
+  createdAt: string
+}
+
+/** Ответ GET /api/notifications — новые посты каналов с включённым колокольчиком + активность */
 export type NotificationsResponse = {
   /** Суммарное число новых постов по всем группам */
   count: number
@@ -406,6 +421,10 @@ export type NotificationsResponse = {
   groups: NotificationGroupDTO[]
   /** Нижняя граница окна «нового»: lastSeenNotifiedAt ?? now−48ч (ISO) */
   since: string
+  /** Инбокс активности (последние события: комментарии/поддержка/кампании) */
+  activity: NotificationDTO[]
+  /** Непрочитанных событий активности */
+  unreadActivity: number
 }
 
 /** Пульс сообщества за 24 часа (экран «Тренды») */

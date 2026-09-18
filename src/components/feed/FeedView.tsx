@@ -9,7 +9,6 @@ import { cn } from '@/lib/utils'
 import { api, getSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
-import { pluralRu } from '@/lib/format'
 import { loadFeedCache, saveFeedCache } from '@/lib/offline'
 import { openChannelToJoin } from '@/lib/tg-subscribe'
 import type { AdDTO, FeedResponse, NotificationsResponse, PostDTO } from '@/lib/types'
@@ -159,6 +158,9 @@ export function FeedView() {
   const [offline, setOffline] = useState(false)
   // Экран «Уведомления»: счётчик для бейджа у колокольчика + открытый шит + данные шита
   const [notifCount, setNotifCount] = useState(0)
+  // Непрочитанные события «Активности» (комментарии/поддержка/кампании) —
+  // с новыми постами делят один бейдж колокольчика
+  const [unreadActivity, setUnreadActivity] = useState(0)
   const [notifOpen, setNotifOpen] = useState(false)
   const [notifData, setNotifData] = useState<NotificationsResponse | null>(null)
   const [notifFailed, setNotifFailed] = useState(false)
@@ -294,6 +296,7 @@ export function FeedView() {
     try {
       const r = await api<NotificationsResponse>(`/api/notifications?userId=${encodeURIComponent(uid)}`)
       setNotifCount(r.count)
+      setUnreadActivity(r.unreadActivity ?? 0)
     } catch {
       // тихо — бейдж просто останется прежним до следующего тика
     }
@@ -328,6 +331,7 @@ export function FeedView() {
     haptic('light')
     setNotifOpen(true)
     setNotifCount(0) // оптимистично
+    setUnreadActivity(0)
     setNotifData(null) // шит покажет скелетон
     setNotifFailed(false)
     notifFetchedAtRef.current = Date.now()
@@ -849,21 +853,21 @@ export function FeedView() {
             })}
           </div>
 
-          {/* Колокольчик «Уведомления» — 40×40, бейдж с числом новых постов (9+ при переполнении) */}
+          {/* Колокольчик «Уведомления» — 40×40, бейдж: новые посты + активность (9+ при переполнении) */}
           <div className="shrink-0 px-3 pb-1.5 pt-2.5">
             <button
               type="button"
               onClick={openNotifications}
               aria-label={
-                notifCount > 0
-                  ? `Уведомления: ${notifCount} ${pluralRu(notifCount, 'новый пост', 'новых поста', 'новых постов')}`
+                notifCount + unreadActivity > 0
+                  ? `Уведомления: ${notifCount + unreadActivity}`
                   : 'Уведомления'
               }
               className="relative flex h-10 w-10 items-center justify-center rounded-full border border-tg-sep bg-tg-surface transition active:scale-90"
             >
               <Bell className="h-5 w-5 text-tg-text" strokeWidth={1.9} />
               <AnimatePresence>
-                {notifCount > 0 && (
+                {notifCount + unreadActivity > 0 && (
                   <motion.span
                     initial={{ scale: 0, opacity: 0 }}
                     animate={{ scale: 1, opacity: 1 }}
@@ -871,7 +875,7 @@ export function FeedView() {
                     transition={{ type: 'spring', stiffness: 500, damping: 24 }}
                     className="absolute -right-1 -top-1 flex h-4.5 min-w-4.5 items-center justify-center rounded-full bg-tg-like px-1 text-[10px] font-semibold leading-none text-white"
                   >
-                    {notifCount > 9 ? '9+' : notifCount}
+                    {notifCount + unreadActivity > 9 ? '9+' : notifCount + unreadActivity}
                   </motion.span>
                 )}
               </AnimatePresence>

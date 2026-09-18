@@ -227,6 +227,8 @@ export function SearchTab() {
 
   return (
     <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain pb-24">
+      {/* Центрированная колонка: поиск не растягивается на весь широкий экран */}
+      <div className="mx-auto w-full max-w-[1000px]">
       {/* Заголовок */}
       <header className="px-4 pb-3 pt-4">
         <h1 className="text-screen-title text-tg-text">Поиск</h1>
@@ -479,6 +481,7 @@ export function SearchTab() {
           )}
         </section>
       )}
+      </div>
     </div>
   )
 }

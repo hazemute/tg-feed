@@ -137,6 +137,35 @@ export async function POST(request: Request) {
       author: authorOf(created.c.user),
       own: true,
     }
+
+    // Уведомление владельцу привязанного канала: под его постом новый
+    // комментарий. Fire-and-forget — ответ не ждёт (и не ломается от ошибки).
+    void (async () => {
+      try {
+        const post = await db.post.findUnique({
+          where: { id: postId },
+          select: {
+            channel: { select: { id: true, title: true, username: true, claimedById: true } },
+          },
+        })
+        const ownerId = post?.channel.claimedById
+        if (!post || !ownerId || ownerId === g.uid) return
+        const author = authorOf(created.c.user)
+        await db.notification.create({
+          data: {
+            userId: ownerId,
+            type: 'comment',
+            title: post.channel.title,
+            body: `${author.name}: ${created.c.text}`.slice(0, 200),
+            postId,
+            channelUsername: post.channel.username,
+          },
+        })
+      } catch (e) {
+        console.error('[comments notify]', e)
+      }
+    })()
+
     return NextResponse.json({ comment: dto, commentsCount: created.commentsCount })
   } catch (e) {
     console.error('[comments POST]', e)

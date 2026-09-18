@@ -28,6 +28,31 @@ const schema = z.discriminatedUnion('action', [
   }),
 ])
 
+/** Уведомление рекламодателю о судьбе его кампании (инбокс «Активность») */
+function notifyCampaignOwner(
+  ownerId: string,
+  title: string,
+  status: 'approved' | 'paused' | 'rejected',
+  note?: string | null,
+) {
+  const headline =
+    status === 'approved'
+      ? `Кампания «${title}» одобрена`
+      : status === 'paused'
+        ? `Кампания «${title}» приостановлена`
+        : `Кампания «${title}» отклонена`
+  void db.notification
+    .create({
+      data: {
+        userId: ownerId,
+        type: 'campaign',
+        title: headline,
+        body: note ? note.slice(0, 200) : null,
+      },
+    })
+    .catch((e: unknown) => console.error('[campaigns notify]', e))
+}
+
 /** GET — все кампании + последние рекламные счета */
 export async function GET(request: Request) {
   const g = guardAdmin(request, { limit: 60, windowMs: 60_000, bucket: 'panel-campaigns' })
@@ -105,6 +130,7 @@ export async function POST(request: Request) {
         where: { id: campaign.id },
         data: { status: 'active', startedAt: new Date(), note: null },
       })
+      notifyCampaignOwner(campaign.ownerId, campaign.title, 'approved')
       return NextResponse.json({ ok: true, status: 'active' })
     }
 
@@ -113,6 +139,7 @@ export async function POST(request: Request) {
         where: { id: campaign.id },
         data: { status: 'paused' },
       })
+      notifyCampaignOwner(campaign.ownerId, campaign.title, 'paused')
       return NextResponse.json({ ok: true, status: 'paused' })
     }
 
@@ -132,6 +159,7 @@ export async function POST(request: Request) {
           ]
         : []),
     ])
+    notifyCampaignOwner(campaign.ownerId, campaign.title, 'rejected', d.note ?? null)
     return NextResponse.json({ ok: true, status: 'rejected', refundKop: refund })
   } catch (e) {
     console.error('[panel/campaigns]', e)

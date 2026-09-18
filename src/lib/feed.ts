@@ -177,6 +177,8 @@ export type PersonalSignals = {
   affinity: AffinityMap
   viewedIds: Set<string>
   subscribedIds: Set<string>
+  /** Каналы, скрытые кнопкой «Не интересно» — сильный минус в ранжировании */
+  mutedIds: Set<string>
 }
 
 export async function loadPersonalSignals(userId: string): Promise<PersonalSignals> {
@@ -191,7 +193,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   let views: Array<{ postId: string; dwellMs: number; post: { channelId: string; channel: { categoryId: string | null } } }>
   let likes: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
   let bookmarks: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
-  let subs: Array<{ channelId: string }>
+  let subs: Array<{ channelId: string; notInterestedAt: Date | null }>
   try {
     ;[views, likes, bookmarks, subs] = await db.$transaction([
       db.postView.findMany({
@@ -218,7 +220,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
       }),
       db.subscription.findMany({
         where: { userId },
-        select: { channelId: true },
+        select: { channelId: true, notInterestedAt: true },
       }),
     ])
   } catch {
@@ -231,6 +233,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
       affinity: { channels: new Map(), categories: new Map() },
       viewedIds: new Set(),
       subscribedIds: new Set(),
+      mutedIds: new Set(),
     }
     affinityCache.set(userId, { data: empty, exp: Date.now() + 2_000 })
     return empty
@@ -263,6 +266,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     affinity,
     viewedIds: new Set(views.map((v) => v.postId)),
     subscribedIds: new Set(subs.map((s) => s.channelId)),
+    mutedIds: new Set(subs.filter((s) => s.notInterestedAt != null).map((s) => s.channelId)),
   }
 
   if (affinityCache.size >= AFFINITY_MAX) {

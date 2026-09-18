@@ -17,6 +17,7 @@ import { PostMedia, PostMediaCards, postVisualItems } from '@/components/feed/Po
 import { translatedText, TranslateControl, useTranslation } from '@/components/feed/TranslateButton'
 import { ListenButton } from '@/components/feed/TTSButton'
 import { RailButton, SubscribeCircle } from '@/components/feed/actions'
+import { cutAtWord, TEASER_LINES, useLineTruncate } from '@/lib/clamp-text'
 import { useIsDesktop } from '@/lib/use-desktop'
 
 /**
@@ -104,15 +105,16 @@ function TeaserCta({ post }: { post: PostDTO }) {
 }
 
 /**
- * Текст поста ленты: clamp ровно 3 строки, кнопка «...еще» в правом нижнем углу
- * обрезанного блока открывает полный экран поста (PostOverlay) — с полным текстом
- * и всеми картинками. Текст рендерится markdown-lite (RichText).
+ * Текст поста ленты: превью — укороченный ДО ЦЕЛОГО СЛОВА текст (5 строк на
+ * мобильных) с инлайн-кнопкой «еще» сразу за последним словом — как в нативном
+ * Telegram. Кнопка открывает полный экран поста (PostOverlay) — с полным
+ * текстом и всеми картинками.
  *
- * Почему absolute, а не float: кнопка-float стоит ПОСЛЕ абзаца с полным текстом —
- * при обрезке overflow:hidden она попадает под линию отсечки и становится невидимой.
- * Абсолютная кнопка привязана к НИЗУ обрезанного контейнера (низ = конец 3-й строки)
- * и всегда видима. Слева от кнопки — градиент под цвет фона, текст под ней
- * растворяется без жёсткого края.
+ * Почему так: прежний клип по maxHeight (3 строки + градиент + absolute-кнопка
+ * поверх) резал текст посреди строки/слова — владелец: «что бы “еще” было, но
+ * что бы не обрезало текст». Теперь превью — это честный укороченный текст:
+ * механизм — useLineTruncate (см. lib/clamp-text.ts).
+ * На ПК (lg+) текст не обрезаем — читаемость важнее компактности ленты.
  */
 function PostText({
   text,
@@ -126,81 +128,44 @@ function PostText({
   onOpenMore?: () => void
 }) {
   const t = useT()
-  const innerRef = useRef<HTMLDivElement>(null)
-  // Высота 3 строк в px — из фактического измерения (корректно при любом fontScale)
-  const [clamp, setClamp] = useState<{ collapsed: number } | null>(null)
   // На ПК (lg+) текст не обрезаем — читаемость важнее компактности ленты
   const isDesktop = useIsDesktop()
-
-  const measure = () => {
-    const el = innerRef.current
-    if (!el) return
-    if (isDesktop) {
-      setClamp((prev) => (prev === null ? prev : null))
-      return
-    }
-    const cs = getComputedStyle(el)
-    const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5
-    const collapsed = Math.round(line * 3) // ровно 3 строки, как в макете
-    const over = el.scrollHeight > collapsed + 4
-    // Идемпотентно: не создаём новый объект без изменений — иначе ResizeObserver
-    // зациклится на перерендерах
-    setClamp((prev) => {
-      const next = over ? { collapsed } : null
-      if (prev === next || (prev && next && prev.collapsed === next.collapsed)) return prev
-      return next
-    })
-  }
-
-  // ResizeObserver на контейнере: срабатывает и при монтировании, и при смене текста,
-  // поздней загрузке шрифта и повороте экрана (div лежит внутри clip-контейнера,
-  // поэтому его собственная высота — всегда полная, не обрезанная)
-  useEffect(() => {
-    const el = innerRef.current
-    if (!el || typeof ResizeObserver === 'undefined') return
-    const ro = new ResizeObserver(measure)
-    ro.observe(el)
-    return () => ro.disconnect()
-     
-  }, [isDesktop])
+  const { ref, cut } = useLineTruncate(text, TEASER_LINES, !isDesktop)
+  const truncated = cut !== null && cut.length < text.length
 
   const long = text.length > 400
   // Перевод замещает текст на месте (Twitter-style), контрол — строкой под постом
   const tr = useTranslation(postId, text)
   const shown = translatedText(tr, text)
+  // Перевод может быть короче/длиннее оригинала — хук сам пересчитает срез
+  const trResult = useLineTruncate(shown, TEASER_LINES, !isDesktop && shown !== text)
+  const activeCut = shown !== text ? trResult.cut : cut
+  const activeRef = shown !== text ? trResult.ref : ref
+  const activeTruncated = activeCut !== null && activeCut.length < shown.length
 
   return (
     <div className="mt-3">
-      <div
-        className="relative"
-        style={{
-          maxHeight: clamp ? clamp.collapsed : 9999,
-          overflow: 'hidden',
-          transition: 'max-height 320ms ease',
-        }}
-      >
-        <div ref={innerRef}>
-          <RichText text={shown} />
-        </div>
-        {/* Оверлей «...еще» на третьей строке → полный экран поста.
-            Градиент слева растворяет обрезанный текст под кнопкой */}
-        {clamp && (
-          <button
-            type="button"
-            onClick={() => {
-              haptic('light')
-              onOpenMore?.()
-            }}
-            aria-label={t('post.readMore')}
-            className="absolute bottom-0 right-0 bg-tg-bg pl-2 text-post font-medium text-tg-hint active:opacity-70"
-          >
-            <span
-              aria-hidden
-              className="absolute right-full top-0 h-full w-10 bg-gradient-to-r from-transparent to-tg-bg"
-            />
-            {t('post.more')}
-          </button>
-        )}
+      <div ref={activeRef}>
+        <RichText
+          text={activeCut ?? shown}
+          trailing={
+            activeTruncated && (
+              <button
+                type="button"
+                data-noswipe
+                onClick={(e) => {
+                  e.stopPropagation()
+                  haptic('light')
+                  onOpenMore?.()
+                }}
+                aria-label={t('post.readMore')}
+                className="ml-1.5 inline select-none whitespace-nowrap align-baseline text-post font-medium text-tg-hint active:opacity-60"
+              >
+                {t('post.more')}
+              </button>
+            )
+          }
+        />
       </div>
       {long && onSummary && (
         <button
@@ -256,6 +221,29 @@ function PostBody({
 /** Пост свежее двух часов — рядом со временем показываем зелёную точку «новое» */
 const FRESH_MS = 2 * 60 * 60 * 1000
 
+/**
+ * Причина рекомендации (чип в мета-строке) — прозрачность ленты: читатель видит,
+ * ПОЧЕМУ этот пост ему показан. Эвристика на клиенте (серверные сигналы не выдаём):
+ * интересы профиля → «по вашим интересам»; высокое вовлечение → «популярно»;
+ * совсем свежий пост → «новое». У подписок и рекламы объяснений не нужно.
+ */
+function recommendReason(
+  post: PostDTO,
+  interests: string[],
+  lang: 'ru' | 'en',
+): { key: 'interests' | 'popular' | 'new'; label: string } | null {
+  if (post.sponsored || post.channel.subscribed) return null
+  const ageH = Math.max(0, (Date.now() - new Date(post.publishedAt).getTime()) / 3_600_000)
+  const inInterests =
+    post.channel.categorySlug !== null && interests.includes(post.channel.categorySlug)
+  if (inInterests) return { key: 'interests', label: lang === 'ru' ? 'по вашим интересам' : 'for you' }
+  const engagement = post.likesCount + post.commentsCount * 3 + post.bookmarksCount * 2
+  if (engagement >= 6 && ageH < 48) return { key: 'popular', label: lang === 'ru' ? 'популярно' : 'popular' }
+  if (ageH < 3) return { key: 'new', label: lang === 'ru' ? 'новое' : 'new' }
+  if (engagement >= 15) return { key: 'popular', label: lang === 'ru' ? 'популярно' : 'popular' }
+  return null
+}
+
 /** Приблизительное время чтения текста (мин, из расчёта ~180 слов/мин).
  *  Возвращаем 0 для коротких текстов: «1 мин» на каждом посте — шум. */
 function readingMinutes(text: string): number {
@@ -297,6 +285,7 @@ export function PostCard({
   const openComments = useApp((s) => s.openComments)
   const t = useT()
   const lang = useApp((s) => s.lang)
+  const user = useApp((s) => s.user)
   const ch = post.channel
   /** «...еще» → полный экран поста */
   const openFullPost = () => openPost(post)
@@ -305,7 +294,10 @@ export function PostCard({
   const teaser =
     !ch.subscribed && ch.teaserMode !== 'none' && post.text.length > ch.teaserLimit
   const teaserText =
-    ch.teaserMode === 'cut' ? post.text.slice(0, Math.max(60, ch.teaserLimit)).trimEnd() + '…' : post.text
+    ch.teaserMode === 'cut'
+      ? // Срез по границе слова: превью не должно резать слова посередине
+        `${cutAtWord(post.text, Math.max(60, ch.teaserLimit)).trimEnd()}…`
+      : post.text
   /* Визуал определяет раскладку ряда (высокий блок рядом с рельсов действий);
      карточки (ссылка/файл/опрос…) рисуем ПОД текстом — иначе короткая карточка
      рядом с высокой рельсов оставляла огромную пустоту (жалоба владельца). */
@@ -550,6 +542,19 @@ export function PostCard({
           {formatCount(post.viewsCount)}
           {post.viewsTg != null ? ` ${t('card.inChannel')}` : ` ${t('card.views')}`}
         </span>
+        {(() => {
+          const reason = recommendReason(post, user?.categories ?? [], lang)
+          return (
+            reason && (
+              <span
+                className="shrink-0 rounded-full bg-tg-link/10 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-tg-link"
+                title={t('feed.reasonHint')}
+              >
+                {reason.label}
+              </span>
+            )
+          )
+        })()}
         {(() => {
           // «N мин» только у реально длинных текстов (≥2 мин) — иначе «1 мин»
           // прилипает к каждому посту и превращается в шум

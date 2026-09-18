@@ -325,3 +325,19 @@ CREATE INDEX IF NOT EXISTS "Comment_userId_idx" ON "Comment"("userId");
 -- v5.5: Lottie-премиум-эмодзи (.tgs) + галочка верификации каналов
 ALTER TABLE "CustomEmoji" ADD COLUMN IF NOT EXISTS "animated" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "verified" BOOLEAN NOT NULL DEFAULT false;
+
+-- v5.8: инбокс уведомлений-активности (ответы поддержки, комментарии под
+-- постами привязанного канала, статусы кампаний, системные)
+CREATE TABLE IF NOT EXISTS "Notification" (
+  "id"              TEXT PRIMARY KEY,
+  "userId"          TEXT NOT NULL,
+  "type"            TEXT NOT NULL DEFAULT 'system',
+  "title"           TEXT NOT NULL,
+  "body"            TEXT,
+  "postId"          TEXT,
+  "channelUsername" TEXT,
+  "readAt"          TIMESTAMP(3),
+  "createdAt"       TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "Notification_userId_createdAt_idx" ON "Notification"("userId", "createdAt" DESC);

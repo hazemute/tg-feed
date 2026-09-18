@@ -39,6 +39,7 @@ model User {
   translations  TranslationLog[]
   supportThreads SupportThread[]
   comments      Comment[]
+  notifications Notification[]
 }
 
 model Category {
@@ -399,4 +400,25 @@ model Comment {
 
   @@index([postId, createdAt])
   @@index([userId])
+}
+
+// Уведомления-активность пользователя (централизованный инбокс): ответы
+// поддержки, новые комментарии под постами привязанного канала, статусы
+// рекламных кампаний, системные сообщения. «Новые посты каналов с
+// колокольчиком» хранятся вычислением по окну lastSeenNotifiedAt
+// (см. GET /api/notifications) — их в таблице нет.
+// type: comment | support | campaign | system
+model Notification {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String    @default("system")
+  title           String
+  body            String?
+  postId          String? // связанный пост (type=comment — куда ведёт тап)
+  channelUsername String? // канал для перехода (type=comment)
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, createdAt])
 }

@@ -87,6 +87,14 @@ export function ProfileTab() {
      
   }, [user?.id, editOpen])
 
+  // Событие из инбокса «Активность» (уведомление поддержки): открыть чат поддержки.
+  // Чат смонтирован во вкладке профиля, уведомление переключает вкладку и шлёт событие.
+  useEffect(() => {
+    const onOpenSupport = () => setSupportOpen(true)
+    window.addEventListener('tgfeed:open-support', onOpenSupport)
+    return () => window.removeEventListener('tgfeed:open-support', onOpenSupport)
+  }, [])
+
   // Непрочитанные закладки (открытие поста — отметка «прочитано»)
   const unreadCount = useMemo(
     () => (bookmarks ?? []).filter((b) => !b.readAt).length,
@@ -142,6 +150,9 @@ export function ProfileTab() {
 
   return (
     <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain pb-28">
+      {/* Центрированная колонка: на широких мониторах секции профиля не должны
+          растягиваться на весь экран (жалоба «слишком растянуто») */}
+      <div className="mx-auto w-full max-w-[880px]">
       {/* Заголовок */}
       <header className="px-4 pb-2 pt-4">
         <h1 className="text-screen-title text-tg-text">Профиль</h1>
@@ -470,6 +481,7 @@ export function ProfileTab() {
           />
         </div>
       </section>
+      </div>
 
       {/* Шиты */}
       <BottomSheet

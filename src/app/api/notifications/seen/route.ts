@@ -7,7 +7,8 @@ export const dynamic = 'force-dynamic'
 
 /**
  * POST /api/notifications/seen — отметить уведомления прочитанными:
- * lastSeenNotifiedAt = now (окно «нового» сдвигается к текущему моменту).
+ * lastSeenNotifiedAt = now (окно «нового» сдвигается к текущему моменту),
+ * непрочитанная активность (инбокс Notification) получает readAt = now.
  * Пользователь берётся из Bearer-сессии (userId в теле игнорируется).
  */
 export async function POST(request: Request) {
@@ -19,10 +20,15 @@ export async function POST(request: Request) {
     const user = await db.user.findUnique({ where: { id: userId }, select: { id: true } })
     if (!user) return err('user not found', 404)
 
+    const now = new Date()
     await db.user.update({
       where: { id: userId },
-      data: { lastSeenNotifiedAt: new Date() },
+      data: { lastSeenNotifiedAt: now },
     })
+    // Инбокс активности: непрочитанные события гасим тем же моментом
+    await db.notification
+      .updateMany({ where: { userId, readAt: null }, data: { readAt: now } })
+      .catch(() => {})
 
     return NextResponse.json({ ok: true })
   } catch (e) {
