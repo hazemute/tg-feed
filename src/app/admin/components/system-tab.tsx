@@ -172,7 +172,7 @@ export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMai
                 Технические работы
               </CardTitle>
               <CardDescription className="text-xs text-slate-500">
-                Закрывает миниапп для всех, кроме админов и белого списка
+                Закрывает сайт и миниапп для всех, кроме админов и белого списка
               </CardDescription>
             </div>
             <div className="flex items-center gap-2.5">
@@ -198,11 +198,18 @@ export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMai
             <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
               <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
               <span>
-                Миниапп закрыт: пользователи видят экран техработ, все API (кроме auth/panel/health)
+                Сайт и миниапп закрыты: пользователи видят экран техработ, все API (кроме auth/panel/health)
                 отвечают 503. Изменение применяется на всех инстансах в течение ~15 секунд.
               </span>
             </div>
           )}
+          <div className="flex items-start gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs leading-relaxed text-emerald-800">
+            <ShieldCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+            <span>
+              Режим сохраняется в базе данных: не слетает после перезапусков, деплоев и вымывания
+              Redis — флаг и белый список восстанавливаются автоматически.
+            </span>
+          </div>
           <div className="flex flex-wrap items-center gap-x-6 gap-y-2 text-xs text-slate-500">
             <span className="flex items-center gap-1.5">
               <ShieldCheck className="size-3.5 text-emerald-600" aria-hidden />
@@ -218,7 +225,9 @@ export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMai
               )}
             </span>
             {data.maintenance.dbMirror !== maintOn && (
-              <span className="text-amber-700">зеркало в БД расходится — включите и выключите режим</span>
+              <span className="text-amber-700">
+                зеркало в БД расходится с рантаймом — переключите режим ещё раз
+              </span>
             )}
           </div>
         </CardContent>

@@ -17,6 +17,11 @@ import { bearerToken, verifySessionEdge } from '@/lib/session-edge'
  *    UID из белого списка sys:maint_pass (проверка JWT в Edge + SISMEMBER).
  *    HTML-страницы не блокируются — клиент показывает экран техработ.
  *
+ * УСТОЙЧИВОСТЬ: у Edge нет доступа к PostgreSQL, поэтому Node-рантайм
+ * сам держит зеркало тёплым — lib/maintenance.ts самолечит ключ sys:maintenance
+ * из БД при первом же чтении и сверяет Redis с БД heartbeat'ом раз в 30с
+ * (флаг и белый список не слетают после флаша/эвикции/перезапуска Redis).
+ *
  * Redis недоступен → лимиты пропускаются, флаг техработ считается off.
  */
 

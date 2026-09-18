@@ -2,21 +2,25 @@ import { db } from '@/lib/db'
 import { redis } from '@/lib/redis'
 
 /**
- * Режим технических работ.
+ * Режим технических работ — УСТОЙЧИВЫЙ К ПЕРЕЗАПУСКАМ И ВЫМЫВАНИЮ REDIS.
  *
- * Кто может зайти в миниапп при включённых техработах:
- *  1) админы — Telegram ID из переменной окружения ADMIN_TG_IDS
- *     (через запятую; допускаются формы "123456789" и "tg_123456789");
- *  2) пользователи с галкой «допуск» (User.bypassMaintenance) — их UID
- *     продублирован в Redis-множестве sys:maint_pass для быстрой проверки
- *     в Edge-middleware (в Edge нет доступа к PostgreSQL).
+ * ИСТОЧНИК ИСТИНЫ — PostgreSQL (SystemSetting.key='maintenance').
+ * Redis (sys:maintenance) и память процесса — только рантайм-зеркала:
+ *   - ключ Redis может быть вымыт (эвикция/флаш/перезапуск Upstash) или
+ *     вообще отсутствовать локально (token не задан) — флаг от этого
+ *     БОЛЬШЕ НЕ СЛЕТАЕТ: при пустом Redis значение читается из БД,
+ *     а Redis самолечится (запись 'on' + синхронизация белого списка);
+ *   - фоновый heartbeat (раз в 30с) сводит Redis с БД, чтобы Edge-
+ *     middleware (у которого доступа к PostgreSQL нет) всегда видел флаг.
  *
- * Хранение флага: Redis sys:maintenance ('1'/'0') — рантайм-источник,
- * таблица SystemSetting — долговечное зеркало (восстановление после
- * сброса Redis, отображение в панели).
+ * Кто может зайти при включённых техработах:
+ *  1) админы — Telegram ID из ADMIN_TG_IDS (через запятую, "123456789"/"tg_...");
+ *  2) пользователи с галкой «допуск» (User.bypassMaintenance) — UID'ы
+ *     продублированы в Redis-множестве sys:maint_pass для быстрой проверки
+ *     в Edge; БД — источник истины, множество восстанавливается из неё.
  *
- * Деградация: Redis недоступен → флаг считается выключенным (приложение
- * остаётся доступным — доступность важнее строгости блокировки).
+ * Деградация: и Redis, и БД недоступны → флаг считается выключенным
+ * (доступность приложения важнее строгости блокировки).
  */
 
 export const MAINT_KEY = 'sys:maintenance'
@@ -24,49 +28,15 @@ export const MAINT_PASS_SET = 'sys:maint_pass'
 export const MAINT_SETTING_KEY = 'maintenance'
 
 const MEM_TTL_MS = 15_000
+const DB_MIRROR_TTL_MS = 30_000
+const HEARTBEAT_MS = 30_000
+
 let memFlag: { v: boolean; exp: number } | null = null
+let dbMirrorCache: { v: boolean; exp: number } | null = null
 
-/** Флаг техработ (кэш в памяти процесса на 15с — экономим команды Redis) */
-export async function isMaintenanceOn(): Promise<boolean> {
-  if (memFlag && memFlag.exp > Date.now()) return memFlag.v
-  let v = false
-  if (redis) {
-    try {
-      const raw = await redis.get<string | number>(MAINT_KEY)
-      // Upstash может отдать и строку, и число (REST-десериализация) — учитываем оба варианта
-      v = raw === 'on' || raw === '1' || raw === 1
-    } catch {
-      v = false
-    }
-  }
-  memFlag = { v, exp: Date.now() + MEM_TTL_MS }
-  return v
-}
+// ------------------------- Прямое чтение зеркала БД -------------------------
 
-/** Включить/выключить техработы (Redis + зеркало в БД, локальный кэш сразу) */
-export async function setMaintenance(on: boolean): Promise<void> {
-  memFlag = { v: on, exp: Date.now() + MEM_TTL_MS }
-  if (redis) {
-    try {
-      // 'on'/'off' — нечисловые строки: REST-клиент гарантированно вернёт строку
-      await redis.set(MAINT_KEY, on ? 'on' : 'off')
-    } catch {
-      /* Redis недоступен — флаг применится, когда восстановится */
-    }
-  }
-  try {
-    await db.systemSetting.upsert({
-      where: { key: MAINT_SETTING_KEY },
-      update: { value: on ? '1' : '0' },
-      create: { key: MAINT_SETTING_KEY, value: on ? '1' : '0' },
-    })
-  } catch {
-    /* зеркало не критично */
-  }
-}
-
-/** Значение из долговечного зеркала (для панели: что было до сбоя Redis) */
-export async function maintenanceDbMirror(): Promise<boolean> {
+async function dbMirrorRead(): Promise<boolean> {
   try {
     const row = await db.systemSetting.findUnique({ where: { key: MAINT_SETTING_KEY } })
     return row?.value === '1'
@@ -75,31 +45,193 @@ export async function maintenanceDbMirror(): Promise<boolean> {
   }
 }
 
-// ------------------------- Белый список допуска -------------------------
+/** Значение зеркала БД с коротким кэшем (экономим PostgreSQL при частых вызовах) */
+async function dbMirrorCached(): Promise<boolean> {
+  if (dbMirrorCache && dbMirrorCache.exp > Date.now()) return dbMirrorCache.v
+  const v = await dbMirrorRead()
+  dbMirrorCache = { v, exp: Date.now() + DB_MIRROR_TTL_MS }
+  return v
+}
 
-/** UIDs, допущенные мимо техработ (из Redis-множества; для панели) */
-export async function maintenanceAllowList(): Promise<string[]> {
-  if (!redis) return []
+/** Свежее значение из БД (панель показывает расхождение рантайма и зеркала) */
+export async function maintenanceDbMirror(): Promise<boolean> {
+  return dbMirrorRead()
+}
+
+// ------------------------------ Флаг техработ ------------------------------
+
+/**
+ * Значение ключа в Redis: true/false — явное значение,
+ * null — ключа нет (вымыт/перезапуск) или Redis недоступен.
+ */
+async function redisFlagValue(): Promise<boolean | null> {
+  if (!redis) return null
   try {
-    const members = await redis.smembers<string[]>(MAINT_PASS_SET)
-    return Array.isArray(members) ? members : []
+    const raw = await redis.get<string | number>(MAINT_KEY)
+    // Upstash может отдать и строку, и число (REST-десериализация)
+    if (raw === 'on' || raw === '1' || raw === 1) return true
+    if (raw === 'off' || raw === '0' || raw === 0) return false
+    return null
   } catch {
-    return []
+    return null
   }
 }
 
-/** Проверка допуска по UID (SISMEMBER, 1 команда; вызывается только при включённых техработах) */
-export async function isMaintenanceAllowed(uid: string): Promise<boolean> {
-  if (!redis) return false
+/** Флаг техработ. Явное значение Redis → иначе долговечное зеркало в БД. */
+export async function isMaintenanceOn(): Promise<boolean> {
+  ensureHeartbeat()
+  if (memFlag && memFlag.exp > Date.now()) return memFlag.v
+
+  const explicit = await redisFlagValue()
+  if (explicit !== null) {
+    memFlag = { v: explicit, exp: Date.now() + MEM_TTL_MS }
+    return explicit
+  }
+
+  // Redis пуст/недоступен — техработы НЕ слетают: читаем БД
+  const v = await dbMirrorCached()
+  memFlag = { v, exp: Date.now() + MEM_TTL_MS }
+  if (v) void healRedisFromDb()
+  return v
+}
+
+/** Включить/выкл. техработы: СНАЧАЛА БД (не слетает), затем Redis-зеркало */
+export async function setMaintenance(on: boolean): Promise<void> {
+  ensureHeartbeat()
+  memFlag = { v: on, exp: Date.now() + MEM_TTL_MS }
+  dbMirrorCache = { v: on, exp: Date.now() + DB_MIRROR_TTL_MS }
   try {
-    const r = await redis.sismember(MAINT_PASS_SET, uid)
-    return r === 1
+    await db.systemSetting.upsert({
+      where: { key: MAINT_SETTING_KEY },
+      update: { value: on ? '1' : '0' },
+      create: { key: MAINT_SETTING_KEY, value: on ? '1' : '0' },
+    })
+  } catch {
+    /* БД недоступна — Redis ниже всё равно применит; heartbeat сведёт позже */
+  }
+  if (redis) {
+    try {
+      // 'on'/'off' — нечисловые строки: REST-клиент гарантированно вернёт строку
+      await redis.set(MAINT_KEY, on ? 'on' : 'off')
+    } catch {
+      /* Redis недоступен — восстановится heartbeat'ом/самолечением */
+    }
+  }
+}
+
+/**
+ * Самолечение: вернуть флаг 'on' в Redis (после вымывания/перезапуска) и
+ * синхронизировать белый список — чтобы Edge-middleware снова видел режим.
+ */
+async function healRedisFromDb(): Promise<void> {
+  if (!redis) return
+  try {
+    await redis.set(MAINT_KEY, 'on')
+  } catch {
+    /* heartbeat повторит */
+  }
+  await syncAllowSetFromDb()
+}
+
+// ------------------------- Белый список допуска -------------------------
+
+/**
+ * Синхронизация Redis-множества допуска с БД (User.bypassMaintenance —
+ * источник истины). Вызывается heartbeat'ом и самолечением.
+ */
+async function syncAllowSetFromDb(): Promise<void> {
+  if (!redis) return
+  try {
+    const users = await db.user.findMany({
+      where: { bypassMaintenance: true },
+      select: { id: true },
+    })
+    const target = users.map((u) => u.id)
+    const current = await redis.smembers<string[]>(MAINT_PASS_SET)
+    const cur = new Set(Array.isArray(current) ? current : [])
+    const add = target.filter((id) => !cur.has(id))
+    const rem = [...cur].filter((id) => !target.includes(id))
+    if (add.length) {
+      try {
+        // сигнатура Upstash: sadd(key, member, ...members) — первый элемент позиционный
+        await redis.sadd(MAINT_PASS_SET, add[0], ...add.slice(1))
+      } catch {
+        /* повтор на следующем тике */
+      }
+    }
+    if (rem.length) {
+      try {
+        await redis.srem(MAINT_PASS_SET, rem[0], ...rem.slice(1))
+      } catch {
+        /* повтор на следующем тике */
+      }
+    }
+  } catch {
+    /* тихо — повтор на следующем тике heartbeat'а */
+  }
+}
+
+/**
+ * UIDs, допущенные мимо техработ. БД — источник истины (список не слетает
+ * вместе с Redis), члены Redis-множества добавляются поверх (совместимость).
+ */
+export async function maintenanceAllowList(): Promise<string[]> {
+  const ids = new Set<string>()
+  try {
+    const users = await db.user.findMany({
+      where: { bypassMaintenance: true },
+      select: { id: true },
+    })
+    for (const u of users) ids.add(u.id)
+  } catch {
+    /* БД недоступна — попробуем Redis ниже */
+  }
+  if (redis) {
+    try {
+      const members = await redis.smembers<string[]>(MAINT_PASS_SET)
+      for (const m of Array.isArray(members) ? members : []) ids.add(m)
+    } catch {
+      /* только БД */
+    }
+  }
+  return [...ids]
+}
+
+/**
+ * Проверка допуска по UID. Сначала Redis (1 команда, SISMEMBER),
+ * при промахе — БД (множество могло быть вымыто), с самолечением множества.
+ */
+export async function isMaintenanceAllowed(uid: string): Promise<boolean> {
+  if (redis) {
+    try {
+      const r = await redis.sismember(MAINT_PASS_SET, uid)
+      if (r === 1) return true
+    } catch {
+      /* падаем в БД */
+    }
+  }
+  try {
+    const u = await db.user.findUnique({
+      where: { id: uid },
+      select: { bypassMaintenance: true },
+    })
+    if (u?.bypassMaintenance) {
+      if (redis) {
+        try {
+          await redis.sadd(MAINT_PASS_SET, uid)
+        } catch {
+          /* повтор на следующем тике */
+        }
+      }
+      return true
+    }
+    return false
   } catch {
     return false
   }
 }
 
-/** Добавить/убрать UID из допуска. DB — источник истины, Redis — рантайм. */
+/** Добавить/убрать UID из допуска. БД — источник истины, Redis — рантайм. */
 export async function setMaintenanceAllowed(uid: string, allowed: boolean): Promise<void> {
   try {
     await db.user.update({ where: { id: uid }, data: { bypassMaintenance: allowed } })
@@ -111,8 +243,47 @@ export async function setMaintenanceAllowed(uid: string, allowed: boolean): Prom
       if (allowed) await redis.sadd(MAINT_PASS_SET, uid)
       else await redis.srem(MAINT_PASS_SET, uid)
     } catch {
-      /* восстановим через панель */
+      /* восстановится heartbeat'ом из БД */
     }
+  }
+}
+
+// ------------------------------ Heartbeat ------------------------------
+
+let heartbeatStarted = false
+
+/**
+ * Фоновая сверка Redis с БД раз в 30с: Edge-middleware не имеет доступа к
+ * PostgreSQL, поэтому Node-рантайм сам держит зеркало тёплым — флаг и белый
+ * список восстанавливаются в Redis даже после флаша/эвикции/перезапуска.
+ */
+function ensureHeartbeat(): void {
+  if (heartbeatStarted) return
+  heartbeatStarted = true
+  if (typeof setInterval !== 'function') return
+  const timer = setInterval(() => {
+    void heartbeatTick()
+  }, HEARTBEAT_MS)
+  // не держим процесс живым из-за таймера (скрипты/CLI завершаются штатно)
+  ;(timer as unknown as { unref?: () => void }).unref?.()
+}
+
+async function heartbeatTick(): Promise<void> {
+  if (!redis) return // локально без Upstash зеркала нет — БД и так источник
+  try {
+    const on = await dbMirrorCached()
+    const redisOn = await redisFlagValue()
+    if (redisOn !== on) {
+      try {
+        await redis.set(MAINT_KEY, on ? 'on' : 'off')
+        memFlag = { v: on, exp: Date.now() + MEM_TTL_MS }
+      } catch {
+        /* повтор на следующем тике */
+      }
+    }
+    if (on) await syncAllowSetFromDb()
+  } catch {
+    /* тихо */
   }
 }
 
