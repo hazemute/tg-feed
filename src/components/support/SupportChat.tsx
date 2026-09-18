@@ -2,27 +2,31 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ArrowUp, Headset, ShieldCheck, Bot, UserRound } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Headset, ShieldCheck, Bot, UserRound, Lightbulb, Bug, Paperclip, X } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import { haptic } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
+import { uploadImage } from '@/lib/upload'
 import { RichText } from '@/components/feed/RichText'
 import { cn } from '@/lib/utils'
 
 /**
- * Чат поддержки — стиль нативного Telegram.
+ * Чат поддержки / ПРЕДЛОЖКА (v5.11) — стиль нативного Telegram.
  *
- * Слева — ответы поддержки (нейросеть или сотрудник), справа — сообщения
- * пользователя. Markdown в ответах рендерится тем же RichText'ом, что и посты.
- * Нейросеть дешёвая (gemini-2.5-flash-lite через OpenRouter) и знает
- * устройство приложения; сложные обращения эскалируются сотруднику в
- * админ-панель, ответ приходит в этот же чат (поллинг раз в 1.5с — почти
- * мгновенно).
+ * kind='support': слева — ответы (нейросеть или сотрудник), справа —
+ * пользователь. Нейросеть эскалирует сложное сотруднику (админ-панель).
+ *
+ * kind='feedback' (приказ владельца «Предложка/баг»): сообщения БЕЗ нейронки
+ * сразу уходят админу в админ-панель (вкладка «Предложки»); выбор темы
+ * «Идея / Баг»; ответ админа приходит в этот же чат + колокольчиком.
+ *
+ * В обоих чатах можно прикрепить до 3 картинок: клиент сжимает их
+ * (canvas → WebP ≤350КБ) и грузит на /api/upload.
  */
 
-type Msg = { id: string; sender: string; text: string; createdAt: string }
-type ThreadState = { status: 'ai' | 'human' | 'closed' | null; messages: Msg[] }
+type Msg = { id: string; sender: string; text: string; images: string[]; createdAt: string }
+type ThreadState = { status: 'ai' | 'human' | 'closed' | null; topic?: string | null; messages: Msg[] }
 
 const STATUS_KEY: Record<string, 'support.subtitle.ai' | 'support.subtitle.human' | 'support.subtitle.closed'> = {
   ai: 'support.subtitle.ai',
@@ -50,13 +54,29 @@ function TypingDots({ label }: { label: string }) {
   )
 }
 
-export function SupportChat({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function SupportChat({
+  open,
+  onClose,
+  kind = 'support',
+}: {
+  open: boolean
+  onClose: () => void
+  /** support — чат с ассистентом; feedback — предложка/баг напрямую админу */
+  kind?: 'support' | 'feedback'
+}) {
   const t = useT()
-  const [state, setState] = useState<ThreadState>({ status: null, messages: [] })
+  const isFeedback = kind === 'feedback'
+  const [state, setState] = useState<ThreadState>({ status: null, topic: null, messages: [] })
   const [loaded, setLoaded] = useState(false)
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  const [topic, setTopic] = useState<'idea' | 'bug' | null>(null)
+  const [pending, setPending] = useState<string[]>([]) // url загруженных картинок перед отправкой
+  const [uploading, setUploading] = useState(false)
+  const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const endpoint = isFeedback ? '/api/feedback' : '/api/support'
 
   const scrollBottom = useCallback((smooth = true) => {
     const el = scrollRef.current
@@ -65,14 +85,15 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
 
   const load = useCallback(async () => {
     try {
-      const data = await api<ThreadState>('/api/support')
+      const data = await api<ThreadState>(endpoint)
       setState(data)
+      if (isFeedback && data.topic) setTopic(data.topic as 'idea' | 'bug')
     } catch {
       // сеть/сессия — молча, чат покажет пустое состояние
     } finally {
       setLoaded(true)
     }
-  }, [])
+  }, [endpoint, isFeedback])
 
   // Открытие: загрузка + подписка на ответы сотрудника (быстрый поллинг 1.5с —
   // ответы почти мгновенные; запрос лёгкий: один тред по индексу)
@@ -91,22 +112,54 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
     if (open) scrollBottom(false)
   }, [state.messages.length, open, scrollBottom])
 
+  const onPick = useCallback(
+    async (files: FileList | null) => {
+      if (!files || files.length === 0) return
+      const free = 3 - pending.length
+      if (free <= 0) return
+      setUploading(true)
+      for (const f of Array.from(files).slice(0, free)) {
+        try {
+          const url = await uploadImage(f)
+          setPending((p) => (p.length < 3 ? [...p, url] : p))
+          haptic('light')
+        } catch {
+          // превышен лимит/не картинка — тихо пропускаем
+        }
+      }
+      setUploading(false)
+      if (fileRef.current) fileRef.current.value = ''
+    },
+    [pending.length],
+  )
+
   const send = useCallback(async () => {
     const text = draft.trim()
-    if (!text || sending) return
+    if ((!text && pending.length === 0) || sending) return
     setSending(true)
     setDraft('')
     haptic('light')
     // Оптимистичное сообщение: пользователь видит свой текст мгновенно
-    const optimistic: Msg = { id: `tmp-${Date.now()}`, sender: 'user', text, createdAt: new Date().toISOString() }
+    const optimistic: Msg = {
+      id: `tmp-${Date.now()}`,
+      sender: 'user',
+      text: text || '📷',
+      images: [...pending],
+      createdAt: new Date().toISOString(),
+    }
     setState((s) => ({ ...s, messages: [...s.messages, optimistic] }))
+    setPending([])
     try {
-      const res = await api<{ ok: boolean; status: ThreadState['status']; messages: Msg[] }>('/api/support', {
+      const res = await api<{ ok: boolean; status?: ThreadState['status']; messages: Msg[] }>(endpoint, {
         method: 'POST',
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({
+          text: text || '📷',
+          ...(isFeedback && topic ? { topic } : {}),
+          ...(optimistic.images.length > 0 ? { images: optimistic.images } : {}),
+        }),
       })
       setState((s) => ({
-        status: res.status,
+        status: (res.status ?? s.status) as ThreadState['status'],
         // Оптимистичный пузырь заменяется настоящим (с id и серверным временем)
         messages: [...s.messages.filter((m) => m.id !== optimistic.id), ...res.messages],
       }))
@@ -115,15 +168,16 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
       // Ошибка — возвращаем черновик, чтобы сообщение не потерялось
       setState((s) => ({ ...s, messages: s.messages.filter((m) => m.id !== optimistic.id) }))
       setDraft(text)
+      setPending(optimistic.images)
       haptic('error')
     } finally {
       setSending(false)
     }
-  }, [draft, sending])
+  }, [draft, sending, pending, endpoint, isFeedback, topic])
 
   if (!open) return null
 
-  const waiting = sending && state.status !== 'human'
+  const waiting = sending && !isFeedback && state.status !== 'human'
 
   return (
     <motion.div
@@ -132,7 +186,7 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
       transition={{ type: 'spring', stiffness: 380, damping: 34 }}
       className="fixed inset-0 z-[60] mx-auto flex w-full flex-col overflow-hidden bg-tg-bg lg:bottom-auto lg:top-[6vh] lg:h-[88vh] lg:max-w-[680px] lg:rounded-3xl lg:border lg:border-tg-sep lg:shadow-[0_24px_90px_rgba(0,0,0,0.30)]"
       role="dialog"
-      aria-label={t('support.dialog')}
+      aria-label={isFeedback ? t('feedback.dialog') : t('support.dialog')}
     >
       {/* Шапка как в Telegram-чате */}
       <header className="flex shrink-0 items-center gap-3 border-b border-tg-sep/60 bg-tg-surface/80 px-2 pb-2 pt-[max(0.5rem,env(safe-area-inset-top))] backdrop-blur-md">
@@ -144,16 +198,58 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
         >
           <ArrowLeft className="h-[22px] w-[22px]" />
         </button>
-        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-tg-link text-white">
-          <Headset className="h-[18px] w-[18px]" aria-hidden />
+        <span
+          className={cn(
+            'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white',
+            isFeedback ? 'bg-gradient-to-tr from-tg-star to-tg-link' : 'bg-tg-link',
+          )}
+        >
+          {isFeedback ? <Lightbulb className="h-[18px] w-[18px]" aria-hidden /> : <Headset className="h-[18px] w-[18px]" aria-hidden />}
         </span>
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[16px] font-semibold text-tg-text">{t('support.title')}</span>
+          <span className="block truncate text-[16px] font-semibold text-tg-text">
+            {isFeedback ? t('feedback.title') : t('support.title')}
+          </span>
           <span className="block truncate text-[12.5px] text-tg-hint">
-            {state.status ? t(STATUS_KEY[state.status]) : t('support.subtitle.idle')}
+            {isFeedback
+              ? state.status
+                ? t('feedback.subtitle')
+                : t('feedback.subtitleIdle')
+              : state.status
+                ? t(STATUS_KEY[state.status])
+                : t('support.subtitle.idle')}
           </span>
         </span>
       </header>
+
+      {/* Тема предложки: идея или баг (до первого сообщения) */}
+      {isFeedback && !topic && state.messages.length === 0 && (
+        <div className="flex shrink-0 gap-2 px-3 pt-3">
+          {(
+            [
+              { key: 'idea', icon: Lightbulb, label: t('feedback.topicIdea') },
+              { key: 'bug', icon: Bug, label: t('feedback.topicBug') },
+            ] as const
+          ).map(({ key, icon: Icon, label }) => (
+            <button
+              key={key}
+              type="button"
+              data-noswipe
+              onClick={() => {
+                haptic('light')
+                setTopic(key)
+              }}
+              className={cn(
+                'flex h-11 flex-1 items-center justify-center gap-2 rounded-xl text-[14px] font-semibold transition active:scale-[0.98]',
+                'bg-tg-surface text-tg-text2 ring-1 ring-tg-sep/60',
+              )}
+            >
+              <Icon className={cn('h-4.5 w-4.5', key === 'idea' ? 'text-amber-500' : 'text-red-500')} aria-hidden />
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* Лента сообщений */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto overscroll-contain px-3 py-3">
@@ -163,11 +259,20 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
           </div>
         ) : state.messages.length === 0 ? (
           <div className="mx-auto mt-10 max-w-[280px] text-center">
-            <span className="mx-auto flex size-14 items-center justify-center rounded-full bg-tg-link/10 text-tg-link">
-              <Headset className="h-7 w-7" aria-hidden />
+            <span
+              className={cn(
+                'mx-auto flex size-14 items-center justify-center rounded-full',
+                isFeedback ? 'bg-tg-star/10 text-tg-star' : 'bg-tg-link/10 text-tg-link',
+              )}
+            >
+              {isFeedback ? <Lightbulb className="h-7 w-7" aria-hidden /> : <Headset className="h-7 w-7" aria-hidden />}
             </span>
-            <p className="mt-3 text-[15px] font-semibold text-tg-text">{t('support.welcomeTitle')}</p>
-            <p className="mt-1 text-[13.5px] leading-relaxed text-tg-hint">{t('support.welcomeText')}</p>
+            <p className="mt-3 text-[15px] font-semibold text-tg-text">
+              {isFeedback ? t('feedback.welcomeTitle') : t('support.welcomeTitle')}
+            </p>
+            <p className="mt-1 text-[13.5px] leading-relaxed text-tg-hint">
+              {isFeedback ? t('feedback.welcomeText') : t('support.welcomeText')}
+            </p>
           </div>
         ) : (
           <div className="space-y-2">
@@ -214,8 +319,21 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
                     {isStaff && (
                       <span className="mb-0.5 block text-[11px] font-semibold text-emerald-500">{t('support.staff')}</span>
                     )}
-                    {!mine && <RichText text={m.text} className="[&_a]:text-tg-link" />}
-                    {mine && <span className="whitespace-pre-wrap break-words">{m.text}</span>}
+                    {m.images.length > 0 && (
+                      <div className={cn('mb-1 flex flex-wrap gap-1.5', !m.text && 'mb-0')}>
+                        {m.images.map((u) => (
+                          <img
+                            key={u}
+                            src={u}
+                            alt={t('feedback.imageAlt')}
+                            loading="lazy"
+                            className="max-h-44 max-w-[180px] rounded-xl object-cover ring-1 ring-black/10"
+                          />
+                        ))}
+                      </div>
+                    )}
+                    {m.text !== '📷' && !mine && <RichText text={m.text} className="[&_a]:text-tg-link" />}
+                    {m.text !== '📷' && mine && <span className="whitespace-pre-wrap break-words">{m.text}</span>}
                     <span
                       className={cn(
                         'mt-0.5 block text-right text-[10.5px]',
@@ -242,9 +360,55 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
         )}
       </div>
 
+      {/* Превью прикреплённых картинок */}
+      {pending.length > 0 && (
+        <div className="flex shrink-0 gap-2 px-3 pb-1">
+          {pending.map((u) => (
+            <span key={u} className="relative">
+              <img src={u} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-tg-sep" />
+              <button
+                type="button"
+                data-noswipe
+                onClick={() => setPending((p) => p.filter((x) => x !== u))}
+                aria-label={t('feedback.removeImage')}
+                className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-tg-text text-tg-bg shadow"
+              >
+                <X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+          {uploading && (
+            <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-tg-surface" aria-label={t('feedback.uploading')}>
+              <span className="size-4 animate-spin rounded-full border-2 border-tg-sep border-t-tg-link" />
+            </span>
+          )}
+        </div>
+      )}
+
       {/* Поле ввода как в Telegram */}
       <footer className="shrink-0 border-t border-tg-sep/60 bg-tg-surface/80 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-md">
         <div className="flex items-end gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => void onPick(e.target.files)}
+            aria-hidden
+            tabIndex={-1}
+          />
+          <button
+            type="button"
+            data-noswipe
+            onClick={() => fileRef.current?.click()}
+            disabled={pending.length >= 3 || uploading}
+            aria-label={t('feedback.attach')}
+            title={t('feedback.attach')}
+            className="flex size-[42px] shrink-0 items-center justify-center rounded-full bg-tg-bg text-tg-hint transition active:scale-90 disabled:opacity-35"
+          >
+            <Paperclip className="h-5 w-5" />
+          </button>
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -256,14 +420,15 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
             }}
             rows={1}
             maxLength={2000}
-            placeholder={t('support.input')}
-            aria-label={t('support.input')}
+            placeholder={isFeedback ? t('feedback.input') : t('support.input')}
+            aria-label={isFeedback ? t('feedback.input') : t('support.input')}
             className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-tg-bg px-4 py-2.5 text-snippet text-tg-text outline-none placeholder:text-tg-hint focus:ring-1 focus:ring-tg-link/40"
           />
           <button
             type="button"
+            data-noswipe
             onClick={() => void send()}
-            disabled={!draft.trim() || sending}
+            disabled={(!draft.trim() && pending.length === 0) || sending}
             aria-label={t('support.send')}
             className="flex size-[42px] shrink-0 items-center justify-center rounded-full bg-tg-link text-white transition disabled:opacity-35 active:scale-90"
           >

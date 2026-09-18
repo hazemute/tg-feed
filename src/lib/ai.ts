@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { gtxTranslate } from '@/lib/translate'
 import { chatSimple, chatStream } from '@/lib/openrouter'
 
 /**
@@ -93,6 +94,16 @@ export async function translatePostCached(
   }
   const hit = cache[lang]
   if (hit?.text) return { ok: true, text: hit.text, cached: true }
+
+  // Бесплатный быстрый провайдер (Google gtx) — сначала он; LLM — фолбэк
+  const gtx = await gtxTranslate(text, lang).catch(() => null)
+  if (gtx) {
+    cache[lang] = { text: gtx, at: new Date().toISOString() }
+    await db.post
+      .update({ where: { id: postId }, data: { translations: JSON.stringify(cache) } })
+      .catch(() => {})
+    return { ok: true, text: gtx, cached: false }
+  }
 
   const translated = await translateText(text, lang)
   cache[lang] = { text: translated, at: new Date().toISOString() }

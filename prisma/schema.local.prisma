@@ -23,9 +23,12 @@ model User {
   isDemo        Boolean  @default(true)
   categories    String   @default("[]") // JSON array of category slugs (interests)
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
+  bannedAt      DateTime? // бан: null — активен; API отвечает 403 banned
+  banReason     String?   // причина бана (видна админу)
   createdAt     DateTime @default(now())
 
   likes         Like[]
+  uploads       Upload[]
   views         PostView[]
   subscriptions Subscription[]
   channelMutes  ChannelMute[]
@@ -187,4 +190,19 @@ model HashtagClick {
   createdAt DateTime @default(now())
 
   @@index([tag, createdAt])
+}
+
+// Загруженные пользователями картинки (чат поддержки/предложка)
+model Upload {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  mime      String   // image/webp | image/jpeg | image/png
+  data      String   // base64
+  bytes     Int
+  width     Int      @default(0)
+  height    Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, createdAt])
 }

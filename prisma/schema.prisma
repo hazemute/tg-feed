@@ -26,6 +26,8 @@ model User {
   categories    String   @default("[]") // JSON array of category slugs (interests)
   bypassMaintenance Boolean @default(false) // допуск в миниапп во время техработ (кроме админов из ADMIN_TG_IDS)
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
+  bannedAt      DateTime? // бан: null — активен; API отвечает 403 banned
+  banReason     String?   // причина бана (видна админу)
   createdAt     DateTime @default(now())
 
   likes         Like[]
@@ -41,6 +43,7 @@ model User {
   supportThreads SupportThread[]
   comments      Comment[]
   notifications Notification[]
+  uploads       Upload[]
 }
 
 model Category {
@@ -376,6 +379,8 @@ model SupportThread {
   userId        String
   user          User     @relation(fields: [userId], references: [id])
   status        String   @default("ai") // ai | human | closed
+  kind          String   @default("support") // support | feedback (предложка/баг)
+  topic         String?  // для feedback: idea | bug
   unreadAdmin   Int      @default(0) // непрочитанные от пользователя для сотрудника
   unreadUser    Int      @default(0) // непрочитанные от поддержки для пользователя
   lastMessageAt DateTime @default(now())
@@ -395,6 +400,7 @@ model SupportMessage {
   thread    SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
   sender    String
   text      String
+  images    String? // JSON array URL картинок (/api/upload/{id})
   createdAt DateTime      @default(now())
 
   @@index([threadId, createdAt])
@@ -435,4 +441,21 @@ model Notification {
   createdAt       DateTime  @default(now())
 
   @@index([userId, createdAt])
+}
+
+// Загруженные пользователями картинки (чат поддержки/предложка): клиент сжимает
+// до ≤350КБ (canvas → WebP/JPEG), сервер кладёт base64; выдаётся публично по
+// некугадарному cuid (/api/upload/{id}).
+model Upload {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  mime      String   // image/webp | image/jpeg | image/png
+  data      String   // base64
+  bytes     Int
+  width     Int      @default(0)
+  height    Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, createdAt])
 }

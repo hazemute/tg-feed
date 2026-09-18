@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Bot,
   CheckCheck,
+  Lightbulb,
   ChevronLeft,
   EyeOff,
   Eye,
@@ -72,7 +73,17 @@ function statusBadge(status: string) {
   return <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">нейросеть</span>
 }
 
-export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () => void }) {
+export function SupportTab({
+  tick,
+  onSettled,
+  kind = 'support',
+}: {
+  tick: number
+  onSettled?: () => void
+  /** support — чат поддержки (с нейросетью); feedback — предложка/баг (v5.11) */
+  kind?: 'support' | 'feedback'
+}) {
+  const isFeedback = kind === 'feedback'
   const [threads, setThreads] = useState<SupportThreadItem[] | null>(null)
   const [selected, setSelected] = useState<string | null>(null)
   const [thread, setThread] = useState<SupportThreadFull | null>(null)
@@ -90,7 +101,7 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
 
   const loadList = useCallback(async () => {
     try {
-      const items = await fetchSupportThreads()
+      const items = await fetchSupportThreads(false, kind)
       setThreads(items)
       setListError(null)
     } catch (e) {
@@ -99,7 +110,7 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
     } finally {
       onSettled?.()
     }
-  }, [onSettled])
+  }, [onSettled, kind])
 
   const loadThread = useCallback(async (id: string, quiet = false) => {
     if (!quiet) setThread(null)
@@ -220,8 +231,14 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
       {/* ------- Список чатов ------- */}
       <div className={cn('rounded-xl border border-slate-200 bg-white', selected && 'hidden lg:block')}>
         <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
-          <Headset className="size-4 text-emerald-600" aria-hidden />
-          <h3 className="text-sm font-semibold text-slate-900">Обращения</h3>
+          {isFeedback ? (
+            <Lightbulb className="size-4 text-amber-500" aria-hidden />
+          ) : (
+            <Headset className="size-4 text-emerald-600" aria-hidden />
+          )}
+          <h3 className="text-sm font-semibold text-slate-900">
+            {isFeedback ? 'Предложки и баги' : 'Обращения'}
+          </h3>
           {unseenTotal > 0 && (
             <span className="ml-auto rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white">
               {unseenTotal}
@@ -270,7 +287,19 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
                       </span>
                     )}
                   </span>
-                  <span className="mt-1 block">{statusBadge(t.status)}</span>
+                  <span className="mt-1 flex items-center gap-1">
+                    {statusBadge(t.status)}
+                    {isFeedback && t.topic && (
+                      <span
+                        className={cn(
+                          'rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                          t.topic === 'bug' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700',
+                        )}
+                      >
+                        {t.topic === 'bug' ? 'баг' : 'идея'}
+                      </span>
+                    )}
+                  </span>
                 </span>
               </button>
             ))
@@ -324,15 +353,6 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
               </div>
               <button
                 type="button"
-                onClick={() => void changeStatus('ai')}
-                disabled={thread.status === 'ai'}
-                title="Вернуть диалог нейросети"
-                className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
-              >
-                <Bot className="size-3.5" aria-hidden /> ИИ
-              </button>
-              <button
-                type="button"
                 onClick={() => void changeStatus('closed')}
                 disabled={thread.status === 'closed'}
                 title="Закрыть обращение"
@@ -340,6 +360,17 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
               >
                 <CheckCheck className="size-3.5" aria-hidden /> Закрыть
               </button>
+              {!isFeedback && (
+                <button
+                  type="button"
+                  onClick={() => void changeStatus('ai')}
+                  disabled={thread.status === 'ai'}
+                  title="Вернуть диалог нейросети"
+                  className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 transition hover:bg-slate-50 disabled:opacity-40"
+                >
+                  <Bot className="size-3.5" aria-hidden /> ИИ
+                </button>
+              )}
             </div>
 
             {/* Карточка пользователя: кто пишет, его активность и подписки */}
@@ -425,6 +456,20 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
                         >
                           {SENDER_LABEL[m.sender] ?? m.sender}
                         </span>
+                      )}
+                      {m.images && m.images.length > 0 && (
+                        <div className="mb-1.5 flex flex-wrap gap-1.5">
+                          {m.images.map((u) => (
+                            <a key={u} href={u} target="_blank" rel="noopener noreferrer">
+                              <img
+                                src={u}
+                                alt="вложение"
+                                loading="lazy"
+                                className="max-h-40 max-w-[220px] rounded-lg object-cover ring-1 ring-black/10 transition hover:opacity-90"
+                              />
+                            </a>
+                          ))}
+                        </div>
                       )}
                       <span className="whitespace-pre-wrap break-words">{m.text}</span>
                       <span className={cn('mt-0.5 block text-right text-[10px]', mine ? 'text-white/60' : 'text-slate-400')}>

@@ -17,11 +17,18 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url)
     const unseenOnly = searchParams.get('unseen') === '1'
+    // v5.11: kind=feedback — только предложки; kind=support — только поддержка; иначе все
+    const kindFilter = searchParams.get('kind')
+
+    const baseWhere: Record<string, unknown> = unseenOnly
+      ? { unreadAdmin: { gt: 0 } }
+      : { OR: [{ status: { not: 'closed' } }, { lastMessageAt: { gte: new Date(Date.now() - 3 * 86_400_000) } }] }
+    if (kindFilter === 'feedback' || kindFilter === 'support') {
+      baseWhere.kind = kindFilter
+    }
 
     const threads = await db.supportThread.findMany({
-      where: unseenOnly
-        ? { unreadAdmin: { gt: 0 } }
-        : { OR: [{ status: { not: 'closed' } }, { lastMessageAt: { gte: new Date(Date.now() - 3 * 86_400_000) } }] },
+      where: baseWhere,
       orderBy: { lastMessageAt: 'desc' },
       take: 100,
       include: {
@@ -33,6 +40,8 @@ export async function GET(request: Request) {
     const items = threads.map((t) => ({
       id: t.id,
       status: t.status,
+      kind: t.kind,
+      topic: t.topic,
       unreadAdmin: t.unreadAdmin,
       unreadUser: t.unreadUser,
       lastMessageAt: t.lastMessageAt.toISOString(),

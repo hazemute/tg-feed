@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { cyrillicRatio, streamTranslate } from '@/lib/ai'
+import { gtxTranslate } from '@/lib/translate'
 import { sseStream } from '@/lib/sse'
 
 export const dynamic = 'force-dynamic'
@@ -74,18 +75,32 @@ export async function POST(request: Request) {
       return
     }
 
-    // 2) Холодный путь: стрим LLM в UI, полный текст — в кэш
+    // 2) Холодный путь: СНАЧАЛА бесплатный быстрый gtx (без ключей и лимитов
+    //    OpenRouter, ~0.2-1с целиком) — отдаём одним событием; при недоступности
+    //    — прежний стрим LLM. Финальный текст в кэш в обоих случаях.
+    let provider: 'gtx' | 'llm' = 'llm'
+    let translated: string | null = null
     try {
-      const translated = await streamTranslate(text, lang, (chunk) => send('delta', { v: chunk }))
-      cache[lang] = { text: translated, at: new Date().toISOString() }
-      await db.post
-        .update({ where: { id: postId }, data: { translations: JSON.stringify(cache) } })
-        .catch(() => {})
-      // Журнал для анти-абьюза (раз в пост — не на каждый показ)
-      db.translationLog.create({ data: { userId: g.uid, postId, srcLang: lang } }).catch(() => {})
-      send('done', { cached: false })
+      translated = await gtxTranslate(text, lang)
+      if (translated) provider = 'gtx'
     } catch {
-      send('fail', { reason: 'llm' })
+      translated = null
     }
+    if (!translated) {
+      try {
+        translated = await streamTranslate(text, lang, (chunk) => send('delta', { v: chunk }))
+      } catch {
+        send('fail', { reason: 'llm' })
+        return
+      }
+    }
+    cache[lang] = { text: translated, at: new Date().toISOString() }
+    await db.post
+      .update({ where: { id: postId }, data: { translations: JSON.stringify(cache) } })
+      .catch(() => {})
+    // Журнал для анти-абьюза (раз в пост — не на каждый показ)
+    db.translationLog.create({ data: { userId: g.uid, postId, srcLang: lang } }).catch(() => {})
+    if (provider === 'gtx') send('delta', { v: translated }) // gtx не стримил дельты — отдаём целиком
+    send('done', { cached: false, provider })
   })
 }

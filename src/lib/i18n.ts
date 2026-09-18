@@ -169,6 +169,23 @@ const DICT = {
   'support.profileRow': ['Чат поддержки', 'Support chat'],
   'support.profileHint': ['отвечаем быстро', 'we reply fast'],
   'support.section': ['Поддержка', 'Support'],
+  /* Предложка / баг (v5.11): чат напрямую админу, без нейронки */
+  'feedback.title': ['Предложка / Баг', 'Ideas / Bugs'],
+  'feedback.dialog': ['Предложка и баг-репорты', 'Ideas and bug reports'],
+  'feedback.subtitle': ['пишет админу напрямую', 'straight to the admin'],
+  'feedback.subtitleIdle': ['новая тема', 'new thread'],
+  'feedback.topicIdea': ['Идея', 'Idea'],
+  'feedback.topicBug': ['Баг', 'Bug'],
+  'feedback.welcomeTitle': ['Помогите сделать Tg Swipe лучше', 'Help make Tg Swipe better'],
+  'feedback.welcomeText': [
+    'Выберите «Идея» или «Баг» и опишите: что предложить или что сломалось. Можно приложить скриншот — попадёт прямо к админу.',
+    'Pick “Idea” or “Bug” and describe it. Attach a screenshot if needed — it goes straight to the admin.',
+  ],
+  'feedback.input': ['Что предложить или что не работает?', 'Suggest an idea or report a bug…'],
+  'feedback.attach': ['Прикрепить картинку', 'Attach an image'],
+  'feedback.removeImage': ['Убрать картинку', 'Remove image'],
+  'feedback.uploading': ['Загружаем…', 'Uploading…'],
+  'feedback.imageAlt': ['Прикреплённая картинка', 'Attached image'],
 
   // Комментарии под постом
   'comments.title': ['Комментарии', 'Comments'],

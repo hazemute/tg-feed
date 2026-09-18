@@ -356,3 +356,25 @@ CREATE TABLE IF NOT EXISTS "ChannelMute" (
         REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "ChannelMute_userId_channelId_key" ON "ChannelMute"("userId", "channelId");
+
+-- v5.11: баны пользователей, предложка (kind/topic), картинки в чатах, аплоады
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "bannedAt" timestamptz;
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "banReason" text;
+ALTER TABLE "SupportThread" ADD COLUMN IF NOT EXISTS "kind" text NOT NULL DEFAULT 'support';
+ALTER TABLE "SupportThread" ADD COLUMN IF NOT EXISTS "topic" text;
+ALTER TABLE "SupportMessage" ADD COLUMN IF NOT EXISTS "images" text;
+
+CREATE TABLE IF NOT EXISTS "Upload" (
+    "id"        text        NOT NULL DEFAULT gen_random_uuid()::text,
+    "ownerId"   text        NOT NULL,
+    "mime"      text        NOT NULL,
+    "data"      text        NOT NULL,
+    "bytes"     integer     NOT NULL DEFAULT 0,
+    "width"     integer     NOT NULL DEFAULT 0,
+    "height"    integer     NOT NULL DEFAULT 0,
+    "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "Upload_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "Upload_ownerId_fkey" FOREIGN KEY ("ownerId")
+        REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "Upload_ownerId_createdAt_idx" ON "Upload"("ownerId", "createdAt");

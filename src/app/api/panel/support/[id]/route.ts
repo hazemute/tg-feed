@@ -34,16 +34,30 @@ export async function GET(request: Request, ctx: Ctx) {
     return NextResponse.json({
       id: thread.id,
       status: thread.status,
+      kind: thread.kind,
+      topic: thread.topic,
       unreadUser: thread.unreadUser,
       lastMessageAt: thread.lastMessageAt.toISOString(),
       createdAt: thread.createdAt.toISOString(),
       user: thread.user,
-      messages: thread.messages.map((m) => ({
-        id: m.id,
-        sender: m.sender,
-        text: m.text,
-        createdAt: m.createdAt.toISOString(),
-      })),
+      messages: thread.messages.map((m) => {
+        let images: string[] = []
+        if (m.images) {
+          try {
+            const parsed: unknown = JSON.parse(m.images)
+            if (Array.isArray(parsed)) images = parsed.filter((x): x is string => typeof x === 'string')
+          } catch {
+            images = []
+          }
+        }
+        return {
+          id: m.id,
+          sender: m.sender,
+          text: m.text,
+          images,
+          createdAt: m.createdAt.toISOString(),
+        }
+      }),
     })
   } catch (e) {
     console.error('[panel/support/[id] GET]', e)

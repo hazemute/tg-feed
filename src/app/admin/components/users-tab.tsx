@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, RefreshCw, Search, SearchX } from 'lucide-react'
+import { AlertTriangle, Ban, Gem, RefreshCw, Search, SearchX, ShieldOff, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -25,6 +25,7 @@ import {
   isAuthOrNetworkError,
   panelFetch,
   PanelError,
+  userAction,
   type PanelUser,
   type UsersResponse,
 } from './api'
@@ -52,6 +53,11 @@ export function UsersTab({ tick, onSettled }: TabProps) {
   const [error, setError] = useState<string | null>(null)
   const [localTick, setLocalTick] = useState(0)
   const [bypassBusy, setBypassBusy] = useState<string | null>(null)
+  // v5.11: модалка действий над пользователем (бан/баланс/премиум)
+  const [actionUser, setActionUser] = useState<PanelUser | null>(null)
+  const [banReason, setBanReason] = useState('')
+  const [swipesInput, setSwipesInput] = useState('')
+  const [actionBusy, setActionBusy] = useState(false)
 
   useEffect(() => {
     let alive = true
@@ -109,6 +115,39 @@ export function UsersTab({ tick, onSettled }: TabProps) {
 
   const displayName = (u: PanelUser) =>
     [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.id
+
+  /** Действие v5.11: бан/разбан/баланс/премиум с оптимистичным апдейтом */
+  const runUserAction = async (
+    u: PanelUser,
+    payload: Parameters<typeof userAction>[0],
+    okText: string,
+    patch: Partial<PanelUser>,
+  ) => {
+    setActionBusy(true)
+    const prev = data
+    if (data) {
+      setData({ ...data, items: data.items.map((x) => (x.id === u.id ? { ...x, ...patch } : x)) })
+    }
+    try {
+      await userAction(payload)
+      toast.success(okText)
+      setActionUser(null)
+      setBanReason('')
+    } catch (e) {
+      if (prev) setData(prev)
+      if (!isAuthOrNetworkError(e)) {
+        toast.error(e instanceof PanelError ? e.message : 'Не получилось')
+      }
+    } finally {
+      setActionBusy(false)
+    }
+  }
+
+  const openAction = (u: PanelUser) => {
+    setBanReason(u.banReason ?? '')
+    setSwipesInput(u.swipes != null ? String(u.swipes) : '')
+    setActionUser(u)
+  }
 
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show">
@@ -192,7 +231,10 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                         <TableHead className="text-right text-xs text-slate-500">Подписки</TableHead>
                         <TableHead className="text-right text-xs text-slate-500">Закладки</TableHead>
                         <TableHead className="text-right text-xs text-slate-500">Просмотры</TableHead>
+                        <TableHead className="text-right text-xs text-slate-500">Свайпы</TableHead>
+                        <TableHead className="text-center text-xs text-slate-500">Статус</TableHead>
                         <TableHead className="text-center text-xs text-slate-500">Допуск</TableHead>
+                        <TableHead className="text-center text-xs text-slate-500">Действия</TableHead>
                         <TableHead className="text-xs text-slate-500">Регистрация</TableHead>
                       </TableRow>
                     </TableHeader>
@@ -223,6 +265,16 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                           <TableCell className="text-right tabular-nums text-slate-700">
                             {fmtNum(u.views)}
                           </TableCell>
+                          <TableCell className="text-right tabular-nums text-slate-700">
+                            {u.swipes != null ? fmtNum(u.swipes) : '—'}
+                          </TableCell>
+                          <TableCell className="text-center">
+                            {u.bannedAt ? (
+                              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">бан</span>
+                            ) : (
+                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">ок</span>
+                            )}
+                          </TableCell>
                           <TableCell className="text-center">
                             <Switch
                               checked={u.bypassMaintenance}
@@ -231,6 +283,17 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                               aria-label={`Допуск мимо техработ: ${displayName(u)}`}
                               className="mx-auto"
                             />
+                          </TableCell>
+                          <TableCell className="text-center">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => openAction(u)}
+                              aria-label={`Действия: ${displayName(u)}`}
+                              className={cn('h-7 px-2 text-xs', btnOutlineDark)}
+                            >
+                              ⚙ Действия
+                            </Button>
                           </TableCell>
                           <TableCell className="text-sm text-slate-500">{fmtAgo(u.createdAt)}</TableCell>
                         </TableRow>
@@ -277,6 +340,19 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                     <div className="mt-1.5 text-[11px] text-slate-400">
                       {u.username ? `@${u.username} · ` : ''}регистрация {fmtAgo(u.createdAt)}
                     </div>
+                    <div className="mt-2 flex items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openAction(u)}
+                        className={cn('h-7 px-2 text-xs', btnOutlineDark)}
+                      >
+                        Действия{u.bannedAt ? ' (бан)' : ''}
+                      </Button>
+                      {u.swipes != null && (
+                        <span className="text-[11px] tabular-nums text-slate-500">{fmtNum(u.swipes)} свайпов</span>
+                      )}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -288,6 +364,154 @@ export function UsersTab({ tick, onSettled }: TabProps) {
           ) : null}
         </CardContent>
       </Card>
+
+      {/* Модалка действий: бан / баланс свайпов / премиум (v5.11) */}
+      {actionUser && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Действия: ${displayName(actionUser)}`}
+          onClick={() => !actionBusy && setActionUser(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="truncate text-base font-semibold text-slate-900">{displayName(actionUser)}</p>
+                <p className="truncate font-mono text-[11px] text-slate-400">{actionUser.id}</p>
+              </div>
+              {actionUser.isPremium && (
+                <span className="flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-700">
+                  <Gem className="size-3" aria-hidden /> Premium
+                </span>
+              )}
+            </div>
+            {actionUser.bannedAt && actionUser.banReason && (
+              <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                Забанен: {actionUser.banReason}
+              </p>
+            )}
+
+            {/* Баланс свайпов */}
+            <div className="mt-4">
+              <label className="text-xs font-semibold text-slate-700" htmlFor="swipes-input">
+                <Wallet className="mr-1 inline size-3.5" aria-hidden /> Баланс свайпов (сейчас{' '}
+                {fmtNum(actionUser.swipes ?? 0)})
+              </label>
+              <div className="mt-1.5 flex gap-2">
+                <Input
+                  id="swipes-input"
+                  type="number"
+                  min={0}
+                  max={10000000}
+                  value={swipesInput}
+                  onChange={(e) => setSwipesInput(e.target.value)}
+                  className={cn('h-9 flex-1 text-sm', inputDark)}
+                  aria-label="Новый баланс свайпов"
+                />
+                <Button
+                  size="sm"
+                  disabled={actionBusy || swipesInput === '' || Number(swipesInput) === actionUser.swipes}
+                  onClick={() =>
+                    actionUser &&
+                    void runUserAction(
+                      actionUser,
+                      { action: 'swipes', userId: actionUser.id, swipes: Number(swipesInput) },
+                      `Баланс изменён на ${fmtNum(Number(swipesInput))} свайпов`,
+                      { swipes: Number(swipesInput) },
+                    )
+                  }
+                  className="h-9 bg-emerald-600 text-white hover:bg-emerald-700"
+                >
+                  Сохранить
+                </Button>
+              </div>
+            </div>
+
+            {/* Премиум */}
+            <div className="mt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={actionBusy}
+                onClick={() =>
+                  actionUser &&
+                  void runUserAction(
+                    actionUser,
+                    { action: 'premium', userId: actionUser.id },
+                    actionUser.isPremium ? 'Premium снят' : 'Premium выдан',
+                    { isPremium: !actionUser.isPremium },
+                  )
+                }
+                className={cn('w-full', btnOutlineDark)}
+              >
+                <Gem className="size-4" aria-hidden />
+                {actionUser.isPremium ? 'Снять Premium' : 'Выдать Premium'}
+              </Button>
+            </div>
+
+            {/* Бан/разбан */}
+            <div className="mt-4 border-t border-slate-100 pt-4">
+              {!actionUser.bannedAt ? (
+                <>
+                  <label className="text-xs font-semibold text-slate-700" htmlFor="ban-reason">
+                    <Ban className="mr-1 inline size-3.5 text-red-500" aria-hidden /> Причина бана
+                  </label>
+                  <Input
+                    id="ban-reason"
+                    value={banReason}
+                    onChange={(e) => setBanReason(e.target.value)}
+                    placeholder="спам, абьюз…"
+                    maxLength={200}
+                    className={cn('mt-1.5 h-9 text-sm', inputDark)}
+                  />
+                  <Button
+                    size="sm"
+                    disabled={actionBusy || banReason.trim().length === 0}
+                    onClick={() =>
+                      actionUser &&
+                      void runUserAction(
+                        actionUser,
+                        { action: 'ban', userId: actionUser.id, reason: banReason.trim() },
+                        'Пользователь забанен — API отвечает ему 403',
+                        { bannedAt: new Date().toISOString(), banReason: banReason.trim() },
+                      )
+                    }
+                    className="mt-2 w-full bg-red-600 text-white hover:bg-red-700"
+                  >
+                    <Ban className="size-4" aria-hidden /> Забанить пользователя
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={actionBusy}
+                  onClick={() =>
+                    actionUser &&
+                    void runUserAction(
+                      actionUser,
+                      { action: 'unban', userId: actionUser.id },
+                      'Пользователь разбанен',
+                      { bannedAt: null, banReason: null },
+                    )
+                  }
+                  className={cn('w-full', btnOutlineDark)}
+                >
+                  <ShieldOff className="size-4" aria-hidden /> Разбанить
+                </Button>
+              )}
+              <p className="mt-2 text-[11px] leading-snug text-slate-400">
+                Бан блокирует весь API (лента, комментарии, платежи) через Edge-зеркало;
+                вход в миниапп остаётся, чтобы пользователь видел бан.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }

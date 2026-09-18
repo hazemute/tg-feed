@@ -26,6 +26,8 @@ import { redis } from '@/lib/redis'
 export const MAINT_KEY = 'sys:maintenance'
 export const MAINT_PASS_SET = 'sys:maint_pass'
 export const MAINT_SETTING_KEY = 'maintenance'
+/** Зеркало забаненных пользователей (Edge не видит Postgres — см. шапку) */
+export const BANS_SET = 'sys:banned'
 
 const MEM_TTL_MS = 15_000
 const DB_MIRROR_TTL_MS = 30_000
@@ -248,6 +250,29 @@ export async function setMaintenanceAllowed(uid: string, allowed: boolean): Prom
   }
 }
 
+/**
+ * БАН (v5.11, приказ владельца): User.bannedAt + зеркало sys:banned для
+ * Edge-middleware (403 banned на всех /api/*, кроме auth/panel/health/webhooks).
+ */
+export async function setBanned(uid: string, banned: boolean, reason?: string): Promise<void> {
+  try {
+    await db.user.update({
+      where: { id: uid },
+      data: banned ? { bannedAt: new Date(), banReason: reason ?? null } : { bannedAt: null, banReason: null },
+    })
+  } catch {
+    /* пользователя нет в БД — мьютим только зеркало */
+  }
+  if (redis) {
+    try {
+      if (banned) await redis.sadd(BANS_SET, uid)
+      else await redis.srem(BANS_SET, uid)
+    } catch {
+      /* восстановится heartbeat'ом из БД */
+    }
+  }
+}
+
 // ------------------------------ Heartbeat ------------------------------
 
 let heartbeatStarted = false
@@ -282,8 +307,46 @@ async function heartbeatTick(): Promise<void> {
       }
     }
     if (on) await syncAllowSetFromDb()
+    await syncBansFromDb()
   } catch {
     /* тихо */
+  }
+}
+
+// ------------------------------ Баны ------------------------------
+
+/**
+ * Зеркало банов БД → Redis (тот же паттерн, что whitelist техработ):
+ * Edge-middleware проверяет SMEMBERS sys:banned с локальным кэшем 60с.
+ */
+async function syncBansFromDb(): Promise<void> {
+  if (!redis) return
+  try {
+    const users = await db.user.findMany({
+      where: { bannedAt: { not: null } },
+      select: { id: true },
+    })
+    const target = users.map((u) => u.id)
+    const current = await redis.smembers<string[]>(BANS_SET)
+    const cur = new Set(Array.isArray(current) ? current : [])
+    const add = target.filter((id) => !cur.has(id))
+    const rem = [...cur].filter((id) => !target.includes(id))
+    if (add.length) {
+      try {
+        await redis.sadd(BANS_SET, add[0], ...add.slice(1))
+      } catch {
+        /* повтор на следующем тике */
+      }
+    }
+    if (rem.length) {
+      try {
+        await redis.srem(BANS_SET, rem[0], ...rem.slice(1))
+      } catch {
+        /* повтор на следующем тике */
+      }
+    }
+  } catch {
+    /* тихо — повтор на следующем тике heartbeat'а */
   }
 }
 

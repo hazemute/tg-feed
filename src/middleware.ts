@@ -128,6 +128,7 @@ function clientIp(request: NextRequest): string {
 
 const MAINT_KEY = 'sys:maintenance'
 const MAINT_PASS_SET = 'sys:maint_pass'
+const BANS_SET = 'sys:banned'
 let maintCache: { v: boolean; exp: number } | null = null
 const MAINT_MEM_TTL_MS = 15_000
 
@@ -153,6 +154,27 @@ async function maintenanceOn(): Promise<boolean> {
  */
 let passCache: { set: Set<string>; exp: number } | null = null
 const PASS_MEM_TTL_MS = 30_000
+
+/** Зеркало банов (SMEMBERS sys:banned раз в 60с — экономия команд) */
+let bansCache: { set: Set<string>; exp: number } | null = null
+const BANS_MEM_TTL_MS = 60_000
+
+async function isBannedEdge(uid: string): Promise<boolean> {
+  if (!redis) return false
+  const now = Date.now()
+  if (!bansCache || bansCache.exp <= now) {
+    try {
+      const members = await redis.smembers<string[]>(BANS_SET)
+      bansCache = {
+        set: new Set(Array.isArray(members) ? members : []),
+        exp: now + BANS_MEM_TTL_MS,
+      }
+    } catch {
+      return false // Redis недоступен — не блокируем (БД-зеркало восстановится)
+    }
+  }
+  return bansCache.set.has(uid)
+}
 
 async function maintenanceAllowed(uid: string): Promise<boolean> {
   if (!redis) return false
@@ -210,7 +232,9 @@ function maintenanceExempt(path: string): boolean {
     path.startsWith('/api/emoji') ||
     // Stories-картинка поста: её скачивает Telegram-клиент при публикации
     // сторис (п.4 запроса владельца) — тоже публичное медиа-GET
-    path.startsWith('/api/story')
+    path.startsWith('/api/story') ||
+    // чатовые картинки поддержки/предложки (<img> без Bearer)
+    path.startsWith('/api/upload')
   )
 }
 
@@ -254,6 +278,29 @@ export async function middleware(request: NextRequest) {
         }
       } catch {
         // Redis недоступен — пропускаем (слои 0 и 2 продолжают работать)
+      }
+    }
+  }
+
+  // --- Бан (v5.11): забаненный получает 403 на всём API, кроме статуса/админки/мониторов.
+  //      /api/auth оставлен свободным — клиент должен узнать о бане и показать экран. ---
+  if (
+    redis &&
+    !path.startsWith('/api/auth') &&
+    !path.startsWith('/api/panel') &&
+    !path.startsWith('/api/health') &&
+    !path.startsWith('/api/bot/webhook') &&
+    !path.startsWith('/api/payments/webhook')
+  ) {
+    const bearer = bearerToken(request)
+    if (bearer) {
+      try {
+        const session = await verifySessionEdge(bearer)
+        if (session && (await isBannedEdge(session.uid))) {
+          return NextResponse.json({ error: 'banned', banned: true }, { status: 403 })
+        }
+      } catch {
+        // сессия невалидна — дальше штатные проверки роутов
       }
     }
   }

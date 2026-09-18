@@ -7,6 +7,7 @@ import {
   FileText,
   Headset,
   Info,
+  Lightbulb,
   Loader2,
   MousePointerClick,
   Send,
@@ -64,6 +65,8 @@ export function ProfileTab() {
   const loginOpen = useApp((s) => s.loginOpen)
   const setLoginOpen = useApp((s) => s.setLoginOpen)
   const [supportOpen, setSupportOpen] = useState(false)
+  // Предложка/баг (v5.11): отдельный чат напрямую админу, без нейронки
+  const [feedbackOpen, setFeedbackOpen] = useState(false)
   const [notify, setNotify] = useState(true)
 
   const reload = () => {
@@ -477,6 +480,21 @@ export function ProfileTab() {
               haptic('light')
               setSupportOpen(true)
             }}
+            last={false}
+          />
+          <SettingRow
+            icon={<Lightbulb className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label={t('feedback.title')}
+            right={
+              <span className="flex items-center gap-1 text-[15px] text-tg-hint">
+                {t('feedback.subtitleIdle')}
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              haptic('light')
+              setFeedbackOpen(true)
+            }}
             last
           />
         </div>
@@ -613,6 +631,7 @@ export function ProfileTab() {
 
       {/* Чат поддержки (телеграм-стиль) */}
       <SupportChat open={supportOpen} onClose={() => setSupportOpen(false)} />
+      <SupportChat open={feedbackOpen} onClose={() => setFeedbackOpen(false)} kind="feedback" />
     </div>
   )
 }

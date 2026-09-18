@@ -127,6 +127,10 @@ export interface PanelUser {
   isGuest: boolean
   isPremium?: boolean
   bypassMaintenance: boolean
+  /** v5.11: бан и баланс свайпов (AdvertiserAccount.balanceKop / 100) */
+  bannedAt?: string | null
+  banReason?: string | null
+  swipes?: number
   createdAt: string
   likes: number
   subscriptions: number
@@ -455,12 +459,17 @@ export interface SupportMsg {
   id: string
   sender: 'user' | 'ai' | 'admin' | 'system'
   text: string
+  images?: string[]
   createdAt: string
 }
 
 export interface SupportThreadItem {
   id: string
   status: 'ai' | 'human' | 'closed'
+  /** v5.11: support — чат поддержки; feedback — предложка/баг */
+  kind?: 'support' | 'feedback'
+  /** Для feedback: idea | bug */
+  topic?: string | null
   unreadAdmin: number
   unreadUser: number
   lastMessageAt: string
@@ -473,10 +482,12 @@ export interface SupportThreadFull extends Omit<SupportThreadItem, 'lastMessage'
   messages: SupportMsg[]
 }
 
-export async function fetchSupportThreads(unseenOnly = false): Promise<SupportThreadItem[]> {
-  const data = await panelFetch<{ items: SupportThreadItem[] }>(
-    `/api/panel/support${unseenOnly ? '?unseen=1' : ''}`,
-  )
+export async function fetchSupportThreads(unseenOnly = false, kind?: 'support' | 'feedback'): Promise<SupportThreadItem[]> {
+  const params = new URLSearchParams()
+  if (unseenOnly) params.set('unseen', '1')
+  if (kind) params.set('kind', kind)
+  const qs = params.toString()
+  const data = await panelFetch<{ items: SupportThreadItem[] }>(`/api/panel/support${qs ? `?${qs}` : ''}`)
   return data.items
 }
 
@@ -497,6 +508,45 @@ export async function setSupportThreadStatus(id: string, status: 'ai' | 'human' 
     method: 'PATCH',
     json: { status },
   })
+}
+
+/** v5.11: действия модерации пользователя (бан/баланс/премиум) */
+export async function userAction(
+  payload:
+    | { action: 'ban'; userId: string; reason?: string }
+    | { action: 'unban'; userId: string }
+    | { action: 'swipes'; userId: string; swipes: number }
+    | { action: 'premium'; userId: string },
+): Promise<void> {
+  await panelFetch<{ ok: boolean }>('/api/panel/users', {
+    method: 'PATCH',
+    json: payload,
+  })
+}
+
+/* ===================== Финансы и вовлечённость ===================== */
+
+export interface FinanceResponse {
+  revenue: {
+    totalKop: number
+    paymentsCount: number
+    byProvider: Array<{ provider: string; kop: number; count: number }>
+    byDay: Array<{ day: string; kop: number; count: number }>
+  }
+  ads: { spentKop: number; campaigns: number }
+  liabilities: { balanceKop: number; accounts: number }
+  engagement: {
+    dau: number
+    wau: number
+    mau: number
+    newUsersByDay: Array<{ day: string; count: number }>
+    likesByDay: Array<{ day: string; count: number }>
+    commentsByDay: Array<{ day: string; count: number }>
+  }
+}
+
+export function fetchFinance(): Promise<FinanceResponse> {
+  return panelFetch<FinanceResponse>('/api/panel/finance')
 }
 
 /** Имя пользователя нити: «Имя @username» или «Гость abc123» */
