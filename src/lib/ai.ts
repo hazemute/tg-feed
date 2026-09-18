@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { chatSimple } from '@/lib/openrouter'
+import { chatSimple, chatStream } from '@/lib/openrouter'
 
 /**
  * AI-помощники ленты: перевод постов и краткое содержание.
@@ -10,7 +10,8 @@ import { chatSimple } from '@/lib/openrouter'
  * (/api/warm) — пользователь получает перевод/саммари мгновенно.
  */
 
-const MAX_TEXT = 1600
+const MAX_TEXT = 4200 // покрывает ЛЮБОЙ пост Telegram (лимит 4096) целиком —
+// раньше 1600 обрезали длинные лонгриды посреди предложения (жалоба «переводится не весь пост»)
 
 const LANG_NAMES: Record<string, string> = {
   ru: 'русском',
@@ -31,6 +32,8 @@ const LANG_NAMES: Record<string, string> = {
   pt: 'португальском',
   pl: 'польском',
 }
+
+export { LANG_NAMES }
 
 /** Доля кириллицы в тексте: >15% считаем «уже на русском» */
 export function cyrillicRatio(text: string): number {
@@ -53,7 +56,7 @@ export async function translateText(text: string, lang: string): Promise<string>
   const completion = await chatSimple(
     TRANSLATE_PROMPT(langName),
     text.slice(0, MAX_TEXT),
-    { maxTokens: 1100, timeoutMs: 18_000 },
+    { maxTokens: 2300, timeoutMs: 40_000 },
   )
   const translated = completion.replace(/^["«»"]+|["«»"]+$/g, '').trim()
   if (translated.length < 4 || translated === text) {
@@ -99,11 +102,39 @@ export async function translatePostCached(
   return { ok: true, text: translated, cached: false }
 }
 
-const SUMMARY_PROMPT =
-  'Сделай выжимку текста поста ровно из 3 пунктов: одна законченная мысль, до 110 символов, ' +
-  'по-русски, без эмодзи и markdown. Ответь СТРОГО JSON-массивом из 3 строк: ["...","...","..."]'
+/**
+ * СТРИМинговый перевод: дельты уходят в UI в реальном времени (первый токен
+ * ~0.5–1с — «перевод за секунду»), полный текст возвращается вызывающему
+ * для записи в кэш. Валидация та же, что у translateText.
+ */
+export async function streamTranslate(
+  text: string,
+  lang: string,
+  onDelta: (chunk: string) => void,
+): Promise<string> {
+  const langName = LANG_NAMES[lang] ?? lang
+  const raw = await chatStream(TRANSLATE_PROMPT(langName), text.slice(0, MAX_TEXT), {
+    maxTokens: 2300,
+    timeoutMs: 55_000,
+    onDelta,
+  })
+  const translated = raw.replace(/^["«»"]+|["«»"]+$/g, '').trim()
+  if (translated.length < 4 || translated === text) {
+    throw new Error('перевод не удался')
+  }
+  return translated
+}
 
-function parseBullets(raw: string): string[] {
+/** Саммари: ровно 3 строками — построчный формат идеален для СТРИМИНГА
+ *  (каждая строка появляется в панели сразу, как только дописана).
+ *  Старый JSON-формат тоже принимается (parseBullets умеет оба). */
+const SUMMARY_PROMPT =
+  'Сделай выжимку текста поста ровно из 3 пунктов. КАЖДЫЙ пункт — ОБЯЗАТЕЛЬНО отдельной строкой ' +
+  '(между пунктами перевод строки). Один пункт = одна законченная мысль, до 110 символов, ' +
+  'по-русски, без эмодзи, без markdown, без нумерации и маркеров. ' +
+  'Ответь только тремя строками, больше ничего.'
+
+export function parseBullets(raw: string): string[] {
   try {
     const cleaned = raw
       .replace(/```json/gi, '')
@@ -115,17 +146,30 @@ function parseBullets(raw: string): string[] {
       const arr = JSON.parse(cleaned.slice(start, end + 1))
       if (Array.isArray(arr)) {
         const items = arr.filter((x): x is string => typeof x === 'string' && x.length > 0)
-        if (items.length > 0) return items.slice(0, 3)
+        if (items.length > 0) return splitStickyParagraph(items).slice(0, 3)
       }
     }
   } catch {
     // fallback ниже
   }
-  return raw
-    .split('\n')
-    .map((l) => l.replace(/^[\s\-\d.*•]+/, '').trim())
-    .filter((l) => l.length > 8)
+  return splitStickyParagraph(
+    raw
+      .split('\n')
+      .map((l) => l.replace(/^[\s\-\d.*•]+/, '').trim())
+      .filter((l) => l.length > 8)
+      .slice(0, 3),
+  )
+}
+
+/** Модель склеила пункты в один абзац — делим по предложениям (до 3 штук) */
+function splitStickyParagraph(items: string[]): string[] {
+  if (items.length !== 1 || (items[0]?.length ?? 0) < 140) return items
+  const parts = (items[0] ?? '')
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 8)
     .slice(0, 3)
+  return parts.length >= 2 ? parts : items
 }
 
 /** Саммари поста в 3 пунктах (с кэшем в Post.aiSummary). null — текст короткий */
@@ -165,4 +209,34 @@ export async function summarizePostCached(
     .update({ where: { id: postId }, data: { aiSummary: JSON.stringify(items) } })
     .catch(() => {})
   return { items, cached: false }
+}
+
+/** Стриминговое саммари: дельты в UI, финальный текст парсится вызывающим */
+export function streamSummary(
+  text: string,
+  onDelta: (chunk: string) => void,
+): Promise<string> {
+  return chatStream(SUMMARY_PROMPT, text.slice(0, 1600), {
+    maxTokens: 160,
+    timeoutMs: 24_000,
+    onDelta,
+  })
+}
+
+/** Извлекающий фолбэк: 1–3 первых длинных предложения текста (общий) */
+export function extractiveSummary(text: string): string[] {
+  const clean = text.replace(/\s+/g, ' ').trim()
+  const sentences = clean
+    .split(/(?<=[.!?…])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 20)
+  const picked: string[] = []
+  for (const s of sentences) {
+    picked.push(s.length > 120 ? s.slice(0, 117) + '…' : s)
+    if (picked.length === 3) break
+  }
+  if (picked.length === 0 && clean.length > 20) {
+    picked.push(clean.slice(0, 117) + (clean.length > 117 ? '…' : ''))
+  }
+  return picked
 }

@@ -7,6 +7,7 @@ import type { LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
 import { formatCount } from '@/lib/format'
+import { useT } from '@/lib/i18n'
 import { RichText } from '@/components/feed/RichText'
 import { useIsDesktop } from '@/lib/use-desktop'
 
@@ -87,6 +88,7 @@ export function SubscribeCircle({
  * растворяющий текст. Высота строки — из computed style (реальный line-height).
  */
 export function ExpandableText({ text, onSummary }: { text: string; onSummary?: () => void }) {
+  const t = useT()
   const innerRef = useRef<HTMLParagraphElement>(null)
   const [expanded, setExpanded] = useState(false)
   const [clamp, setClamp] = useState<{ full: number; collapsed: number } | null>(null)
@@ -157,7 +159,7 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
               aria-hidden
               className="absolute right-full top-0 h-full w-10 bg-gradient-to-r from-transparent to-tg-bg"
             />
-            ...еще
+            {t('post.more')}
           </button>
         )}
       </div>
@@ -167,7 +169,7 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
           onClick={() => setExpanded(false)}
           className="mt-1 text-[15px] font-medium text-tg-hint active:opacity-60"
         >
-          Свернуть
+          {t('post.collapse')}
         </button>
       )}
       {expanded && long && onSummary && (
@@ -177,7 +179,7 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
           className="mt-2 inline-flex items-center gap-1.5 text-[14px] font-semibold text-tg-link active:opacity-60"
         >
           <Sparkle className="h-4 w-4" />
-          Краткое содержание
+          {t('post.summary')}
         </button>
       )}
     </div>

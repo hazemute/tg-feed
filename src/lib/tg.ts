@@ -32,6 +32,8 @@ export type TgWebApp = {
   }
   openTelegramLink: (url: string) => void
   openLink: (url: string, options?: { try_instant_view?: boolean }) => void
+  /** Нативное окно оплаты Telegram (инвойсы бота, в т.ч. Stars/XTR) */
+  openInvoice?: (url: string, callback?: (status: string) => void) => void
   setHeaderColor?: (color: string) => void
   setBackgroundColor?: (color: string) => void
   setBottomBarColor?: (color: string) => void
@@ -145,6 +147,32 @@ export function openTelegram(usernameOrUrl: string) {
 export function openExternal(url: string) {
   const w = tg()
   if (w?.openLink) w.openLink(url)
+  else window.open(url, '_blank', 'noopener')
+}
+
+/**
+ * ОТКРЫТЬ ИНВОЙС (Telegram Stars): только WebApp.openInvoice — этот метод
+ * поднимает НАТИВНОЕ окно оплаты внутри Telegram. Раньше ссылка инвойса шла
+ * через openTelegramLink, и окно оплаты не открывалось — выглядело как
+ * «оплата Stars недоступна». Вне миниаппы — обычный переход по ссылке.
+ * Статус 'paid' приходит в колбэк — по нему обновляем баланс.
+ */
+export function openInvoiceUrl(url: string, onPaid?: () => void) {
+  const w = tg()
+  if (w?.openInvoice) {
+    try {
+      w.openInvoice(url, (status) => {
+        if (status === 'paid') {
+          haptic('success')
+          onPaid?.()
+        }
+      })
+      return
+    } catch {
+      // старые клиенты без openInvoice — фолбэк ниже
+    }
+  }
+  if (w?.openTelegramLink) w.openTelegramLink(url)
   else window.open(url, '_blank', 'noopener')
 }
 

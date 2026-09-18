@@ -52,6 +52,7 @@ async function copyPostText(text: string): Promise<boolean> {
 /** Кнопка «Копировать текст»: чистый текст поста в буфер обмена */
 function CopyTextButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
+  const t = useT()
   return (
     <button
       type="button"
@@ -61,17 +62,17 @@ function CopyTextButton({ text }: { text: string }) {
         const ok = await copyPostText(stripMarkdown(text))
         if (ok) {
           setCopied(true)
-          toast.success('Текст скопирован')
+          toast.success(t('post.copiedToast'))
           setTimeout(() => setCopied(false), 1600)
         } else {
-          toast.error('Не удалось скопировать')
+          toast.error(t('post.copyFail'))
         }
       }}
-      aria-label="Копировать текст поста"
+      aria-label={t('post.copyText')}
       className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-surface text-[14px] font-semibold text-tg-link active:opacity-70"
     >
       {copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
-      {copied ? 'Скопировано' : 'Копировать текст'}
+      {copied ? t('post.copied') : t('post.copyText')}
     </button>
   )
 }

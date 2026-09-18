@@ -169,6 +169,102 @@ const DICT = {
   'comments.tooLong': ['Слишком длинный комментарий', 'Comment is too long'],
   'comments.deleted': ['Комментарий удалён', 'Comment deleted'],
   'comments.delete': ['Удалить комментарий', 'Delete comment'],
+
+  /* Перевод поста (Twitter-style) */
+  'translate.do': ['Перевести', 'Translate'],
+  'translate.doing': ['Переводим…', 'Translating…'],
+  'translate.showOriginal': ['Показать оригинал', 'Show original'],
+  'translate.showTranslation': ['Показать перевод', 'Show translation'],
+  'translate.auto': ['Переведено автоматически', 'Translated automatically'],
+  'translate.error': ['Перевод недоступен, попробуйте позже', 'Translation unavailable, try again later'],
+
+  /* Краткое содержание (AI-саммари) */
+  'summary.title': ['Краткое содержание', 'Summary'],
+  'summary.subtitle': ['выжимка в 3 пунктах', '3-point digest'],
+  'summary.close': ['Закрыть', 'Close'],
+  'summary.generating': ['Генерируем…', 'Generating…'],
+  'summary.tooShort': [
+    'Пост короткий — саммари не требуется, просто прочитайте его целиком',
+    'This post is short — no summary needed, just read it in full',
+  ],
+  'summary.error': ['Не удалось сгенерировать саммари', 'Failed to generate the summary'],
+  'summary.disclaimer': [
+    'Сгенерировано нейросетью · может ошибаться в деталях',
+    'AI-generated · may be inaccurate in details',
+  ],
+  'summary.fallbackNote': [
+    'Временный режим: выжимка из первых предложений · нейросеть вернётся позже',
+    'Temporary mode: digest of the first sentences · the AI will be back soon',
+  ],
+
+  /* Конец ленты / ошибки загрузки */
+  'feed.endTitle': ['Вы досмотрели ленту', "You've reached the end"],
+  'feed.endHint': ['Загляните чуть позже — каналы публикуют новое', 'Check back later — channels keep posting'],
+  'feed.refresh': ['Обновить', 'Refresh'],
+  'feed.retryLoad': ['Не загрузилось — повторить', "Couldn't load — retry"],
+
+  /* Пост: разворот текста и копирование */
+  'post.collapse': ['Свернуть', 'Collapse'],
+  'post.copyText': ['Копировать текст', 'Copy text'],
+  'post.copied': ['Скопировано', 'Copied'],
+  'post.copyFail': ['Не удалось скопировать', "Couldn't copy"],
+  'post.copiedToast': ['Текст скопирован', 'Text copied'],
+
+  /* Пополнение баланса */
+  'topup.title': ['Пополнение баланса', 'Top up balance'],
+  'topup.titleShort': ['Пополнить баланс', 'Top up'],
+  'topup.tabCard': ['Карта', 'Card'],
+  'topup.tabStars': ['Stars', 'Stars'],
+  'topup.tabTon': ['TON', 'TON'],
+  'topup.cardSub': ['Оплата в один экран · ЮKassa', 'One-screen checkout · YooKassa'],
+  'topup.starsSub': ['Оплата в самом Telegram', 'Paid right in Telegram'],
+  'topup.tonSub': ['Tonkeeper и любые TON-кошельки', 'Tonkeeper and any TON wallet'],
+  'topup.soon': ['Скоро', 'Soon'],
+  'topup.unavailable': ['Появится в ближайшее время', 'Coming soon'],
+  'topup.custom': ['Своя сумма — от 100', 'Custom amount — from 100'],
+  'topup.customAria': ['Сумма пополнения в свайпах', 'Top-up amount in swipes'],
+  'topup.range': ['от 100 до 50 000 свайпов', 'from 100 to 50,000 swipes'],
+  'topup.toPay': ['к оплате', 'to pay'],
+  'topup.rate1': ['1 свайп = 1 ₽', '1 swipe = ₽1'],
+  'topup.payCard': ['Пополнить на', 'Top up'],
+  'topup.payStars': ['Оплатить', 'Pay'],
+  'topup.payTon': ['Получить TON-счёт', 'Get TON invoice'],
+  'topup.starsOpen': [
+    'Счёт открыт в Telegram — подтвердите оплату Stars',
+    'Invoice opened in Telegram — confirm the Stars payment',
+  ],
+  'topup.starsNote': [
+    'Stars принимают до 2 500 за один платёж — крупная сумма просто разобьётся на несколько счетов (первый откроется сейчас).',
+    'Stars accept up to 2,500 per payment — larger amounts split into several invoices (the first opens now).',
+  ],
+  'topup.escrow': [
+    'Свайпы зачисляются на эскроу-счёт и списываются только за уникальных читателей',
+    'Swipes are held in escrow and charged only for unique readers',
+  ],
+  'topup.invoiceFail': ['Не удалось создать платёж', "Couldn't create the payment"],
+  'topup.packName': ['Stars', 'Stars'],
+  'topup.swipes': ['свайпов', 'swipes'],
+  'topup.waiting': ['Ждём перевод', 'Waiting for transfer'],
+  'topup.paid': ['Платёж получен', 'Payment received'],
+  'topup.paidHint': [
+    'Свайпы уже на балансе — можно запускать продвижение канала',
+    'Swipes are on your balance — you can start promoting your channel',
+  ],
+  'topup.great': ['Отлично', 'Great'],
+  'topup.newInvoice': ['Новый счёт', 'New invoice'],
+  'topup.otherMethod': ['Выбрать другой способ', 'Choose another method'],
+  'topup.addrLabel': ['Адрес кошелька', 'Wallet address'],
+  'topup.memoLabel': ['Код платежа (обязательно в комментарии)', 'Payment code (required in the comment)'],
+  'topup.tonExpired': [
+    'Счёт устарел — курс TON изменился. Нажмите «Новый счёт», чтобы получить актуальный.',
+    'Invoice expired — the TON rate changed. Tap "New invoice" to get a fresh one.',
+  ],
+  'topup.tonHint': [
+    'Переводите точно указанную сумму TON с кодом в комментарии — зачисление придёт автоматически в течение минуты после подтверждения сети.',
+    'Send the exact TON amount with the code in the comment — it will be credited automatically within a minute after network confirmation.',
+  ],
+  'topup.openTonkeeper': ['Открыть в Tonkeeper', 'Open in Tonkeeper'],
+  'topup.rateSuffix': ['₽/TON', '₽/TON'],
 } as const
 
 export type I18nKey = keyof typeof DICT

@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import { summarizePostCached } from '@/lib/ai'
+import { extractiveSummary, summarizePostCached } from '@/lib/ai'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,24 +11,6 @@ export const dynamic = 'force-dynamic'
 const bodySchema = z.object({
   postId: z.string().min(1).max(64),
 })
-
-/** Извлекающий фолбэк: 1–3 первых длинных предложения текста */
-function extractiveSummary(text: string): string[] {
-  const clean = text.replace(/\s+/g, ' ').trim()
-  const sentences = clean
-    .split(/(?<=[.!?…])\s+/)
-    .map((s) => s.trim())
-    .filter((s) => s.length > 20)
-  const picked: string[] = []
-  for (const s of sentences) {
-    picked.push(s.length > 120 ? s.slice(0, 117) + '…' : s)
-    if (picked.length === 3) break
-  }
-  if (picked.length === 0 && clean.length > 20) {
-    picked.push(clean.slice(0, 117) + (clean.length > 117 ? '…' : ''))
-  }
-  return picked
-}
 
 /**
  * POST /api/summary { postId }

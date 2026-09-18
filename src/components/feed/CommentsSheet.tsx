@@ -48,6 +48,7 @@ function Skeletons() {
 
 export function CommentsSheet() {
   const t = useT()
+  const lang = useApp((s) => s.lang)
   const post = useApp((s) => s.commentsPost)
   const closeComments = useApp((s) => s.closeComments)
   const patchCommentsPost = useApp((s) => s.patchCommentsPost)
@@ -180,13 +181,20 @@ export function CommentsSheet() {
   }
 
   const count = post?.commentsCount ?? 0
+  // Счётчик в подзаголовке: русская плюрализация, английский — простая форма
+  const countLabel =
+    count > 0
+      ? lang === 'en'
+        ? `${count} ${t('comments.count')}`
+        : `${count} ${pluralRu(count, 'комментарий', 'комментария', 'комментариев')}`
+      : null
 
   return (
     <BottomSheet
       open={open}
       onClose={closeComments}
       title={t('comments.title')}
-      subtitle={count > 0 ? `${count} ${pluralRu(count, 'комментарий', 'комментария', 'комментариев')}` : undefined}
+      subtitle={countLabel ?? undefined}
       zClass="z-[80]"
       wide
     >
@@ -232,11 +240,13 @@ export function CommentsSheet() {
                   {items.map((c) => (
                     <motion.li
                       key={c.id}
-                      layout="position"
-                      initial={{ opacity: 0, y: 8 }}
+                      /* БЕЗ layout-анимации: она мерила геометрию каждого элемента
+                        на каждый чих и лагала при входе в комментарии и подгрузке —
+                        остаётся только лёгкий вход без измерений */
+                      initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: c.id.startsWith('tmp_') ? 0.55 : 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.96 }}
-                      transition={{ type: 'spring', damping: 30, stiffness: 380 }}
+                      exit={{ opacity: 0 }}
+                      transition={{ duration: 0.16 }}
                       className="flex gap-2.5"
                     >
                       <Avatar name={c.author.name} src={c.author.avatarUrl} size={36} />

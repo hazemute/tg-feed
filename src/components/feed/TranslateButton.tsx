@@ -1,16 +1,20 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import { Languages, Loader2, RotateCcw } from 'lucide-react'
 import { toast } from 'sonner'
-import { api } from '@/lib/api'
+import { apiStream } from '@/lib/api'
 import { haptic } from '@/lib/tg'
+import { useT } from '@/lib/i18n'
 
 /**
  * Перевод поста на родной язык читателя — как в Twitter: переведённый текст
  * ЗАМЕЩАЕТ оригинал на месте, внизу остаётся компактная строка-контрол
- * («Показать оригинал» / «Показать перевод»). Перевод кэшируется на сервере —
- * повторное открытие мгновенно.
+ * («Показать оригинал» / «Показать перевод»).
+ *
+ * СКОРОСТЬ: перевод СТРИМИТСЯ (SSE /api/translate/stream) — переведённый текст
+ * печатается на месте прямо во время генерации: первый кусок виден через ~1с,
+ * а не весь ответ через 5–15с. Кэш на сервере — повторное открытие мгновенно.
  */
 
 function isForeign(text: string): boolean {
@@ -25,7 +29,7 @@ export type TranslationState = {
   /** Текст явно не на русском — кнопка «Перевести» показывается */
   foreign: boolean
   busy: boolean
-  /** Переведённый текст (null — ещё не переводили) */
+  /** Переведённый текст (null — ещё не переводили); при стриминге приходит кусками */
   translated: string | null
   showOriginal: boolean
   translate: () => void
@@ -33,38 +37,43 @@ export type TranslationState = {
 }
 
 export function useTranslation(postId: string, text: string): TranslationState {
+  const t = useT()
   const [foreign] = useState(() => isForeign(text))
   const [busy, setBusy] = useState(false)
   const [translated, setTranslated] = useState<string | null>(null)
   const [showOriginal, setShowOriginal] = useState(false)
+  // Аккумулятор в ref: дельты приходят часто, setState только на текст
+  const accRef = useRef('')
 
   const translate = useCallback(() => {
-    if (busy || translated) {
-      if (translated) {
-        haptic('light')
-        setShowOriginal(false)
-      }
+    if (busy) return
+    if (translated) {
+      haptic('light')
+      setShowOriginal(false)
       return
     }
     haptic('light')
     setBusy(true)
-    api<{ ok: boolean; text?: string; reason?: string }>('/api/translate', {
-      method: 'POST',
-      body: JSON.stringify({ postId }),
-    })
-      .then((r) => {
-        if (r.ok && r.text) {
-          setTranslated(r.text)
-          setShowOriginal(false)
-        } else {
-          if (r.reason !== 'russian') toast.error('Перевод недоступен, попробуйте позже')
+    accRef.current = ''
+    let first = true
+    apiStream('/api/translate/stream', { postId }, (type, data) => {
+      if (type === 'delta') {
+        accRef.current += String(data.v ?? '')
+        if (first) {
+          first = false
+          setBusy(false) // текст уже печатается — спиннер больше не нужен
         }
-      })
+        setTranslated(accRef.current)
+      } else if (type === 'fail') {
+        const reason = data.reason
+        if (reason !== 'russian' && reason !== 'short') toast.error(t('translate.error'))
+      }
+    })
       .catch(() => {
-        toast.error('Перевод недоступен, попробуйте позже')
+        if (!accRef.current) toast.error(t('translate.error'))
       })
       .finally(() => setBusy(false))
-  }, [busy, postId, translated])
+  }, [busy, postId, translated, t])
 
   if (!foreign) {
     return {
@@ -90,6 +99,7 @@ export function translatedText(tr: TranslationState, original: string): string {
  * после — «Показать оригинал / Показать перевод» + пометка об автопереводе.
  */
 export function TranslateControl({ tr }: { tr: TranslationState }) {
+  const t = useT()
   if (!tr.foreign) return null
 
   if (!tr.translated) {
@@ -105,7 +115,7 @@ export function TranslateControl({ tr }: { tr: TranslationState }) {
         ) : (
           <Languages className="h-4 w-4" aria-hidden />
         )}
-        {tr.busy ? 'Переводим…' : 'Перевести'}
+        {tr.busy ? t('translate.doing') : t('translate.do')}
       </button>
     )
   }
@@ -113,7 +123,7 @@ export function TranslateControl({ tr }: { tr: TranslationState }) {
   return (
     <div className="mt-2 flex items-center gap-2" data-noswipe>
       {!tr.showOriginal && (
-        <span className="text-[12.5px] text-tg-hint">Переведено автоматически</span>
+        <span className="text-[12.5px] text-tg-hint">{t('translate.auto')}</span>
       )}
       <button
         type="button"
@@ -124,7 +134,7 @@ export function TranslateControl({ tr }: { tr: TranslationState }) {
         className="inline-flex items-center gap-1.5 text-[13px] font-medium text-tg-link active:opacity-60"
       >
         <RotateCcw className="h-3.5 w-3.5" aria-hidden />
-        {tr.showOriginal ? 'Показать перевод' : 'Показать оригинал'}
+        {tr.showOriginal ? t('translate.showTranslation') : t('translate.showOriginal')}
       </button>
     </div>
   )

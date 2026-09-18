@@ -371,16 +371,19 @@ export function FeedView() {
         }
         /* Пустая страница = окно пагинации съехало (свежие посты вставлены выше).
            После MAX_EMPTY_PAGES пустых подряд — честно заканчиваем ленту вместо
-           бесконечной погони за окном (раньше это выглядело как вечный спиннер). */
+           бесконечной погони за окном (раньше это выглядело как вечный спиннер).
+           ВАЖНО: сервер почти всегда отвечает hasMore:true — если дать ему
+           перезаписать стоп-флаг, лента гоняла пустые страницы ВЕЧНО (запрос
+           за запросом, спиннер без конца). Стоп-флаг теперь главный. */
         if (replace) emptyStreakRef.current = 0
         else if (freshCount === 0) emptyStreakRef.current += 1
         else emptyStreakRef.current = 0
-        if (emptyStreakRef.current >= MAX_EMPTY_PAGES) setHasMore(false)
+        const feedOver = emptyStreakRef.current >= MAX_EMPTY_PAGES
         // Запоминаем новейший пост (для пилюли «N новых постов») — только если он новее текущего
         const times = data.items.map((x) => x.publishedAt).sort()
         const mx = times[times.length - 1]
         if (mx && mx > latestTimeRef.current) latestTimeRef.current = mx
-        setHasMore(data.hasMore)
+        setHasMore(feedOver ? false : data.hasMore)
         setPage(p)
         setOffline(false)
         setLoadFailed(false)
@@ -1096,7 +1099,10 @@ export function FeedView() {
             <div ref={sentinelRef} className="h-2" aria-hidden />
             </div>
 
-            {loading && (
+            {/* Спиннер догрузки: виден ТОЛЬКО пока реально идёт запрос следующей
+                страницы (не при initial-скелетонах и не после конца ленты) —
+                «пропадает, когда посты загрузились, появляется, когда закончились» */}
+            {!initial && loading && hasMore && (
               <div className="flex justify-center py-6">
                 <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
               </div>
@@ -1104,7 +1110,7 @@ export function FeedView() {
 
             {/* Ошибка догрузки при скролле вниз: ненавязчивая кнопка вместо
                 вечного ожидания — тап повторяет текущую страницу */}
-            {!loading && hasMore && loadFailed && (
+            {!initial && !loading && hasMore && loadFailed && (
               <div className="flex justify-center py-4">
                 <button
                   type="button"
@@ -1116,23 +1122,21 @@ export function FeedView() {
                   className="flex h-9 items-center gap-1.5 rounded-full border border-tg-sep bg-tg-surface px-4 text-[13px] font-medium text-tg-link transition active:scale-95"
                 >
                   <AlertCircle className="h-3.5 w-3.5" aria-hidden />
-                  Не загрузилось — повторить
+                  {t('feed.retryLoad')}
                 </button>
               </div>
             )}
 
             {!hasMore && (
               <div className="flex flex-col items-center px-8 py-10 text-center">
-                <p className="text-[15px] font-semibold text-tg-text">Вы досмотрели ленту</p>
-                <p className="mt-1 text-snippet text-tg-hint">
-                  Загляните чуть позже — каналы публикуют новое
-                </p>
+                <p className="text-[15px] font-semibold text-tg-text">{t('feed.endTitle')}</p>
+                <p className="mt-1 text-snippet text-tg-hint">{t('feed.endHint')}</p>
                 <button
                   type="button"
                   onClick={bumpFeed}
                   className="mt-4 h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link active:scale-95"
                 >
-                  Обновить
+                  {t('feed.refresh')}
                 </button>
               </div>
             )}
