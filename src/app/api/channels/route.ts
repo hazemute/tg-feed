@@ -71,7 +71,12 @@ async function loadChannels(category: string, q: string) {
       ...(q ? { OR: [{ title: { contains: q } }, { username: { contains: q } }] } : {}),
     },
     include: { category: true, _count: { select: { posts: true } } },
-    orderBy: [{ isPremium: 'desc' }, { subscribersCount: 'desc' }],
+    // сначала каналы с известным реальным числом подписчиков (Bot API), потом без
+    orderBy: [
+      { isPremium: 'desc' },
+      { membersCount: { sort: 'desc', nulls: 'last' } },
+      { subscribersCount: 'desc' },
+    ],
     take: 100,
   })
 

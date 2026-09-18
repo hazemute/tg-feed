@@ -368,9 +368,12 @@ export function PostCard({
                 />
               )}
             </span>
-            <span className="mt-0.5 block truncate text-[13.5px] leading-tight text-tg-hint">
-              {formatCount(ch.subscribersCount)} {t('post.subscribers')}
-            </span>
+            {/* Без данных подписчиков (0/null) строку не рисуем — «0 подписчиков» вводит в заблуждение */}
+            {ch.subscribersCount > 0 && (
+              <span className="mt-0.5 block truncate text-[13.5px] leading-tight text-tg-hint">
+                {formatCount(ch.subscribersCount)} {t('post.subscribers')}
+              </span>
+            )}
           </span>
         </button>
         <time
@@ -378,6 +381,15 @@ export function PostCard({
           className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-tg-hint"
           title={new Date(post.publishedAt).toLocaleString(lang === 'en' ? 'en-US' : 'ru-RU')}
         >
+          {/* Честная метка спонсорского поста (обязательна по правилам Telegram Ads) */}
+          {post.sponsored && (
+            <span
+              className="rounded-full bg-tg-surface px-2 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-tg-hint"
+              title="Спонсорский пост"
+            >
+              Реклама
+            </span>
+          )}
           {Date.now() - new Date(post.publishedAt).getTime() < FRESH_MS && (
             <span
               aria-label="Новый пост"

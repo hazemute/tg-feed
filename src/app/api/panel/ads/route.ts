@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { bumpCache } from '@/lib/redis'
+import { clearPageCache } from '@/lib/page-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -22,6 +24,8 @@ const createSchema = z.object({
 
 const patchSchema = z.object({
   id: z.string().min(1).max(64),
+  // kind: 'ad' (по умолчанию, классическая реклама) | 'campaign' (CPA-кампания из PromoteSheet)
+  kind: z.enum(['ad', 'campaign']).optional(),
   isActive: z.boolean().optional(),
   title: z.string().trim().min(1).max(120).optional(),
   body: z.string().trim().min(1).max(600).optional(),
@@ -29,6 +33,39 @@ const patchSchema = z.object({
   link: linkField.optional(),
   imageUrl: z.string().trim().max(512).optional().nullable(),
 })
+
+function serializeCampaign(c: {
+  id: string
+  title: string
+  body: string
+  ctaLabel: string
+  link: string
+  imageUrl: string | null
+  status: string
+  budgetKop: number
+  spentKop: number
+  impressions: number
+  clicks: number
+  createdAt: Date
+  owner?: { username: string | null; firstName: string | null } | null
+}) {
+  return {
+    id: c.id,
+    title: c.title,
+    body: c.body,
+    ctaLabel: c.ctaLabel,
+    link: c.link,
+    imageUrl: c.imageUrl,
+    isActive: c.status === 'active',
+    status: c.status,
+    budgetKop: c.budgetKop,
+    spentKop: c.spentKop,
+    impressions: c.impressions,
+    clicks: c.clicks,
+    createdAt: c.createdAt.toISOString(),
+    owner: c.owner ? { username: c.owner.username, firstName: c.owner.firstName } : null,
+  }
+}
 
 function serialize(
   ad: {
@@ -71,6 +108,14 @@ export async function GET(request: Request) {
   try {
     const ads = await db.ad.findMany({ orderBy: { createdAt: 'desc' } })
 
+    // CPA-кампании (создаются пользователями через PromoteSheet) — админ видит
+    // и может поставить на паузу/удалить: это единственное место управления ими
+    const campaigns = await db.adCampaign.findMany({
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+      include: { owner: { select: { username: true, firstName: true } } },
+    })
+
     // Суточные суммы одним запросом: день (UTC) сегодня + вчера
     const since = new Date(Date.now() - 24 * 60 * 60_000)
     const days = [...new Set([dayKey(since), dayKey(new Date())])]
@@ -88,6 +133,7 @@ export async function GET(request: Request) {
           clicks24h: byAd.get(ad.id)?.clicks ?? 0,
         }),
       ),
+      campaigns: campaigns.map(serializeCampaign),
     })
   } catch (e) {
     console.error('[panel/ads GET]', e)
@@ -120,6 +166,7 @@ export async function POST(request: Request) {
         imageUrl: parsed.data.imageUrl || null,
       },
     })
+    await bumpCache(['ct']).catch(() => {})
 
     return NextResponse.json({
       ok: true,
@@ -132,7 +179,9 @@ export async function POST(request: Request) {
 }
 
 /**
- * PATCH /api/panel/ads { id, isActive?, ...поля } — изменить рекламу.
+ * PATCH /api/panel/ads { id, kind?: 'ad'|'campaign', isActive?, ...поля } — изменить.
+ * kind=campaign: isActive=true → статус active, false → paused (мгновенно
+ * убирает и карточку из /api/ads, и спонсорские посты из ленты).
  * Лимит 60/мин/IP.
  */
 export async function PATCH(request: Request) {
@@ -142,7 +191,22 @@ export async function PATCH(request: Request) {
   try {
     const parsed = patchSchema.safeParse(await readJson(request))
     if (!parsed.success) return err('некорректные поля рекламы')
-    const { id, ...fields } = parsed.data
+    const { id, kind = 'ad', isActive, ...fields } = parsed.data
+
+    // ---- CPA-кампания: переключение статуса ----
+    if (kind === 'campaign') {
+      if (isActive === undefined) return err('для кампании нужен флаг isActive')
+      const campaign = await db.adCampaign.update({
+        where: { id },
+        data: {
+          status: isActive ? 'active' : 'paused',
+          ...(isActive ? { startedAt: new Date() } : {}),
+        },
+      })
+      await bumpCache(['ct']).catch(() => {})
+      clearPageCache() // спонсорские посты не доживают в кэше страниц
+      return NextResponse.json({ ok: true, campaign: serializeCampaign(campaign) })
+    }
 
     const data: Record<string, unknown> = {}
     for (const [k, v] of Object.entries(fields)) {
@@ -151,6 +215,7 @@ export async function PATCH(request: Request) {
     if (Object.keys(data).length === 0) return err('нужен хотя бы один изменяемый столбец')
 
     const ad = await db.ad.update({ where: { id }, data })
+    await bumpCache(['ct']).catch(() => {})
     return NextResponse.json({ ok: true, ad: serialize(ad, { impressions24h: 0, clicks24h: 0 }) })
   } catch (e) {
     console.error('[panel/ads PATCH]', e)
@@ -166,10 +231,17 @@ export async function DELETE(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    const id = (new URL(request.url).searchParams.get('id') ?? '').trim()
+    const url = new URL(request.url)
+    const id = (url.searchParams.get('id') ?? '').trim()
+    const kind = url.searchParams.get('kind') ?? 'ad'
     if (!id || id.length > 64) return err('id required')
 
-    await db.ad.delete({ where: { id } })
+    if (kind === 'campaign') {
+      await db.adCampaign.delete({ where: { id } })
+    } else {
+      await db.ad.delete({ where: { id } })
+    }
+    await bumpCache(['ct']).catch(() => {})
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[panel/ads DELETE]', e)

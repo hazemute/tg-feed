@@ -350,7 +350,13 @@ export function PostOverlay() {
                   )}
                 </span>
                 <span className="mt-0.5 block truncate text-[13px] leading-tight text-tg-hint">
-                  {formatCount(ch.subscribersCount)} {t('post.subscribers')} · @{ch.username}
+                  {ch.subscribersCount > 0 ? (
+                    <>
+                      {formatCount(ch.subscribersCount)} {t('post.subscribers')} · @{ch.username}
+                    </>
+                  ) : (
+                    <>@{ch.username}</>
+                  )}
                 </span>
               </span>
             </button>

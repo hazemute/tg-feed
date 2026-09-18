@@ -155,13 +155,33 @@ export interface Ad {
   clicks24h: number
 }
 
+/** CPA-кампания пользователя (создаётся в мини-аппе через «Продвинуть в Топ») */
+export interface AdCampaign {
+  id: string
+  title: string
+  body: string
+  ctaLabel: string
+  link: string
+  imageUrl: string | null
+  isActive: boolean
+  status: string
+  budgetKop: number
+  spentKop: number
+  impressions: number
+  clicks: number
+  createdAt: string
+  owner: { username: string | null; firstName: string | null } | null
+}
+
 export interface AdsResponse {
   items: Ad[]
+  campaigns?: AdCampaign[]
 }
 
 export interface AdMutationResponse {
   ok: boolean
-  ad: Ad
+  ad?: Ad
+  campaign?: AdCampaign
 }
 
 export interface PanelHealthEnv {

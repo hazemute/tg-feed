@@ -157,14 +157,15 @@ export async function refreshChannelCards(limit = 12): Promise<CardsResult> {
     return { refreshed: 0, scanned: 0 }
   }
 
-  // Конкурентная обработка: 6 воркеров × (getChat + getChatMemberCount + UPDATE).
-  // Правило флуд-безопасности: Bot API ответил 429 → вся партия останавливается,
-  // оставшиеся каналы НЕ штампуются (иначе они выпадут из обновления на срок TTL).
-  // Штамп fetchedAt ставится только когда вызовы реально прошли (ok).
+  // Конкурентная обработка: 3 воркера × (getChat + getChatMemberCount + UPDATE).
+  // 6 воркеров давали burst до 12 вызовов/сек — Telegram банил за частые getChat.
+  // Правило флуд-безопасности: Bot API ответил 429 → ГЛОБАЛЬНАЯ пауза Bot API
+  // (см. tg-bot markBotBan), оставшиеся каналы НЕ штампуются (иначе они выпадут
+  // из обновления на срок TTL). Штамп fetchedAt ставится только при ok.
   let refreshed = 0
   let cursor = 0
   let banned = false
-  const workers = Array.from({ length: Math.min(6, rows.length) }, async () => {
+  const workers = Array.from({ length: Math.min(3, rows.length) }, async () => {
     for (;;) {
       if (banned) return
       const i = cursor++
@@ -175,6 +176,17 @@ export async function refreshChannelCards(limit = 12): Promise<CardsResult> {
         if (card.rateLimited) {
           banned = true
           return
+        }
+        if (card.notFound) {
+          // Канал удалён/сделан приватным: штампуем fetchedAt на полный TTL,
+          // чтобы не тратить лимит Bot API на мёртвый канал каждый тик.
+          // Данные НЕ трогаем — если канал вернётся, обновится после TTL.
+          const now = new Date()
+          await db.channel.update({
+            where: { id: r.id },
+            data: { avatarFetchedAt: now, membersFetchedAt: now },
+          }).catch(() => {})
+          continue
         }
         if (!card.ok) continue // сетевой сбой — без штампа, повтор на следующем тике
         const now = new Date()

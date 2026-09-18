@@ -48,6 +48,7 @@ import {
   panelFetch,
   PanelError,
   type Ad,
+  type AdCampaign,
   type AdMutationResponse,
   type AdsResponse,
 } from './api'
@@ -96,6 +97,19 @@ function ctr(clicks: number, impressions: number): string {
   return `${((clicks / impressions) * 100).toFixed(1)}%`
 }
 
+/** Копейки → «500 ₽» (деньги кампаний хранятся в копейках) */
+function rub(kop: number): string {
+  return `${(kop / 100).toLocaleString('ru-RU', { maximumFractionDigits: 0 })} ₽`
+}
+
+const CAMPAIGN_STATUS: Record<string, { label: string; cls: string }> = {
+  active: { label: 'идёт показ', cls: 'border-emerald-500/30 bg-emerald-50 text-emerald-700' },
+  paused: { label: 'пауза', cls: 'border-amber-500/30 bg-amber-50 text-amber-700' },
+  moderation: { label: 'на модерации', cls: 'border-sky-500/30 bg-sky-50 text-sky-700' },
+  completed: { label: 'завершена', cls: 'border-slate-200 bg-slate-100 text-slate-500' },
+  rejected: { label: 'отклонена', cls: 'border-red-500/30 bg-red-50 text-red-700' },
+}
+
 /** Метрики кампании: показы/клики/CTR за всё время и за 24 часа */
 function AdMetrics({ ad }: { ad: Ad }) {
   return (
@@ -124,6 +138,7 @@ function Metric({ label, value, sub }: { label: string; value: string; sub: stri
 
 export function AdsTab({ tick, onSettled }: TabProps) {
   const [items, setItems] = useState<Ad[] | null>(null)
+  const [campaigns, setCampaigns] = useState<AdCampaign[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [localTick, setLocalTick] = useState(0)
@@ -138,6 +153,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
         const d = await panelFetch<AdsResponse>('/api/panel/ads')
         if (!alive) return
         setItems(d.items)
+        setCampaigns(d.campaigns ?? [])
         setError(null)
         setLoading(false)
       } catch (e) {
@@ -154,6 +170,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
     return () => {
       alive = false
     }
+     
   }, [tick, localTick])
 
   const create = async () => {
@@ -169,7 +186,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
           imageUrl: form.imageUrl.trim() || undefined,
         },
       })
-      setItems((prev) => (prev ? [res.ad, ...prev] : prev))
+      if (res.ad) setItems((prev) => (prev ? [res.ad!, ...prev] : prev))
       toast.success('Реклама создана')
       setDialogOpen(false)
       setForm(EMPTY_FORM)
@@ -190,10 +207,52 @@ export function AdsTab({ tick, onSettled }: TabProps) {
         method: 'PATCH',
         json: { id: ad.id, isActive },
       })
-      setItems((prev) => (prev ? prev.map((i) => (i.id === ad.id ? res.ad : i)) : prev))
+      if (res.ad) {
+        setItems((prev) => (prev ? prev.map((i) => (i.id === ad.id ? res.ad! : i)) : prev))
+      }
       toast.success(isActive ? 'Реклама активирована' : 'Реклама выключена')
     } catch (e) {
       setItems(snapshot)
+      if (!isAuthOrNetworkError(e) && e instanceof PanelError) toast.error(e.message)
+    }
+  }
+
+  /** CPA-кампания: пауза/активация (мгновенно убирает рекламу из мини-аппа) */
+  const toggleCampaign = async (c: AdCampaign, isActive: boolean) => {
+    const snapshot = campaigns
+    setCampaigns((prev) =>
+      prev
+        ? prev.map((i) =>
+            i.id === c.id ? { ...i, isActive, status: isActive ? 'active' : 'paused' } : i,
+          )
+        : prev,
+    )
+    try {
+      const res = await panelFetch<AdMutationResponse>('/api/panel/ads', {
+        method: 'PATCH',
+        json: { id: c.id, kind: 'campaign', isActive },
+      })
+      if (res.campaign) {
+        const upd = res.campaign
+        setCampaigns((prev) => (prev ? prev.map((i) => (i.id === upd.id ? upd : i)) : prev))
+      }
+      toast.success(isActive ? 'Кампания активирована' : 'Кампания поставлена на паузу')
+    } catch (e) {
+      setCampaigns(snapshot)
+      if (!isAuthOrNetworkError(e) && e instanceof PanelError) toast.error(e.message)
+    }
+  }
+
+  const removeCampaign = async (c: AdCampaign) => {
+    const snapshot = campaigns
+    setCampaigns((prev) => (prev ? prev.filter((i) => i.id !== c.id) : prev))
+    try {
+      await panelFetch(`/api/panel/ads?id=${encodeURIComponent(c.id)}&kind=campaign`, {
+        method: 'DELETE',
+      })
+      toast.success(`Кампания «${c.title}» удалена`)
+    } catch (e) {
+      setCampaigns(snapshot)
       if (!isAuthOrNetworkError(e) && e instanceof PanelError) toast.error(e.message)
     }
   }
@@ -355,6 +414,143 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                   </div>
                 </motion.div>
               ))}
+            </motion.div>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      {/* -------- CPA-кампании пользователей (единственное место управления) -------- */}
+      <Card className={panelCard}>
+        <CardHeader>
+          <CardTitle className="text-base text-slate-900">Кампании пользователей</CardTitle>
+          <CardDescription className="text-xs text-slate-500">
+            CPA-кампании «Продвинуть в Топ»: карточка в ротации рекламы + спонсорские посты
+            в начале ленты. Пауза скрывает рекламу мгновенно.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {loading && campaigns === null ? (
+            <SkeletonRows rows={2} />
+          ) : campaigns && campaigns.length === 0 ? (
+            <EmptyState
+              icon={Megaphone}
+              title="Кампаний пока нет"
+              hint="Пользовательские кампании появятся здесь после создания в мини-аппе"
+            />
+          ) : campaigns ? (
+            <motion.div
+              variants={staggerContainer}
+              initial="hidden"
+              animate="show"
+              className="grid gap-3 lg:grid-cols-2"
+            >
+              {campaigns.map((c) => {
+                const st = CAMPAIGN_STATUS[c.status] ?? {
+                  label: c.status,
+                  cls: 'border-slate-200 bg-slate-100 text-slate-500',
+                }
+                return (
+                  <motion.div
+                    key={c.id}
+                    variants={fadeUp}
+                    whileHover={{ y: -2 }}
+                    className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
+                  >
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="truncate text-sm font-semibold text-slate-900">
+                            {c.title}
+                          </span>
+                          <Badge variant="outline" className={st.cls}>
+                            {st.label}
+                          </Badge>
+                        </div>
+                        <p className="mt-1 line-clamp-2 text-xs leading-snug text-slate-500">
+                          {c.body}
+                        </p>
+                      </div>
+                      {(c.status === 'active' || c.status === 'paused') && (
+                        <Switch
+                          checked={c.isActive}
+                          onCheckedChange={(v) => void toggleCampaign(c, v)}
+                          aria-label={`Активна кампания: ${c.title}`}
+                          className="data-[state=checked]:bg-emerald-500"
+                        />
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                      <Metric
+                        label="Бюджет"
+                        value={rub(c.budgetKop)}
+                        sub={`потрачено ${rub(c.spentKop)}`}
+                      />
+                      <Metric label="Показы" value={fmtNum(c.impressions)} sub="всего" />
+                      <Metric label="Клики" value={fmtNum(c.clicks)} sub={`CTR ${ctr(c.clicks, c.impressions)}`} />
+                      <Metric
+                        label="Цена клика"
+                        value={rub(300)}
+                        sub={c.owner?.username ? `@${c.owner.username}` : 'CPA-кампания'}
+                      />
+                    </div>
+                    <div className="mt-auto flex items-center justify-between gap-2">
+                      <a
+                        href={c.link}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex min-w-0 items-center gap-1 text-xs text-emerald-700 hover:text-emerald-600"
+                      >
+                        <ExternalLink className="size-3 shrink-0" aria-hidden />
+                        <span className="truncate">
+                          {c.ctaLabel} → {c.link}
+                        </span>
+                      </a>
+                      <div className="flex shrink-0 items-center gap-2">
+                        <span className="text-[11px] text-slate-500">{fmtAgo(c.createdAt)}</span>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              aria-label={`Удалить кампанию ${c.title}`}
+                              className="size-8 text-slate-500 hover:bg-red-50 hover:text-red-700"
+                            >
+                              <Trash2 className="size-4" aria-hidden />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent className="border-slate-200 bg-white text-slate-800">
+                            <AlertDialogHeader>
+                              <AlertDialogTitle className="text-slate-900">
+                                Удалить кампанию?
+                              </AlertDialogTitle>
+                              <AlertDialogDescription className="text-slate-500">
+                                Кампания «{c.title}» исчезнет из ротации рекламы. Неизрасходованный
+                                бюджет ({rub(Math.max(0, c.budgetKop - c.spentKop))}) вернётся на
+                                баланс владельца при возврате по обращению.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel
+                                className={cn(
+                                  'border-slate-200 bg-transparent text-slate-700 hover:bg-slate-100 hover:text-slate-900',
+                                )}
+                              >
+                                Отмена
+                              </AlertDialogCancel>
+                              <AlertDialogAction
+                                onClick={() => void removeCampaign(c)}
+                                className="bg-red-500/90 text-white hover:bg-red-500"
+                              >
+                                Удалить
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </div>
+                    </div>
+                  </motion.div>
+                )
+              })}
             </motion.div>
           ) : null}
         </CardContent>

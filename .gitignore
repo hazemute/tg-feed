@@ -63,3 +63,5 @@ server.log
 local-deploy-secrets.env
 
 /upload/
+tmp/
+scripts/tmp/

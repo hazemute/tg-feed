@@ -60,6 +60,66 @@ export function botEnabled(): boolean {
   return BOT_TOKEN().length > 0
 }
 
+// ---------------- Глобальный флуд-предохранитель Bot API ----------------
+
+/**
+ * После 429 Telegram продолжает банить за КАЖДЫЙ вызов (retry_after растёт).
+ * Раньше бэкфиллы и тики продолжали долбить API во время бана — и продлевали
+ * его на часы. Теперь первый 429 ставит ГЛОБАЛЬНУЮ паузу (память + Redis):
+ * все вызовы Bot API мгновенно возвращают rateLimited, не тратя лимит и
+ * не продлевая наказание. Пауза = retry_after от Telegram (кап 4 часа).
+ */
+const BOT_BAN_LOCAL_KEY = 'bot:globalBanUntil'
+const BOT_BAN_REDIS_KEY = 'tgbot:globalBan'
+let botBanUntilMs = 0
+let botBanRedisChecked = false
+
+/** Есть ли сейчас глобальная пауза Bot API (синхронно, по памяти процесса) */
+function botBanned(): boolean {
+  return Date.now() < botBanUntilMs
+}
+
+/** Отметить глобальную паузу после 429 (retryAfterSec — рекомендация Telegram) */
+async function markBotBan(retryAfterSec: number): Promise<void> {
+  const until = Date.now() + Math.min(Math.max(retryAfterSec, 30), 4 * 3600) * 1000
+  if (until <= botBanUntilMs) return // уже бан длиннее — не укорачиваем
+  botBanUntilMs = until
+  memSet(BOT_BAN_LOCAL_KEY, String(until), until - Date.now() + 60_000)
+  // синхронизируем между инстансами (Vercel): TTL = остаток бана, ±1 команда
+  void cacheSet(BOT_BAN_REDIS_KEY, String(until), Math.ceil((until - Date.now()) / 1000)).catch(
+    () => {},
+  )
+}
+
+/** Поднять паузу из Redis при холодном старте инстанса (один раз за процесс) */
+async function hydrateBotBan(): Promise<void> {
+  if (botBanRedisChecked || botBanned()) return
+  botBanRedisChecked = true
+  try {
+    const v = await cacheGet<string>(BOT_BAN_REDIS_KEY)
+    if (v) {
+      const until = Number(v)
+      if (Number.isFinite(until) && until > Date.now()) {
+        botBanUntilMs = until
+        memSet(BOT_BAN_LOCAL_KEY, String(until), until - Date.now() + 60_000)
+      }
+    }
+  } catch {
+    // Redis моргнул — работает только локальная память
+  }
+}
+
+/** Диагностика: до какого времени действует глобальная пауза (0 — нет) */
+export function botBanRemainSec(): number {
+  return Math.max(0, Math.ceil((botBanUntilMs - Date.now()) / 1000))
+}
+
+/** Как botBanRemainSec, но поднимает паузу из Redis (для health-эндпоинтов) */
+export async function botBanRemainSecAsync(): Promise<number> {
+  await hydrateBotBan()
+  return botBanRemainSec()
+}
+
 let meCache: { username: string | null; expiresAt: number } | null = null
 
 /** Username бота (кэш 10 минут; при отсутствии токена/ошибке — null) */
@@ -181,6 +241,8 @@ export type ChatCardResult = {
   members: number | null
   /** Bot API ответил 429 (флуд-бан) — пакетную обработку нужно остановить */
   rateLimited: boolean
+  /** канал не существует/приватен (400/403): штампуем TTL, чтобы не дёргать каждый тик */
+  notFound?: boolean
   /** вызовы прошли (не сетевой сбой): можно штамповать fetchedAt */
   ok: boolean
 }
@@ -196,6 +258,9 @@ export async function getChatCard(username: string): Promise<ChatCardResult> {
   const clean = username.replace(/^@/, '')
   const empty: ChatCardResult = { photoFileId: null, members: null, rateLimited: false, ok: false }
   if (!botEnabled()) return empty
+  await hydrateBotBan()
+  // Глобальная пауза: не дёргаем API во время флуд-бана (иначе продлеваем его)
+  if (botBanned()) return { ...empty, rateLimited: true }
   try {
     const [chatRes, membersRes] = await Promise.all([
       fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChat`, {
@@ -211,11 +276,18 @@ export async function getChatCard(username: string): Promise<ChatCardResult> {
         signal: AbortSignal.timeout(8000),
       }),
     ])
-    // Флуд-защита: 429 — сигнал остановить всю партию (не штампуем!)
+    // Флуд-защита: 429 — сигнал остановить ВСЮ пакетную обработку Bot API:
+    // ставим глобальную паузу и НЕ штампуем канал (повтор после снятия)
     if (chatRes.status === 429 || membersRes.status === 429) {
       const retry = Number(chatRes.headers.get('retry-after') ?? membersRes.headers.get('retry-after') ?? '0')
       memSet(`cardban:${clean}`, String(retry), Math.min(30, Math.max(1, retry)) * 1000)
+      void markBotBan(retry)
       return { photoFileId: null, members: null, rateLimited: true, ok: false }
+    }
+    // Канал удалён/приватен: Telegram отвечает 400/403 — фиксируем notFound,
+    // чтобы шедулер не молотил несуществующий канал каждый тик
+    if (chatRes.status === 400 || chatRes.status === 403 || membersRes.status === 400 || membersRes.status === 403) {
+      return { photoFileId: null, members: null, rateLimited: false, notFound: true, ok: false }
     }
     const chat = (await chatRes.json().catch(() => null)) as {
       ok?: boolean
@@ -505,6 +577,10 @@ function formatPostMessage(post: NotifiablePost): string {
  */
 export async function notifyNewPosts(posts: NotifiablePost[]): Promise<NotifyResult> {
   if (!botEnabled() || posts.length === 0) return { sent: 0, failed: 0, recipients: 0 }
+  // Флуд-бан Bot API: отправка в Telegram сейчас невозможна — но посты НЕ помечаем
+  // notifiedAt (см. ниже): рассылка догонит после снятия бана при следующем прогоне
+  await hydrateBotBan()
+  if (botBanned()) return { sent: 0, failed: 0, recipients: 0 }
 
   const channelIds = [...new Set(posts.map((p) => p.channel.username))]
   const byUsername = new Map(posts.map((p) => [p.channel.username, p]))

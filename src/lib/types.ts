@@ -87,6 +87,8 @@ export type PostDTO = {
   publishedAt: string
   liked: boolean
   bookmarked: boolean
+  /** Спонсорский пост (активная CPA-кампания) — показывается с бейджем «Реклама» */
+  sponsored?: boolean
   channel: ChannelDTO
 }
 

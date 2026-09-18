@@ -214,11 +214,13 @@ export function FeedView() {
   }, [visibleItems, setPostQueue])
   const busyRef = useRef(false)
 
+  // Реклама: первичная загрузка + рефреш при каждом bump ленты (pull-to-refresh,
+  // новые посты) — выключенная админом реклама исчезает без перезагрузки приложения
   useEffect(() => {
     api<{ items: AdDTO[] }>('/api/ads')
       .then((d) => setAds(d.items))
       .catch(() => {})
-  }, [])
+  }, [feedVersion])
 
   // ---------- Уведомления (колокольчик в шапке) ----------
 

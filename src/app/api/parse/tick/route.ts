@@ -5,7 +5,7 @@ import { notifyNewPosts } from '@/lib/tg-bot'
 import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards } from '@/lib/parse-scheduler'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 120
 
 /**
  * POST|GET /api/parse/tick — ОДИН тик адаптивного шедулера (для cron-сервиса).
@@ -31,8 +31,12 @@ async function handle(request: Request) {
       return NextResponse.json({ ok: true, batch: 0, added: 0, enriched: 0 })
     }
 
-    // per=5 новых постов на канал, тайм-бюджет 45с — тик остаётся лёгким
-    const result = await runParser(5, undefined, batch.length, Date.now() + 45_000, 1, batch)
+    // per=5 новых постов на канал, тайм-бюджет 35с — тик остаётся лёгким.
+    // Бюджет сжат не случайно: после парсинга гарантированно должны успеть
+    // обновиться карточки каналов (аватар/подписчики) — раньше порог 45с
+    // при медленном t.me (~10-15с/канал) не оставлял им ни секунды, и
+    // сотни каналов навсегда оставались без подписчиков/аватаров.
+    const result = await runParser(5, undefined, batch.length, Date.now() + 35_000, 1, batch)
 
     let notified = { sent: 0, failed: 0, recipients: 0 }
     try {
@@ -41,23 +45,26 @@ async function handle(request: Request) {
       console.error('[tick] notify failed', e)
     }
 
-    // бэкфилл медиа — в остатке бюджета
+    // карточки каналов (аватар + подписчики через Bot API) — ГАРАНТИРОВАННЫЙ
+    // слот сразу после парсинга: приоритет выше медиа-бэкфилла, т.к. карточка
+    // видна пользователю в каждом посте ленты. 10 каналов / 3 воркера ≈ 20с и
+    // ~20 вызовов Bot API — безопасный burst без риска флуд-бана.
+    let cards = { refreshed: 0, scanned: 0 }
+    if (Date.now() - started < 70_000) {
+      try {
+        cards = await refreshChannelCards(10)
+      } catch (e) {
+        console.error('[tick] cards failed', e)
+      }
+    }
+
+    // бэкфилл медиа — только если ещё остался бюджет (самый нижний приоритет)
     let enriched = 0
-    if (Date.now() - started < 40_000) {
+    if (Date.now() - started < 85_000) {
       try {
         enriched = (await enrichMissingMedia()).enriched
       } catch (e) {
         console.error('[tick] enrich failed', e)
-      }
-    }
-
-    // карточки каналов (аватар + подписчики через Bot API) — в остатке бюджета
-    let cards = { refreshed: 0, scanned: 0 }
-    if (Date.now() - started < 45_000) {
-      try {
-        cards = await refreshChannelCards(12)
-      } catch (e) {
-        console.error('[tick] cards failed', e)
       }
     }
 

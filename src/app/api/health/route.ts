@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { botEnabled, getBotUsername } from '@/lib/tg-bot'
+import { botEnabled, getBotUsername, botBanRemainSecAsync } from '@/lib/tg-bot'
 import { redisHealth } from '@/lib/redis'
 import { APP_VERSION } from '@/lib/server'
 
@@ -30,6 +30,7 @@ export async function GET() {
       cache,
       bot,
       botUsername,
+      botBanSec: await botBanRemainSecAsync(),
       session: 'jwt',
       version: APP_VERSION,
       time: new Date().toISOString(),

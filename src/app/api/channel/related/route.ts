@@ -49,7 +49,12 @@ export async function GET(request: Request) {
         categoryId: channel.categoryId,
         id: { not: channel.id },
       },
-      orderBy: [{ isPremium: 'desc' }, { subscribersCount: 'desc' }],
+      // каналы с известным реальным числом подписчиков — первыми
+      orderBy: [
+        { isPremium: 'desc' },
+        { membersCount: { sort: 'desc', nulls: 'last' } },
+        { subscribersCount: 'desc' },
+      ],
       take: limit * 4,
       select: {
         id: true,

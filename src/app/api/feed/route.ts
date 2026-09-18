@@ -246,6 +246,7 @@ export async function GET(request: Request) {
         стоит ~0.3-0.9с: последовательная цепочка и была причиной «тормозов»). */
     const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
     const sponsors = page === 0 ? await sponsorChannelIds() : null
+    let sponSet: Set<string> | null = null
     mark('sponsors-ids')
 
     const pageRows: PageRow[] = sliceIds.length
@@ -300,8 +301,9 @@ export async function GET(request: Request) {
       }
       if (picked.size > 0) {
         const sponIds = [...picked.values()]
-        const sponSet = new Set(sponIds)
-        const rest = ordered.filter((x) => !sponSet.has(x.id))
+        const sponSetLocal = new Set(sponIds)
+        sponSet = sponSetLocal
+        const rest = ordered.filter((x) => !sponSetLocal.has(x.id))
         ordered.length = 0
         ordered.push(...sponIds.map((id) => ({ id, cid: '', w: 0 })), ...rest)
         // страница уже вырезана из старого порядка — перевырезаем из нового
@@ -349,7 +351,7 @@ export async function GET(request: Request) {
 
     const items: PostDTO[] = rows.map((r) => {
       const post = postFromRow(r)
-      return toPostDTO(
+      const dto = toPostDTO(
         post,
         {
           liked: Boolean(r.liked),
@@ -358,6 +360,9 @@ export async function GET(request: Request) {
         },
         Number(r.bookmarksCount),
       )
+      // Спонсорский пост помечается честной меткой «Реклама» в карточке
+      if (sponSet?.has(r.id)) dto.sponsored = true
+      return dto
     })
 
     const hasMore = (page + 1) * limit < index.total

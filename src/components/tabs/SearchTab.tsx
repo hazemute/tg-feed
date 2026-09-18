@@ -520,9 +520,11 @@ function ChannelRow({
             {channel.description}
           </span>
         )}
-        <span className="mt-0.5 block text-[13px] text-tg-hint">
-          {formatCount(channel.subscribersCount)} подписчиков
-        </span>
+        {channel.subscribersCount > 0 && (
+          <span className="mt-0.5 block text-[13px] text-tg-hint">
+            {formatCount(channel.subscribersCount)} подписчиков
+          </span>
+        )}
       </button>
       <SubscribePill subscribed={channel.subscribed} onClick={onToggle} />
     </div>

@@ -79,3 +79,11 @@ export function putFlagsOverride(uid: string, postId: string, flags: Flags) {
   }
   overrides.set(`${uid}|${postId}`, { flags, exp: Date.now() + OVERRIDE_TTL_MS })
 }
+
+/**
+ * Полная очистка кэша страниц: вызывают админские мутации рекламы (пауза/удаление
+ * кампании) — иначе спонсорские посты могут доживать в кэше до 45с.
+ */
+export function clearPageCache() {
+  pages.clear()
+}

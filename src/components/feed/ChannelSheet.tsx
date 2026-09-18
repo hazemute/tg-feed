@@ -286,10 +286,12 @@ function ChannelScreen({
                   <h1 className="truncate text-[21px] font-bold leading-tight text-tg-text">{channel.title}</h1>
                   <div className="mt-0.5 text-[14px] text-tg-link">@{channel.username}</div>
                   <div className="mt-1.5 flex items-center gap-4 text-[13.5px] text-tg-hint">
-                    <span>
-                      <b className="font-semibold text-tg-text2">{formatCount(channel.subscribersCount)}</b>{' '}
-                      подписчиков
-                    </span>
+                    {channel.subscribersCount > 0 && (
+                      <span>
+                        <b className="font-semibold text-tg-text2">{formatCount(channel.subscribersCount)}</b>{' '}
+                        подписчиков
+                      </span>
+                    )}
                     <span>
                       <b className="font-semibold text-tg-text2">{channel.postsCount ?? items.length}</b>{' '}
                       постов

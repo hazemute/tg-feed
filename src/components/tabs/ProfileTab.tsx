@@ -273,8 +273,8 @@ export function ProfileTab() {
                     {s.channel.title}
                   </span>
                   <span className="block truncate text-[14px] text-tg-hint">
-                    {formatCount(s.channel.subscribersCount)} подписчиков
-                    {s.hidden && ' · скрыт из ленты'}
+                    {s.channel.subscribersCount > 0 && `${formatCount(s.channel.subscribersCount)} подписчиков`}
+                    {s.hidden && `${s.channel.subscribersCount > 0 ? ' · ' : ''}скрыт из ленты`}
                   </span>
                 </span>
                 <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" />

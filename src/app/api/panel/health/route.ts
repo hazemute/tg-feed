@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { APP_VERSION } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
-import { botEnabled, getBotUsername } from '@/lib/tg-bot'
+import { botEnabled, getBotUsername, botBanRemainSecAsync } from '@/lib/tg-bot'
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +39,7 @@ export async function GET(request: Request) {
       db: dbOk,
       bot,
       botUsername,
+      botBanSec: await botBanRemainSecAsync(),
       session: 'jwt',
       version: APP_VERSION,
       uptimeSec: Math.round(process.uptime()),

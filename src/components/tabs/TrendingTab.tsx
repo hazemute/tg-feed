@@ -304,8 +304,9 @@ function TopChannels({ channels }: { channels: ChannelDTO[] }) {
                 {c.title}
               </span>
               <span className="mt-0.5 block truncate text-[13px] text-tg-hint">
-                {formatCount(c.subscribersCount)}{' '}
-                {pluralRu(c.subscribersCount, 'подписчик', 'подписчика', 'подписчиков')}
+                {c.subscribersCount > 0
+                  ? `${formatCount(c.subscribersCount)} ${pluralRu(c.subscribersCount, 'подписчик', 'подписчика', 'подписчиков')}`
+                  : `@${c.username}`}
               </span>
             </button>
             <SubscribeButton subscribed={c.subscribed} title={c.title} onClick={() => toggleSub(c)} />

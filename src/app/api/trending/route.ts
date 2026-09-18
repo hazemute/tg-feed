@@ -173,12 +173,18 @@ async function computeCore(): Promise<TrendingCore> {
     )
   })()
 
-  /* ---------- Топ каналов по подписчикам ---------- */
+  /* ---------- Топ каналов по подписчикам ----------
+     Сортировка по РЕАЛЬНОМУ числу подписчиков (membersCount из Bot API);
+     раньше сортировали по локальному счётчику приложения (почти всегда 0) —
+     лидерборд был случайным. Каналы без данных — в конце списка. */
   const topChannelsPromise = (async (): Promise<ChannelDTO[]> => {
     const channels = await db.channel.findMany({
       where: { status: 'active' },
       include: { category: true },
-      orderBy: { subscribersCount: 'desc' },
+      orderBy: [
+        { membersCount: { sort: 'desc', nulls: 'last' } },
+        { subscribersCount: 'desc' },
+      ],
       take: 8,
     })
     return channels.map((c) => toChannelDTO(c, false))
