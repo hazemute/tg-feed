@@ -12,10 +12,25 @@ function visibleText(text: string): string {
       else out += s.v ?? ''
     }
   }
-  for (const b of blocks) {
-    if (b.type === 'code') { out += b.v + '\n'; continue }
-    walk(b.spans)
+  const walkSpans = (spans: any[] | undefined) => {
+    if (!spans) return
+    walk(spans)
     out += '\n'
+  }
+  for (const b of blocks) {
+    switch (b.type) {
+      case 'code': out += b.v + '\n'; break
+      case 'hr': out += '\n'; break
+      case 'p':
+      case 'heading':
+      case 'quote': walkSpans(b.spans); break
+      case 'list': for (const item of b.items) walkSpans(item); break
+      case 'todo': for (const item of b.items) walkSpans(item.spans); break
+      case 'table':
+        for (const cell of b.header ?? []) walkSpans(cell)
+        for (const row of b.rows) for (const cell of row) walkSpans(cell)
+        break
+    }
   }
   return out
 }

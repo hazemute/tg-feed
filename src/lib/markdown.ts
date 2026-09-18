@@ -73,7 +73,8 @@ export function htmlToMarkdownLite(html: string): string {
   const stack: Mark[] = []
   let pos = 0
 
-  const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9-]*)((?:\s[^>]*)?)>/g
+  // Допускаем самозакрывающиеся теги (<br/>, <hr/>) — иначе они остаются текстом
+  const tagRe = /<\/?([a-zA-Z][a-zA-Z0-9-]*)((?:\s[^>]*?)?\/?)>/g
   let m: RegExpExecArray | null
 
   const pushText = (raw: string) => {
@@ -101,11 +102,16 @@ export function htmlToMarkdownLite(html: string): string {
 
   /** Премиум-эмодзи современного превью: <tg-emoji emoji-id="ID">…статичный фолбэк…</tg-emoji>
    *  → маркер ![e:ID](thumb) — ID нужен клиенту для анимированной версии
-   *  (Bot API getCustomEmojiStickers → webm через /api/emoji/[id]). */
+   *  (Bot API getCustomEmojiStickers → webm через /api/emoji/[id]).
+   *  Некоторые паки пишут emoji-id="ID #TAG" (текстовая метка рядом) — берём
+   *  первый токен как ID, метку используем как фолбэк-текст. */
   const tryTgEmoji = (): boolean => {
     if (!m) return false
     if (m[1].toLowerCase() !== 'tg-emoji') return false
-    const id = (m[2] ?? '').match(/emoji-id="([^"]+)"/)?.[1] ?? ''
+    const rawId = (m[2] ?? '').match(/emoji-id="([^"]+)"/)?.[1] ?? ''
+    const idParts = rawId.split(/\s+/).filter(Boolean)
+    const id = /^\d+$/.test(idParts[0] ?? '') ? idParts[0] : ''
+    const tag = idParts.find((p) => p.startsWith('#')) ?? ''
     const close = html.indexOf('</tg-emoji>', pos)
     if (close === -1) return false
     const inner = html.slice(pos, close)
@@ -114,7 +120,8 @@ export function htmlToMarkdownLite(html: string): string {
     const url = bg ? absolutizeUrl(decodeEntities(bg.trim())) : null
     if (id && url) out.push(`![e:${id}](${url})`)
     else if (url) out.push(`![e](${url})`)
-    else out.push(fallback)
+    else if (fallback) out.push(fallback)
+    else if (tag) out.push(tag)
     pos = close + '</tg-emoji>'.length
     return true
   }
@@ -145,6 +152,42 @@ export function htmlToMarkdownLite(html: string): string {
     }
   }
 
+  /** Таблица Telegram (Bot API поддерживает <table>) → pipe-разметка markdown.
+   *  Ячейки рекурсивно прогоняются через htmlToMarkdownLite (b/i/code/ссылки живут),
+   *  новые строки схлопываются в пробел, «|» экранируется. */
+  const tryTable = (): boolean => {
+    if (!m || m[1].toLowerCase() !== 'table') return false
+    const lower = html.toLowerCase()
+    const close = lower.indexOf('</table>', pos)
+    if (close === -1) return false
+    const inner = html.slice(pos, close)
+    pos = close + '</table>'.length
+    const rows: string[][] = []
+    const trRe = /<tr[^>]*>([\s\S]*?)<\/tr>/gi
+    let r: RegExpExecArray | null
+    while ((r = trRe.exec(inner))) {
+      const cells: string[] = []
+      const tdRe = /<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi
+      let c: RegExpExecArray | null
+      while ((c = tdRe.exec(r[1]))) {
+        const cell = htmlToMarkdownLite(c[1])
+          .replace(/\n+/g, ' ')
+          .replace(/\|/g, '\\|')
+          .replace(/\s+/g, ' ')
+          .trim()
+        if (cell.length > 0 || cells.length > 0) cells.push(cell)
+      }
+      if (cells.length > 0) rows.push(cells)
+    }
+    if (rows.length === 0) return true
+    const width = Math.max(...rows.map((rw) => rw.length))
+    for (const rw of rows) while (rw.length < width) rw.push('')
+    out.push('\n')
+    for (const rw of rows) out.push(`| ${rw.join(' | ')} |\n`)
+    out.push('\n')
+    return true
+  }
+
   while (pos < html.length) {
     tagRe.lastIndex = pos
     m = tagRe.exec(html)
@@ -155,12 +198,18 @@ export function htmlToMarkdownLite(html: string): string {
     pushText(html.slice(pos, m.index))
     if (tryInlineEmoji()) continue
     if (tryTgEmoji()) continue
+    if (tryTable()) continue
     const [full, rawTag, attrs] = m
     const tag = rawTag.toLowerCase()
     pos = m.index + full.length
 
     if (tag === 'br') {
       out.push('\n')
+      continue
+    }
+
+    if (tag === 'hr') {
+      out.push('\n---\n')
       continue
     }
 
@@ -272,7 +321,12 @@ export function stripMarkdown(text: string): string {
     .replace(/\^\^([^^]*)\^\^/g, '$1')
     .replace(/`([^`]*)`/g, '$1')
     .replace(/\[([^\]]*)\]\(([^)]*)\)/g, '$1')
-    .replace(/^>\s?/gm, '')
+    .replace(/^(>\s?)+/gm, '')
+    .replace(/^#{1,3}\s+/gm, '')
+    .replace(/^\s{0,3}\[( |x|X)\]\s+/gm, '')
+    .replace(/^\s{0,3}([-\*_])\s*(?:\1\s*){2,}$/gm, ' ')
+    .replace(/\\\|/g, ' ')
+    .replace(/\|/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
 
@@ -295,8 +349,13 @@ export type Span =
 
 export type Block =
   | { type: 'p'; spans: Span[] }
-  | { type: 'quote'; spans: Span[] }
-  | { type: 'code'; v: string }
+  | { type: 'heading'; level: 1 | 2 | 3; spans: Span[] }
+  | { type: 'quote'; spans: Span[]; depth: number }
+  | { type: 'code'; v: string; lang?: string }
+  | { type: 'hr' }
+  | { type: 'list'; ordered: boolean; start: number; items: Span[][] }
+  | { type: 'todo'; items: { done: boolean; spans: Span[] }[] }
+  | { type: 'table'; header?: Span[][]; rows: Span[][][] }
 
 /**
  * Регэксп спанов markdown-lite: премиум-эмодзи, жирный, курсив, зачёркнутый,
@@ -488,14 +547,128 @@ function normalizeLegacyHtml(text: string): string {
     .replace(/<br\s*\/?>/gi, '\n')
 }
 
-/** Разбирает markdown-lite поста на блоки: абзацы, цитаты, блоки кода */
+/**
+ * Легаси-эмодзи старых парсеров: ![e:ID #TAG] (метка без URL) → «#TAG» —
+ * дальше она подсвечивается как обычный хэштег. Битый маркер не должен
+ * утекать в видимый текст поста.
+ */
+function normalizeLegacyEmojiMarkers(text: string): string {
+  return text.replace(/!\[e(?:v)?(?::\d+)?\s*(#[^\]\s]{1,40})\]/g, '$1')
+}
+
+/**
+ * HTML-сущности в сохранённых текстах старых парсеров (&gt; &amp; …) —
+ * декодируем безопасное подмножество; &amp; — последним (иначе «&amp;gt;»
+ * превратится в «&gt;» дважды).
+ */
+function normalizeLegacyEntities(text: string): string {
+  let out = text
+  for (let i = 0; i < 3; i++) {
+    const next = out
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;|&apos;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&laquo;/g, '«')
+      .replace(/&raquo;/g, '»')
+      .replace(/&amp;/g, '&')
+    if (next === out) break
+    out = next
+  }
+  return out
+}
+
+/** Разбирает строку-ячейку таблицы на ячейки с учётом экранирования «\|» */
+function splitTableCells(row: string): string[] {
+  const cells: string[] = []
+  let cur = ''
+  for (let i = 0; i < row.length; i++) {
+    const ch = row[i]
+    if (ch === '\\' && row[i + 1] === '|') {
+      cur += '|'
+      i++
+      continue
+    }
+    if (ch === '|') {
+      cells.push(cur.trim())
+      cur = ''
+      continue
+    }
+    cur += ch
+  }
+  cells.push(cur.trim())
+  return cells
+}
+
+const TABLE_SEP_CELL_RE = /^:?-{2,}:?$/
+
+/** Строка-разделитель таблицы: | --- | :---: | */
+function isTableSepLine(line: string): boolean {
+  const inner = line.trim().replace(/^\|/, '').replace(/\|$/, '')
+  const cells = splitTableCells(inner)
+  return cells.length > 0 && cells.every((c) => TABLE_SEP_CELL_RE.test(c.replace(/\s+/g, '')))
+}
+
+function parseTableLines(lines: string[]): Block | null {
+  if (lines.length < 2) return null
+  const sepIdx = lines.findIndex(isTableSepLine)
+  // Разделитель всегда стоит сразу под строкой заголовка (index 1)
+  const header = sepIdx === 1 ? splitTableCells(lines[0].replace(/^\s*\|/, '').replace(/\|\s*$/, '')) : undefined
+  // Строка заголовка и разделитель не входят в тело таблицы
+  const bodyLines = lines.filter((_, i) => i !== sepIdx && !(header && i === 0))
+  const rows = bodyLines.map((l) => splitTableCells(l.replace(/^\s*\|/, '').replace(/\|\s*$/, '')))
+  const width = Math.max(header?.length ?? 0, ...rows.map((r) => r.length))
+  if (width < 2 && rows.length < 2) return null
+  const pad = (cells: string[]) => {
+    while (cells.length < width) cells.push('')
+    return cells.map((c) => spansOf(c))
+  }
+  return {
+    type: 'table',
+    ...(header ? { header: pad(header) } : {}),
+    rows: rows.map(pad),
+  }
+}
+
+const BULLET_RE = /^\s{0,3}[-•·*+\u2013]\s+(.+)$/
+const ORDERED_RE = /^\s{0,3}(\d{1,3})[.)]\s+(.+)$/
+const HEADING_RE = /^\s{0,3}(#{1,3})\s+(.{1,120}?)\s*#*\s*$/
+const HR_RE = /^\s{0,3}([-\*_])\s*(?:\1\s*){2,}$/
+const TODO_RE = /^\s{0,3}\[( |x|X)\]\s+(.*)$/
+const QUOTE_RE = /^(>+) ?(.*)$/
+const TABLE_ROW_RE = /^\s{0,3}\|.*\|\s*$/
+const FENCE_RE = /^\s*```(\S*)\s*$/
+
+/**
+ * Разбирает markdown-lite поста на блоки: абзацы, заголовки (#, ##, ###),
+ * цитаты (с глубиной вложенности >, >>, >>>), блоки кода (с языком),
+ * списки (буллеты и нумерованные), чек-листы ([ ]/[x]), разделители (---)
+ * и таблицы (| a | b |). Пустая строка не рвёт цитату, если дальше идёт
+ * цитата той же глубины — абзацы внутри цитаты склеиваются.
+ */
 export function blocksOf(text: string): Block[] {
   const blocks: Block[] = []
   const lines = reorderMarkersAroundLinks(
-    decodeHrefAmpersands(normalizeDecorations(normalizeLegacyHtml(text))),
+    decodeHrefAmpersands(
+      normalizeLegacyEntities(
+        normalizeLegacyEmojiMarkers(normalizeDecorations(normalizeLegacyHtml(text))),
+      ),
+    ),
   ).split('\n')
+
   let para: string[] = []
-  let quote: string[] = []
+  let inCode = false
+  let codeLang: string | undefined
+  let codeLines: string[] = []
+  let quoteDepth = 0
+  let quoteLines: string[] = []
+  let quotePendingBlank = false
+  let listOrdered = false
+  let listStart = 1
+  let listItems: string[] | null = null
+  let todoItems: { done: boolean; text: string }[] | null = null
+  let tableLines: string[] | null = null
 
   const flushPara = () => {
     if (para.length === 0) return
@@ -504,46 +677,159 @@ export function blocksOf(text: string): Block[] {
     para = []
   }
   const flushQuote = () => {
-    if (quote.length === 0) return
-    blocks.push({ type: 'quote', spans: spansOf(quote.join('\n')) })
-    quote = []
+    if (quoteDepth === 0) return
+    const content = quoteLines.join('\n')
+    if (content.trim().length > 0) blocks.push({ type: 'quote', depth: quoteDepth, spans: spansOf(content) })
+    quoteDepth = 0
+    quoteLines = []
+    quotePendingBlank = false
+  }
+  const flushList = () => {
+    if (listItems && listItems.length > 0) {
+      blocks.push({ type: 'list', ordered: listOrdered, start: listStart, items: listItems.map((it) => spansOf(it)) })
+    }
+    listItems = null
+  }
+  const flushTodo = () => {
+    if (todoItems && todoItems.length > 0) {
+      blocks.push({ type: 'todo', items: todoItems.map((it) => ({ done: it.done, spans: spansOf(it.text) })) })
+    }
+    todoItems = null
+  }
+  const flushTable = () => {
+    if (!tableLines) return
+    const block = parseTableLines(tableLines)
+    if (block) blocks.push(block)
+    else para.push(...tableLines) // не похоже на таблицу — вернём в абзац
+    tableLines = null
+  }
+  const flushAll = () => {
+    flushPara()
+    flushQuote()
+    flushList()
+    flushTodo()
+    flushTable()
   }
 
-  let inCode = false
-  let codeLines: string[] = []
   for (const line of lines) {
-    const fenced = /^\s*```/.test(line)
-    if (fenced) {
-      if (inCode) {
-        blocks.push({ type: 'code', v: codeLines.join('\n') })
+    if (inCode) {
+      if (FENCE_RE.test(line)) {
+        blocks.push({ type: 'code', v: codeLines.join('\n'), ...(codeLang ? { lang: codeLang } : {}) })
         codeLines = []
         inCode = false
+        codeLang = undefined
       } else {
-        flushPara()
-        flushQuote()
-        inCode = true
+        codeLines.push(line)
       }
       continue
     }
-    if (inCode) {
-      codeLines.push(line)
+
+    const fence = line.match(FENCE_RE)
+    if (fence) {
+      flushAll()
+      inCode = true
+      codeLang = fence[1] || undefined
       continue
     }
-    if (/^>\s?/.test(line)) {
-      flushPara()
-      quote.push(line.replace(/^>\s?/, ''))
-      continue
-    }
-    if (line.trim().length === 0) {
+
+    // Таблица: жадно собираем подряд идущие |…| строки
+    if (TABLE_ROW_RE.test(line)) {
       flushPara()
       flushQuote()
+      flushList()
+      flushTodo()
+      ;(tableLines ??= []).push(line.trim())
       continue
     }
+    if (tableLines) flushTable()
+
+    if (line.trim().length === 0) {
+      flushPara()
+      flushList()
+      flushTodo()
+      if (tableLines) flushTable()
+      if (quoteDepth > 0) quotePendingBlank = true
+      continue
+    }
+
+    const qm = line.match(QUOTE_RE)
+    if (qm) {
+      const depth = Math.min(qm[1].length, 4)
+      if (quoteDepth === depth) {
+        if (quotePendingBlank) quoteLines.push('')
+        quoteLines.push(qm[2] ?? '')
+        quotePendingBlank = false
+        continue
+      }
+      flushQuote()
+      flushPara()
+      flushList()
+      flushTodo()
+      quoteDepth = depth
+      quoteLines = [qm[2] ?? '']
+      quotePendingBlank = false
+      continue
+    }
+
+    if (HR_RE.test(line)) {
+      flushAll()
+      blocks.push({ type: 'hr' })
+      continue
+    }
+
+    const hm = line.match(HEADING_RE)
+    if (hm) {
+      flushAll()
+      blocks.push({ type: 'heading', level: hm[1].length as 1 | 2 | 3, spans: spansOf(hm[2]) })
+      continue
+    }
+
+    const tm = line.match(TODO_RE)
+    if (tm) {
+      flushPara()
+      flushQuote()
+      flushList()
+      ;(todoItems ??= []).push({ done: tm[1].toLowerCase() === 'x', text: tm[2] })
+      continue
+    }
+
+    const om = line.match(ORDERED_RE)
+    const bm = om ? null : line.match(BULLET_RE)
+    if (om || bm) {
+      flushPara()
+      flushQuote()
+      flushTodo()
+      if (om) {
+        if (listItems && listOrdered) {
+          listItems.push(om[2])
+        } else {
+          flushList()
+          listOrdered = true
+          listStart = parseInt(om[1], 10)
+          listItems = [om[2]]
+        }
+      } else if (bm) {
+        if (listItems && !listOrdered) {
+          listItems.push(bm[1])
+        } else {
+          flushList()
+          listOrdered = false
+          listStart = 1
+          listItems = [bm[1]]
+        }
+      }
+      continue
+    }
+
+    // Обычный текст
     flushQuote()
+    flushList()
+    flushTodo()
     para.push(line)
   }
-  if (inCode && codeLines.length > 0) blocks.push({ type: 'code', v: codeLines.join('\n') })
-  flushPara()
-  flushQuote()
+  if (inCode && codeLines.length > 0) {
+    blocks.push({ type: 'code', v: codeLines.join('\n'), ...(codeLang ? { lang: codeLang } : {}) })
+  }
+  flushAll()
   return blocks
 }

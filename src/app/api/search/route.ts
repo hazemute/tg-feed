@@ -17,12 +17,13 @@ const querySchema = z.object({
 /**
  * GET /api/search?q=...
  * Поиск по ключевым словам ВНУТРИ ПОСТОВ (не по названиям каналов).
- * Регистронезависимый, включая кириллицу (фильтрация на стороне JS).
- * Без сессии — анонимный поиск: liked/bookmarked = false.
+ * Регистронезависимый: фильтр ILIKE на стороне Postgres — покрывает ВСЮ
+ * историю постов (раньше сканировались только 500 свежайших, остальное
+ * было «не найдено»), а тяжёлый JOIN с include не убивает latency:
+ * строки фильтруются ДО склейки с каналами.
  *
- * Redis-оптимизация: это самый тяжёлый роут (скан 500 свежих постов на запрос),
- * поэтому результаты поиска (глобальная часть) кэшируются по нормализованному
- * запросу на 90с; персональные флаги накладываются после кэша.
+ * Redis-оптимизация: результаты поиска (глобальная часть) кэшируются по
+ * нормализованному запросу на 90с; персональные флаги накладываются после кэша.
  */
 export async function GET(request: Request) {
   const g = guardPublic(request, { limit: 60, windowMs: 60_000, bucket: 'search' })
@@ -41,20 +42,19 @@ export async function GET(request: Request) {
     const items = await cacheAside({
       key: await famKey('sr', shortHash(needle)),
       ttlSec: 90,
-      memoryTtlMs: 8000,
+      memoryTtlMs: 30_000,
       fetcher: async (): Promise<PostDTO[]> => {
         const posts = await db.post.findMany({
           where: {
+            text: { contains: needle, mode: 'insensitive' },
             channel: { status: 'active', id: { notIn: await getNsfwChannelIds() } },
           },
           include: { channel: { include: { category: true } } },
           orderBy: { publishedAt: 'desc' },
-          take: 500,
+          take: 30,
         })
         return posts
-          .filter((p) => p.text.toLowerCase().includes(needle))
           .filter((p) => !isNsfwText(p.text)) // NSFW-спам не находится поиском
-          .slice(0, 30)
           .map((p) => toPostDTO(p, { liked: false, bookmarked: false, subscribed: false }))
       },
     })

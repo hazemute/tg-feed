@@ -33,6 +33,8 @@ const NSFW_CHANNEL_RE: RegExp[] = [
   /секс[- ]?(?:досуг|знакомств|видео|по\s?телефону)/i,
   /\bnsfw\b|\bnudes?\b|bdsm|femdom/i,
   /стриптиз|приватк|сливы?\s?18/i,
+  // Узбекские эскорт-объявления: «ДАМ ОЛИШГА КИЗЛАР» (продажа девушек)
+  /олишга|olishga|[\s№]кизлар|qizlar\b/i,
 ]
 
 /** Пост-паттерны: спам-текст эскорт/18+ рекламы внутри поста. */
@@ -47,6 +49,9 @@ const NSFW_TEXT_RE: RegExp[] = [
   /\bxxx\s?(?:видео|контент|канал)/i,
   /девушки\s?за\s?(?:деньги|донат)|содержанк/i,
   /горячие\s?знакомства|взрослые\s?знакомства/i,
+  // Узбекская эскорт-реклама в текстах: «2 Та Киз Ишледи», «дам олишга»
+  /(?:киз|qiz|kiz)\s*ишл|(?:ишледи|ishledi)/i,
+  /дам\s*олишга|dam\s*olishga/i,
 ]
 
 /* ------------------------- JS-проверки (дёшево) ------------------------- */
@@ -89,7 +94,16 @@ export const NSFW_DB_KEYWORDS = [
   'bongacams',
   'порно',
   'xxx',
+  // узбекская эскорт-реклама
+  'олишга',
+  'olishga',
+  'ишледи',
+  'ishledi',
 ] as const
+
+/** Ключевые слова для ПОИСКА КАНДИДАТОВ-КАНАЛОВ (шире постовых — «кизлар»
+ *  («девушки») в названии канала практически всегда эскорт/спам). */
+const CHANNEL_DB_KEYWORDS = [...NSFW_DB_KEYWORDS, 'кизлар', 'qizlar'] as const
 
 /** Prisma-фрагмент для Post.findMany: текст поста не содержит ни одно ключевое слово.
  *  Через логический NOT — вложенный `not: { contains, mode }` mode не принимает. */
@@ -114,7 +128,7 @@ export async function getNsfwChannelIds(): Promise<string[]> {
   try {
     const candidates = await db.channel.findMany({
       where: {
-        OR: NSFW_DB_KEYWORDS.flatMap((kw) => [
+        OR: CHANNEL_DB_KEYWORDS.flatMap((kw) => [
           { title: { contains: kw, mode: 'insensitive' } },
           { username: { contains: kw, mode: 'insensitive' } },
           { description: { contains: kw, mode: 'insensitive' } },
