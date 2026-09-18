@@ -5,6 +5,7 @@ import { err } from '@/lib/server'
 import { buildFeedScope } from '@/lib/feed'
 import { toPostDTO } from '@/lib/dto'
 import { guardAuth } from '@/lib/guard'
+import { nsfwPostNotIn } from '@/lib/moderation'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -41,7 +42,7 @@ export async function GET(request: Request) {
     if (!scope) return err('user not found', 404)
 
     const posts = await db.post.findMany({
-      where: { ...scope.where, publishedAt: { gt: afterDate } },
+      where: { ...scope.where, publishedAt: { gt: afterDate }, AND: nsfwPostNotIn() },
       orderBy: { publishedAt: 'desc' },
       take: 30,
       include: { channel: { include: { category: true } }, _count: { select: { bookmarkedBy: true } } },

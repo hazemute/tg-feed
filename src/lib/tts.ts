@@ -1,21 +1,26 @@
 import ZAI from 'z-ai-web-dev-sdk'
+import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts'
 import { stripMarkdown } from '@/lib/markdown'
 
 /**
  * TTS-движки озвучки постов (кнопка «Слушать»).
  *
- * Два движка с взаимным фолбэком:
+ * Три движка с взаимным фолбэком:
  *  - z-ai-web-dev-sdk — работает в песочнице (конфиг /etc/.z-ai-config),
  *    на Vercel недоступен (файла конфига нет);
- *  - Google Translate TTS — без ключа, работает из датацентров Vercel.
+ *  - Microsoft Edge TTS — без ключа, отличная русская речь (MP3 24 кГц),
+ *    работает и из датацентров Vercel — ОСНОВНОЙ движок прода;
+ *  - Google Translate TTS — без ключа, но IP датацентров Vercel часто
+ *    забанены Google — последний фолбэк.
  *
  * Порядок определяется по process.env.VERCEL. Результат кэшируется вызывающим
- * кодом в Post.ttsAudio (base64; WAV или MP3 — клиент определяет по содержимому).
+ * кодом в Post.ttsAudio (base64; клиент определяет формат по содержимому).
  */
 
-/** Лимит озвучки: ~3 минуты речи (TTS принимает до 1024 символов за вызов) */
+/** Лимит озвучки: ~3 минуты речи */
 const MAX_CHARS = 2400
 const CHUNK_ZAI = 950
+const CHUNK_EDGE = 800
 
 /** Текст → куски по предложениям (лимит TTS-движка на длину входа) */
 function splitChunks(text: string, max: number): string[] {
@@ -87,7 +92,35 @@ async function ttsZai(plain: string): Promise<Buffer | null> {
 }
 
 /**
- * Движок 2: Google Translate TTS (без ключа, MP3; лимит ~200 символов на запрос).
+ * Движок 2: Microsoft Edge TTS (без ключа, MP3 24 кГц/48 кбит — трёхминутный
+ * пост ≈ 100-200 КБ base64, без проблем с лимитами ответов Vercel).
+ * Нейроголос умеет паузы и ударения — звучит заметно лучше Google.
+ */
+async function ttsEdge(plain: string): Promise<Buffer | null> {
+  const ru = cyrillicShare(plain) >= 0.3
+  const voice = ru ? 'ru-RU-SvetlanaNeural' : 'en-US-AriaNeural'
+  const chunks = splitChunks(plain, CHUNK_EDGE).slice(0, 6)
+  if (chunks.length === 0) return null
+  try {
+    const tts = new MsEdgeTTS()
+    await tts.setMetadata(voice, OUTPUT_FORMAT.AUDIO_24KHZ_48KBITRATE_MONO_MP3)
+    const parts: Buffer[] = []
+    for (const chunk of chunks) {
+      const readable = tts.toStream(chunk, { pitch: '+0Hz', rate: 1.0, volume: 100 })
+      const bufs: Buffer[] = []
+      for await (const c of readable.audioStream) bufs.push(Buffer.from(c))
+      const buf = Buffer.concat(bufs)
+      if (buf.length === 0) return null
+      parts.push(buf)
+    }
+    return parts.length > 0 ? Buffer.concat(parts) : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Движок 3: Google Translate TTS (без ключа, MP3; лимит ~200 символов на запрос).
  * Работает из датацентров Vercel (браузерный UA обязателен); куски склеиваются —
  * MP3-фреймы конкатенируются корректно для всех популярных плееров.
  */
@@ -128,13 +161,13 @@ export function ttsPlainOf(text: string): string {
     .trim()
 }
 
-/** Генерация озвучки обоими движками по порядку (порядок зависит от окружения) */
+/** Генерация озвучки тремя движками по порядку (порядок зависит от окружения) */
 export async function generateTts(postText: string): Promise<Buffer | null> {
   const plain = ttsPlainOf(postText)
   if (plain.length < 12) return null
   const capped = plain.slice(0, MAX_CHARS)
   const onVercel = process.env.VERCEL === '1'
   return onVercel
-    ? (await ttsGoogle(capped)) ?? (await ttsZai(capped))
-    : (await ttsZai(capped)) ?? (await ttsGoogle(capped))
+    ? (await ttsEdge(capped)) ?? (await ttsGoogle(capped)) ?? (await ttsZai(capped))
+    : (await ttsZai(capped)) ?? (await ttsEdge(capped)) ?? (await ttsGoogle(capped))
 }

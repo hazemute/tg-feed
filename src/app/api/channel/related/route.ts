@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
+import { getNsfwChannelIds } from '@/lib/moderation'
 import type { RelatedChannelDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -47,7 +48,7 @@ export async function GET(request: Request) {
       where: {
         status: 'active',
         categoryId: channel.categoryId,
-        id: { not: channel.id },
+        id: { not: channel.id, notIn: await getNsfwChannelIds() },
       },
       // каналы с известным реальным числом подписчиков — первыми
       orderBy: [

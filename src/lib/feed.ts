@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { parseJsonArray } from '@/lib/server'
 import type { AffinityMap } from '@/lib/rank'
+import { getNsfwChannelIds } from '@/lib/moderation'
 
 /**
  * Общий скоуп ленты для пользователя: активные каналы, минус скрытые,
@@ -57,17 +58,18 @@ export async function buildFeedScope(userId: string, category: string): Promise<
 }
 
 async function buildFeedScopeUncached(userId: string, category: string) {
-  // Пользователь + скрытые каналы — один batch (дальний регион: каждая
-  // последовательная «(п)роверка» стоит ~1 RTT до Supabase)
-  const [user, hidden] = await db.$transaction([
+  // Пользователь + скрытые каналы + NSFW-каналы — один batch (дальний регион:
+  // каждая последовательная «(п)роверка» стоит ~1 RTT до Supabase)
+  const [user, hidden, nsfwIds] = await Promise.all([
     db.user.findUnique({ where: { id: userId } }),
     db.subscription.findMany({
       where: { userId, hidden: true },
       select: { channelId: true },
     }),
+    getNsfwChannelIds(), // кэш в памяти 10 мин — почти всегда мгновенно
   ])
   if (!user) return null
-  const hiddenIds = hidden.map((h) => h.channelId)
+  const hiddenIds = [...new Set([...hidden.map((h) => h.channelId), ...nsfwIds])]
 
   const where: {
     channel: {

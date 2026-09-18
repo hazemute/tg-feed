@@ -34,9 +34,13 @@ export async function POST(request: Request) {
     })
     if (!post) return err('post not found', 404)
 
-    // Кэш валиден, пока текст поста не менялся (парсер мог обновить разметку)
+    // Кэш валиден, пока текст поста не менялся (парсер мог обновить разметку);
+    // на Vercel раздутый WAV-кэш не отдаётся (лимит ответа ~4.5 МБ) —
+    // перегенерируем компактным прода-движком (Edge MP3)
     if (post.ttsAudio && post.ttsAt && post.ttsAt > post.publishedAt) {
-      return NextResponse.json({ ok: true, audio: post.ttsAudio, cached: true })
+      if (process.env.VERCEL !== '1' || post.ttsAudio.length <= 3_500_000) {
+        return NextResponse.json({ ok: true, audio: post.ttsAudio, cached: true })
+      }
     }
 
     const wav = await generateTts(post.text)
@@ -44,12 +48,25 @@ export async function POST(request: Request) {
 
     const audio = wav.toString('base64')
 
-    await db.post
-      .update({
-        where: { id: post.id },
-        data: { ttsAudio: audio, ttsAt: new Date() },
-      })
-      .catch(() => {})
+    /*
+     * Защита от гигантских ответов: WAV от z-ai весит ~100 КБ/с — трёхминутный
+     * пост даёт base64 >10 МБ, а лимит ответа serverless на Vercel ~4.5 МБ
+     * (вторая причина «Озвучка недоступна» в проде). Компактные движки прода
+     * (Edge/Google MP3 ≈ 6 КБ/с) в лимит помещаются с запасом. Слишком большие
+     * кэш НЕ засоряют (Post.ttsAudio останется null) и в проде не отдаются.
+     */
+    const tooBig = audio.length > 3_500_000
+    if (tooBig && process.env.VERCEL === '1') {
+      return err('Озвучка не удалась, попробуйте позже', 502)
+    }
+    if (!tooBig) {
+      await db.post
+        .update({
+          where: { id: post.id },
+          data: { ttsAudio: audio, ttsAt: new Date() },
+        })
+        .catch(() => {})
+    }
 
     return NextResponse.json({ ok: true, audio, cached: false })
   } catch (e) {

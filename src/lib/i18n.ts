@@ -100,6 +100,33 @@ const DICT = {
   /* Переключатель языка */
   'lang.title': ['Язык', 'Language'],
   'lang.hint': ['Переключение языка интерфейса', 'Switch the interface language'],
+
+  /* Тулбар ленты: поиск и фильтры */
+  'toolbar.search': ['Поиск в ленте', 'Search feed'],
+  'toolbar.searchAria': ['Поиск по загруженным постам ленты', 'Search loaded feed posts'],
+  'toolbar.clear': ['Очистить поиск', 'Clear search'],
+  'toolbar.media': ['Медиа', 'Media'],
+  'toolbar.mediaAria': ['Только посты с медиа', 'Posts with media only'],
+  'toolbar.day': ['24ч', '24h'],
+  'toolbar.dayAria': ['Только посты за сутки', 'Posts from the last 24 hours only'],
+  'toolbar.top': ['Топ', 'Top'],
+  'toolbar.topAria': ['Сначала популярные', 'Popular first'],
+  'toolbar.shownPrefix': ['Показано', 'Showing'],
+  'toolbar.of': ['из', 'of'],
+  'toolbar.reset': ['сбросить', 'reset'],
+  'toolbar.unhide': ['вернуть скрытые', 'restore hidden'],
+  'toolbar.empty': ['Ничего не найдено', 'Nothing found'],
+  'toolbar.emptyHint': [
+    'Попробуйте изменить запрос или снять фильтры',
+    'Try changing the query or clearing the filters',
+  ],
+  'toolbar.resetFilters': ['Сбросить фильтры', 'Reset filters'],
+
+  /* Скрытие поста («Не интересно») */
+  'feed.hiddenToast': ['Пост скрыт из ленты', 'Post hidden from feed'],
+  'feed.unhideToast': ['Вернуть', 'Undo'],
+  'feed.notInterested': ['Не интересно — скрыть пост', 'Not interested — hide post'],
+  'feed.minRead': ['мин', 'min read'],
 } as const
 
 export type I18nKey = keyof typeof DICT

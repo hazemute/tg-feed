@@ -9,6 +9,7 @@ import { buildFeedScope, loadPersonalSignals } from '@/lib/feed'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { getCachedPage, putCachedPage } from '@/lib/page-cache'
+import { nsfwPostNotIn } from '@/lib/moderation'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -177,12 +178,16 @@ export async function GET(request: Request) {
         парсером — свежесть не страдает, пул разгружен. */
     const indexKey =
       scope.sig !== null
-        ? await famKey('feed', `${category}:v2:${shortHash(scope.sig)}`)
+        ? await famKey('feed', `${category}:v3:${shortHash(scope.sig)}`) // v3 — NSFW-фильтр
         : null // discover — персональный скоуп по интересам, без кэша
 
     const loadIndex = async (): Promise<RankedIndex> => {
       const posts = await db.post.findMany({
-        where: scope.where,
+        where: {
+          ...scope.where,
+          // NSFW-спам (эскорт/18+) не попадает даже в индекс ленты
+          AND: nsfwPostNotIn(),
+        },
         select: {
           id: true,
           channelId: true,
@@ -282,6 +287,7 @@ export async function GET(request: Request) {
             where: {
               channelId: { in: [...sponsors.keys()] },
               id: { notIn: [...signals.viewedIds] },
+              AND: nsfwPostNotIn(), // CPA-спам тоже проходит гигиену текста
             },
             orderBy: { publishedAt: 'desc' },
             take: 12,

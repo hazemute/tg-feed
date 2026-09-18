@@ -4,6 +4,7 @@ import { err } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
 import { toPostDTO, toChannelDTO } from '@/lib/dto'
 import { cacheAside, famKey } from '@/lib/redis'
+import { nsfwPostNotIn, getNsfwChannelIds } from '@/lib/moderation'
 import type { ChannelDTO, PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -153,7 +154,7 @@ async function computeCore(): Promise<TrendingCore> {
 
     const load = async (since: Date) =>
       db.post.findMany({
-        where: { publishedAt: { gte: since } },
+        where: { publishedAt: { gte: since }, AND: nsfwPostNotIn() },
         include: {
           channel: { include: { category: true } },
           _count: { select: { bookmarkedBy: true } },
@@ -179,7 +180,7 @@ async function computeCore(): Promise<TrendingCore> {
      лидерборд был случайным. Каналы без данных — в конце списка. */
   const topChannelsPromise = (async (): Promise<ChannelDTO[]> => {
     const channels = await db.channel.findMany({
-      where: { status: 'active' },
+      where: { status: 'active', id: { notIn: await getNsfwChannelIds() } },
       include: { category: true },
       orderBy: [
         { membersCount: { sort: 'desc', nulls: 'last' } },

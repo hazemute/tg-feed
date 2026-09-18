@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { guardPublic } from '@/lib/guard'
 import { cacheAside, famKey } from '@/lib/redis'
+import { getNsfwChannelIds } from '@/lib/moderation'
 
 export const dynamic = 'force-dynamic'
 
@@ -64,9 +65,11 @@ export async function GET(request: Request) {
 }
 
 async function loadChannels(category: string, q: string) {
+  // NSFW-каналы не попадают в каталог ни при каком поиске
   const channels = await db.channel.findMany({
     where: {
       status: 'active',
+      id: { notIn: await getNsfwChannelIds() },
       ...(category ? { category: { slug: category } } : {}),
       ...(q ? { OR: [{ title: { contains: q } }, { username: { contains: q } }] } : {}),
     },

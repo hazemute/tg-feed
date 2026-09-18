@@ -464,8 +464,8 @@ export function PostCard({
           {post.viewsTg != null ? ` ${t('card.inChannel')}` : ` ${t('card.views')}`}
         </span>
         {post.text.length > 280 && (
-          <span className="shrink-0 tabular-nums" title="Примерное время чтения">
-            · {readingMinutes(post.text)} мин
+          <span className="shrink-0 tabular-nums" title={t('feed.minRead')}>
+            · {readingMinutes(post.text)} {t('feed.minRead')}
           </span>
         )}
         {post.text && <ListenButton postId={post.id} text={post.text} className="ml-1" />}
@@ -478,8 +478,8 @@ export function PostCard({
               haptic('light')
               onHide()
             }}
-            aria-label="Не интересно — скрыть пост"
-            title="Не интересно — скрыть пост"
+            aria-label={t('feed.notInterested')}
+            title={t('feed.notInterested')}
             className="ml-auto -mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 active:bg-tg-sep/50"
           >
             <EyeOff className="h-[15px] w-[15px]" aria-hidden />

@@ -4,6 +4,7 @@ import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'rea
 import { AlertCircle, ArrowUp, Bell, Clock3, EyeOff, Flame, Image as ImageIcon, Inbox, Loader2, Search, WifiOff, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
+import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
 import { api, getSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -83,6 +84,7 @@ function FilterChip({
  * бесконечная вертикальная прокрутка, pull-to-refresh, каждый 10-й слот — реклама.
  */
 export function FeedView() {
+  const t = useT()
   const { user, category, setCategory, categories, feedVersion, bumpFeed, openSearchWith, setPostQueue } = useApp()
   const [items, setItems] = useState<PostDTO[]>([])
   const [ads, setAds] = useState<AdDTO[]>([])
@@ -132,9 +134,9 @@ export function FeedView() {
       saveHidden(next)
       return next
     })
-    toast('Пост скрыт из ленты', {
+    toast(t('feed.hiddenToast'), {
       action: {
-        label: 'Вернуть',
+        label: t('feed.unhideToast'),
         onClick: () => {
           setHiddenIds((prev) => {
             const next = new Set(prev)
@@ -145,7 +147,7 @@ export function FeedView() {
         },
       },
     })
-  }, [])
+  }, [t])
 
   /** Видимые посты: скрытые + фильтры + поиск + сортировка (клиентски, мгновенно) */
   const visibleItems = useMemo(() => {
@@ -823,15 +825,15 @@ export function FeedView() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Поиск в ленте"
-              aria-label="Поиск по загруженным постам ленты"
+              placeholder={t('toolbar.search')}
+              aria-label={t('toolbar.searchAria')}
               className="h-8 w-full rounded-full border border-tg-sep bg-tg-surface pl-8 pr-7 text-[13.5px] text-tg-text outline-none transition-colors placeholder:text-tg-hint focus:border-tg-link/40"
             />
             {query.length > 0 && (
               <button
                 type="button"
                 onClick={() => setQuery('')}
-                aria-label="Очистить поиск"
+                aria-label={t('toolbar.clear')}
                 className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-tg-sep text-tg-hint active:scale-90"
               >
                 <X className="h-3 w-3" aria-hidden />
@@ -841,23 +843,23 @@ export function FeedView() {
           <FilterChip
             active={mediaOnly}
             onClick={() => setMediaOnly((v) => !v)}
-            label="Медиа"
+            label={t('toolbar.media')}
             Icon={ImageIcon}
-            aria="Только посты с медиа"
+            aria={t('toolbar.mediaAria')}
           />
           <FilterChip
             active={dayOnly}
             onClick={() => setDayOnly((v) => !v)}
-            label="24ч"
+            label={t('toolbar.day')}
             Icon={Clock3}
-            aria="Только посты за сутки"
+            aria={t('toolbar.dayAria')}
           />
           <FilterChip
             active={popularSort}
             onClick={() => setPopularSort((v) => !v)}
-            label="Топ"
+            label={t('toolbar.top')}
             Icon={Flame}
-            aria="Сначала популярные"
+            aria={t('toolbar.topAria')}
           />
         </div>
 
@@ -865,7 +867,7 @@ export function FeedView() {
         {filtersActive && (
           <div className="flex items-center gap-1 px-4 pb-1.5 text-[11.5px] leading-none text-tg-hint" data-noswipe>
             <span>
-              Показано {visibleItems.length} из {items.length}
+              {t('toolbar.shownPrefix')} {visibleItems.length} {t('toolbar.of')} {items.length}
             </span>
             {(query.trim().length > 0 || mediaOnly || dayOnly || popularSort) && (
               <button
@@ -873,7 +875,7 @@ export function FeedView() {
                 onClick={resetFilters}
                 className="font-semibold text-tg-link active:opacity-60"
               >
-                · сбросить
+                · {t('toolbar.reset')}
               </button>
             )}
             {hiddenIds.size > 0 && (
@@ -885,7 +887,7 @@ export function FeedView() {
                 }}
                 className="font-semibold text-tg-link active:opacity-60"
               >
-                · вернуть скрытые ({hiddenIds.size})
+                · {t('toolbar.unhide')} ({hiddenIds.size})
               </button>
             )}
           </div>
@@ -1025,10 +1027,8 @@ export function FeedView() {
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-tg-surface">
               <Search className="h-7 w-7 text-tg-hint" aria-hidden />
             </span>
-            <p className="text-[15px] font-semibold text-tg-text">Ничего не найдено</p>
-            <p className="text-snippet text-tg-hint">
-              Поиск ищет только по загруженным постам — листайте ленту или сбросьте фильтры
-            </p>
+            <p className="text-[15px] font-semibold text-tg-text">{t('toolbar.empty')}</p>
+            <p className="text-snippet text-tg-hint">{t('toolbar.emptyHint')}</p>
             <button
               type="button"
               onClick={() => {
@@ -1039,7 +1039,7 @@ export function FeedView() {
               }}
               className="mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white active:scale-95"
             >
-              Сбросить фильтры
+              {t('toolbar.resetFilters')}
             </button>
           </div>
         ) : (

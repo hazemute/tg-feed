@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { toPostDTO } from '@/lib/dto'
 import { guardPublic } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
+import { isNsfwText, getNsfwChannelIds } from '@/lib/moderation'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -43,13 +44,16 @@ export async function GET(request: Request) {
       memoryTtlMs: 8000,
       fetcher: async (): Promise<PostDTO[]> => {
         const posts = await db.post.findMany({
-          where: { channel: { status: 'active' } },
+          where: {
+            channel: { status: 'active', id: { notIn: await getNsfwChannelIds() } },
+          },
           include: { channel: { include: { category: true } } },
           orderBy: { publishedAt: 'desc' },
           take: 500,
         })
         return posts
           .filter((p) => p.text.toLowerCase().includes(needle))
+          .filter((p) => !isNsfwText(p.text)) // NSFW-спам не находится поиском
           .slice(0, 30)
           .map((p) => toPostDTO(p, { liked: false, bookmarked: false, subscribed: false }))
       },
