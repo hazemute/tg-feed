@@ -22,6 +22,8 @@ export function BottomSheet({
   children,
   /** Ширина панели на lg+ (по умолчанию 560px) */
   wide,
+  /** z-класс контейнера (по умолчанию z-[60]; поверх оверлея поста — z-[80]) */
+  zClass = 'z-[60]',
 }: {
   open: boolean
   onClose: () => void
@@ -29,6 +31,7 @@ export function BottomSheet({
   subtitle?: string
   children: ReactNode
   wide?: boolean
+  zClass?: string
 }) {
   // Нативная кнопка «назад» Telegram закрывает шит
   useBackButton(open, onClose)
@@ -57,7 +60,7 @@ export function BottomSheet({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[60] flex flex-col justify-end lg:justify-center lg:px-6"
+          className={cn('fixed inset-0 flex flex-col justify-end lg:justify-center lg:px-6', zClass)}
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

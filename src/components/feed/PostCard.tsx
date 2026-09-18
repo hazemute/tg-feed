@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
+import { Eye, EyeOff, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -293,6 +293,7 @@ export function PostCard({
   const viewedRef = useRef(false)
   const openChannel = useApp((s) => s.openChannel)
   const openPost = useApp((s) => s.openPost)
+  const openComments = useApp((s) => s.openComments)
   const t = useT()
   const lang = useApp((s) => s.lang)
   const ch = post.channel
@@ -483,8 +484,17 @@ export function PostCard({
             </div>
           )}
         </div>
-        <div className="flex w-10 shrink-0 flex-col items-center gap-4 pt-0.5" aria-label={t('card.actions')}>
+        <div className="flex w-10 shrink-0 flex-col items-center gap-3.5 pt-0.5" aria-label={t('card.actions')}>
           <LikeRailButton count={post.likesCount} active={post.liked} onClick={onLike} />
+          <RailButton
+            icon={MessageCircle}
+            label={t('comments.title')}
+            count={post.commentsCount}
+            onClick={() => {
+              haptic('light')
+              openComments(post)
+            }}
+          />
           <RailButton
             icon={Sparkle}
             label={t('post.save')}

@@ -134,6 +134,7 @@ export function toPostDTO(
     viewsTg: p.viewsTg,
     likesCount,
     bookmarksCount,
+    commentsCount: p.commentsCount,
     publishedAt: p.publishedAt.toISOString(),
     liked: flags.liked,
     bookmarked: flags.bookmarked,

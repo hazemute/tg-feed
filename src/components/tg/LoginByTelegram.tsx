@@ -116,6 +116,7 @@ export function LoginByTelegram({ open, onClose }: { open: boolean; onClose: () 
       onClose={onClose}
       title="Вход по Telegram"
       subtitle="Подтверждение через нашего бота — без паролей"
+      zClass="z-[95]"
     >
       {/* Шаги */}
       <ol className="space-y-2.5">

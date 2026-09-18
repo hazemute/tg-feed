@@ -23,6 +23,10 @@ const COPY: Record<string, { title: string; text: string }> = {
     title: 'Сохраните пост навсегда',
     text: 'Понадобится всего 2 секунды: подтвердите аккаунт в нашем боте — и пост останется в закладках на всех устройствах.',
   },
+  comment: {
+    title: 'Присоединяйтесь к обсуждению',
+    text: 'Комментарии — для настоящих людей, поэтому нужен привязанный Telegram: 2 секунды в боте — и вы можете обсуждать посты.',
+  },
   default: {
     title: 'Пара секунд — и всё сохранится',
     text: 'Привяжите Telegram, чтобы сохранять посты и ставить лайки. Ничего не потеряется: история уже с вами.',
@@ -44,7 +48,7 @@ export function AuthGateSheet() {
   }
 
   return (
-    <BottomSheet open={open} onClose={closeAuthGate} title="Вход за 2 секунды">
+    <BottomSheet open={open} onClose={closeAuthGate} title="Вход за 2 секунды" zClass="z-[90]">
       <div className="pb-1">
         {/* Иллюстрация */}
         <div className="flex items-center gap-2" aria-hidden>

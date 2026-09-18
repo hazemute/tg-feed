@@ -16,6 +16,7 @@ import { Sidebar } from '@/components/tg/Sidebar'
 import { Splash } from '@/components/tg/Splash'
 import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
 import { AuthGateSheet } from '@/components/tg/AuthGateSheet'
+import { CommentsSheet } from '@/components/feed/CommentsSheet'
 import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { FeedView } from '@/components/feed/FeedView'
 import { ChannelSheet } from '@/components/feed/ChannelSheet'
@@ -289,6 +290,8 @@ export default function Home() {
           и глобальный шит входа (открывается из любого места приложения) */}
       <AuthGateSheet />
       <GlobalLoginSheet />
+      {/* Комментарии под постом (глобально: лента и полный экран поста) */}
+      <CommentsSheet />
     </div>
   )
 }

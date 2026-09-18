@@ -84,12 +84,32 @@ export type PostDTO = {
   viewsTg: number | null
   likesCount: number
   bookmarksCount: number
+  /** Локальные комментарии миниаппа (только привязанные к Telegram) */
+  commentsCount: number
   publishedAt: string
   liked: boolean
   bookmarked: boolean
   /** Спонсорский пост (активная CPA-кампания) — показывается с бейджем «Реклама» */
   sponsored?: boolean
   channel: ChannelDTO
+}
+
+/** Автор комментария (без приватных полей: только публичное представление) */
+export type CommentAuthorDTO = {
+  id: string
+  name: string // «Имя Фамилия» или @username, или нейтральный фолбэк
+  username: string | null
+  avatarUrl: string | null
+}
+
+export type CommentDTO = {
+  id: string
+  postId: string
+  text: string
+  createdAt: string
+  author: CommentAuthorDTO
+  /** true — комментарий текущей сессии (можно удалить) */
+  own: boolean
 }
 
 export type AdDTO = {

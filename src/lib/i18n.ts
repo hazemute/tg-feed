@@ -154,6 +154,21 @@ const DICT = {
   'support.profileRow': ['Чат поддержки', 'Support chat'],
   'support.profileHint': ['отвечаем быстро', 'we reply fast'],
   'support.section': ['Поддержка', 'Support'],
+
+  // Комментарии под постом
+  'comments.title': ['Комментарии', 'Comments'],
+  'comments.count': ['комментариев', 'comments'],
+  'comments.emptyTitle': ['Пока ни одного комментария', 'No comments yet'],
+  'comments.emptyHint': ['Будьте первым — скажите, что думаете', 'Be the first to share what you think'],
+  'comments.placeholder': ['Написать комментарий…', 'Add a comment…'],
+  'comments.send': ['Отправить', 'Send'],
+  'comments.more': ['Показать ещё', 'Load more'],
+  'comments.retry': ['Повторить', 'Retry'],
+  'comments.error': ['Не получилось. Попробуйте ещё раз', 'Something went wrong. Try again'],
+  'comments.login': ['Войдите, чтобы комментировать', 'Sign in to comment'],
+  'comments.tooLong': ['Слишком длинный комментарий', 'Comment is too long'],
+  'comments.deleted': ['Комментарий удалён', 'Comment deleted'],
+  'comments.delete': ['Удалить комментарий', 'Delete comment'],
 } as const
 
 export type I18nKey = keyof typeof DICT

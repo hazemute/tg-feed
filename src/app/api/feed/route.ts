@@ -50,6 +50,7 @@ type PageRow = {
   viewsTg: number | null
   reactionsTg: number
   likesCount: number
+  commentsCount: number
   publishedAt: Date
   c_id: string
   c_title: string
@@ -93,6 +94,7 @@ function postFromRow(r: PageRow): PostWithChannel {
     viewsTg: r.viewsTg,
     reactionsTg: r.reactionsTg,
     likesCount: r.likesCount,
+    commentsCount: r.commentsCount,
     publishedAt: r.publishedAt,
     channel: {
       id: r.c_id,
@@ -262,7 +264,7 @@ export async function GET(request: Request) {
       ? await db.$queryRaw<PageRow[]>`
             SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
                    p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
-                   p."likesCount", p."publishedAt",
+                   p."likesCount", p."commentsCount", p."publishedAt",
                    c."id"           AS "c_id",   c."title"       AS "c_title",
                    c."username"     AS "c_username", c."description" AS "c_description",
                    c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
@@ -330,7 +332,7 @@ export async function GET(request: Request) {
           const extraRows = await db.$queryRaw<PageRow[]>`
             SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
                    p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
-                   p."likesCount", p."publishedAt",
+                   p."likesCount", p."commentsCount", p."publishedAt",
                    c."id"           AS "c_id",   c."title"       AS "c_title",
                    c."username"     AS "c_username", c."description" AS "c_description",
                    c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",

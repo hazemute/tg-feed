@@ -38,6 +38,7 @@ model User {
   campaigns     AdCampaign[]
   translations  TranslationLog[]
   supportThreads SupportThread[]
+  comments      Comment[]
 }
 
 model Category {
@@ -106,6 +107,7 @@ model Post {
   viewsTg     Int? // просмотры из оригинального канала Telegram (t.me/s) — обновляются при парсинге
   reactionsTg Int      @default(0) // сумма всех реакций исходного поста (t.me/s) — обновляются при парсинге
   likesCount  Int      @default(0)
+  commentsCount Int    @default(0) // денормализованный счётчик комментариев
   hotScore    Float    @default(0) // «температура» поста: -1 просмотр, +3 дочитали 5с+, +10 лайк, +20 репост
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
   translations String? // кэш переводов: {"en":{"text":"…","at":"ISO"}}
@@ -118,6 +120,7 @@ model Post {
   likedBy     Like[]
   viewedBy    PostView[]
   bookmarkedBy Bookmark[]
+  comments    Comment[]
 
   @@index([channelId, publishedAt])
 }
@@ -378,4 +381,20 @@ model SupportMessage {
   createdAt DateTime      @default(now())
 
   @@index([threadId, createdAt])
+}
+
+// Комментарий пользователя под постом. Только привязанные к Telegram
+// (гостям комментарий недоступен — Lazy Auth). Плейн-текст до 700 символов;
+// счётчик денормализован в Post.commentsCount (как likesCount).
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime @default(now())
+
+  @@index([postId, createdAt])
+  @@index([userId])
 }

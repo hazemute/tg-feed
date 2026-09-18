@@ -27,11 +27,15 @@ interface AppState {
    * открывают шторку «привяжи Telegram за 2 секунды» (authGate) и,
    * по кнопке, шит входа (loginOpen) — глобально, чтобы открываться
    * из любого места (лента, оверлей, экран канала). */
-  authGate: string | null // что хотел сделать гость: 'like' | 'bookmark' | null (null — закрыто)
+  authGate: string | null // что хотел сделать гость: 'like' | 'bookmark' | 'comment' | null (null — закрыто)
   openAuthGate: (action: string) => void
   closeAuthGate: () => void
   loginOpen: boolean // шит «Вход по Telegram» (глобальный)
   setLoginOpen: (v: boolean) => void
+  commentsPost: PostDTO | null // открытый экран комментариев (глобально — из ленты и оверлея)
+  openComments: (post: PostDTO) => void
+  closeComments: () => void
+  patchCommentsPost: (postId: string, commentsCount: number) => void
   setUser: (u: UserDTO | null) => void
   setAuthReady: (v: boolean) => void
   setTab: (t: Tab) => void
@@ -82,6 +86,16 @@ export const useApp = create<AppState>((set, get) => ({
   closeAuthGate: () => set({ authGate: null }),
   loginOpen: false,
   setLoginOpen: (loginOpen) => set({ loginOpen }),
+  commentsPost: null,
+  openComments: (post) => set({ commentsPost: post }),
+  closeComments: () => set({ commentsPost: null }),
+  // Счётчик после отправки/удаления: шит живёт снимком, поэтому патчим и снимок
+  patchCommentsPost: (postId, commentsCount) =>
+    set((s) =>
+      s.commentsPost && s.commentsPost.id === postId
+        ? { commentsPost: { ...s.commentsPost, commentsCount } }
+        : s,
+    ),
   setUser: (user) => set({ user, interests: user?.categories ?? [] }),
   setAuthReady: (authReady) => set({ authReady }),
   setTab: (tab) => set({ tab }),

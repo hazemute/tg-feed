@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bookmark, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
+import { ArrowLeft, Bookmark, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -83,6 +83,7 @@ export function emitPostUpdated(patch: {
   likesCount?: number
   bookmarked?: boolean
   bookmarksCount?: number
+  commentsCount?: number
 }) {
   window.dispatchEvent(new CustomEvent('tgfeed:post-updated', { detail: patch }))
 }
@@ -118,6 +119,7 @@ export function PostOverlay() {
   const postQueue = useApp((s) => s.postQueue)
   const openChannel = useApp((s) => s.openChannel)
   const openAuthGate = useApp((s) => s.openAuthGate)
+  const openComments = useApp((s) => s.openComments)
   const user = useApp((s) => s.user)
   const open = !!post
   const t = useT()
@@ -172,6 +174,23 @@ export function PostOverlay() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open, goNext, goPrev])
+
+  // Комментарии (шит поверх оверлея) обновили счётчик — патчим живую копию,
+  // чтобы число в панели действий не отставало
+  useEffect(() => {
+    const onUpdated = (e: Event) => {
+      const d = (e as CustomEvent).detail as { postId: string; commentsCount?: number }
+      const cc = d?.commentsCount
+      if (!d?.postId || typeof cc !== 'number') return
+      setLive((prev) =>
+        prev && prev.id === d.postId
+          ? { ...prev, data: { ...prev.data, commentsCount: cc } }
+          : prev,
+      )
+    }
+    window.addEventListener('tgfeed:post-updated', onUpdated)
+    return () => window.removeEventListener('tgfeed:post-updated', onUpdated)
+  }, [])
 
   /* ---------- Dwell полного просмотра: сигнал интереса для рекомендаций ---------- */
   // Время, проведённое в оверлее конкретного поста, — самый сильный сигнал
@@ -523,6 +542,20 @@ export function PostOverlay() {
                 />
                 <span className="text-[13px] font-medium tabular-nums text-tg-text2">
                   {formatCount(current.bookmarksCount)}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  openComments(current)
+                }}
+                aria-label={t('comments.title')}
+                className="flex items-center gap-1.5 py-1.5"
+              >
+                <MessageCircle className="h-[23px] w-[23px] text-tg-text" strokeWidth={1.7} />
+                <span className="text-[13px] font-medium tabular-nums text-tg-text2">
+                  {formatCount(current.commentsCount)}
                 </span>
               </button>
               <button

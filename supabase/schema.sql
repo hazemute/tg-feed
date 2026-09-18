@@ -306,3 +306,18 @@ CREATE TABLE IF NOT EXISTS "PendingPayment" (
   "updatedAt"         TIMESTAMP(3) NOT NULL
 );
 CREATE INDEX IF NOT EXISTS "PendingPayment_userId_createdAt_idx" ON "PendingPayment"("userId", "createdAt" DESC);
+
+-- v5.3: комментарии под постами (только привязанные к Telegram пользователи)
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "commentsCount" INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS "Comment" (
+  "id"        TEXT PRIMARY KEY,
+  "postId"    TEXT NOT NULL,
+  "userId"    TEXT NOT NULL,
+  "text"      TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "Comment_postId_fkey" FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE,
+  CONSTRAINT "Comment_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE INDEX IF NOT EXISTS "Comment_postId_createdAt_idx" ON "Comment"("postId", "createdAt");
+CREATE INDEX IF NOT EXISTS "Comment_userId_idx" ON "Comment"("userId");
