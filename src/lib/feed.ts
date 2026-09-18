@@ -1,7 +1,71 @@
 import { db } from '@/lib/db'
 import { parseJsonArray } from '@/lib/server'
-import { getNsfwChannelIds } from '@/lib/moderation'
+import { getNsfwChannelIds, nsfwPostNotIn } from '@/lib/moderation'
+import { computeWeight, rankJitter } from '@/lib/rank'
 import type { AffinityMap } from '@/lib/rank'
+
+// ------------------------- Глобальный индекс ленты -------------------------
+
+/**
+ * Запись глобального индекса: id поста, id канала, id категории, вес.
+ * Кэшируется для ВСЕХ пользователей (вес — глобальное качество поста),
+ * персонализация применяется на каждом запросе поверх этих данных.
+ */
+export type IndexEntry = { i: string; c: string; g: string | null; w: number }
+export type RankedIndex = { entries: IndexEntry[]; total: number }
+
+/** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
+type IndexWhere = {
+  channel: {
+    status: 'active'
+    id?: { notIn: string[] }
+    category?: { slug: string } | { slug: { in: string[] } }
+  }
+  AND?: Array<Record<string, unknown>>
+}
+
+/**
+ * ТЯЖЁЛЫЙ пересчёт глобального индекса (400 постов + веса): единая реализация
+ * для /api/feed и фонового прогрева (feed-warm.ts) — ключи и формула весов
+ * всегда совпадают, расхождение исключено по построению.
+ */
+export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex> {
+  const posts = await db.post.findMany({
+    where: {
+      ...where,
+      // NSFW-спам (эскорт/18+) не попадает даже в индекс ленты
+      AND: nsfwPostNotIn(),
+    },
+    select: {
+      id: true,
+      channelId: true,
+      likesCount: true,
+      viewsCount: true,
+      hotScore: true,
+      publishedAt: true,
+      channel: {
+        select: { isPremium: true, categoryId: true },
+      },
+    },
+    orderBy: { publishedAt: 'desc' },
+    take: 400,
+  })
+  const entries: IndexEntry[] = posts
+    .map((p) => ({
+      i: p.id,
+      c: p.channelId,
+      g: p.channel.categoryId,
+      w: computeWeight({
+        likesCount: p.likesCount,
+        viewsCount: p.viewsCount,
+        hotScore: p.hotScore,
+        publishedAt: p.publishedAt,
+        premium: p.channel.isPremium,
+      }) + rankJitter(p.id),
+    }))
+    .sort((a, b) => b.w - a.w)
+  return { entries, total: entries.length }
+}
 
 /**
  * Общий скоуп ленты для пользователя: активные каналы, минус скрытые,

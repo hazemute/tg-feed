@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { isValidChannelUsername } from '@/lib/server'
 import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
+import { warmFeedIndexes } from '@/lib/feed-warm'
 import { botEnabled, getChatPhotoFileId, getChatMemberCount, getCustomEmojiStickers } from '@/lib/tg-bot'
 import { syncChannelAvatar } from '@/lib/avatar-store'
 import { isAdCliche } from '@/lib/moderation'
@@ -730,8 +731,18 @@ export async function runParser(
   const result = { ok: true as const, results, newPosts, truncated, totalTargets: targets.length }
   emitAdminEvent('parse:done', { newPosts: newPosts.length, ms: Date.now() - startedAt })
 
-  // Инвалидация кэша: лента/тренды/каталог/категории/поиск — новые посты
-  if (newPosts.length > 0) await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
+  // Инвалидация кэша: лента/тренды/каталог/категории/поиск — новые посты.
+  // Сразу после инвалидации ПРОГРЕВАЕМ глобальные индексы ленты (feed-warm):
+  // новая версия ключей становится тёплой ДО первых пользовательских запросов —
+  // бёрст после выхода новых постов не пересобирает индекс из БД.
+  if (newPosts.length > 0) {
+    await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
+    try {
+      await warmFeedIndexes()
+    } catch {
+      /* прогрев не влияет на результат тика */
+    }
+  }
 
   // Живое событие для SSE-подписчиков (/api/events): пилюля «N новых» и
   // бейдж уведомлений обновятся без ожидания ближайшего поллинга

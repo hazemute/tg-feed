@@ -3,9 +3,10 @@ import { z } from 'zod'
 import type { Channel, Post } from '@prisma/client'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
-import { computeWeight, diversify, personalBoost, rankJitter, shuffleNoise } from '@/lib/rank'
+import { diversify, personalBoost, shuffleNoise } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
-import { buildFeedScope, loadPersonalSignals } from '@/lib/feed'
+import { buildFeedScope, loadPersonalSignals, computeRankedIndex } from '@/lib/feed'
+import type { RankedIndex } from '@/lib/feed'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { getCachedPage, putCachedPage } from '@/lib/page-cache'
@@ -129,15 +130,6 @@ const querySchema = z.object({
 })
 
 /**
- * Запись глобального индекса: id поста, id канала, id категории, вес.
- * Кэшируется для ВСЕХ пользователей (вес — глобальное качество поста),
- * персонализация применяется на каждом запросе поверх этих данных.
- */
-type IndexEntry = { i: string; c: string; g: string | null; w: number }
-type RankedIndex = { entries: IndexEntry[]; total: number }
-
-
-/**
  * GET /api/feed?category=all|slug|discover&page=0&limit=6
  *
  * Рекомендации в два уровня:
@@ -178,55 +170,21 @@ export async function GET(request: Request) {
     if (!scope) return err('user not found', 404)
     mark('scope+signals')
 
-    /* ---------- Глобальный индекс: Redis (120с) → Postgres ----------
+    /* ---------- Глобальный индекс: Redis (300с + прогрев) → Postgres ----------
         Дальний регион (Supabase eu-central-1): холодный пересчёт индекса стоит
-        ~2с и грузит пул; TTL 120с + инвалидация famKey при новых постах
-        парсером — свежесть не страдает, пул разгружен. */
+        ~2с и грузит пул; TTL 300с + инвалидация famKey при новых постах
+        парсером + ПРОГРЕВ ключей парсером/warm'ом (feed-warm.ts) — юзеры
+        почти никогда не платят за пересчёт; кросс-инстансный лок в cacheAside
+        не даёт бёрсту запросов умножить холодную пересборку. */
     const indexKey =
       scope.sig !== null
         ? await famKey('feed', `${category}:v3:${shortHash(scope.sig)}`) // v3 — NSFW-фильтр
         : null // discover — персональный скоуп по интересам, без кэша
 
-    const loadIndex = async (): Promise<RankedIndex> => {
-      const posts = await db.post.findMany({
-        where: {
-          ...scope.where,
-          // NSFW-спам (эскорт/18+) не попадает даже в индекс ленты
-          AND: nsfwPostNotIn(),
-        },
-        select: {
-          id: true,
-          channelId: true,
-          likesCount: true,
-          viewsCount: true,
-          hotScore: true,
-          publishedAt: true,
-          channel: {
-            select: { isPremium: true, categoryId: true },
-          },
-        },
-        orderBy: { publishedAt: 'desc' },
-        take: 400,
-      })
-      const entries: IndexEntry[] = posts
-        .map((p) => ({
-          i: p.id,
-          c: p.channelId,
-          g: p.channel.categoryId,
-          w: computeWeight({
-            likesCount: p.likesCount,
-            viewsCount: p.viewsCount,
-            hotScore: p.hotScore,
-            publishedAt: p.publishedAt,
-            premium: p.channel.isPremium,
-          }) + rankJitter(p.id),
-        }))
-        .sort((a, b) => b.w - a.w)
-      return { entries, total: entries.length }
-    }
+    const loadIndex = () => computeRankedIndex(scope.where)
 
     const index: RankedIndex = indexKey
-      ? await cacheAside({ key: indexKey, ttlSec: 120, memoryTtlMs: 15_000, fetcher: loadIndex })
+      ? await cacheAside({ key: indexKey, ttlSec: 300, memoryTtlMs: 15_000, fetcher: loadIndex })
       : await loadIndex()
     mark('index')
 

@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { cronAuthorized } from '@/lib/guard'
 import { generateTts, ttsPlainOf } from '@/lib/tts'
 import { summarizePostCached, translatePostCached } from '@/lib/ai'
+import { warmFeedIndexes } from '@/lib/feed-warm'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -31,6 +32,19 @@ export async function POST(request: Request) {
     let tts = 0
     let translated = 0
     let summarized = 0
+
+    /* ---------- Прогрев глобальных индексов ленты (защита от лавины) ----------
+        Vercel CRON (ежедневный /api/parse/tick) и локальный feed-cron дергают
+        /api/warm после тика — индексы Redis пересобираются фоном, юзеры
+        всегда читают готовое. БЕЗ force: feed-cron тикает часто (60-600с),
+        троттлинг 15 мин держит цену прогрева разумной; Vercel-CRON в свежем
+        serverless-инстансе троттлинг не замечает (память пуста). */
+    let warmed = 0
+    try {
+      warmed = await warmFeedIndexes()
+    } catch {
+      /* прогрев индексов не влияет на остальной warm */
+    }
 
     /* ---------- Озвучка: 2 свежих поста без аудио ---------- */
     const ttsPosts = await db.post.findMany({
@@ -99,10 +113,10 @@ export async function POST(request: Request) {
       }
     }
 
-    if (tts + translated + summarized > 0) {
-      console.log(`[warm] tts:+${tts} translate:+${translated} summary:+${summarized}`)
+    if (tts + translated + summarized + warmed > 0) {
+      console.log(`[warm] tts:+${tts} translate:+${translated} summary:+${summarized} feed-indexes:+${warmed}`)
     }
-    return NextResponse.json({ ok: true, tts, translated, summarized })
+    return NextResponse.json({ ok: true, tts, translated, summarized, warmed })
   } catch (e) {
     console.error('[warm]', e)
     return NextResponse.json({ error: 'warm failed' }, { status: 500 })

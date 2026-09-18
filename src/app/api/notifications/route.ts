@@ -2,7 +2,16 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { getCachedNotifications, putCachedNotifications } from '@/lib/notif-cache'
 import type { NotificationDTO, NotificationGroupDTO, NotificationPostDTO } from '@/lib/types'
+
+type NotificationsResponse = {
+  count: number
+  groups: NotificationGroupDTO[]
+  since: string
+  activity: NotificationDTO[]
+  unreadActivity: number
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -52,6 +61,11 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
   const userId = g.uid
 
+  // L0-кэш 10с: бейдж опрашивается при каждом bump ленты — бёрсты поллинга
+  // не должны умножать 3-5 SQL-запросов (см. src/lib/notif-cache.ts)
+  const cached = getCachedNotifications<NotificationsResponse>(userId)
+  if (cached) return NextResponse.json(cached)
+
   try {
     const user = await db.user.findUnique({
       where: { id: userId },
@@ -87,13 +101,15 @@ export async function GET(request: Request) {
     }))
 
     if (channelIds.length === 0) {
-      return NextResponse.json({
+      const empty: NotificationsResponse = {
         count: 0,
         groups: [],
         since: since.toISOString(),
         activity,
         unreadActivity,
-      })
+      }
+      putCachedNotifications(userId, empty)
+      return NextResponse.json(empty)
     }
 
     const posts = await db.post.findMany({
@@ -141,13 +157,15 @@ export async function GET(request: Request) {
       return b.posts[0].publishedAt.localeCompare(a.posts[0].publishedAt)
     })
 
-    return NextResponse.json({
+    const payload: NotificationsResponse = {
       count: posts.length,
       groups,
       since: since.toISOString(),
       activity,
       unreadActivity,
-    })
+    }
+    putCachedNotifications(userId, payload)
+    return NextResponse.json(payload)
   } catch (e) {
     console.error('[notifications]', e)
     return err('notifications failed', 500)

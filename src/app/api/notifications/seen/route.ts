@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { clearNotificationsCache } from '@/lib/notif-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +30,8 @@ export async function POST(request: Request) {
     await db.notification
       .updateMany({ where: { userId, readAt: null }, data: { readAt: now } })
       .catch(() => {})
+    // Кэш GET /api/notifications устарел — сбрасываем (бейджи/инбокс сразу честные)
+    clearNotificationsCache(userId)
 
     return NextResponse.json({ ok: true })
   } catch (e) {

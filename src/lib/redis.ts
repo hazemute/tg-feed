@@ -19,6 +19,11 @@ import { Redis } from '@upstash/redis'
  *  - персонализация (лайки/закладки/подписки) НЕ кэшируется — глобальная
  *    часть кэшируется с нейтральными флагами, флаги пользователя
  *    накладываются после (см. /api/trending, /api/channels, /api/search).
+ *
+ * Защита от лавины: кросс-инстансный лок (lock:*, SET NX PX 10с) — тяжёлый
+ * fetcher при полном промахе выполняет один инстанс; при падении fetcher'а
+ * отдаётся stale-слепок (stale:*, TTL ≥ 1ч) вместо 500-й. Прогрев ключей
+ * без участия пользователей — feed-warm.ts (парсер/CRON).
  */
 
 const url = process.env.UPSTASH_REDIS_REST_URL?.trim() ?? ''
@@ -122,6 +127,78 @@ function l1Store(key: string, v: unknown, memTtlMs: number, hardTtlMs: number): 
   l1.set(key, { v, freshExp: now + memTtlMs, hardExp: now + hardTtlMs })
 }
 
+// ---------------- Защита от лавины (cache stampede) ----------------
+
+/*
+ * УСТОЙЧИВОСТЬ ПОД НАГРУЗКОЙ: полный промах (L1 + Redis пусто) — самая
+ * опасная точка кэша: N одновременных запросов из M инстансов запускают
+ * N×M тяжёлых fetcher'ов (SQL по дальнему Supabase) и кладут пул.
+ * Два барьера (сверху уже стоит in-process single-flight):
+ *  1) КРОСС-ИНСТАНСНЫЙ ЛОК: SET NX PX — тяжёлый fetcher выполняет
+ *     ровно один инстанс, остальные ждут готовое значение (до ~0.9с),
+ *     затем фетчат сами (доступность важнее строгости);
+ *  2) STALE-ФОЛБЭК: при падении fetcher'а (перегрузка пула, таймаут БД)
+ *     отдаём устаревший слепок (stale:{key}, TTL ≥ 1ч) вместо 500-й —
+ *     пользователь видит ленту, а не ошибку.
+ * ЭКОНОМИКА КОМАНД: лок/stale трогаются ТОЛЬКО на пути полного промаха
+ * (редкий случай); горячий путь (fresh/stale L1, попадание в Redis)
+ * по-прежнему 0–1 команда.
+ */
+
+const LOCK_TTL_MS = 10_000
+const LOCK_WAIT_ROUNDS = 4
+const LOCK_WAIT_MS = 220
+
+const lockKeyOf = (key: string) => `lock:${key}`
+const staleKeyOf = (key: string) => `stale:${key}`
+
+/** Попытка взять кросс-инстансный лок; true — взяли (или Redis недоступен — фетчим) */
+async function acquireLock(key: string): Promise<boolean> {
+  if (!redis) return true
+  try {
+    const r = await withTimeout(
+      redis.set(lockKeyOf(key), '1', { nx: true, px: LOCK_TTL_MS }),
+      null as unknown as 'OK',
+    )
+    return r === 'OK' || r === '1'
+  } catch {
+    return true // fail-open: без лока хуже — полагаемся на single-flight в памяти
+  }
+}
+
+async function releaseLock(key: string): Promise<void> {
+  if (!redis) return
+  try {
+    await withTimeout(redis.del(lockKeyOf(key)), undefined as never)
+  } catch {
+    /* лок истечёт по PX */
+  }
+}
+
+/** fetcher → память + Redis + stale-бэкап */
+async function fetchAndStore<T>(
+  opts: CacheAsideOpts<T>,
+  memTtlMs: number,
+  hardTtlMs: number,
+): Promise<T> {
+  const fresh = await opts.fetcher()
+  l1Store(opts.key, fresh, memTtlMs, hardTtlMs)
+  await cacheSet(opts.key, fresh, opts.ttlSec) // 1 SET (только при промахе)
+  // stale-бэкап переживёт несколько неудачных ревалидаций подряд
+  await cacheSet(staleKeyOf(opts.key), fresh, Math.max(opts.ttlSec * 6, 3_600))
+  return fresh
+}
+
+/** При ошибке fetcher'а — устаревший слепок вместо 500-й; null — отдавать ошибку */
+async function staleFallback<T>(key: string, memTtlMs: number, hardTtlMs: number): Promise<T | null> {
+  const stale = await cacheGet<T>(staleKeyOf(key))
+  if (stale !== null) {
+    l1Store(key, stale, memTtlMs, hardTtlMs)
+    return stale
+  }
+  return null
+}
+
 /** Общий путь «Redis GET → при промахе fetcher → Redis SET», с дедупликацией */
 function loadThrough<T>(opts: CacheAsideOpts<T>, memTtlMs: number, hardTtlMs: number): Promise<T> {
   const existing = inflight.get(opts.key)
@@ -133,10 +210,37 @@ function loadThrough<T>(opts: CacheAsideOpts<T>, memTtlMs: number, hardTtlMs: nu
       l1Store(opts.key, remote, memTtlMs, hardTtlMs)
       return remote
     }
-    const fresh = await opts.fetcher()
-    l1Store(opts.key, fresh, memTtlMs, hardTtlMs)
-    await cacheSet(opts.key, fresh, opts.ttlSec) // 1 SET (только при промахе)
-    return fresh
+
+    // Полный промах: сначала пробуем лок (фетчит один инстанс)
+    if (await acquireLock(opts.key)) {
+      try {
+        return await fetchAndStore(opts, memTtlMs, hardTtlMs)
+      } catch (e) {
+        const stale = await staleFallback<T>(opts.key, memTtlMs, hardTtlMs)
+        if (stale !== null) return stale
+        throw e
+      } finally {
+        void releaseLock(opts.key)
+      }
+    }
+
+    // Лок занят — другой инстанс уже фетчит: ждём готовое значение
+    for (let i = 0; i < LOCK_WAIT_ROUNDS; i++) {
+      await new Promise((resolve) => setTimeout(resolve, LOCK_WAIT_MS))
+      const v = await cacheGet<T>(opts.key)
+      if (v !== null) {
+        l1Store(opts.key, v, memTtlMs, hardTtlMs)
+        return v
+      }
+    }
+    // Не дождались (медленный fetcher, вымытый лок) — фетчим сами
+    try {
+      return await fetchAndStore(opts, memTtlMs, hardTtlMs)
+    } catch (e) {
+      const stale = await staleFallback<T>(opts.key, memTtlMs, hardTtlMs)
+      if (stale !== null) return stale
+      throw e
+    }
   })()
 
   inflight.set(

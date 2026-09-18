@@ -48,6 +48,10 @@ const LIMITS: Array<{ prefix: string; limit: number }> = [
   { prefix: '/api/translate', limit: 20 },
   { prefix: '/api/mychannel', limit: 40 },
   { prefix: '/api/campaigns', limit: 40 },
+  // Комментарии: публичный GET (120/мин на юзера в guard'е — памяти недостаточно
+  // против распределённого спама с ботнета). Redis трогается только после
+  // локального порога (36/мин с IP) — обычные пользователи его не видят.
+  { prefix: '/api/comments', limit: 60 },
 ]
 
 /**
