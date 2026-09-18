@@ -506,3 +506,40 @@ export function supportUserName(u: SupportUser): string {
   if (u.isGuest) return `Гость · ${u.id.slice(0, 10)}`
   return u.id.slice(0, 14)
 }
+
+/* ===================== Быстрые операции и карточка юзера ===================== */
+
+export type OpsAction =
+  | { action: 'hide_channel'; username: string }
+  | { action: 'show_channel'; username: string }
+  | { action: 'refresh_card'; username: string }
+  | { action: 'reclassify'; username: string }
+  | { action: 'delete_post'; target: string }
+
+export async function runOps(payload: OpsAction): Promise<string> {
+  const data = await panelFetch<{ ok: boolean; message: string }>('/api/panel/ops', {
+    method: 'POST',
+    json: payload,
+  })
+  return data.message
+}
+
+export interface PanelUserInfo {
+  user: {
+    id: string
+    username: string | null
+    firstName: string | null
+    lastName: string | null
+    isGuest: boolean
+    isPremium: boolean
+    languageCode: string | null
+    createdAt: string
+  }
+  stats: { views: number; likes: number; bookmarks: number; subscriptions: number }
+  subscriptions: Array<{ title: string; username: string; hidden: boolean; status: string }>
+  threads: Array<{ id: string; status: string; lastMessageAt: string }>
+}
+
+export async function fetchUserInfo(userId: string): Promise<PanelUserInfo> {
+  return panelFetch<PanelUserInfo>(`/api/panel/user-info?userId=${encodeURIComponent(userId)}`)
+}

@@ -188,7 +188,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
    * последовательное выполнение — устраняет P2024 «Timed out fetching a new
    * connection from the connection pool» при connection_limit=1.
    */
-  let views: Array<{ postId: string; post: { channelId: string; channel: { categoryId: string | null } } }>
+  let views: Array<{ postId: string; dwellMs: number; post: { channelId: string; channel: { categoryId: string | null } } }>
   let likes: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
   let bookmarks: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
   let subs: Array<{ channelId: string }>
@@ -196,7 +196,11 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     ;[views, likes, bookmarks, subs] = await db.$transaction([
       db.postView.findMany({
         where: { userId },
-        select: { postId: true, post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
+        select: {
+          postId: true,
+          dwellMs: true,
+          post: { select: { channelId: true, channel: { select: { categoryId: true } } } },
+        },
         orderBy: { createdAt: 'desc' },
         take: 500,
       }),
@@ -242,7 +246,16 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     const cat = row.post?.channel?.categoryId
     if (cat) affinity.categories.set(cat, (affinity.categories.get(cat) ?? 0) + w)
   }
-  for (const v of views) bump(v, 1)
+  for (const v of views) {
+    /*
+     * Сигналы интереса: просмотр = 1; ДОЛГОЕ ЧТЕНИЕ усиливает сигнал —
+     * каждые полные 10с dwell добавляют +1 (кап +4, т.е. «дочитал 40с+» = 5).
+     * Лайк/закладка = 3 (осознанное действие, но одно; долгое чтение нескольких
+     * постов канала может перевесить).
+     */
+    const dwellW = Math.min(4, Math.floor((v.dwellMs ?? 0) / 10_000))
+    bump(v, 1 + dwellW)
+  }
   for (const l of likes) bump(l, 3)
   for (const b of bookmarks) bump(b, 3)
 

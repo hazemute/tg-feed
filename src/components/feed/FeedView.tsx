@@ -96,7 +96,6 @@ export function FeedView() {
   const [loadFailed, setLoadFailed] = useState(false)
   const [summaryPost, setSummaryPost] = useState<PostDTO | null>(null)
   const [showTop, setShowTop] = useState(false)
-  const [freshCount, setFreshCount] = useState(0)
   // Офлайн-режим: сеть недоступна — показываем кэш из IndexedDB
   const [offline, setOffline] = useState(false)
   // Экран «Уведомления»: счётчик для бейджа у колокольчика + открытый шит + данные шита
@@ -225,8 +224,6 @@ export function FeedView() {
   }, [feedVersion])
 
   // ---------- Уведомления (колокольчик в шапке) ----------
-
-  /** Обновить счётчик новых постов (не чаще раза в 30с — guard-таймштамп в ref) */
   const fetchNotifCount = useCallback(async () => {
     const uid = userRef.current?.id
     if (!uid) return
@@ -386,7 +383,6 @@ export function FeedView() {
     setInitial(true)
     setLoadFailed(false)
     busyRef.current = false
-    setFreshCount(0)
     setQuery('') // поиски разных категорий не смешиваются
     // Stale-while-revalidate: мгновенно показываем кэш, сеть догонит
     void loadFeedCache(category).then((cached) => {
@@ -432,7 +428,8 @@ export function FeedView() {
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
 
-  // Поллинг новых постов (пилюля «N новых»), только когда вкладка активна и видима
+  // Поллинг новых постов: ТИХО добавляем их в КОНЕЦ ленты (без пилюль и скроллов
+  // вверх — пользователь просто продолжает листать и встречает свежее ниже)
   const checkFresh = useCallback(async () => {
     if (document.visibilityState !== 'visible') return
     if (useApp.getState().tab !== 'feed') return
@@ -442,7 +439,22 @@ export function FeedView() {
       const r = await api<FeedResponse & { count: number }>(
         `/api/feed/fresh?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&after=${encodeURIComponent(latestTimeRef.current)}`,
       )
-      if (r.count > 0) setFreshCount(r.count)
+      if (r.items.length > 0) {
+        // Тихий аппенд в низ: без прыжков скролла, без тостов — посты просто
+        // появляются ниже, когда пользователь долистает до них
+        setItems((prev) => {
+          const seen = new Set(prev.map((p) => p.id))
+          const fresh: typeof r.items = []
+          for (const x of r.items) {
+            if (seen.has(x.id)) continue
+            seen.add(x.id)
+            fresh.push(x)
+          }
+          return fresh.length > 0 ? [...prev, ...fresh] : prev
+        })
+        const mx = r.items.map((x) => x.publishedAt).sort().pop()
+        if (mx && mx > latestTimeRef.current) latestTimeRef.current = mx
+      }
     } catch {
       // тихо — попробуем на следующем тике
     }
@@ -523,45 +535,12 @@ export function FeedView() {
     }
   }, [user, fetchNotifCount])
 
-  // Тап по пилюле: вставляем новые посты сверху (как в Telegram), без полного ре-ранка
-  const applyFresh = useCallback(async () => {
-    if (!userRef.current || busyRef.current) return
-    setRefreshing(true)
-    try {
-      const r = await api<FeedResponse & { count: number }>(
-        `/api/feed/fresh?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&after=${encodeURIComponent(latestTimeRef.current)}`,
-      )
-      if (r.items.length > 0) {
-        // дедуп и против уже виденных, и против дубликатов внутри самого ответа
-        setItems((prev) => {
-          const seen = new Set(prev.map((p) => p.id))
-          const fresh: typeof r.items = []
-          for (const x of r.items) {
-            if (seen.has(x.id)) continue
-            seen.add(x.id)
-            fresh.push(x)
-          }
-          return [...fresh, ...prev]
-        })
-        const mx = r.items.map((x) => x.publishedAt).sort().pop()
-        if (mx && mx > latestTimeRef.current) latestTimeRef.current = mx
-      }
-      setFreshCount(0)
-      haptic('light')
-      scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
-    } catch {
-      toast.error('Не удалось обновить ленту')
-    } finally {
-      setRefreshing(false)
-    }
-  }, [category])
-
+  // Pull-to-refresh: полная перезагрузка ленты с новым сидом перемешивания
   const refresh = useCallback(async () => {
     if (!userRef.current || busyRef.current) return
     setRefreshing(true)
     try {
       await load(0, true)
-      setFreshCount(0)
     } finally {
       setRefreshing(false)
       setPull(0)
@@ -913,34 +892,6 @@ export function FeedView() {
         )}
       </AnimatePresence>
 
-      {/*
-        Пилюля «N новых постов» — «язычок», выползающий из-под панели тегов:
-        • нулевая обёртка сразу после шапки → статическая позиция ровно под баром;
-        • z-10 ниже шапки (z-20) — в приподнятом состоянии пилюля скрыта ЗА панелью,
-          анимация y:-120% → 0 физически «вытягивает» её вниз из-под тегов;
-        • верх плоский (без скруглений — сливается с баром), низ — полный полукруг;
-        • top-[-1px] перекрывает волосную линию шапки — нет щели.
-      */}
-      <div className="relative z-10 h-0">
-        <AnimatePresence>
-          {freshCount > 0 && !refreshing && (
-            <motion.button
-              type="button"
-              initial={{ y: '-120%' }}
-              animate={{ y: '0%' }}
-              exit={{ y: '-120%' }}
-              transition={{ type: 'spring', stiffness: 380, damping: 32 }}
-              onClick={() => applyFresh()}
-              aria-label={`Показать: ${freshCount} ${pluralRu(freshCount, 'новый пост', 'новых поста', 'новых постов')}`}
-              className="absolute left-1/2 top-[-1px] flex h-9 -translate-x-1/2 items-center gap-1.5 rounded-b-full bg-tg-link px-4 pt-1 text-[13.5px] font-semibold text-white shadow-[0_12px_24px_-8px_rgba(0,0,0,0.4)] transition-[scale] active:scale-95"
-            >
-              <ArrowUp className="h-4 w-4" strokeWidth={2.5} />
-              {freshCount} {pluralRu(freshCount, 'новый пост', 'новых поста', 'новых постов')}
-            </motion.button>
-          )}
-        </AnimatePresence>
-      </div>
-
       {/* Сама лента — естественный скролл + pull-to-refresh */}
       <div
         ref={scrollRef}
@@ -958,14 +909,6 @@ export function FeedView() {
             style={{ transform: 'scaleX(0)', opacity: 0, transition: 'opacity 150ms ease' }}
           />
         </div>
-        {/* Мягкая подложка под пилюлей «N новых»: контент под язычком растворяется,
-            текст каналов не просвечивает сквозь плашку (фикс наложения на скрине) */}
-        {freshCount > 0 && !refreshing && (
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 z-[5] h-16 bg-gradient-to-b from-tg-bg via-tg-bg/85 to-transparent"
-          />
-        )}
         {/* Индикатор pull-to-refresh */}
         <motion.div
           initial={false}

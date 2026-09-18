@@ -172,6 +172,30 @@ export function PostOverlay() {
     return () => window.removeEventListener('keydown', onKey)
   }, [open, goNext, goPrev])
 
+  /* ---------- Dwell полного просмотра: сигнал интереса для рекомендаций ---------- */
+  // Время, проведённое в оверлее конкретного поста, — самый сильный сигнал
+  // «заинтересовало» (сильнее лайка: дочитал до конца). Отправляем при закрытии
+  // и при переключении на соседний пост; кап 10 минут, шум <5с не пишем.
+  const dwellRef = useRef<{ id: string; since: number } | null>(null)
+  const flushDwell = useCallback(() => {
+    const d = dwellRef.current
+    dwellRef.current = null
+    if (!d) return
+    const ms = Math.min(Date.now() - d.since, 600_000)
+    if (ms < 5_000) return
+    api('/api/view/dwell', { method: 'POST', body: JSON.stringify({ postId: d.id, ms }) }).catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    if (open && current) {
+      // Смена поста внутри оверлея — флашим предыдущий, открываем новый отсчёт
+      if (dwellRef.current && dwellRef.current.id !== current.id) flushDwell()
+      if (!dwellRef.current) dwellRef.current = { id: current.id, since: Date.now() }
+    } else if (!open) {
+      flushDwell() // закрытие оверлея
+    }
+  }, [open, current?.id, current, flushDwell])
+
   // Touch-свайп: горизонталь должна доминировать над вертикалью (иначе это скролл),
   // порог 80px и не дольше 700мс — не мешает вертикальной прокрутке контента
   const touchStart = useRef<{ x: number; y: number; t: number } | null>(null)

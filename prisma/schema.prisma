@@ -137,6 +137,7 @@ model PostView {
   userId    String
   postId    String
   createdAt DateTime @default(now())
+  dwellMs   Int      @default(0) // суммарное время поста на экране/в оверлее — сигнал интереса для рекомендаций
 
   user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)

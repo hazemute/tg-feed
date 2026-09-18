@@ -245,14 +245,18 @@ export type ChatCardResult = {
   notFound?: boolean
   /** вызовы прошли (не сетевой сбой): можно штамповать fetchedAt */
   ok: boolean
+  /** getChat (аватар) под флуд-баном, а подписчики получены: штампуем только members */
+  chatLimited?: boolean
 }
 
 /**
- * Карточка канала ОДНИМ параллельным заходом (getChat + getChatMemberCount).
- * Отличается от «слепых» хелперов тем, что РАЗЛИЧАЕТ «фото нет» и «Bot API
- * пригрозил баном за частые вызовы»: при 429 пакетный бэкфилл обязан
- * остановиться и НЕ штамповать время — иначе каналы «выпадут» из обновления
- * на весь срок TTL.
+ * Карточка канала. ПОСЛЕДОВАТЕЛЬНО: сначала лёгкий getChatMemberCount,
+ * затем getChat — параллельный burst двух запросов × 3 воркера (до 6 одновременных
+ * вызовов) мгновенно перезапускал флуд-контроль сразу после снятия бана, и
+ * наказание становилось вечным.
+ *
+ * Частичный успех: getChatMemberCount чаще остаётся живым при бане getChat —
+ * тогда подписчики сохраняются (chatLimited), аватар догонит после снятия.
  */
 export async function getChatCard(username: string): Promise<ChatCardResult> {
   const clean = username.replace(/^@/, '')
@@ -261,46 +265,61 @@ export async function getChatCard(username: string): Promise<ChatCardResult> {
   await hydrateBotBan()
   // Глобальная пауза: не дёргаем API во время флуд-бана (иначе продлеваем его)
   if (botBanned()) return { ...empty, rateLimited: true }
+
+  const call = (method: string): Promise<Response> =>
+    fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: `@${clean}` }),
+      signal: AbortSignal.timeout(8000),
+    })
+
   try {
-    const [chatRes, membersRes] = await Promise.all([
-      fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: `@${clean}` }),
-        signal: AbortSignal.timeout(8000),
-      }),
-      fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMemberCount`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: `@${clean}` }),
-        signal: AbortSignal.timeout(8000),
-      }),
-    ])
-    // Флуд-защита: 429 — сигнал остановить ВСЮ пакетную обработку Bot API:
-    // ставим глобальную паузу и НЕ штампуем канал (повтор после снятия)
-    if (chatRes.status === 429 || membersRes.status === 429) {
-      const retry = Number(chatRes.headers.get('retry-after') ?? membersRes.headers.get('retry-after') ?? '0')
-      memSet(`cardban:${clean}`, String(retry), Math.min(30, Math.max(1, retry)) * 1000)
+    /* --- Шаг 1: подписчики (лёгкий метод, чаще доступен при бане getChat) --- */
+    const membersRes = await call('getChatMemberCount')
+    if (membersRes.status === 429) {
+      const retry = Number(membersRes.headers.get('retry-after') ?? '0')
       void markBotBan(retry)
-      return { photoFileId: null, members: null, rateLimited: true, ok: false }
+      return { ...empty, rateLimited: true }
     }
-    // Канал удалён/приватен: Telegram отвечает 400/403 — фиксируем notFound,
-    // чтобы шедулер не молотил несуществующий канал каждый тик
-    if (chatRes.status === 400 || chatRes.status === 403 || membersRes.status === 400 || membersRes.status === 403) {
-      return { photoFileId: null, members: null, rateLimited: false, notFound: true, ok: false }
+    if (membersRes.status === 400 || membersRes.status === 403) {
+      // Канал удалён/приватен — не тратим второй вызов
+      return { ...empty, notFound: true }
     }
-    const chat = (await chatRes.json().catch(() => null)) as {
-      ok?: boolean
-      result?: { photo?: { big_file_id?: string; small_file_id?: string } }
-    } | null
-    const mc = (await membersRes.json().catch(() => null)) as {
-      ok?: boolean
-      result?: number
-    } | null
-    if (!chatRes.ok && chatRes.status !== 200) return empty
-    const photoFileId = chat?.ok ? (chat.result?.photo?.big_file_id ?? chat.result?.photo?.small_file_id ?? null) : null
+    const mc = (await membersRes.json().catch(() => null)) as { ok?: boolean; result?: number } | null
     const members = mc?.ok && typeof mc.result === 'number' ? mc.result : null
-    return { photoFileId, members, rateLimited: false, ok: Boolean(chat?.ok || mc?.ok) }
+
+    /* --- Шаг 2: аватар (getChat) — с малой паузой, чтобы не копить burst --- */
+    await new Promise((r) => setTimeout(r, 150))
+    let photoFileId: string | null = null
+    let chatLimited = false
+    let chatOk = false
+    const chatRes = await call('getChat')
+    if (chatRes.status === 429) {
+      // Подписчики уже спасены; getChat под баном — аватар догонит позже.
+      // Глобальную паузу НЕ ставим: блокировать рассылку/подписчиков из-за
+      // перегруженного метода getChat дороже, чем потерянный вызов раз в тик.
+      chatLimited = true
+      memSet(`cardchatban:${clean}`, '1', 10 * 60_000)
+    } else if (chatRes.status === 400 || chatRes.status === 403) {
+      // странно (members ок, getChat нет) — считаем фото отсутствующим
+      chatOk = true
+    } else {
+      const chat = (await chatRes.json().catch(() => null)) as {
+        ok?: boolean
+        result?: { photo?: { big_file_id?: string; small_file_id?: string } }
+      } | null
+      chatOk = Boolean(chat?.ok)
+      photoFileId = chat?.ok ? (chat.result?.photo?.big_file_id ?? chat.result?.photo?.small_file_id ?? null) : null
+    }
+
+    return {
+      photoFileId,
+      members,
+      rateLimited: false,
+      ok: Boolean(chatOk || members != null),
+      ...(chatLimited ? { chatLimited: true } : {}),
+    }
   } catch {
     return empty
   }

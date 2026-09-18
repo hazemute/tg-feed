@@ -300,7 +300,59 @@ export function PostCard({
     (post.media != null && (post.media.url || post.media.name || post.media.question || post.media.link)) ||
     post.gallery.length > 0
 
-  // Просмотр засчитывается, когда пост показался на экране
+  const dwellCleanupRef = useRef<(() => void) | null>(null)
+  useEffect(() => () => dwellCleanupRef.current?.(), [])
+  // Dwell-трекинг: пока ≥50% карточки в вьюпорте — капает время. Флаш каждые
+  // 15с и при уходе карточки с экрана (unmount). Ошибки тихие.
+  const startDwellTracking = () => {
+    const el = rootRef.current
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    let visible = false
+    let buffer = 0
+    let lastTick = Date.now()
+
+    const vis = new IntersectionObserver((entries) => {
+      visible = (entries[0]?.intersectionRatio ?? 0) >= 0.5
+    }, { threshold: [0, 0.5] })
+    vis.observe(el)
+
+    const flush = () => {
+      if (buffer < 2000) return // короткие проблески — шум
+      const ms = buffer
+      buffer = 0
+      api('/api/view/dwell', { method: 'POST', body: JSON.stringify({ postId: post.id, ms }) }).catch(() => {})
+    }
+
+    const timer = setInterval(() => {
+      const now = Date.now()
+      const delta = now - lastTick
+      lastTick = now
+      if (visible) buffer += delta
+      if (buffer >= 15_000) flush()
+    }, 1_000)
+
+    const cleanup = () => {
+      const now = Date.now()
+      if (visible) buffer += now - lastTick
+      clearInterval(timer)
+      vis.disconnect()
+      if (buffer >= 2000) {
+        const ms = buffer
+        // sendBeacon не тянем (нужны заголовки сессии) — обычный fire-and-forget
+        api('/api/view/dwell', { method: 'POST', body: JSON.stringify({ postId: post.id, ms }) }).catch(() => {})
+      }
+    }
+    // Флаш при анмаунте карточки
+    const onUnload = () => cleanup()
+    window.addEventListener('pagehide', onUnload)
+    dwellCleanupRef.current = () => {
+      window.removeEventListener('pagehide', onUnload)
+      cleanup()
+    }
+  }
+
+  // Просмотр засчитывается, когда пост показался на экране; ПОСЛЕ этого копим
+  // dwell — время карточки в вьюпорте (сигнал интереса для рекомендаций)
   useEffect(() => {
     if (viewedRef.current) return
     const el = rootRef.current
@@ -321,6 +373,7 @@ export function PostCard({
               if (r?.added > 0) onViewed?.(post.id)
             })
             .catch(() => {})
+          startDwellTracking()
         }
       },
       { threshold: [0, 0.7] },

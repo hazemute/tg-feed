@@ -138,7 +138,24 @@ export type CardsResult = { refreshed: number; scanned: number }
  * fetchedAt штампуем всегда: канал без аватара (удалён/запрещён) не будет
  * долбиться каждый тик, повтор — после TTL.
  */
-export async function refreshChannelCards(limit = 12): Promise<CardsResult> {
+/*
+ * АДАПТИВНЫЙ ОБЪЁМ ПАРТИИ КАРТОЧЕК: после флуд-бана резкий burst (10+ каналов
+ * × 2 вызова) мгновенно возвращает бан — наказание становится вечным. Теперь
+ * партия стартует с 2 каналов и растёт на +2 за каждый тик без 429 (кап 12);
+ * любой 429 сбрасывает к 2. Так бэкфилл сам «находит» комфортный темп.
+ */
+let cardRamp = 2
+
+/** Текущий рекомендованный размер партии карточек (растёт после спокойных тиков) */
+export function cardBatchSize(): number {
+  return cardRamp
+}
+
+export async function refreshChannelCards(explicitLimit?: number): Promise<CardsResult> {
+  // ЗАЩИТА ОТ BURST: любой явный limit (в т.ч. ручной /api/parse/avatars?limit=200)
+  // обрезается адаптивным бюджетом cardRamp — именно ручные бэкфиллы дважды
+  // ловили флуд-бан на 3-4 часа. Хочешь быстрее — жди роста cardRamp.
+  const limit = Math.min(Math.max(explicitLimit ?? cardRamp, 1), Math.max(cardRamp, 1))
   let rows: Array<{ id: string; username: string }> = []
   try {
     rows = await db.$queryRawUnsafe<Array<{ id: string; username: string }>>(
@@ -175,6 +192,7 @@ export async function refreshChannelCards(limit = 12): Promise<CardsResult> {
         const card = await getChatCard(r.username)
         if (card.rateLimited) {
           banned = true
+          cardRamp = 2 // флуд-контроль снова жив — на следующий раз начинаем аккуратно
           return
         }
         if (card.notFound) {
@@ -193,9 +211,12 @@ export async function refreshChannelCards(limit = 12): Promise<CardsResult> {
         await db.channel.update({
           where: { id: r.id },
           data: {
-            ...(card.photoFileId
-              ? { photoFileId: card.photoFileId, avatarFetchedAt: now }
-              : { avatarFetchedAt: now }),
+            // при chatLimited (бан getChat) аватар НЕ штампуем — догонит после снятия
+            ...(!card.chatLimited
+              ? card.photoFileId
+                ? { photoFileId: card.photoFileId, avatarFetchedAt: now }
+                : { avatarFetchedAt: now }
+              : {}),
             ...(card.members != null
               ? { membersCount: card.members, membersFetchedAt: now }
               : { membersFetchedAt: now }),
@@ -208,5 +229,6 @@ export async function refreshChannelCards(limit = 12): Promise<CardsResult> {
     }
   })
   await Promise.all(workers)
+  if (!banned) cardRamp = Math.min(12, cardRamp + 2) // спокойный тик — темп растёт
   return { refreshed, scanned: rows.length }
 }

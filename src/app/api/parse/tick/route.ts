@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { cronAuthorized, guardIp } from '@/lib/guard'
 import { runParser } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
-import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards } from '@/lib/parse-scheduler'
+import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, cardBatchSize } from '@/lib/parse-scheduler'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -46,13 +46,13 @@ async function handle(request: Request) {
     }
 
     // карточки каналов (аватар + подписчики через Bot API) — ГАРАНТИРОВАННЫЙ
-    // слот сразу после парсинга: приоритет выше медиа-бэкфилла, т.к. карточка
-    // видна пользователю в каждом посте ленты. 10 каналов / 3 воркера ≈ 20с и
-    // ~20 вызовов Bot API — безопасный burst без риска флуд-бана.
+    // слот сразу после парсинга. Размер партии АДАПТИВНЫЙ (cardBatchSize):
+    // после флуд-бана начинается с 2 каналов и растёт на +2 за спокойный тик
+    // (кап 12) — burst после бана мгновенно возвращал наказание, делая его вечным.
     let cards = { refreshed: 0, scanned: 0 }
     if (Date.now() - started < 70_000) {
       try {
-        cards = await refreshChannelCards(10)
+        cards = await refreshChannelCards(cardBatchSize())
       } catch (e) {
         console.error('[tick] cards failed', e)
       }

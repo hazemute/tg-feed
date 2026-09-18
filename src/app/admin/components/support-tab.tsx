@@ -5,23 +5,32 @@ import {
   Bot,
   CheckCheck,
   ChevronLeft,
+  EyeOff,
+  Eye,
   Headset,
+  Layers,
   MessageSquareOff,
   RefreshCw,
   Send,
+  Sparkles,
+  Trash2,
   UserRound,
   Wrench,
+  Zap,
 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
 import {
   fetchSupportThread,
   fetchSupportThreads,
+  fetchUserInfo,
   fmtAgo,
   PanelError,
   replySupportThread,
+  runOps,
   setSupportThreadStatus,
   supportUserName,
+  type PanelUserInfo,
   type SupportMsg,
   type SupportThreadFull,
   type SupportThreadItem,
@@ -39,6 +48,16 @@ const SENDER_LABEL: Record<string, string> = {
   ai: 'Нейросеть',
   admin: 'Сотрудник',
 }
+
+/** Шаблоны ответов: типовые ситуации поддержки — один клик вместо набора */
+const CANNED_REPLIES: string[] = [
+  'Спасибо за обращение! Проверяем ситуацию, ответ пришлём в этот чат.',
+  'Проблему нашли и уже исправили — проверьте, пожалуйста, ещё раз.',
+  'Канал скрыт из вашей ленты — он больше не будет попадаться. Хорошего дня!',
+  'Данные канала обновлены: аватар и число подписчиков подтянуты из Telegram.',
+  'Передал ваш вопрос профильному специалисту — ответ появится здесь.',
+  'Не удалось воспроизвести проблему. Опишите, пожалуйста, шаги и пришлите скриншот.',
+]
 
 function timeOf(iso: string): string {
   const d = new Date(iso)
@@ -61,6 +80,13 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
   const [sending, setSending] = useState(false)
   const [listError, setListError] = useState<string | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  // Карточка пользователя (для жалоб «скройте канал», «кто это» и т.п.)
+  const [userInfo, setUserInfo] = useState<PanelUserInfo | null>(null)
+  const [userInfoOpen, setUserInfoOpen] = useState(false)
+  // Быстрые операции: имя канала / ссылка на пост + результат последней операции
+  const [opsTarget, setOpsTarget] = useState('')
+  const [opsBusy, setOpsBusy] = useState<string | null>(null)
+  const [opsResult, setOpsResult] = useState<{ ok: boolean; text: string } | null>(null)
 
   const loadList = useCallback(async () => {
     try {
@@ -114,6 +140,41 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
       void loadThread(id)
     },
     [loadThread],
+  )
+
+  // Карточка пользователя подгружается при открытии диалога
+  useEffect(() => {
+    setUserInfo(null)
+    setUserInfoOpen(false)
+    if (!thread?.user.id) return
+    let alive = true
+    fetchUserInfo(thread.user.id)
+      .then((info) => {
+        if (alive) setUserInfo(info)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
+  }, [thread?.user.id])
+
+  /** Выполнить быструю операцию админа («решил за клик») */
+  const runOp = useCallback(
+    async (payload: Parameters<typeof runOps>[0]) => {
+      if (opsBusy) return
+      setOpsBusy(payload.action)
+      setOpsResult(null)
+      try {
+        const message = await runOps(payload)
+        setOpsResult({ ok: true, text: message })
+        void loadList()
+      } catch (e) {
+        setOpsResult({ ok: false, text: e instanceof Error ? e.message : 'Операция не удалась' })
+      } finally {
+        setOpsBusy(null)
+      }
+    },
+    [opsBusy, loadList],
   )
 
   const send = useCallback(async () => {
@@ -247,11 +308,19 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
                 <ChevronLeft className="size-5" />
               </button>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-semibold text-slate-900">{supportUserName(thread.user)}</p>
-                <p className="truncate text-xs text-slate-400">
-                  {thread.user.isGuest ? 'гость' : 'Telegram-аккаунт'}
-                  {thread.user.username ? ` · @${thread.user.username}` : ''} · обращение {fmtAgo(thread.createdAt)}
-                </p>
+                <button
+                  type="button"
+                  onClick={() => setUserInfoOpen((v) => !v)}
+                  className="block max-w-full text-left"
+                  title="Показать карточку пользователя"
+                >
+                  <p className="truncate text-sm font-semibold text-slate-900 hover:text-emerald-700">{supportUserName(thread.user)}</p>
+                  <p className="truncate text-xs text-slate-400">
+                    {thread.user.isGuest ? 'гость' : 'Telegram-аккаунт'}
+                    {thread.user.username ? ` · @${thread.user.username}` : ''} · обращение {fmtAgo(thread.createdAt)}
+                    {userInfo ? ' · клик — карточка' : ''}
+                  </p>
+                </button>
               </div>
               <button
                 type="button"
@@ -273,6 +342,55 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
               </button>
             </div>
 
+            {/* Карточка пользователя: кто пишет, его активность и подписки */}
+            {userInfoOpen && (
+              <div className="border-b border-slate-100 bg-emerald-50/50 px-4 py-3">
+                {!userInfo ? (
+                  <p className="text-xs text-slate-400">Загружаем карточку пользователя…</p>
+                ) : (
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1 text-xs text-slate-600">
+                      <p className="font-semibold text-slate-900">
+                        {supportUserName(userInfo.user)}
+                        {userInfo.user.isPremium && <span className="ml-1 text-amber-500">★ Premium</span>}
+                      </p>
+                      <p>ID: <span className="font-mono">{userInfo.user.id}</span></p>
+                      <p>
+                        С нами с {fmtAgo(userInfo.user.createdAt)} · просмотров {userInfo.stats.views} · лайков{' '}
+                        {userInfo.stats.likes} · сохранено {userInfo.stats.bookmarks}
+                      </p>
+                      <p>Обращений в поддержку: {userInfo.threads.length}</p>
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-xs font-semibold text-slate-700">Подписки ({userInfo.stats.subscriptions})</p>
+                      <div className="mt-1 flex flex-wrap gap-1">
+                        {userInfo.subscriptions.length === 0 ? (
+                          <span className="text-xs text-slate-400">нет подписок</span>
+                        ) : (
+                          userInfo.subscriptions.slice(0, 10).map((s) => (
+                            <button
+                              key={s.username}
+                              type="button"
+                              title={`@${s.username}${s.status !== 'active' ? ' · канал скрыт' : ''}`}
+                              onClick={() => setOpsTarget(`@${s.username}`)}
+                              className={cn(
+                                'rounded-full border px-2 py-0.5 text-[10.5px] transition hover:bg-white',
+                                s.status !== 'active'
+                                  ? 'border-red-200 bg-red-50 text-red-600 line-through'
+                                  : 'border-slate-200 bg-white text-slate-600',
+                              )}
+                            >
+                              {s.title}
+                            </button>
+                          ))
+                        )}
+                      </div>
+                      <p className="mt-1 text-[10.5px] text-slate-400">Клик по каналу — подставит в быстрые операции</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
             {/* Сообщения */}
             <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto bg-[#eef1f5] px-4 py-4 lg:max-h-[calc(100vh-340px)]">
               {thread.messages.map((m: SupportMsg) => {
@@ -316,6 +434,72 @@ export function SupportTab({ tick, onSettled }: { tick: number; onSettled?: () =
                   </div>
                 )
               })}
+            </div>
+
+            {/* Инструменты «решил за клик»: жалоба пользователя → операция админа */}
+            <div className="border-t border-slate-100 bg-slate-50/70 px-3 py-2.5">
+              <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-slate-700">
+                  <Zap className="size-3.5 text-amber-500" aria-hidden />
+                  Быстрые операции
+                  <span className="ml-auto text-slate-300 group-open:hidden">развернуть</span>
+                </summary>
+                <div className="mt-2 space-y-2">
+                  <div className="flex gap-1.5">
+                    <input
+                      value={opsTarget}
+                      onChange={(e) => setOpsTarget(e.target.value)}
+                      placeholder="@канал или t.me/канал/12345"
+                      className="min-w-0 flex-1 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs outline-none focus:border-emerald-400"
+                    />
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {(
+                      [
+                        { act: 'hide_channel', label: 'Скрыть канал', icon: EyeOff, tone: 'text-amber-700 border-amber-200 hover:bg-amber-50' },
+                        { act: 'show_channel', label: 'Вернуть', icon: Eye, tone: 'text-emerald-700 border-emerald-200 hover:bg-emerald-50' },
+                        { act: 'refresh_card', label: 'Обновить карточку', icon: RefreshCw, tone: 'text-sky-700 border-sky-200 hover:bg-sky-50' },
+                        { act: 'reclassify', label: 'Тема (ИИ)', icon: Layers, tone: 'text-violet-700 border-violet-200 hover:bg-violet-50' },
+                        { act: 'delete_post', label: 'Удалить пост', icon: Trash2, tone: 'text-red-700 border-red-200 hover:bg-red-50' },
+                      ] as const
+                    ).map(({ act, label, icon: Icon, tone }) => (
+                      <button
+                        key={act}
+                        type="button"
+                        disabled={Boolean(opsBusy) || !opsTarget.trim()}
+                        onClick={() => void runOp({ action: act, ...(act === 'delete_post' ? { target: opsTarget } : { username: opsTarget }) } as Parameters<typeof runOps>[0])}
+                        className={cn(
+                          'flex items-center gap-1 rounded-lg border bg-white px-2 py-1 text-[11px] font-medium transition disabled:opacity-40',
+                          tone,
+                        )}
+                      >
+                        <Icon className={cn('size-3', opsBusy === act && 'animate-spin')} aria-hidden />
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                  {opsResult && (
+                    <p className={cn('text-[11.5px] font-medium', opsResult.ok ? 'text-emerald-700' : 'text-red-600')}>
+                      {opsResult.text}
+                    </p>
+                  )}
+                </div>
+              </details>
+            </div>
+
+            {/* Шаблоны ответов: типовые ситуации одним кликом */}
+            <div className="flex gap-1.5 overflow-x-auto border-t border-slate-100 px-3 py-2 no-scrollbar">
+              {CANNED_REPLIES.map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => setDraft(c)}
+                  title={c}
+                  className="shrink-0 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] text-slate-600 transition hover:border-emerald-300 hover:text-emerald-700"
+                >
+                  {c.length > 34 ? `${c.slice(0, 34)}…` : c}
+                </button>
+              ))}
             </div>
 
             {/* Ответ сотрудника */}
