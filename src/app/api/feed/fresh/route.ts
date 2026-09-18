@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { buildFeedScope } from '@/lib/feed'
+import { diversify } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
 import { guardAuth } from '@/lib/guard'
 import { nsfwPostNotIn } from '@/lib/moderation'
@@ -75,7 +76,14 @@ export async function GET(request: Request) {
       ),
     )
 
-    return NextResponse.json({ count: items.length, items })
+    /*
+     * Разнообразие: один канал — НЕ подряд даже в свежей пачке. Канал мог
+     * выложить несколько постов залпом — без diversify все они аппендились
+     * бы в конец ленты сплошной серией (главный источник «повторов подряд»).
+     */
+    const diversified = diversify(items, (x) => x.channel.id)
+
+    return NextResponse.json({ count: diversified.length, items: diversified })
   } catch (e) {
     console.error('[feed/fresh]', e)
     return err('fresh failed', 500)

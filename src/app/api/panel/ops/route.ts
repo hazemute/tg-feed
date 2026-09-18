@@ -34,6 +34,7 @@ function cleanUsername(raw: string): string {
     .replace(/^@/, '')
     .split(/[/?#\s]/)[0]
     .replace(/[^A-Za-z0-9_]/g, '')
+    .toLowerCase() // в БД username хранится в lowercase
 }
 
 /** «t.me/foo/12345» | «foo:12345» | «foo/12345» → tgKey «foo:12345» */

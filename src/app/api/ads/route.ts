@@ -27,7 +27,7 @@ async function ensureCampaignChannels(): Promise<void> {
     if (ensureLock.has(c.id)) continue
     const m = c.link.match(/^https?:\/\/t\.me\/([A-Za-z0-9_]{4,32})\/?$/)
     if (!m) continue
-    const username = m[1]
+    const username = m[1].toLowerCase() // в БД username хранится в lowercase
     if (!isValidChannelUsername(username)) continue
     ensureLock.add(c.id)
     void (async () => {

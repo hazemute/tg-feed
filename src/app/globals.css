@@ -533,6 +533,26 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
+/*
+ * Самостоятельный сайт (html[data-platform='web'], проставляется до гидрации):
+ * на ПК интерфейс растягивается на ВСЮ ширину экрана — рамка max-w-[1120px]
+ * миниаппы не применяется. Внутри Telegram (Mini App) раскладка прежняя.
+ */
+html[data-platform='web'] .app-shell {
+  max-width: 100%;
+}
+
+/* На сайте колонка постов шире (читаемость на большом экране), в миниаппе — 600 */
+html[data-platform='web'] .feed-col {
+  max-width: 720px;
+}
+
+/* Веб-браузер: аккуратный тонкий скроллбар вместо «жирного» системного */
+html[data-platform='web'] * {
+  scrollbar-width: thin;
+  scrollbar-color: var(--tg-sep, #e6e6e6) transparent;
+}
+
 button {
   touch-action: manipulation;
 }

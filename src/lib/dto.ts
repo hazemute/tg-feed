@@ -1,6 +1,7 @@
 import type { Channel, Post } from '@prisma/client'
 import type { ChannelDTO, MediaItemDTO, MediaKind, PostDTO } from '@/lib/types'
 import { proxiedMediaUrl } from '@/lib/media'
+import { animatedEmojiIds } from '@/lib/emoji-registry'
 
 type ChannelWithCategory = Channel & {
   category?: { slug: string; title: string } | null
@@ -120,7 +121,7 @@ export function toPostDTO(
 
   return {
     id: p.id,
-    text: p.text,
+    text: upgradeAnimatedEmoji(p.text),
     mediaUrl: proxiedMediaUrl(p.mediaUrl) ?? p.mediaUrl,
     mediaType: kind,
     media: media as MediaItemDTO | null,
@@ -135,4 +136,21 @@ export function toPostDTO(
     bookmarked: flags.bookmarked,
     channel: toChannelDTO(p.channel, flags.subscribed),
   }
+}
+
+/*
+ * Премиум-эмодзи: ретроактивный апгрейд статичных маркеров в анимированные.
+ *
+ * В БД хранится канонический текст с ![e:ID](thumb). Раньше апгрейд в ![ev:ID]
+ * делал только парсер при ПОСТОЧНОЙ перезаписи — старые посты оставались
+ * статичными навсегда (в ленте их 3.1k). Теперь анимированность решается на
+ * выдаче: реестр анимированных ID (CustomEmoji, kind='video') кэшируется в
+ * памяти, и маркеры переписываются при сериализации. Стоимость — один проход
+ * replace по текстам с маркерами (lookup по Set).
+ */
+function upgradeAnimatedEmoji(text: string): string {
+  if (!text.includes('![e:')) return text
+  const anim = animatedEmojiIds()
+  if (anim.size === 0) return text
+  return text.replace(/!\[e:(\d+)\]\(/g, (full, id: string) => (anim.has(id) ? `![ev:${id}](` : full))
 }

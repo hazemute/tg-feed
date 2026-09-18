@@ -43,7 +43,7 @@ export async function POST(request: Request) {
     const channel = channelId
       ? await db.channel.findUnique({ where: { id: channelId }, select: { username: true } })
       : await db.channel.findUnique({
-          where: { username: username!.replace(/^@/, '').slice(0, 64) },
+          where: { username: username!.replace(/^@/, '').slice(0, 64).toLowerCase() },
           select: { username: true },
         })
     if (!channel) return err('channel not found', 404)

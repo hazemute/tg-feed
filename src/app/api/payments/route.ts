@@ -27,7 +27,7 @@ export async function POST(request: Request) {
 
   try {
     const parsed = createSchema.safeParse(await readJson(request))
-    if (!parsed.success) return err('amountKop: от 100 до 50 000 ₽')
+    if (!parsed.success) return err('amountKop: от 100 до 50 000 свайпов')
     const { amountKop } = parsed.data
 
     /* TODO(ЮKassa): когда появятся YOOKASSA_SHOP_ID/YOOKASSA_SECRET_KEY —

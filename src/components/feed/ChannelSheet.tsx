@@ -13,6 +13,7 @@ import { formatCount, timeAgoRu } from '@/lib/format'
 import type { ChannelDTO, PostDTO, RelatedChannelDTO, RelatedChannelsResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { PostMedia } from '@/components/feed/PostMedia'
+import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
 import { ExpandableText } from '@/components/feed/actions'
 
 const PAGE_SIZE = 10
@@ -71,6 +72,8 @@ function ChannelScreen({
   const [error, setError] = useState(false)
   // Колокольчик уведомлений (актуален только при активной подписке)
   const [notify, setNotify] = useState(true)
+  // Таб кабинета: «Статистика» — по умолчанию (кабинет = главная страница канала)
+  const [tab, setTab] = useState<'stats' | 'posts'>('stats')
 
   const busyRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
@@ -354,34 +357,73 @@ function ChannelScreen({
                 )}
               </div>
 
-              <div className="mt-4 flex items-center gap-2.5">
-                <h2 className="text-[15px] font-semibold text-tg-text">Посты</h2>
-                <span className="h-4 w-px bg-tg-sep" aria-hidden />
-                <span className="text-[13.5px] text-tg-hint">сначала новые</span>
+              {/* Переключатель кабинета: плоские табы с подчёркиванием.
+                  Статистика — первый таб (кабинет = лицо страницы канала) */}
+              <div className="mt-4 flex border-b border-tg-sep/60" role="tablist" aria-label="Разделы канала">
+                {(
+                  [
+                    ['stats', 'Статистика'],
+                    ['posts', 'Посты'],
+                  ] as const
+                ).map(([t, label]) => (
+                  <button
+                    key={t}
+                    type="button"
+                    role="tab"
+                    aria-selected={tab === t}
+                    onClick={() => {
+                      if (tab !== t) haptic('light')
+                      setTab(t)
+                    }}
+                    className={cn(
+                      'relative flex-1 pb-2.5 pt-1 text-[14.5px] font-semibold transition-colors',
+                      tab === t ? 'text-tg-link' : 'text-tg-hint active:opacity-70',
+                    )}
+                  >
+                    {label}
+                    {tab === t && (
+                      <span aria-hidden className="absolute inset-x-5 -bottom-px h-[2.5px] rounded-full bg-tg-link" />
+                    )}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {/* Посты канала */}
-            <div className="mt-1 divide-y divide-tg-sep/50">
-              {items.map((p) => (
-                <ChannelPost key={p.id} post={p} onLike={() => onLike(p)} onBookmark={() => onBookmark(p)} />
-              ))}
-            </div>
+            {tab === 'stats' ? (
+              /* ===== Кабинет: большая плоская аналитика канала =====
+                  key — ремount при смене канала: состояние сбрасывается чисто */
+              <ChannelCabinet key={username} username={username} />
+            ) : (
+              <>
+                {/* Посты канала */}
+                <div className="mt-3 flex items-center gap-2.5 px-4">
+                  <h2 className="text-[15px] font-semibold text-tg-text">Посты</h2>
+                  <span className="h-4 w-px bg-tg-sep" aria-hidden />
+                  <span className="text-[13.5px] text-tg-hint">сначала новые</span>
+                </div>
 
-            <div ref={sentinelRef} className="h-2" aria-hidden />
+                <div className="mt-1 divide-y divide-tg-sep/50">
+                  {items.map((p) => (
+                    <ChannelPost key={p.id} post={p} onLike={() => onLike(p)} onBookmark={() => onBookmark(p)} />
+                  ))}
+                </div>
 
-            {loading && !initial && (
-              <div className="flex justify-center py-5">
-                <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
-              </div>
+                <div ref={sentinelRef} className="h-2" aria-hidden />
+
+                {loading && !initial && (
+                  <div className="flex justify-center py-5">
+                    <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
+                  </div>
+                )}
+
+                {!hasMore && items.length > 0 && (
+                  <p className="py-6 text-center text-snippet text-tg-hint">Это все посты канала</p>
+                )}
+
+                {/* Похожие каналы — рельс в конце списка постов (сам скрывается, если похожих нет) */}
+                <RelatedChannels username={username} userId={userId} />
+              </>
             )}
-
-            {!hasMore && items.length > 0 && (
-              <p className="py-6 text-center text-snippet text-tg-hint">Это все посты канала</p>
-            )}
-
-            {/* Похожие каналы — рельс в конце списка постов (сам скрывается, если похожих нет) */}
-            <RelatedChannels username={username} userId={userId} />
           </>
         )}
       </div>

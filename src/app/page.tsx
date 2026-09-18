@@ -3,11 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
-import { api, setSessionToken } from '@/lib/api'
+import { api, getSessionToken, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import type { Lang } from '@/lib/i18n'
 import { getDeviceId } from '@/lib/user-id'
 import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
+import { isInTelegram } from '@/lib/platform'
 import { THEME_BY_ID } from '@/lib/themes'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
@@ -50,7 +51,7 @@ export default function Home() {
     const savedTheme = (localStorage.getItem('tgfeed_theme') as ThemeMode | null) ?? null
     const savedFont = (localStorage.getItem('tgfeed_font') as FontScale | null) ?? null
     const savedLang = localStorage.getItem('tgfeed_lang') as Lang | null
-    const inTg = !!tg()
+    const inTg = isInTelegram()
     setTheme(savedTheme ?? (inTg ? 'auto' : 'light'))
     setFontScale(savedFont ?? 'md')
     if (savedLang === 'ru' || savedLang === 'en') setLang(savedLang)
@@ -106,6 +107,39 @@ export default function Home() {
   // идут с заголовком Authorization: Bearer (см. src/lib/api.ts).
   const authenticate = useCallback(async (): Promise<boolean> => {
     const w = initTelegram()
+    /*
+     * САЙТ (не Mini App): если сессия уже есть — проверяем её лёгким GET /api/auth
+     * и выходим. Иначе POST ниже сделал бы из вошедшего через бота tg-юзера
+     * гостя заново при каждой перезагрузке страницы. Внутри Telegram — всегда
+     * полный вход: initData заодно обновляет профиль/премиум/аватар.
+     */
+    const existing = getSessionToken()
+    if (existing && !isInTelegram()) {
+      try {
+        const res = await fetch('/api/auth', {
+          headers: { Authorization: `Bearer ${existing}` },
+          cache: 'no-store',
+        })
+        if (res.ok) {
+          const me = (await res.json()) as {
+            user: UserDTO
+            maintenance?: { active: boolean; canBypass: boolean }
+          }
+          setUser(me.user)
+          const blocked = me.maintenance?.active === true && me.maintenance.canBypass !== true
+          setMaintenance(blocked)
+          if (!blocked) {
+            const cats = await api<{ items: CategoryDTO[] }>('/api/categories')
+            setCategories(cats.items)
+          }
+          return true
+        }
+        // протухла/отозвана — входим заново по обычному сценарию
+        setSessionToken(null)
+      } catch {
+        /* сеть моргнула — обычный вход ниже */
+      }
+    }
     try {
       const res = await api<{
         user: UserDTO
@@ -216,8 +250,10 @@ export default function Home() {
 
   return (
     <div className="flex h-dvh justify-center bg-tg-bg">
-      {/* Десктоп: сайдбар-навигация слева (lg+), мобильный — нижняя капсула */}
-      <div className="flex h-full w-full max-w-[1120px]">
+      {/* Десктоп: сайдбар-навигация слева (lg+), мобильный — нижняя капсула.
+          На самостоятельном сайте (html[data-platform='web']) CSS снимает
+          max-w — интерфейс ПК растягивается на всю ширину экрана. */}
+      <div className="app-shell flex h-full w-full max-w-[1120px]">
         <Sidebar />
         <div className="relative flex min-w-0 flex-1 flex-col overflow-hidden bg-tg-bg lg:rounded-l-2xl lg:border lg:border-tg-sep lg:shadow-xl">
           <AnimatePresence initial={false} custom={tabDir} mode="popLayout">

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Bell,
   ChevronRight,
+  FileText,
   Headset,
   Info,
   Loader2,
@@ -33,6 +34,7 @@ import { ThemeGallery } from '@/components/tg/ThemeGallery'
 import { LANG_LIST, useT } from '@/lib/i18n'
 import { APP_VERSION } from '@/lib/version'
 import { Onboarding } from '@/components/tg/Onboarding'
+import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { THEMES, themeName } from '@/lib/themes'
 import { SupportChat } from '@/components/support/SupportChat'
 
@@ -57,6 +59,8 @@ export function ProfileTab() {
   const [themesOpen, setThemesOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [privacyOpen, setPrivacyOpen] = useState(false)
+  const [termsOpen, setTermsOpen] = useState(false)
+  const [loginOpen, setLoginOpen] = useState(false)
   const [supportOpen, setSupportOpen] = useState(false)
   const [notify, setNotify] = useState(true)
 
@@ -168,6 +172,19 @@ export function ProfileTab() {
               <ShieldCheck className="h-3.5 w-3.5" />
               Telegram аккаунт подтверждён
             </div>
+          )}
+          {user.isGuest && (
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                setLoginOpen(true)
+              }}
+              className="mt-2 flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-3.5 text-[13px] font-bold text-white transition active:scale-95"
+            >
+              <Send className="h-3.5 w-3.5" />
+              Вход по Telegram
+            </button>
           )}
         </div>
         <button
@@ -405,6 +422,17 @@ export function ProfileTab() {
             onClick={() => setThemesOpen(true)}
           />
           <SettingRow
+            icon={<FileText className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label="Пользовательское соглашение"
+            right={
+              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
+                валюта и условия
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => setTermsOpen(true)}
+          />
+          <SettingRow
             icon={<ShieldCheck className="h-[22px] w-[22px]" strokeWidth={1.7} />}
             label="Конфиденциальность"
             onClick={() => setPrivacyOpen(true)}
@@ -507,7 +535,8 @@ export function ProfileTab() {
         <div className="space-y-2.5 text-snippet leading-relaxed text-tg-text2">
           <p>
             Мы не собираем пароли и не просим доступ к переписке. При входе через Telegram
-            используется только ваш публичный профиль: имя, @username и аватар.
+            (в миниаппе или на сайте через нашего бота) используется только ваш публичный
+            профиль: имя, @username и аватар.
           </p>
           <p>
             Лайки, подписки и закладки хранятся, чтобы восстановить вашу ленту на любом устройстве.
@@ -515,6 +544,51 @@ export function ProfileTab() {
           </p>
         </div>
       </BottomSheet>
+
+      {/* Пользовательское соглашение: валюта «Свайпы» и условия */}
+      <BottomSheet
+        open={termsOpen}
+        onClose={() => setTermsOpen(false)}
+        title="Пользовательское соглашение"
+        subtitle="Валюта, платежи и условия сервиса"
+      >
+        <div className="space-y-3 text-snippet leading-relaxed text-tg-text2">
+          <section className="rounded-2xl bg-tg-surface/70 p-3.5">
+            <h3 className="text-[14.5px] font-bold text-tg-text">Валюта сервиса — Свайпы</h3>
+            <p className="mt-1.5 text-tg-hint">
+              Внутренняя валюта Tg Swipe — <b className="text-tg-text">свайпы</b>. Курс всегда
+              один: <b className="text-tg-text">1 свайп = 1 рубль</b>. Свайпы тратятся на
+              продвижение Telegram-каналов: рекламные кампании в ленте (оплата за уникальных
+              читателей, CPA) и premium-размещение.
+            </p>
+          </section>
+          <section className="rounded-2xl bg-tg-surface/70 p-3.5">
+            <h3 className="text-[14.5px] font-bold text-tg-text">Пополнение</h3>
+            <p className="mt-1.5 text-tg-hint">
+              Баланс пополняется в рублях через банковский эквайринг — от 100 рублей за операцию.
+              Свайпы зачисляются на эскроу-счёт автоматически после подтверждения оплаты.
+            </p>
+          </section>
+          <section className="rounded-2xl bg-tg-surface/70 p-3.5">
+            <h3 className="text-[14.5px] font-bold text-tg-text">Списание и возврат</h3>
+            <p className="mt-1.5 text-tg-hint">
+              Списание идёт только за реальные уникальные переходы читателей (эскроу). Не
+              израсходованный баланс остаётся на счёте. Свайпы — внутренняя валюта сервиса и не
+              подлежат обмену обратно на деньги, кроме случаев, предусмотренных законом.
+            </p>
+          </section>
+          <section className="rounded-2xl bg-tg-surface/70 p-3.5">
+            <h3 className="text-[14.5px] font-bold text-tg-text">Контент</h3>
+            <p className="mt-1.5 text-tg-hint">
+              Лента собирает публичные посты открытых Telegram-каналов. Права на контент остаются
+              у авторов каналов. Скрыть свой канал из ленты можно по обращению в поддержку.
+            </p>
+          </section>
+        </div>
+      </BottomSheet>
+
+      {/* Вход по Telegram (сайт + гости) */}
+      <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />
 
       <Onboarding open={editOpen} mode="edit" onClose={() => setEditOpen(false)} />
       {/* Галерея тем оформления */}

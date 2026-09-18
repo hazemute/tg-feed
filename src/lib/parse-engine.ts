@@ -407,9 +407,9 @@ export async function runParser(
 
   let targets: string[]
   if (only && only.length > 0) {
-    // адаптивный батч: только валидные имена (SSRF-защита)
+    // адаптивный батч: только валидные имена (SSRF-защита); username — строго lowercase
     targets = only
-      .map((u) => String(u).replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '').split('/')[0])
+      .map((u) => String(u).replace(/^@/, '').replace(/^https?:\/\/t\.me\//, '').split('/')[0].toLowerCase())
       .filter((u) => isValidChannelUsername(u))
       .slice(0, 50)
   } else if (singleUsername) {
@@ -417,6 +417,7 @@ export async function runParser(
       .replace(/^@/, '')
       .replace(/^https?:\/\/t\.me\//, '')
       .split('/')[0]
+      .toLowerCase()
     // SSRF-защита: в URL https://t.me/s/<username> попадают только [A-Za-z0-9_]
     if (!isValidChannelUsername(norm)) {
       const r = { username: singleUsername, added: 0, error: 'недопустимый username канала' }

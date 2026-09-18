@@ -23,21 +23,21 @@ const FORMATS = [
     id: 'feed',
     icon: Megaphone,
     title: 'Реклама за переходы (CPA)',
-    price: 'от 3 ₽ / переход',
+    price: 'от 3 свайпов / переход',
     note: 'карточка в ленте · платите только за уникальных читателей, бюджет в эскроу',
   },
   {
     id: '7d',
     icon: Crown,
     title: 'Premium · 7 дней',
-    price: '990 ₽',
+    price: '990 свайпов',
     note: 'канал в топе ленты, ×3 к показам постов',
   },
   {
     id: '30d',
     icon: Crown,
     title: 'Premium · 30 дней',
-    price: '2 990 ₽',
+    price: '2 990 свайпов',
     note: 'выгоднее на 55% + золотое кольцо аватара',
   },
 ] as const
@@ -244,7 +244,7 @@ export function PromoteSheet({
                 Самостоятельно во вкладке «Мой канал»
               </button>
               <p className="text-center text-[11px] leading-snug text-tg-hint">
-                CPA: бюджет в эскроу, списание за уникальные переходы · {activeFormat.title}
+                1 свайп = 1 ₽ · CPA: бюджет в эскроу, списание за уникальные переходы · {activeFormat.title}
               </p>
             </div>
           </motion.div>

@@ -331,6 +331,20 @@ model PendingPayment {
   @@index([userId, createdAt])
 }
 
+// Вход на сайт через Telegram-бота: гость на сайте жмёт «Вход по Telegram»,
+// открывает бота (/start login_<id>), жмёт inline-кнопку «Войти» — вебхук
+// подтверждает попытку, сайт (опрос) выдаёт JWT-сессию реального TG-аккаунта.
+model LoginAttempt {
+  id          String    @id // случайный токен из ссылки-приглашения
+  status      String    @default("pending") // pending | confirmed | used
+  tgUserJson  String?   // снимок tg-user из callback_query (id/username/имя/фото)
+  confirmedAt DateTime?
+  expiresAt   DateTime // 15 минут на подтверждение
+  createdAt   DateTime  @default(now())
+
+  @@index([status, expiresAt])
+}
+
 // Чат поддержки: у пользователя одна нить (создаётся лениво при первом сообщении).
 // status: ai — отвечает нейросеть; human — обращение передано сотруднику
 // (эскалация), отвечает админ в панели; closed — закрыто.

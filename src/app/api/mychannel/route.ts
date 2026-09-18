@@ -45,6 +45,7 @@ function normalizeUsername(raw: string): string {
     .replace(/^https?:\/\/t\.me\//, '')
     .replace(/\/+$/, '')
     .trim()
+    .toLowerCase() // в БД username хранится в lowercase (Telegram-имена регистронезависимы)
 }
 
 /** Код-слово владения каналом: детерминированный, без хранения в БД */

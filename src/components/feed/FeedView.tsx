@@ -42,6 +42,61 @@ function saveHidden(ids: Set<string>) {
   }
 }
 
+/**
+ * Разнообразие ленты на клиенте: один и тот же канал — НЕ подряд. Работает
+ * поверх серверного diversify и ловит ВСЕ источники повторов: стыки страниц,
+ * тихий аппенд свежих постов, дедуп при «съехавшем» окне пагинации, офлайн-кэш.
+ *
+ * Алгоритм — минимальные локальные свопы: пост, соседствующий с каналом
+ * предыдущего, меняется местами с ближайшим постом другого канала правее.
+ * startAt позволяет не трогать уже видимую часть ленты (стабильность экрана):
+ * чиним только хвост, начиная со стыка «старое | новое».
+ *
+ * Хвостовой ремонт: когда весь остаток — посты ОДНОГО канала (канал залил
+ * серию, новых других нет), справа переставлять нечего. Занимаем ближайшего
+ * соседа СЛЕВА другого канала и вставляем его после первого поста серии —
+ * пара в хвосте разбивается. Принимаем вариант только если соседств-дубликатов
+ * стало строго меньше (никогда не ухудшаем).
+ */
+function stitchNoRepeat<T>(list: T[], channelIdOf: (x: T) => string, startAt = 1): T[] {
+  const from = Math.max(1, startAt)
+  const arr = [...list]
+  const pairs = (a: T[]): number => {
+    let n = 0
+    for (let k = 1; k < a.length; k++) if (channelIdOf(a[k]) === channelIdOf(a[k - 1])) n++
+    return n
+  }
+
+  for (let i = from; i < arr.length; i++) {
+    const prevCh = channelIdOf(arr[i - 1])
+    if (!prevCh || channelIdOf(arr[i]) !== prevCh) continue
+    // 1) обычный случай: меняемся с ближайшим постом другого канала правее
+    let j = i + 1
+    while (j < arr.length && channelIdOf(arr[j]) === prevCh) j++
+    if (j < arr.length) {
+      const tmp = arr[i]
+      arr[i] = arr[j]
+      arr[j] = tmp
+      continue
+    }
+    // 2) хвост — сплошная серия этого канала: занимаем соседа слева
+    let runStart = i
+    while (runStart - 1 >= from && channelIdOf(arr[runStart - 1]) === prevCh) runStart--
+    let s = runStart - 1
+    while (s >= from && channelIdOf(arr[s]) === prevCh) s--
+    if (s < from) continue // слева (в окне ремонта) однородно — нечего занимать
+    const candidate = [...arr]
+    const [borrowed] = candidate.splice(s, 1)
+    // s < runStart: после удаления сдвиг влево — первый пост серии теперь на
+    // runStart-1, вставляем занятого соседа СРАЗУ ПОСЛЕ него (индекс runStart)
+    candidate.splice(runStart, 0, borrowed)
+    if (pairs(candidate) < pairs(arr)) {
+      for (let k = 0; k < arr.length; k++) arr[k] = candidate[k]
+    }
+  }
+  return arr
+}
+
 /** Чип-фильтр тулбара: компактный, активный — с синей подложкой */
 function FilterChip({
   active,
@@ -295,7 +350,7 @@ export function FeedView() {
               once.add(p.id)
               uniq.push(p)
             }
-            return uniq
+            return stitchNoRepeat(uniq, (p) => p.channel.id)
           }
           // дедуп при аппенде: пока листаем страницы, шедулер вставляет новые
           // посты — окно пагинации съезжает и присылает уже виденные; плюс
@@ -307,7 +362,9 @@ export function FeedView() {
             seen.add(p.id)
             fresh.push(p)
           }
-          return [...prev, ...fresh]
+          if (fresh.length === 0) return prev
+          // стык «видимое | догруженное» + хвост: без повторов каналов подряд
+          return stitchNoRepeat([...prev, ...fresh], (p) => p.channel.id, Math.max(1, prev.length - 1))
         })
         // Запоминаем новейший пост (для пилюли «N новых постов») — только если он новее текущего
         const times = data.items.map((x) => x.publishedAt).sort()
@@ -450,7 +507,9 @@ export function FeedView() {
             seen.add(x.id)
             fresh.push(x)
           }
-          return fresh.length > 0 ? [...prev, ...fresh] : prev
+          if (fresh.length === 0) return prev
+          // свежая пачка встаёт в конец ленты — стык и хвост разводим по каналам
+          return stitchNoRepeat([...prev, ...fresh], (p) => p.channel.id, Math.max(1, prev.length - 1))
         })
         const mx = r.items.map((x) => x.publishedAt).sort().pop()
         if (mx && mx > latestTimeRef.current) latestTimeRef.current = mx
@@ -987,7 +1046,8 @@ export function FeedView() {
           </div>
         ) : (
           <>
-            <div className="mx-auto w-full max-w-[600px] lg:border-x lg:border-tg-sep/40">
+            {/* На сайте (html[data-platform='web']) колонка шире — см. globals.css */}
+            <div className="feed-col mx-auto w-full max-w-[600px] lg:border-x lg:border-tg-sep/40">
             {visibleItems.map((p, i) => (
               <Fragment key={p.id}>
                 <PostCard

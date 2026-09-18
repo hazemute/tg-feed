@@ -26,12 +26,21 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   title: 'Tg Swipe — умная лента Telegram-каналов',
   description:
-    'Telegram Mini App: бесконечная лента постов из открытых Telegram-каналов по вашим интересам. Подписка в один тап, AI-саммари, закладки.',
-  keywords: ['Telegram', 'Mini App', 'лента', 'каналы', 'Tg Swipe'],
+    'Умная лента постов из открытых Telegram-каналов по вашим интересам: работает как сайт по домену и как Telegram Mini App. Подписка в один тап, AI-саммари, закладки.',
+  keywords: ['Telegram', 'лента', 'каналы', 'Tg Swipe', 'сайт', 'Mini App'],
   icons: { icon: '/logo.svg' },
 }
 
 const themeInit = `try{var t=localStorage.getItem('tgfeed_theme');var f=localStorage.getItem('tgfeed_font');document.documentElement.dataset.theme=t||'light';document.documentElement.dataset.fontscale=f||'md';}catch(e){document.documentElement.dataset.theme='light';}`
+
+/*
+ * Платформа до гидрации: 'web' (открыли по домену в браузере) или 'telegram'
+ * (Mini App внутри клиента). SDK телеграма грузится раньше и синхронно
+ * (classic script), поэтому к моменту запуска детектора window.Telegram уже
+ * существует. Внутри Telegram initData непуст; вне — пуст и platform=unknown.
+ * Раскладка ПК (полная ширина) вешается на html[data-platform='web'] в CSS.
+ */
+const platformInit = `try{var w=window.Telegram&&window.Telegram.WebApp;var p=(w&&(w.initData&&w.initData.length>0||w.platform&&w.platform!=='unknown'))?'telegram':'web';document.documentElement.dataset.platform=p;}catch(e){document.documentElement.dataset.platform='web';}`
 
 export default function RootLayout({
   children,
@@ -39,7 +48,13 @@ export default function RootLayout({
   children: React.ReactNode
 }>) {
   return (
-    <html lang="ru" suppressHydrationWarning data-theme="light" data-fontscale="md">
+    <html
+      lang="ru"
+      suppressHydrationWarning
+      data-theme="light"
+      data-fontscale="md"
+      data-platform="telegram"
+    >
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
@@ -54,11 +69,16 @@ export default function RootLayout({
           рендере. После Interactive (было) скрипт грузился ПОСЛЕ первого запроса —
           в Telegram Web/Desktop объект ещё не существовал, initData уходил пустым
           и ВСЕ пользователи становились гостями без профиля и аватара.
+          ВАЖНО: SDK объявлен РАНЬШЕ детектора платформы — оба beforeInteractive
+          исполняются по порядку появления, детектор уже видит window.Telegram.
         */}
         <Script
           src="https://telegram.org/js/telegram-web-app.js"
           strategy="beforeInteractive"
         />
+        <Script id="tgfeed-platform-init" strategy="beforeInteractive">
+          {platformInit}
+        </Script>
       </body>
     </html>
   )

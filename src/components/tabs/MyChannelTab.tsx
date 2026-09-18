@@ -31,6 +31,7 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatCount } from '@/lib/format'
+import { formatSwipes, pluralSwipes } from '@/lib/money'
 import { haptic, openTelegram } from '@/lib/tg'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
@@ -42,7 +43,11 @@ import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
  * кабинет (CPA с эскроу-балансом, пополнение через заготовку ЮKassa).
  */
 
-function formatKop(kop: number): string {
+/**
+ * Рублевый эквивалент (для подписи «= N ₽» в пополнении — списание идёт в рублях).
+ * Сама валюта кабинета — СВАЙПЫ: 1 свайп = 1 ₽ = 100 коп.
+ */
+function formatRub(kop: number): string {
   const rub = kop / 100
   return rub % 1 === 0 ? `${formatCount(rub)} ₽` : `${rub.toFixed(2)} ₽`
 }
@@ -519,7 +524,7 @@ function AdsSection({
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
       <SectionTitle icon={Megaphone}>Реклама</SectionTitle>
       <div className="space-y-3">
-        {/* Баланс */}
+        {/* Баланс — в свайпах (1 свайп = 1 ₽) */}
         <div className="flex items-center gap-4 rounded-3xl border border-tg-sep/50 bg-gradient-to-r from-tg-star/[0.09] to-transparent p-4">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-tg-star/15">
             <Wallet className="h-6 w-6 text-tg-star" />
@@ -527,10 +532,13 @@ function AdsSection({
           <div className="min-w-0 flex-1">
             <div className="text-[12px] font-semibold uppercase tracking-wide text-tg-hint">Эскроу-баланс</div>
             <div className="text-[22px] font-bold leading-tight tabular-nums text-tg-text">
-              {formatKop(advertiser.balanceKop)}
+              {formatSwipes(advertiser.balanceKop)}{' '}
+              <span className="text-[14px] font-semibold text-tg-hint">
+                {pluralSwipes(Math.round(advertiser.balanceKop / 100))}
+              </span>
             </div>
             <div className="text-[11.5px] text-tg-hint">
-              потрачено {formatKop(advertiser.spentTotalKop)} · пополнено {formatKop(advertiser.topupsTotalKop)}
+              1 свайп = 1 ₽ · потрачено {formatSwipes(advertiser.spentTotalKop)} · пополнено {formatSwipes(advertiser.topupsTotalKop)}
             </div>
           </div>
           <button
@@ -587,27 +595,31 @@ function AdsSection({
 }
 
 /* ------------------------------------------------------------------ */
-/* Пополнение: заготовка ЮKassa                                        */
+/* Пополнение: свайпы (1 свайп = 1 ₽), оплата в рублях через ЮKassa    */
 /* ------------------------------------------------------------------ */
 
-const TOPUP_PRESETS = [50000, 100000, 300000, 500000] // копейки
+/** Пресеты в СВАЙПАХ (от 100 ₽ за операцию — требование эквайринга) */
+const TOPUP_PRESETS = [100, 500, 1000, 5000]
 
 function TopUpSheet({ open, onClose, onReload }: { open: boolean; onClose: () => void; onReload: () => void }) {
-  const [amount, setAmount] = useState(100000)
+  const [amount, setAmount] = useState(1000) // свайпы
+  const [custom, setCustom] = useState('')
   const [state, setState] = useState<'idle' | 'busy' | 'created'>('idle')
   const [paymentId, setPaymentId] = useState<string | null>(null)
 
+  const effective = custom.trim() ? Math.max(0, Math.round(Number(custom) || 0)) : amount
+  const valid = effective >= 100 && effective <= 50_000
+
   const pay = async () => {
-    if (state === 'busy') return
+    if (state === 'busy' || !valid) return
     setState('busy')
     try {
       const r = await api<{ ok: boolean; paymentId: string; confirmationUrl: string | null }>('/api/payments', {
         method: 'POST',
-        body: JSON.stringify({ amountKop: amount }),
+        body: JSON.stringify({ amountKop: effective * 100 }),
       })
       setPaymentId(r.paymentId)
       if (r.confirmationUrl) {
-        // после подключения эквайринга — редирект на оплату
         openTelegram(r.confirmationUrl)
         onClose()
         onReload()
@@ -629,7 +641,7 @@ function TopUpSheet({ open, onClose, onReload }: { open: boolean; onClose: () =>
           </span>
           <div className="mt-3 text-[17px] font-bold text-tg-text">Платёж создан</div>
           <p className="mx-auto mt-1.5 max-w-[300px] text-[13.5px] leading-relaxed text-tg-hint">
-            Эквайринг ЮKassa подключается — как только оплата пройдёт, баланс пополнится
+            Эквайринг ЮKassa подключается — как только оплата пройдёт, свайпы зачислятся
             автоматически. Номер платежа: <span className="font-mono text-tg-text2">{paymentId}</span>
           </p>
           <button
@@ -642,35 +654,56 @@ function TopUpSheet({ open, onClose, onReload }: { open: boolean; onClose: () =>
         </div>
       ) : (
         <>
-          <SheetTitle icon={Wallet} title="Пополнить баланс" subtitle="Оплата через ЮKassa · зачисление после оплаты" />
+          <SheetTitle icon={Wallet} title="Пополнение свайпов" subtitle="1 свайп = 1 ₽ · зачисление после оплаты" />
           <div className="mt-3 grid grid-cols-4 gap-2">
-            {TOPUP_PRESETS.map((kop) => (
+            {TOPUP_PRESETS.map((sw) => (
               <button
-                key={kop}
+                key={sw}
                 type="button"
                 onClick={() => {
                   haptic('light')
-                  setAmount(kop)
+                  setAmount(sw)
+                  setCustom('')
                 }}
                 className={cn(
                   'rounded-xl border py-2.5 text-[13.5px] font-bold transition active:scale-95',
-                  amount === kop
+                  effective === sw
                     ? 'border-tg-link bg-tg-link/10 text-tg-link'
                     : 'border-tg-sep/60 bg-tg-bg text-tg-text2',
                 )}
               >
-                {formatKop(kop)}
+                {formatCount(sw)}
               </button>
             ))}
+          </div>
+          <div className="mt-2.5">
+            <input
+              type="number"
+              inputMode="numeric"
+              min={100}
+              max={50000}
+              value={custom}
+              onChange={(e) => setCustom(e.target.value)}
+              placeholder="Своя сумма — от 100"
+              aria-label="Сумма пополнения в свайпах"
+              className={cn(
+                INPUT_CLS,
+                custom.trim() && !valid && 'border-rose-400/70 focus:border-rose-400/70',
+              )}
+            />
+            <div className="mt-1 flex justify-between px-1 text-[11.5px] text-tg-hint">
+              <span>{valid ? `= ${formatRub(effective * 100)} к оплате` : 'от 100 до 50 000 свайпов'}</span>
+              <span>1 свайп = 1 ₽</span>
+            </div>
           </div>
           <button
             type="button"
             onClick={pay}
-            disabled={state === 'busy'}
-            className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+            disabled={state === 'busy' || !valid}
+            className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:bg-tg-sep/60 disabled:text-tg-hint"
           >
             {state === 'busy' ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Wallet className="h-4.5 w-4.5" />}
-            Оплатить {formatKop(amount)} через ЮKassa
+            Пополнить на {formatCount(effective)} {pluralSwipes(effective)}
           </button>
           <p className="mt-2 pb-1 text-center text-[11.5px] leading-snug text-tg-hint">
             Деньги резервируются на эскроу-счёте и списываются только за уникальных читателей
@@ -753,7 +786,7 @@ function CampaignForm({ channel, onDone }: { channel: MyChannelDTO; onDone: () =
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Цена перехода, ₽">
+          <Field label="Цена перехода, свайпов">
             <input
               type="number"
               min={3}
@@ -763,7 +796,7 @@ function CampaignForm({ channel, onDone }: { channel: MyChannelDTO; onDone: () =
               className={INPUT_CLS}
             />
           </Field>
-          <Field label="Бюджет, ₽">
+          <Field label="Бюджет, свайпов">
             <input
               type="number"
               min={30}
@@ -775,7 +808,7 @@ function CampaignForm({ channel, onDone }: { channel: MyChannelDTO; onDone: () =
         </div>
         <p className="text-[12px] leading-snug text-tg-hint">
           Хватит примерно на <span className="font-semibold text-tg-text2">{Math.floor(budget / cpc)}</span>{' '}
-          уникальных переходов · деньги списываются только за реальных читателей
+          уникальных переходов · 1 свайп = 1 ₽ · списание только за реальных читателей
         </p>
       </div>
       <button
@@ -852,7 +885,7 @@ function CampaignCard({ campaign, reload }: { campaign: CampaignDTOView; reload:
           />
         </div>
         <div className="mt-1.5 flex justify-between text-[11.5px] tabular-nums text-tg-hint">
-          <span>{formatKop(spent)} из {formatKop(campaign.budgetKop)}</span>
+          <span>{formatSwipes(spent)} из {formatSwipes(campaign.budgetKop)}</span>
           <span>{progress}%</span>
         </div>
       </div>
@@ -862,7 +895,7 @@ function CampaignCard({ campaign, reload }: { campaign: CampaignDTOView; reload:
         <Metric value={formatCount(campaign.impressions)} label="показы" />
         <Metric value={formatCount(campaign.clicks)} label="переходы" />
         <Metric value={`${ctr}%`} label="CTR" />
-        <Metric value={`${campaign.costPerClickKop / 100}₽`} label="за переход" />
+        <Metric value={`${campaign.costPerClickKop / 100}`} label="свайпов за переход" />
       </div>
 
       {/* Действия */}

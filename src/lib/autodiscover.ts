@@ -519,7 +519,10 @@ export async function autodiscoverStep(batch = 3): Promise<AutodiscoverState | n
       break
     }
 
-    const uname = candidate.trim().replace(/^@/, '')
+    // username нормализуем СРАЗУ в нижний регистр: Telegram-имена регистронезависимы,
+    // все выборки в приложении идут в lowercase — смешанный регистр в БД ломал
+    // открытие канала/подписку (баг «Канал не найден»)
+    const uname = candidate.trim().replace(/^@/, '').toLowerCase()
     const lower = uname.toLowerCase()
 
     // формат / служебные / боты / дубли

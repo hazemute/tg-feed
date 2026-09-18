@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       channelId
         ? db.channel.findUnique({ where: { id: channelId } })
         : username
-          ? db.channel.findUnique({ where: { username } })
+          ? db.channel.findUnique({ where: { username: username.toLowerCase() } })
           : Promise.resolve(null),
     ])
     if (!user) return err('user not found', 404)
@@ -122,7 +122,7 @@ export async function GET(request: Request) {
 
     const channel = channelId
       ? await db.channel.findUnique({ where: { id: channelId } })
-      : await db.channel.findUnique({ where: { username } })
+      : await db.channel.findUnique({ where: { username: username.toLowerCase() } })
     if (!channel) return err('channel not found', 404)
 
     const sub = await db.subscription.findFirst({ where: { userId, channelId: channel.id } })

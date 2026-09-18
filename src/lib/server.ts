@@ -29,14 +29,16 @@ export function parseJsonArray(raw: string | null | undefined): string[] {
   }
 }
 
-/** Нормализация username канала: @name, t.me/name, https://t.me/name/ → name */
+/** Нормализация username канала: @name, t.me/name, https://t.me/name/ → name (lowercase) */
 export function normalizeChannelUsername(input: string): string {
   let u = input.trim()
   u = u.replace(/^https?:\/\//i, '')
   u = u.replace(/^t\.me\//i, '')
   u = u.replace(/^@/, '')
   u = u.split('/')[0].trim()
-  return u
+  // Telegram-имена регистронезависимы; в БД храним только lowercase
+  // (иначе все lowercase-выборки приложения мимо — баг «Канал не найден»)
+  return u.toLowerCase()
 }
 
 /**

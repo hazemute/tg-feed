@@ -276,6 +276,66 @@ export type RelatedChannelsResponse = {
   items: RelatedChannelDTO[]
 }
 
+/** Пост в топе кабинета канала (компактный DTO) */
+export type TopPostDTO = {
+  id: string
+  text: string
+  mediaUrl: string | null
+  mediaType: string
+  /** COALESCE(viewsTg, viewsCount) — приоритет у просмотров Telegram */
+  views: number
+  reactions: number
+  publishedAt: string
+  link: string | null
+}
+
+/** Статистика канала для кабинета (GET /api/channel/stats?username=...) */
+export type ChannelStatsDTO = {
+  posts: number
+  /** Сумма просмотров всех постов (COALESCE(viewsTg, viewsCount)) */
+  viewsTotal: number
+  viewsAvg: number
+  /** Медиана просмотров (PERCENTILE_CONT 0.5) — устойчива к выбросам */
+  viewsMedian: number
+  viewsMax: number
+  reactionsTotal: number
+  reactionsAvg: number
+  /** ER: реакций на 100 просмотров */
+  erPct: number
+  /** Охват: средние просмотры поста / подписчики канала, % (null — нет данных) */
+  reachPct: number | null
+  /** Лайки внутри приложения (Like по постам канала) */
+  likesTotal: number
+  /** Открытия постов канала в приложении (PostView) */
+  appViews: number
+  textLenAvg: number
+  withTextPct: number
+  firstAt: string | null
+  lastAt: string | null
+  /** Дней с хотя бы одним постом за всю историю */
+  activeDays: number
+  /** Среднее число постов на активный день */
+  postsPerDayAvg: number
+  /** Средний интервал между постами, часов (null — постов < 2) */
+  gapHoursAvg: number | null
+  /** [{ type: image|video|none|..., count }] по убыванию */
+  mediaMix: { type: string; count: number }[]
+  /** 0=воскресенье … 6=суббота (EXTRACT DOW, UTC) */
+  weekday: { dow: number; count: number; viewsAvg: number }[]
+  /** 0..23 часов UTC */
+  hours: { hour: number; count: number; viewsAvg: number }[]
+  /** Лучшее время публикации (3ч-бин × день недели, ≥2 постов, max средних просмотров) */
+  bestSlot: { dow: number; hour: number; viewsAvg: number; samples: number } | null
+  /** Последние ≤40 постов хронологически: динамика просмотров/реакций */
+  series: { date: string; views: number; reactions: number }[]
+  /** 30 дней (включая нулевые): постов в день */
+  cadence: { date: string; count: number }[]
+  topByViews: TopPostDTO[]
+  topByReactions: TopPostDTO[]
+  membersCount: number | null
+  subscribersCount: number
+}
+
 /** Ответ GET /api/profile/stats — активность за 7 дней + суммарные показатели */
 export type ProfileStatsResponse = {
   /** Ровно 7 дней по возрастанию, последний — сегодня (UTC сервера) */

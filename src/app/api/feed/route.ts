@@ -310,8 +310,14 @@ export async function GET(request: Request) {
         const sponSetLocal = new Set(sponIds)
         sponSet = sponSetLocal
         const rest = ordered.filter((x) => !sponSetLocal.has(x.id))
+        /* Спонсорские посты несут РЕАЛЬНЫЙ channelId (раньше cid:'' делал их
+            «невидимыми» для диверсификатора — спонсор мог встать рядом с
+            органикой того же канала). Пересобираем с повторным diversify:
+            стык «спонсор → первый органический того же канала» разводится. */
+        const sponEntries = [...picked.entries()].map(([cid, id]) => ({ id, cid, w: 0 }))
+        const merged = diversify([...sponEntries, ...rest], (x) => x.cid)
         ordered.length = 0
-        ordered.push(...sponIds.map((id) => ({ id, cid: '', w: 0 })), ...rest)
+        ordered.push(...merged)
         // страница уже вырезана из старого порядка — перевырезаем из нового
         const newSliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
         const changed = newSliceIds.some((id, i) => sliceIds[i] !== id)

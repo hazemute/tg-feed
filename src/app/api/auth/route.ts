@@ -5,82 +5,9 @@ import { signSession } from '@/lib/session'
 import { getBotUsername, getUserPhotoFileId } from '@/lib/tg-bot'
 import { adminUids, isMaintenanceOn } from '@/lib/maintenance'
 import { err, parseJsonArray, readJson } from '@/lib/server'
-import { guardIp } from '@/lib/guard'
+import { guardAuth, guardIp } from '@/lib/guard'
+import { migrateGuestUserData } from '@/lib/auth-user'
 import type { UserDTO } from '@/lib/types'
-
-/**
- * Гость стал verified-пользователем: переносим его данные из гостевой строки
- * (лайки/закладки/просмотры/подписки/интересы/граница уведомлений), чтобы
- * история, накопленная до HMAC-подтверждения, не потерялась. Гостевая строка
- * удаляется после переноса. Ошибка миграции НЕ ломает вход (try/catch снаружи).
- */
-async function migrateGuestUserData(guestId: string, targetId: string): Promise<void> {
-  try {
-    const guest = await db.user.findUnique({ where: { id: guestId } })
-    if (!guest || guest.id === targetId) return
-
-    await db.$transaction(async (tx) => {
-      const [subs, likes, bookmarks, views] = await Promise.all([
-        tx.subscription.findMany({ where: { userId: guestId } }),
-        tx.like.findMany({ where: { userId: guestId } }),
-        tx.bookmark.findMany({ where: { userId: guestId } }),
-        tx.postView.findMany({ where: { userId: guestId } }),
-      ])
-
-      if (subs.length > 0) {
-        await tx.subscription.createMany({
-          data: subs.map((s) => ({
-            userId: targetId,
-            channelId: s.channelId,
-            hidden: s.hidden,
-            notify: s.notify,
-            createdAt: s.createdAt,
-          })),
-          skipDuplicates: true,
-        })
-        await tx.subscription.deleteMany({ where: { userId: guestId } })
-      }
-      if (likes.length > 0) {
-        await tx.like.createMany({
-          data: likes.map((l) => ({ userId: targetId, postId: l.postId, createdAt: l.createdAt })),
-          skipDuplicates: true,
-        })
-        await tx.like.deleteMany({ where: { userId: guestId } })
-      }
-      if (bookmarks.length > 0) {
-        await tx.bookmark.createMany({
-          data: bookmarks.map((b) => ({
-            userId: targetId,
-            postId: b.postId,
-            createdAt: b.createdAt,
-            readAt: b.readAt,
-          })),
-          skipDuplicates: true,
-        })
-        await tx.bookmark.deleteMany({ where: { userId: guestId } })
-      }
-      if (views.length > 0) {
-        await tx.postView.createMany({
-          data: views.map((v) => ({ userId: targetId, postId: v.postId, createdAt: v.createdAt })),
-          skipDuplicates: true,
-        })
-        await tx.postView.deleteMany({ where: { userId: guestId } })
-      }
-
-      await tx.user.update({
-        where: { id: targetId },
-        data: {
-          ...(guest.categories !== '[]' && { categories: guest.categories }),
-          ...(guest.lastSeenNotifiedAt && { lastSeenNotifiedAt: guest.lastSeenNotifiedAt }),
-        },
-      })
-
-      await tx.user.delete({ where: { id: guestId } })
-    })
-  } catch (e) {
-    console.error('[auth] guest migration failed (non-fatal)', e)
-  }
-}
 
 export const dynamic = 'force-dynamic'
 
@@ -118,6 +45,42 @@ function safePhotoUrl(v: unknown): string | null {
     return raw
   } catch {
     return null
+  }
+}
+
+/**
+ * GET /api/auth — проверка текущей Bearer-сессии (сайт: вебхук бота выдал
+ * tg-сессию, Mini App пере-выдаёт её POST'ом). Возвращает тот же контракт,
+ * что POST: { user, maintenance } — чтобы загрузка приложения шла одним путём.
+ */
+export async function GET(request: Request) {
+  const g = guardAuth(request)
+  if (!g.ok) return g.res
+  try {
+    const user = await db.user.findUnique({ where: { id: g.uid } })
+    if (!user) return err('user not found', 401)
+    const maintenanceActive = await isMaintenanceOn()
+    const dto: UserDTO = {
+      id: user.id,
+      username: user.username,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      photoUrl: user.photoUrl,
+      isGuest: user.isGuest,
+      isPremium: user.isPremium,
+      languageCode: user.languageCode,
+      categories: parseJsonArray(user.categories),
+    }
+    return NextResponse.json({
+      user: dto,
+      maintenance: {
+        active: maintenanceActive,
+        canBypass: adminUids().includes(user.id) || user.bypassMaintenance,
+      },
+    })
+  } catch (e) {
+    console.error('[auth] me failed', e)
+    return err('auth failed', 500)
   }
 }
 

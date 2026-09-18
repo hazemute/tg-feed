@@ -27,7 +27,9 @@ const redis = url && token ? new Redis({ url, token }) : null
 const WINDOW_SEC = 60
 
 // путь → лимит запросов в минуту с одного IP (Redis, единый на инстансы)
+// ВАЖНО: более специфичные префиксы — ВЫШЕ (первое совпадение выигрывает)
 const LIMITS: Array<{ prefix: string; limit: number }> = [
+  { prefix: '/api/auth/link', limit: 60 }, // опрос статуса входа раз в 2.5с
   { prefix: '/api/auth', limit: 20 },
   { prefix: '/api/panel/login', limit: 10 },
   { prefix: '/api/parse', limit: 20 },
@@ -171,7 +173,10 @@ function maintenanceExempt(path: string): boolean {
     path.startsWith('/api/auth') ||
     path.startsWith('/api/panel') ||
     path.startsWith('/api/health') ||
-    path.startsWith('/admin')
+    path.startsWith('/admin') ||
+    // вебхуки — внешние системы: вход через бота и оплата не должны ломаться
+    path.startsWith('/api/bot/webhook') ||
+    path.startsWith('/api/payments/webhook')
   )
 }
 

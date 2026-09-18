@@ -7,6 +7,7 @@ import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
 import { blocksOf, type Block, type Span } from '@/lib/markdown'
 import { tokenizeCodeLine } from '@/lib/code-highlight'
+import { TgEmoji } from '@/components/feed/TelegramEmoji'
 import { cn } from '@/lib/utils'
 
 /**
@@ -110,39 +111,10 @@ function Spoiler({
   )
 }
 
-/** Инлайн-эмодзи Telegram: анимированный видео-стикер (Bot API) или статичная картинка */
+/** Инлайн-эмодзи Telegram — общий ленивый плеер (TelegramEmoji.tsx):
+ *  видео-стикеры инициализируются только в зоне видимости, вне экрана — пауза */
 function EmojiSpan({ url, id, animated }: { url: string; id?: string; animated?: boolean }) {
-  const [broken, setBroken] = useState(false)
-  const cls =
-    'mx-[1px] inline-block h-[1.35em] w-[1.35em] -translate-y-[0.18em] select-none object-contain'
-  if (animated && id && !broken) {
-    return (
-      <video
-        src={`/api/emoji/${id}`}
-        autoPlay
-        muted
-        loop
-        playsInline
-        aria-label="эмодзи"
-        draggable={false}
-        className={cls}
-        onError={() => setBroken(true)}
-      />
-    )
-  }
-  return (
-    <img
-      src={url}
-      alt="эмодзи"
-      loading="lazy"
-      className={cls}
-      draggable={false}
-      onError={(e) => {
-        // картинка не загрузилась — прячем, остаётся соседний текст
-        e.currentTarget.style.display = 'none'
-      }}
-    />
-  )
+  return <TgEmoji url={url} id={id} animated={animated} />
 }
 
 function SpanView({ span, nested }: { span: Span; nested?: boolean }) {

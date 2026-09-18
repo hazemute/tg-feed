@@ -551,11 +551,14 @@ export async function getCustomEmojiStickers(ids: string[]): Promise<Map<string,
       })
       const data = (await res.json().catch(() => null)) as {
         ok?: boolean
-        result?: Array<{ custom_emoji_id?: string; is_video?: boolean; file?: { file_id?: string } }>
+        // ВНИМАНИЕ: file_id у Sticker лежит НА ВЕРХНЕМ УРОВНЕ объекта
+        // (вложенного s.file НЕ существует — из-за него 4.4k видео-эмодзи
+        // остались с fileId=NULL и никогда не анимировались)
+        result?: Array<{ custom_emoji_id?: string; is_video?: boolean; file_id?: string }>
       } | null
       for (const s of data?.result ?? []) {
         if (s.custom_emoji_id) {
-          out.set(s.custom_emoji_id, { video: s.is_video === true, fileId: s.file?.file_id ?? null })
+          out.set(s.custom_emoji_id, { video: s.is_video === true, fileId: s.file_id ?? null })
         }
       }
     } catch {
