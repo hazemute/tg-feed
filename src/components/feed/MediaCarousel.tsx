@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { Heart, Play, Volume2, VolumeX } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
+import { LazyImage } from '@/components/feed/LazyImage'
 import type { MediaItemDTO } from '@/lib/types'
 import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
 
@@ -22,12 +23,14 @@ function SlideVisual({
   i,
   onHide,
   onClick,
+  eager,
 }: {
   item: MediaItemDTO
   alt: string
   i: number
   onHide: React.Dispatch<React.SetStateAction<Set<number>>>
   onClick?: () => void
+  eager?: boolean
 }) {
   const hide = () =>
     onHide((h) => {
@@ -53,19 +56,20 @@ function SlideVisual({
     )
   }
   return (
-    <img
-      src={item.url}
+    <LazyImage
+      src={item.url!}
       alt={`${alt} — изображение ${i + 1}`}
-      loading="lazy"
-      onError={hide}
+      eager={eager}
+      draggable={false}
       onClick={onClick}
+      onError={hide}
       className={cn(
         'mx-auto max-h-[54dvh] w-full cursor-zoom-in rounded-[14px]',
         item.kind === 'sticker'
-          ? 'max-h-[44dvh] max-w-[300px] bg-transparent object-contain'
-          : 'aspect-[4/5] bg-tg-surface object-cover',
+          ? 'max-h-[44dvh] max-w-[300px] rounded-[14px]'
+          : 'aspect-[4/5]',
       )}
-      draggable={false}
+      imgClassName={item.kind === 'sticker' ? 'object-contain' : undefined}
     />
   )
 }
@@ -88,6 +92,8 @@ export function MediaCarousel({
   alt,
   onDoubleTap,
   onOpenIndex,
+  /** Полный экран поста: без задержки загрузки картинок */
+  eager,
 }: {
   /** Слайды карусели: фото, видео, GIF и стикеры (визуальные типы) */
   items: MediaItemDTO[]
@@ -95,6 +101,7 @@ export function MediaCarousel({
   onDoubleTap?: () => void
   /** Одиночный тап по слайду — открыть полноэкранный просмотр с этого слайда */
   onOpenIndex?: (index: number) => void
+  eager?: boolean
 }) {
   const list = items.filter((x) => !!x.url)
   const ref = useRef<HTMLDivElement>(null)
@@ -204,10 +211,10 @@ export function MediaCarousel({
               >
                 {item.spoiler ? (
                   <MediaSpoiler>
-                    <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} onClick={() => handleSingle(i)} />
+                    <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} onClick={() => handleSingle(i)} eager={eager} />
                   </MediaSpoiler>
                 ) : (
-                  <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} onClick={() => handleSingle(i)} />
+                  <SlideVisual item={item} alt={alt} i={i} onHide={setHidden} onClick={() => handleSingle(i)} eager={eager} />
                 )}
               </div>
             </div>

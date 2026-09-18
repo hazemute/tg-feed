@@ -27,6 +27,10 @@ const DICT = {
   'nav.main': ['Основная навигация', 'Main navigation'],
   'nav.tagline': ['лента Telegram-каналов', 'Telegram channels feed'],
   'nav.reader': ['Читатель', 'Reader'],
+  'profile.reader': ['Читатель', 'Reader'],
+  'profile.subGuestHint': ['Войдите, чтобы сохранять посты', 'Sign in to save posts'],
+  'authGate.title': ['Вход за 2 секунды', 'Sign in within seconds'],
+  'authGate.later': ['Потом', 'Later'],
 
   /* Полный экран поста */
   'post.title': ['Пост', 'Post'],

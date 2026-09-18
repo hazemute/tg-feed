@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
 import { formatCount } from '@/lib/format'
 import { RichText } from '@/components/feed/RichText'
+import { useIsDesktop } from '@/lib/use-desktop'
 
 /** Кнопка действия в правой панели поста: иконка + счётчик под ней (макет) */
 export function RailButton({
@@ -89,10 +90,16 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
   const innerRef = useRef<HTMLParagraphElement>(null)
   const [expanded, setExpanded] = useState(false)
   const [clamp, setClamp] = useState<{ full: number; collapsed: number } | null>(null)
+  // На ПК (lg+) текст не обрезаем — читаемость важнее компактности
+  const isDesktop = useIsDesktop()
 
   const measure = () => {
     const el = innerRef.current
     if (!el) return
+    if (isDesktop) {
+      setClamp((prev) => (prev === null ? prev : null))
+      return
+    }
     const cs = getComputedStyle(el)
     const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5
     const collapsed = Math.round(line * 3) // ровно 3 строки, как в макете
@@ -118,7 +125,7 @@ export function ExpandableText({ text, onSummary }: { text: string; onSummary?: 
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+  }, [isDesktop])
 
   const long = text.length > 400
 

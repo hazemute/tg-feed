@@ -16,6 +16,7 @@ import { PostMedia } from '@/components/feed/PostMedia'
 import { translatedText, TranslateControl, useTranslation } from '@/components/feed/TranslateButton'
 import { ListenButton } from '@/components/feed/TTSButton'
 import { RailButton, SubscribeCircle } from '@/components/feed/actions'
+import { useIsDesktop } from '@/lib/use-desktop'
 
 /**
  * Пост ленты по макету:
@@ -127,10 +128,16 @@ function PostText({
   const innerRef = useRef<HTMLDivElement>(null)
   // Высота 3 строк в px — из фактического измерения (корректно при любом fontScale)
   const [clamp, setClamp] = useState<{ collapsed: number } | null>(null)
+  // На ПК (lg+) текст не обрезаем — читаемость важнее компактности ленты
+  const isDesktop = useIsDesktop()
 
   const measure = () => {
     const el = innerRef.current
     if (!el) return
+    if (isDesktop) {
+      setClamp((prev) => (prev === null ? prev : null))
+      return
+    }
     const cs = getComputedStyle(el)
     const line = parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.5
     const collapsed = Math.round(line * 3) // ровно 3 строки, как в макете
@@ -153,7 +160,8 @@ function PostText({
     const ro = new ResizeObserver(measure)
     ro.observe(el)
     return () => ro.disconnect()
-  }, [])
+     
+  }, [isDesktop])
 
   const long = text.length > 400
   // Перевод замещает текст на месте (Twitter-style), контрол — строкой под постом
@@ -487,7 +495,7 @@ export function PostCard({
           <RailButton
             icon={Forward}
             label={t('post.share')}
-            onClick={() => sharePost(post.link, ch.title)}
+            onClick={() => sharePost(post.link, ch.title, post.id)}
           />
         </div>
       </div>

@@ -200,8 +200,18 @@ export function userAvatarUrl(userId: string, photoUrl?: string | null): string 
   return photoUrl
 }
 
-/** Репост поста: в Telegram — нативный шаринг, иначе navigator.share / буфер обмена */
-export async function sharePost(link: string | null, title: string) {
+/** Репост поста: в Telegram — нативный шаринг, иначе navigator.share / буфер обмена.
+ *  Параллельно (fire-and-forget) отмечает репост в API — «температура» поста +20. */
+export async function sharePost(link: string | null, title: string, postId?: string) {
+  if (postId) {
+    // Важно: не ждём и не роняем UX, если сессии нет/ошибка
+    fetch('/api/share', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ postId }),
+      keepalive: true,
+    }).catch(() => {})
+  }
   const url = link || 'https://t.me/tgswipe_bot'
   const w = tg()
   try {

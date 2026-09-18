@@ -30,7 +30,13 @@ export async function POST(request: Request) {
       if (existing) continue
       try {
         await db.postView.create({ data: { userId, postId } })
-        await db.post.update({ where: { id: postId }, data: { viewsCount: { increment: 1 } } })
+        // Просмотр остужает пост (-1): держим ленту живой — «горячим» остаётся
+        // то, на что люди реагируют (дочитывание/лайки/репосты), а не то,
+        // что просто показали каждому.
+        await db.post.update({
+          where: { id: postId },
+          data: { viewsCount: { increment: 1 }, hotScore: { decrement: 1 } },
+        })
         added++
       } catch {
         // гонка с параллельным запросом — пропускаем

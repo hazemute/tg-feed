@@ -60,7 +60,9 @@ export function ProfileTab() {
   const [aboutOpen, setAboutOpen] = useState(false)
   const [privacyOpen, setPrivacyOpen] = useState(false)
   const [termsOpen, setTermsOpen] = useState(false)
-  const [loginOpen, setLoginOpen] = useState(false)
+  // Шит входа глобальный (zustand): открывается и отсюда, и из шторки лайка/закладки
+  const loginOpen = useApp((s) => s.loginOpen)
+  const setLoginOpen = useApp((s) => s.setLoginOpen)
   const [supportOpen, setSupportOpen] = useState(false)
   const [notify, setNotify] = useState(true)
 
@@ -93,7 +95,9 @@ export function ProfileTab() {
 
   if (!user) return null
 
-  const name = [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Пользователь'
+  const name = user.isGuest
+    ? t('profile.reader')
+    : [user.firstName, user.lastName].filter(Boolean).join(' ') || t('profile.name')
   const stats = profile?.stats
 
   const removeBookmark = async (p: PostDTO) => {
@@ -137,7 +141,7 @@ export function ProfileTab() {
   const categoryTitle = (slug: string) => categories.find((c) => c.slug === slug)?.title ?? slug
 
   return (
-    <div className="no-scrollbar h-full overflow-y-auto overscroll-contain pb-28">
+    <div className="no-scrollbar mx-auto h-full w-full max-w-[680px] overflow-y-auto overscroll-contain pb-28">
       {/* Заголовок */}
       <header className="px-4 pb-2 pt-4">
         <h1 className="text-screen-title text-tg-text">Профиль</h1>
@@ -165,7 +169,7 @@ export function ProfileTab() {
             )}
           </div>
           <div className="mt-0.5 truncate text-[15.5px] text-tg-hint">
-            {user.username ? `@${user.username}` : user.isGuest ? 'Гость' : 'Без username'}
+            {user.username ? `@${user.username}` : user.isGuest ? t('profile.subGuestHint') : t('profile.noUsername')}
           </div>
           {!user.isGuest && (
             <div className="mt-1 flex items-center gap-1 text-[12px] font-medium text-tg-link">
@@ -565,8 +569,9 @@ export function ProfileTab() {
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
             <h3 className="text-[14.5px] font-bold text-tg-text">Пополнение</h3>
             <p className="mt-1.5 text-tg-hint">
-              Баланс пополняется в рублях через банковский эквайринг — от 100 рублей за операцию.
-              Свайпы зачисляются на эскроу-счёт автоматически после подтверждения оплаты.
+              Баланс пополняется в рублях (банковская карта или СБП), Telegram Stars или криптовалютой
+              TON — от 100 рублей за операцию. Курс TON фиксируется в момент выставления счёта. Свайпы
+              зачисляются на эскроу-счёт автоматически после подтверждения оплаты.
             </p>
           </section>
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">

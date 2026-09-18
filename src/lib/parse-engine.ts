@@ -4,6 +4,7 @@ import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
 import { botEnabled, getChatPhotoFileId, getChatMemberCount, getCustomEmojiStickers } from '@/lib/tg-bot'
 import { syncChannelAvatar } from '@/lib/avatar-store'
+import { isAdCliche } from '@/lib/moderation'
 import type { NotifiablePost } from '@/lib/tg-bot'
 import { htmlToMarkdownLite } from '@/lib/markdown'
 
@@ -30,6 +31,8 @@ const AVATAR_WEB_TTL_MS = 24 * 60 * 60 * 1000
 export type ParseChannelResult = {
   username: string
   added: number
+  /** рекламных клише-постов пропущено (не создано) */
+  adSkipped?: number
   error?: string
 }
 
@@ -599,6 +602,7 @@ export async function runParser(
       const existingMap = new Map(existing.map((p) => [p.tgKey, p]))
 
       let added = 0
+      let adSkipped = 0 // рекламные клише пропущены (в ленту не попали)
       for (const p of queue) {
         if (added >= per) break
         const primary = p.media
@@ -656,6 +660,14 @@ export async function runParser(
         }
 
         try {
+          // Рекламные клише/кликбейт («читать продолжение в источнике», «смотри
+          // закреп», erid-маркеры, промо-боты) в ленту не попадают: пост не
+          // создаётся вовсе. Обновления просмотров дубликатов это не трогает —
+          // проверка стоит только на пути СОЗДАНИЯ.
+          if (isAdCliche(p.text)) {
+            adSkipped++
+            continue
+          }
           const created = await db.post.create({
             data,
             select: { id: true, text: true, link: true },
@@ -671,7 +683,7 @@ export async function runParser(
           // гонка с другим инстансом — дубликат, пропускаем
         }
       }
-      results.push({ username: target, added })
+      results.push({ username: target, added, adSkipped })
       processed++
       report(results[results.length - 1], channel.title, processed)
     } catch (e) {

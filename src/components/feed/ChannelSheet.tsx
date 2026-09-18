@@ -13,7 +13,6 @@ import { formatCount, timeAgoRu } from '@/lib/format'
 import type { ChannelDTO, PostDTO, RelatedChannelDTO, RelatedChannelsResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { PostMedia } from '@/components/feed/PostMedia'
-import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
 import { ExpandableText } from '@/components/feed/actions'
 
 const PAGE_SIZE = 10
@@ -41,7 +40,7 @@ export function ChannelSheet() {
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 32, stiffness: 330 }}
-          className="fixed inset-0 z-[70] mx-auto flex w-full max-w-[430px] flex-col bg-tg-bg"
+          className="fixed inset-0 z-[70] mx-auto flex w-full max-w-[430px] flex-col overflow-hidden bg-tg-bg lg:bottom-auto lg:top-[6vh] lg:h-[88vh] lg:max-w-[720px] lg:rounded-3xl lg:border lg:border-tg-sep lg:shadow-[0_24px_90px_rgba(0,0,0,0.30)]"
           role="dialog"
           aria-modal="true"
           aria-label={`Канал ${username}`}
@@ -72,13 +71,16 @@ function ChannelScreen({
   const [error, setError] = useState(false)
   // Колокольчик уведомлений (актуален только при активной подписке)
   const [notify, setNotify] = useState(true)
-  // Таб кабинета: «Статистика» — по умолчанию (кабинет = главная страница канала)
-  const [tab, setTab] = useState<'stats' | 'posts'>('stats')
+  /* Большая СТАТИСТИКА — только для СВОЕГО канала (вкладка «Мой канал»).
+   * Чужой канал — это профиль + посты, без кабинета. */
 
   const busyRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const userRef = useRef(userId)
   userRef.current = userId
+  // Ленивая регистрация: гость? шторка входа
+  const isGuest = useApp((s) => s.user?.isGuest ?? false)
+  const openAuthGate = useApp((s) => s.openAuthGate)
 
   const load = useCallback(
     async (p: number, replace: boolean) => {
@@ -149,6 +151,12 @@ function ChannelScreen({
   const onLike = async (post: PostDTO) => {
     const uid = userRef.current
     if (!uid) return
+    // Ленивая регистрация: лайк гостя → шторка входа за 2 секунды
+    if (isGuest) {
+      openAuthGate('like')
+      haptic('light')
+      return
+    }
     const nextLiked = !post.liked
     updatePost(post.id, { liked: nextLiked, likesCount: Math.max(0, post.likesCount + (nextLiked ? 1 : -1)) })
     try {
@@ -165,6 +173,12 @@ function ChannelScreen({
   const onBookmark = async (post: PostDTO) => {
     const uid = userRef.current
     if (!uid) return
+    // Ленивая регистрация: сохранение гостя → шторка входа
+    if (isGuest) {
+      openAuthGate('bookmark')
+      haptic('light')
+      return
+    }
     const next = !post.bookmarked
     updatePost(post.id, {
       bookmarked: next,
@@ -357,73 +371,38 @@ function ChannelScreen({
                 )}
               </div>
 
-              {/* Переключатель кабинета: плоские табы с подчёркиванием.
-                  Статистика — первый таб (кабинет = лицо страницы канала) */}
-              <div className="mt-4 flex border-b border-tg-sep/60" role="tablist" aria-label="Разделы канала">
-                {(
-                  [
-                    ['stats', 'Статистика'],
-                    ['posts', 'Посты'],
-                  ] as const
-                ).map(([t, label]) => (
-                  <button
-                    key={t}
-                    type="button"
-                    role="tab"
-                    aria-selected={tab === t}
-                    onClick={() => {
-                      if (tab !== t) haptic('light')
-                      setTab(t)
-                    }}
-                    className={cn(
-                      'relative flex-1 pb-2.5 pt-1 text-[14.5px] font-semibold transition-colors',
-                      tab === t ? 'text-tg-link' : 'text-tg-hint active:opacity-70',
-                    )}
-                  >
-                    {label}
-                    {tab === t && (
-                      <span aria-hidden className="absolute inset-x-5 -bottom-px h-[2.5px] rounded-full bg-tg-link" />
-                    )}
-                  </button>
-                ))}
-              </div>
+              {/* Посты — единственный раздел чужого канала: большая статистика только у владельца (вкладка «Мой канал») */}
             </div>
 
-            {tab === 'stats' ? (
-              /* ===== Кабинет: большая плоская аналитика канала =====
-                  key — ремount при смене канала: состояние сбрасывается чисто */
-              <ChannelCabinet key={username} username={username} />
-            ) : (
-              <>
-                {/* Посты канала */}
-                <div className="mt-3 flex items-center gap-2.5 px-4">
-                  <h2 className="text-[15px] font-semibold text-tg-text">Посты</h2>
-                  <span className="h-4 w-px bg-tg-sep" aria-hidden />
-                  <span className="text-[13.5px] text-tg-hint">сначала новые</span>
+            <>
+              {/* Посты канала */}
+              <div className="mt-3 flex items-center gap-2.5 px-4">
+                <h2 className="text-[15px] font-semibold text-tg-text">Посты</h2>
+                <span className="h-4 w-px bg-tg-sep" aria-hidden />
+                <span className="text-[13.5px] text-tg-hint">сначала новые</span>
+              </div>
+
+              <div className="mt-1 divide-y divide-tg-sep/50">
+                {items.map((p) => (
+                  <ChannelPost key={p.id} post={p} onLike={() => onLike(p)} onBookmark={() => onBookmark(p)} />
+                ))}
+              </div>
+
+              <div ref={sentinelRef} className="h-2" aria-hidden />
+
+              {loading && !initial && (
+                <div className="flex justify-center py-5">
+                  <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
                 </div>
+              )}
 
-                <div className="mt-1 divide-y divide-tg-sep/50">
-                  {items.map((p) => (
-                    <ChannelPost key={p.id} post={p} onLike={() => onLike(p)} onBookmark={() => onBookmark(p)} />
-                  ))}
-                </div>
+              {!hasMore && items.length > 0 && (
+                <p className="py-6 text-center text-snippet text-tg-hint">Это все посты канала</p>
+              )}
 
-                <div ref={sentinelRef} className="h-2" aria-hidden />
-
-                {loading && !initial && (
-                  <div className="flex justify-center py-5">
-                    <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
-                  </div>
-                )}
-
-                {!hasMore && items.length > 0 && (
-                  <p className="py-6 text-center text-snippet text-tg-hint">Это все посты канала</p>
-                )}
-
-                {/* Похожие каналы — рельс в конце списка постов (сам скрывается, если похожих нет) */}
-                <RelatedChannels username={username} userId={userId} />
-              </>
-            )}
+              {/* Похожие каналы — рельс в конце списка постов (сам скрывается, если похожих нет) */}
+              <RelatedChannels username={username} userId={userId} />
+            </>
           </>
         )}
       </div>

@@ -144,7 +144,7 @@ function FilterChip({
  */
 export function FeedView() {
   const t = useT()
-  const { user, category, setCategory, categories, feedVersion, bumpFeed, openSearchWith, setPostQueue } = useApp()
+  const { user, category, setCategory, categories, feedVersion, bumpFeed, openSearchWith, setPostQueue, openAuthGate } = useApp()
   const [items, setItems] = useState<PostDTO[]>([])
   const [ads, setAds] = useState<AdDTO[]>([])
   const [page, setPage] = useState(0)
@@ -672,6 +672,12 @@ export function FeedView() {
   const onLike = useCallback(
     async (post: PostDTO) => {
       if (!user) return
+      // Ленивая регистрация: гость должен привязать Telegram, чтобы лайкать
+      if (user.isGuest) {
+        openAuthGate('like')
+        haptic('light')
+        return
+      }
       const nextLiked = !post.liked
       const nextCount = post.likesCount + (nextLiked ? 1 : -1)
       updatePost(post.id, { liked: nextLiked, likesCount: Math.max(0, nextCount) })
@@ -692,6 +698,12 @@ export function FeedView() {
   const onBookmark = useCallback(
     async (post: PostDTO) => {
       if (!user) return
+      // Ленивая регистрация: сохранение поста — момент для привязки Telegram
+      if (user.isGuest) {
+        openAuthGate('bookmark')
+        haptic('light')
+        return
+      }
       const next = !post.bookmarked
       updatePost(post.id, {
         bookmarked: next,

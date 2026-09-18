@@ -70,7 +70,7 @@ export function Onboarding({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-tg-bg" role="dialog" aria-modal="true">
+    <div className="fixed inset-0 z-50 mx-auto flex w-full flex-col overflow-hidden bg-tg-bg lg:bottom-auto lg:top-[5vh] lg:h-[90vh] lg:max-w-[640px] lg:rounded-3xl lg:border lg:border-tg-sep lg:shadow-[0_24px_90px_rgba(0,0,0,0.30)]" role="dialog" aria-modal="true">
       {/* Логотип с мягким пульсом */}
       <div className="flex justify-center pt-12">
         <motion.div

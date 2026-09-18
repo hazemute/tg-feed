@@ -128,7 +128,7 @@ export function SupportChat({ open, onClose }: { open: boolean; onClose: () => v
       initial={{ opacity: 0, y: 24 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ type: 'spring', stiffness: 380, damping: 34 }}
-      className="fixed inset-0 z-[60] flex flex-col bg-tg-bg"
+      className="fixed inset-0 z-[60] mx-auto flex w-full flex-col overflow-hidden bg-tg-bg lg:bottom-auto lg:top-[6vh] lg:h-[88vh] lg:max-w-[680px] lg:rounded-3xl lg:border lg:border-tg-sep lg:shadow-[0_24px_90px_rgba(0,0,0,0.30)]"
       role="dialog"
       aria-label={t('support.dialog')}
     >

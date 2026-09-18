@@ -6,6 +6,7 @@ import { BarChart3, FileText, Heart, Link2, Mic, Music2, Volume2 } from 'lucide-
 import { cn } from '@/lib/utils'
 import { haptic, openExternal, openTelegram } from '@/lib/tg'
 import type { MediaItemDTO, PostDTO } from '@/lib/types'
+import { LazyImage } from '@/components/feed/LazyImage'
 import { MediaCarousel, VideoPlayer } from '@/components/feed/MediaCarousel'
 import { MediaSpoiler } from '@/components/feed/MediaSpoiler'
 import { MediaLightbox } from '@/components/feed/MediaLightbox'
@@ -117,7 +118,7 @@ function CardShell({
   )
 }
 
-function CardView({ item, tgLink }: { item: MediaItemDTO; tgLink: string | null }) {
+function CardView({ item, tgLink, eager }: { item: MediaItemDTO; tgLink: string | null; eager?: boolean }) {
   const openTg = () => (tgLink ? openTelegram(tgLink) : undefined)
 
   switch (item.kind) {
@@ -204,13 +205,14 @@ function CardView({ item, tgLink }: { item: MediaItemDTO; tgLink: string | null 
           className="block w-full overflow-hidden rounded-2xl bg-tg-surface text-left transition active:scale-[0.99]"
         >
           {item.url && (
-            <img
+            <LazyImage
               src={item.url}
               alt={item.title ?? 'Превью ссылки'}
-              loading="lazy"
-              className="max-h-[54dvh] w-full object-cover"
+              className="max-h-[54dvh] w-full"
+              eager={eager}
               onError={(e) => {
-                e.currentTarget.style.display = 'none'
+                const wrap = e.currentTarget.parentElement
+                if (wrap) wrap.style.display = 'none'
               }}
             />
           )}
@@ -249,13 +251,15 @@ function SingleVisual({
   alt,
   onDoubleTap,
   onOpen,
+  eager,
 }: {
   item: MediaItemDTO
   alt: string
   onDoubleTap?: () => void
   onOpen?: () => void
+  eager?: boolean
 }) {
-  const inner = <SingleVisualInner item={item} alt={alt} onDoubleTap={onDoubleTap} onOpen={onOpen} />
+  const inner = <SingleVisualInner item={item} alt={alt} onDoubleTap={onDoubleTap} onOpen={onOpen} eager={eager} />
   return item.spoiler ? <MediaSpoiler>{inner}</MediaSpoiler> : inner
 }
 
@@ -264,11 +268,13 @@ function SingleVisualInner({
   alt,
   onDoubleTap,
   onOpen,
+  eager,
 }: {
   item: MediaItemDTO
   alt: string
   onDoubleTap?: () => void
   onOpen?: () => void
+  eager?: boolean
 }) {
   if (item.kind === 'video' && item.url) {
     return <VideoPlayer src={item.url} alt={alt} onDoubleTap={onDoubleTap} onOpen={onOpen} />
@@ -313,12 +319,13 @@ function SingleVisualInner({
             className="max-h-[44dvh] w-full max-w-[300px] rounded-2xl object-contain"
           />
         ) : (
-          <img
+          <LazyImage
             src={item.url}
             alt={alt}
-            loading="lazy"
+            eager
             draggable={false}
-            className="max-h-[44dvh] w-full max-w-[300px] rounded-2xl object-contain"
+            imgClassName="object-contain"
+            className="mx-auto max-h-[44dvh] w-full max-w-[300px] rounded-2xl"
             onError={(e) => {
               e.currentTarget.closest('[data-noswipe]')?.setAttribute('style', 'display:none')
             }}
@@ -331,12 +338,12 @@ function SingleVisualInner({
   if (item.url) {
     return (
       <DoubleTapHeart onDoubleTap={onDoubleTap} onSingleTap={onOpen}>
-        <img
+        <LazyImage
           src={item.url}
           alt={alt}
-          loading="lazy"
           draggable={false}
-          className="mx-auto aspect-[4/5] max-h-[54dvh] w-full cursor-zoom-in rounded-[14px] bg-tg-surface object-cover"
+          eager={eager}
+          className="mx-auto aspect-[4/5] max-h-[54dvh] w-full cursor-zoom-in rounded-[14px]"
           onError={(e) => {
             e.currentTarget.closest('[data-noswipe]')?.setAttribute('style', 'display:none')
           }}
@@ -367,9 +374,12 @@ export function postMediaItems(post: PostDTO): MediaItemDTO[] {
 export function PostMedia({
   post,
   onDoubleTap,
+  /** Полный экран поста: пользователь уже читает — картинки сразу */
+  eager,
 }: {
   post: PostDTO
   onDoubleTap?: () => void
+  eager?: boolean
 }) {
   const items = postMediaItems(post)
   const [lbIndex, setLbIndex] = useState<number | null>(null)
@@ -382,13 +392,13 @@ export function PostMedia({
   return (
     <div className="space-y-2.5">
       {visual.length === 1 && (
-        <SingleVisual item={visual[0]} alt={alt} onDoubleTap={onDoubleTap} onOpen={() => setLbIndex(0)} />
+        <SingleVisual item={visual[0]} alt={alt} onDoubleTap={onDoubleTap} onOpen={() => setLbIndex(0)} eager={eager} />
       )}
       {visual.length > 1 && (
-        <MediaCarousel items={visual} alt={alt} onDoubleTap={onDoubleTap} onOpenIndex={(idx) => setLbIndex(idx)} />
+        <MediaCarousel items={visual} alt={alt} onDoubleTap={onDoubleTap} onOpenIndex={(idx) => setLbIndex(idx)} eager={eager} />
       )}
       {cards.map((c, i) => (
-        <CardView key={i} item={c} tgLink={c.link ?? post.link} />
+        <CardView key={i} item={c} tgLink={c.link ?? post.link} eager={eager} />
       ))}
       {/* Полноэкранный просмотр + скачивание (как в Telegram) */}
       {lbIndex != null && (

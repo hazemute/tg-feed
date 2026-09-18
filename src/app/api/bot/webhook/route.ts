@@ -1,15 +1,17 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { creditPendingPayment } from '@/lib/payments'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * Webhook Telegram Bot API — единственная точка приёма апдейтов бота.
  *
- * Сейчас обслуживает ВХОД НА САЙТ:
- *   • /start login_<token>  → бот присылает сообщение с inline-кнопкой «Войти»;
- *   • нажатие кнопки (callback_query login:<token>) → фиксируем в LoginAttempt
- *     снимок tg-пользователя (callback_query.from), сайт подхватывает опросом.
+ * Обслуживает:
+ *  • ВХОД НА САЙТ: /start login_<token> → кнопка «Войти» → callback_query
+ *    login:<token> → снимок tg-пользователя в LoginAttempt, сайт подхватывает.
+ *  • ОПЛАТУ TELEGRAM STARS: message.successful_payment (currency XTR) —
+ *    инвойсы из POST /api/payments/stars. Свайпы зачисляются идемпотентно.
  *
  * Регистрация: scripts/set-webhook.ts (URL + secret_token).
  * Если задан TELEGRAM_WEBHOOK_SECRET — проверяем заголовок
@@ -36,6 +38,12 @@ type TgUpdate = {
     chat?: { id?: number }
     from?: TgFrom
     text?: string
+    successful_payment?: {
+      currency?: string
+      total_amount?: number
+      invoice_payload?: string
+      telegram_payment_charge_id?: string
+    }
   }
   callback_query?: {
     id: string
@@ -100,7 +108,7 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
     await botCall('sendMessage', {
       chat_id: chatId,
       text:
-        '⌛️ Ссылка входа устарела.\n\nВернитесь на сайт и нажмите «Вход по Telegram» ещё раз — ссылка живёт 15 минут.',
+        '⌛️ Эта ссылка для входа уже недействительна — она живёт 15 минут из соображений безопасности.\n\nОткройте Tg Swipe и нажмите «Вход по Telegram» ещё раз — новая ссылка создаётся в один тап.',
       parse_mode: 'HTML',
     })
     return
@@ -108,11 +116,11 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
 
   await botCall('sendMessage', {
     chat_id: chatId,
-    text: `Привет, <b>${escapeHtml(nameOf(from))}</b>! 👋\n\nПодтвердите вход на сайт <b>Tg Swipe</b> — умная лента Telegram-каналов.\n\nНажмите кнопку ниже, и вы автоматически войдёте на сайте под своим аккаунтом.`,
+    text: `<b>${escapeHtml(nameOf(from))}</b>, подтверждите вход в <b>Tg Swipe</b>.\n\nОдно нажатие — и ваш профиль, подписки и сохранённые посты откроются на сайте и в приложении. Пароли не нужны: доступ подтверждается вашим Telegram.`,
     parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '✅ Войти на сайт', callback_data: `login:${token}` }],
+        [{ text: '✅ Это я, войти', callback_data: `login:${token}` }],
         [{ text: '🌐 Открыть Tg Swipe', url: SITE_URL }],
       ],
     },
@@ -124,11 +132,11 @@ async function handleStart(from: TgFrom | undefined, chatId?: number) {
   if (!chatId) return
   await botCall('sendMessage', {
     chat_id: chatId,
-    text: `Привет, <b>${escapeHtml(nameOf(from))}</b>! 👋\n\n<b>Tg Swipe</b> — умная лента открытых Telegram-каналов: свайпайте посты по интересам, сохраняйте лучшее, подписывайтесь в один тап.\n\n• Открыть приложение — кнопка меню внизу\n• Открыть сайт — кнопка ниже\n• Здесь же я подтверждаю вход на сайт`,
+    text: `<b>Tg Swipe</b> — лента Telegram-каналов, собранная под вас.\n\nСвайпайте посты по интересам, сохраняйте лучшее в закладки и подпишитесь на каналы в один тап — без лишних чатов и рекламы.\n\n<b>Что умеет этот бот</b>\n• Подтверждает вход на сайте и в приложении — по кнопке, без паролей\n• Принимает оплату в Telegram Stars для продвижения каналов\n\nОткрыть ленту — кнопка ниже или в меню.`,
     parse_mode: 'HTML',
     reply_markup: {
       inline_keyboard: [
-        [{ text: '🌐 Открыть сайт', url: SITE_URL }],
+        [{ text: '🌐 Открыть Tg Swipe', url: SITE_URL }],
       ],
     },
   })
@@ -146,7 +154,7 @@ async function handleLoginCallback(
   if (!snap) {
     await botCall('answerCallbackQuery', {
       callback_query_id: cbId,
-      text: 'Не удалось получить данные Telegram. Попробуйте ещё раз.',
+      text: 'Telegram не передал данные аккаунта. Нажмите кнопку ещё раз.',
       show_alert: true,
     })
     return
@@ -157,7 +165,7 @@ async function handleLoginCallback(
   if (!attempt || (attempt.status === 'pending' && attempt.expiresAt.getTime() < Date.now())) {
     await botCall('answerCallbackQuery', {
       callback_query_id: cbId,
-      text: '⌛️ Ссылка устарела — вернитесь на сайт и создайте новую.',
+      text: '⌛️ Ссылка уже недействительна — создайте новую на сайте.',
       show_alert: true,
     })
     return
@@ -173,7 +181,7 @@ async function handleLoginCallback(
 
   await botCall('answerCallbackQuery', {
     callback_query_id: cbId,
-    text: '✅ Готово! Возвращайтесь на сайт — вы вошли.',
+    text: 'Вы вошли в Tg Swipe',
     show_alert: false,
   })
 
@@ -182,10 +190,10 @@ async function handleLoginCallback(
     void botCall('editMessageText', {
       chat_id: msgChatId,
       message_id: msgId,
-      text: `✅ <b>Вход подтверждён</b> — ${escapeHtml(nameOf(from))}, вы вошли на сайт Tg Swipe.\n\nВернитесь на вкладку сайта: профиль, подписки и история подтянутся автоматически.`,
+      text: `✅ <b>${escapeHtml(nameOf(from))}</b>, вы вошли в Tg Swipe!\n\nЛента, подписки и сохранённые посты уже ждут вас — открывайте и читайте. Аккаунт закреплён за вашим Telegram: вход больше не потребуется.`,
       parse_mode: 'HTML',
       reply_markup: {
-        inline_keyboard: [[{ text: '🌐 Открыть Tg Swipe', url: SITE_URL }]],
+        inline_keyboard: [[{ text: '📖 Читать ленту', url: SITE_URL }]],
       },
     })
   }
@@ -193,6 +201,44 @@ async function handleLoginCallback(
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/* ---------------------- Оплата Telegram Stars ---------------------- */
+
+/**
+ * message.successful_payment (currency XTR) — оплата инвойса из
+ * /api/payments/stars. Payload: topup:<userId>:<swipes>:<paymentId>.
+ * Зачисление идемпотентно (creditPendingPayment), повторные апдейты безвредны.
+ */
+async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message']>['successful_payment']>, chatId?: number) {
+  if (sp.currency !== 'XTR') return // другая валюта нам не приходила и не нужна
+  const parts = (sp.invoice_payload ?? '').split(':')
+  // topup:<uid>:<swipes>:<paymentId>
+  if (parts.length !== 4 || parts[0] !== 'topup') return
+  const [, uid, swipesStr, paymentId] = parts
+  const swipes = Number(swipesStr)
+  if (!uid || !Number.isFinite(swipes) || swipes <= 0 || !paymentId) return
+
+  const payment = await db.pendingPayment.findUnique({ where: { id: paymentId } }).catch(() => null)
+  if (!payment || payment.userId !== uid || payment.provider !== 'stars') return
+
+  // Сверяем сумму: Stars к оплате = свайпам из payload
+  if (typeof sp.total_amount === 'number' && sp.total_amount !== swipes) {
+    console.error('[bot/webhook] stars amount mismatch', { paymentId, expected: swipes, got: sp.total_amount })
+    return
+  }
+
+  const credited = await creditPendingPayment(payment.id, sp.telegram_payment_charge_id ?? null)
+  if (credited && chatId) {
+    await botCall('sendMessage', {
+      chat_id: chatId,
+      text: `⭐️ Платёж получен — <b>${swipes} свайпов</b> зачислено на баланс продвижения.\n\nОткройте «Мой канал» в Tg Swipe, чтобы запустить кампанию.`,
+      parse_mode: 'HTML',
+      reply_markup: {
+        inline_keyboard: [[{ text: 'Продвинуть канал', url: SITE_URL }]],
+      },
+    })
+  }
 }
 
 /* --------------------------------- Роут --------------------------------- */
@@ -233,6 +279,10 @@ export async function POST(request: Request) {
     }
 
     const msg = update.message
+    if (msg?.successful_payment) {
+      await handleStarsPayment(msg.successful_payment, msg.chat?.id)
+      return NextResponse.json({ ok: true })
+    }
     if (msg?.text?.startsWith('/start')) {
       const parts = msg.text.split(/\s+/)
       const param = parts[1] ?? ''

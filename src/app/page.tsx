@@ -15,6 +15,8 @@ import { BottomNav } from '@/components/tg/BottomNav'
 import { Sidebar } from '@/components/tg/Sidebar'
 import { Splash } from '@/components/tg/Splash'
 import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
+import { AuthGateSheet } from '@/components/tg/AuthGateSheet'
+import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { FeedView } from '@/components/feed/FeedView'
 import { ChannelSheet } from '@/components/feed/ChannelSheet'
 import { PostOverlay } from '@/components/feed/PostOverlay'
@@ -283,6 +285,17 @@ export default function Home() {
           <PostOverlay />
         </div>
       </div>
+      {/* Ленивая регистрация: шторка «привяжи Telegram» при лайке/закладке гостя
+          и глобальный шит входа (открывается из любого места приложения) */}
+      <AuthGateSheet />
+      <GlobalLoginSheet />
     </div>
   )
+}
+
+/** Шит входа с глобальным состоянием (zustand) — открывается из AuthGate и профиля */
+function GlobalLoginSheet() {
+  const loginOpen = useApp((s) => s.loginOpen)
+  const setLoginOpen = useApp((s) => s.setLoginOpen)
+  return <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />
 }

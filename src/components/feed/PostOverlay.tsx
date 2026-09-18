@@ -117,6 +117,7 @@ export function PostOverlay() {
   const openPost = useApp((s) => s.openPost)
   const postQueue = useApp((s) => s.postQueue)
   const openChannel = useApp((s) => s.openChannel)
+  const openAuthGate = useApp((s) => s.openAuthGate)
   const user = useApp((s) => s.user)
   const open = !!post
   const t = useT()
@@ -222,6 +223,12 @@ export function PostOverlay() {
 
   const onLike = async () => {
     if (!current || !user) return
+    // Ленивая регистрация: лайк гостя → шторка входа за 2 секунды
+    if (user.isGuest) {
+      openAuthGate('like')
+      haptic('light')
+      return
+    }
     const nextLiked = !current.liked
     const nextCount = Math.max(0, current.likesCount + (nextLiked ? 1 : -1))
     setLive({ id: current.id, data: { ...current, liked: nextLiked, likesCount: nextCount } })
@@ -245,6 +252,12 @@ export function PostOverlay() {
 
   const onBookmark = async () => {
     if (!current || !user) return
+    // Ленивая регистрация: сохранение гостя → шторка входа
+    if (user.isGuest) {
+      openAuthGate('bookmark')
+      haptic('light')
+      return
+    }
     const next = !current.bookmarked
     const nextCount = Math.max(0, current.bookmarksCount + (next ? 1 : -1))
     setLive({ id: current.id, data: { ...current, bookmarked: next, bookmarksCount: nextCount } })
@@ -285,7 +298,7 @@ export function PostOverlay() {
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 32, stiffness: 330 }}
-            className="fixed inset-0 z-[65] mx-auto flex w-full max-w-[430px] flex-col bg-tg-bg"
+            className="fixed inset-0 z-[65] mx-auto flex w-full max-w-[430px] flex-col overflow-hidden bg-tg-bg lg:bottom-auto lg:top-[4vh] lg:h-[92vh] lg:max-w-[760px] lg:rounded-3xl lg:border lg:border-tg-sep lg:shadow-[0_24px_90px_rgba(0,0,0,0.30)]"
             role="dialog"
             aria-modal="true"
             aria-label="Пост"
@@ -386,7 +399,7 @@ export function PostOverlay() {
             </button>
 
             {/* Медиа (все типы: фото/видео/гиф/стикер/файл/аудио/опрос/линк) */}
-            <PostMedia post={current} onDoubleTap={onLike} />
+            <PostMedia post={current} onDoubleTap={onLike} eager />
 
             {/* Текст (тизер или полностью; перевод замещает текст на месте) */}
             {current.text &&
@@ -473,7 +486,7 @@ export function PostOverlay() {
             aria-label="Действия с постом"
             className="absolute inset-x-0 bottom-0 border-t border-tg-sep bg-tg-bg/95 px-4 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2.5 backdrop-blur"
           >
-            <div className="mx-auto flex max-w-[430px] items-center justify-around">
+            <div className="mx-auto flex max-w-[430px] items-center justify-around lg:max-w-[560px]">
               <motion.button
                 type="button"
                 whileTap={{ scale: 1.2 }}
@@ -514,7 +527,7 @@ export function PostOverlay() {
               </button>
               <button
                 type="button"
-                onClick={() => sharePost(current.link, ch.title)}
+                onClick={() => sharePost(current.link, ch.title, current.id)}
                 aria-label={t('post.shareAria')}
                 className="flex items-center gap-1.5 py-1.5"
               >

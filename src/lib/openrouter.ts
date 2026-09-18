@@ -14,9 +14,10 @@ const API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 /** Цепочка моделей: первая доступная отвечает. Приоритет — СКОРОСТЬ при копеечной цене.
  *  Переопределяется env OPENROUTER_MODELS */
 const DEFAULT_MODELS = [
-  'google/gemini-2.5-flash-lite', // самая быстрая из дешёвых (~$0.1/M): перевод за ~1с
+  'z-ai/glm-5.2:free', // GLM (бесплатная): классификация/поддержка/реклама-фильтр без затрат
+  'z-ai/glm-5.3-flash', // исчерпали лимиты бесплатной → сверхдешёвая GLM Flash ($0.09/M)
+  'google/gemini-2.5-flash-lite', // проверенный дешёвый фолбэк (~$0.1/M)
   'mistralai/mistral-nemo', // 12B, предельно дешёвая ($0.019/M) — фолбэк
-  'meta-llama/llama-3.1-8b-instruct', // быстрый платный фолбэк
   'google/gemma-4-26b-a4b-it:free', // бесплатный фолбэк на случай исчерпания кредита
 ]
 

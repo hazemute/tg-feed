@@ -195,6 +195,7 @@ export async function GET(request: Request) {
           channelId: true,
           likesCount: true,
           viewsCount: true,
+          hotScore: true,
           publishedAt: true,
           channel: {
             select: { isPremium: true, categoryId: true },
@@ -211,6 +212,7 @@ export async function GET(request: Request) {
           w: computeWeight({
             likesCount: p.likesCount,
             viewsCount: p.viewsCount,
+            hotScore: p.hotScore,
             publishedAt: p.publishedAt,
             premium: p.channel.isPremium,
           }) + rankJitter(p.id),

@@ -21,6 +21,8 @@ export type RankPost = {
   viewsCount?: number
   publishedAt: Date | string
   premium: boolean
+  /** «Температура» поста: -1 просмотр, +3 дочитали 5с+, +10 лайк, +20 репост */
+  hotScore?: number
 }
 
 export function computeWeight(post: RankPost): number {
@@ -31,6 +33,18 @@ export function computeWeight(post: RankPost): number {
   const engagement =
     post.likesCount * 10 + (post.bookmarksCount ?? 0) * 15 + (post.viewsCount ?? 0) * 0.3
   let weight = (post.premium ? 1000 : 0) + engagement / Math.pow(hours + 2, 1.5)
+
+  /*
+   * «Температура» поста (Redis-ранг из ТЗ, в нашей реализации — счётчик в Postgres):
+   * реальные действия людей ПРЯМО СЕЙЧАС поднимают пост в ленте: дочитали 5с+ (+3),
+   * лайк (+10), репост (+20); простой просмотр остужает (-1). Вклад гаснет со
+   * временем (возраст поста в знаменателе) — «горячее» — это то, что интересно
+   * другим читателям именно сегодня, эффект залипательной ленты.
+   */
+  const hot = post.hotScore ?? 0
+  if (hot > 0) {
+    weight += Math.min(260, hot * 2.4 / Math.pow(hours + 2, 1.1))
+  }
 
   if (post.premium) weight *= 3
   if (hours < 48) weight += (48 - hours) * 2

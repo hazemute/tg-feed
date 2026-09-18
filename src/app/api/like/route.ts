@@ -47,9 +47,10 @@ export async function POST(request: Request) {
     }
 
     await db.like.create({ data: { userId, postId } })
+    // Лайк — сильный сигнал температуры: +10 (см. lib/rank.ts computeWeight)
     const updated = await db.post.update({
       where: { id: postId },
-      data: { likesCount: { increment: 1 } },
+      data: { likesCount: { increment: 1 }, hotScore: { increment: 10 } },
     })
     putFlagsOverride(userId, postId, { liked: true })
     return NextResponse.json({ liked: true, likesCount: updated.reactionsTg + updated.likesCount })

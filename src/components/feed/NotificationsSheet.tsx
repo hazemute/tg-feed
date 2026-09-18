@@ -55,7 +55,7 @@ export function NotificationsSheet({
           animate={{ y: 0 }}
           exit={{ y: '100%' }}
           transition={{ type: 'spring', damping: 32, stiffness: 330 }}
-          className="fixed inset-0 z-[70] mx-auto flex w-full max-w-[430px] flex-col bg-tg-bg"
+          className="fixed inset-0 z-[70] mx-auto flex w-full max-w-[430px] flex-col overflow-hidden bg-tg-bg lg:bottom-auto lg:top-[10vh] lg:h-[80vh] lg:max-w-[620px] lg:rounded-3xl lg:border lg:border-tg-sep lg:shadow-[0_24px_90px_rgba(0,0,0,0.30)]"
           role="dialog"
           aria-modal="true"
           aria-label="Уведомления"

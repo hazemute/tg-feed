@@ -106,6 +106,7 @@ model Post {
   viewsTg     Int? // просмотры из оригинального канала Telegram (t.me/s) — обновляются при парсинге
   reactionsTg Int      @default(0) // сумма всех реакций исходного поста (t.me/s) — обновляются при парсинге
   likesCount  Int      @default(0)
+  hotScore    Float    @default(0) // «температура» поста: -1 просмотр, +3 дочитали 5с+, +10 лайк, +20 репост
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
   translations String? // кэш переводов: {"en":{"text":"…","at":"ISO"}}
   ttsAudio     String? // озвучка поста (base64 mp3, кэш; генерируется по запросу)

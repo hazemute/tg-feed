@@ -82,10 +82,10 @@ export function Sidebar() {
         {user && (
           <div className="mb-3 flex items-center gap-2 rounded-xl bg-tg-surface/70 p-2.5">
             <span className="flex h-7 w-7 items-center justify-center rounded-full bg-tg-link/15 text-[11px] font-bold text-tg-link">
-              {(user.firstName ?? '?').slice(0, 1).toUpperCase()}
+              {(user.isGuest ? 'Ч' : (user.firstName ?? '?')).slice(0, 1).toUpperCase()}
             </span>
             <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-tg-text2">
-              {user.firstName ?? user.username ?? t('nav.reader')}
+              {user.isGuest ? t('nav.reader') : (user.firstName ?? user.username ?? t('nav.reader'))}
             </span>
             <Heart className="h-3.5 w-3.5 text-tg-like" aria-hidden />
           </div>

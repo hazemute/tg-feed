@@ -1,31 +1,63 @@
 'use client'
 
+import { useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { X } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { cn } from '@/lib/utils'
 import { useBackButton } from '@/lib/tg'
 
-/** Лаконичный bottom sheet в стиле Telegram (светлый, без неона) */
+/**
+ * Лаконичный bottom sheet в стиле Telegram (светлый, без неона).
+ *
+ * АДАПТИВНОСТЬ: на телефоне (и в Mini App) — привычная шторка снизу;
+ * на больших экранах (lg+) — центрированный модальный диалог со скруглением
+ * и Esc. Блокировка скролла фона — на всех платформах, Esc — вне Telegram.
+ */
 export function BottomSheet({
   open,
   onClose,
   title,
   subtitle,
   children,
+  /** Ширина панели на lg+ (по умолчанию 560px) */
+  wide,
 }: {
   open: boolean
   onClose: () => void
   title: string
   subtitle?: string
   children: ReactNode
+  wide?: boolean
 }) {
   // Нативная кнопка «назад» Telegram закрывает шит
   useBackButton(open, onClose)
+
+  // Блокируем скролл фона, пока шит открыт (иначе ПК-колёсико листает ленту под модалкой)
+  useEffect(() => {
+    if (!open) return
+    const prev = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = prev
+    }
+  }, [open])
+
+  // Esc на сайте закрывает верхнюю панель (в Telegram закрытие нативной кнопкой)
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open, onClose])
+
   return (
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-[60] flex flex-col justify-end"
+          className="fixed inset-0 z-[60] flex flex-col justify-end lg:justify-center lg:px-6"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -39,9 +71,13 @@ export function BottomSheet({
             animate={{ y: 0 }}
             exit={{ y: '100%' }}
             transition={{ type: 'spring', damping: 30, stiffness: 320 }}
-            className="relative mx-auto w-full max-w-[520px] rounded-t-3xl bg-tg-bg px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-8px_40px_rgba(0,0,0,0.18)]"
+            onClick={(e) => e.stopPropagation()}
+            className={cn(
+              'relative mx-auto max-h-[92dvh] w-full overflow-y-auto rounded-t-3xl bg-tg-bg px-5 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-3 shadow-[0_-8px_40px_rgba(0,0,0,0.18)] lg:max-h-[86vh] lg:rounded-3xl lg:pb-6 lg:pt-5 lg:shadow-[0_24px_80px_rgba(0,0,0,0.28)]',
+              wide ? 'max-w-[520px] lg:max-w-[760px]' : 'max-w-[520px] lg:max-w-[560px]',
+            )}
           >
-            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-tg-sep" aria-hidden />
+            <div className="mx-auto mb-3 h-1 w-10 rounded-full bg-tg-sep lg:hidden" aria-hidden />
             <div className="mb-4 flex items-start justify-between gap-3">
               <div>
                 <div className="text-[19px] font-bold text-tg-text">{title}</div>
@@ -51,7 +87,7 @@ export function BottomSheet({
                 type="button"
                 onClick={onClose}
                 aria-label="Закрыть"
-                className="flex h-8 w-8 items-center justify-center rounded-full bg-tg-surface text-tg-hint active:scale-90"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint active:scale-90"
               >
                 <X className="h-4 w-4" />
               </button>

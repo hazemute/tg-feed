@@ -159,7 +159,9 @@ export async function POST(request: Request) {
       const raw = typeof body?.deviceId === 'string' ? body.deviceId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 64) : ''
       if (!raw) return err('deviceId required')
       id = `guest_${raw}`
-      firstName = 'Гость'
+      // Без «Гость» в имени: клиент сам показывает нейтрального «Читателя»
+      // (и для старых гостевых строк тоже), в БД имя не нужно
+      firstName = ''
     }
 
     const isGuest = !verified

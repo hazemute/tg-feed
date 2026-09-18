@@ -33,6 +33,9 @@ export async function POST(request: Request) {
     const { postId, ms } = parsed.data
     if (ms < 1000) return NextResponse.json({ ok: true }) // шум не пишем
 
+    // Дочитывание — сильный сигнал «горячего» поста: задержался 5с+ → +3 к температуре
+    const hotDelta = ms >= 5_000 ? 3 : 0
+
     const existing = await db.postView.findUnique({
       where: { userId_postId: { userId, postId } },
       select: { id: true },
@@ -45,13 +48,19 @@ export async function POST(request: Request) {
     } else {
       try {
         await db.postView.create({ data: { userId, postId, dwellMs: ms } })
-        await db.post.update({ where: { id: postId }, data: { viewsCount: { increment: 1 } } })
+        await db.post.update({
+          where: { id: postId },
+          data: { viewsCount: { increment: 1 }, hotScore: hotDelta - 1 },
+        })
       } catch {
         // гонка с параллельным просмотром — досыпаем время поверх
         await db.postView
           .update({ where: { userId_postId: { userId, postId } }, data: { dwellMs: { increment: ms } } })
           .catch(() => {})
       }
+    }
+    if (existing && hotDelta > 0) {
+      await db.post.update({ where: { id: postId }, data: { hotScore: { increment: hotDelta } } }).catch(() => {})
     }
 
     return NextResponse.json({ ok: true })

@@ -4,14 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowUpRight,
-  BarChart3,
   Check,
   Copy,
-  Crown,
   Eye,
   EyeOff,
   FileText,
-  Heart,
   Link2,
   Loader2,
   Megaphone,
@@ -22,7 +19,6 @@ import {
   Scissors,
   Send,
   Sparkles,
-  Users,
   Wallet,
   X,
 } from 'lucide-react'
@@ -35,22 +31,16 @@ import { formatSwipes, pluralSwipes } from '@/lib/money'
 import { haptic, openTelegram } from '@/lib/tg'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
+import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
+import { TopUpModal } from '@/components/tabs/TopUpModal'
 import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
 
 /**
- * «Мой канал» — кабинет автора: привязка канала по кодовому слову,
- * живая статистика, гибкие настройки показа в ленте и рекламный
- * кабинет (CPA с эскроу-балансом, пополнение через заготовку ЮKassa).
+ * «Мой канал» — КАБИНЕТ ВЛАДЕЛЬЦА: большая аналитика именно СВОЕГО канала
+ * (просмотры/ER/динамика/ритм/топ постов — как в админке, но у автора),
+ * привязка по кодовому слову, показ в ленте и рекламный кабинет (CPA с
+ * эскроу-балансом). Плоский стиль без карточек — как поручено.
  */
-
-/**
- * Рублевый эквивалент (для подписи «= N ₽» в пополнении — списание идёт в рублях).
- * Сама валюта кабинета — СВАЙПЫ: 1 свайп = 1 ₽ = 100 коп.
- */
-function formatRub(kop: number): string {
-  const rub = kop / 100
-  return rub % 1 === 0 ? `${formatCount(rub)} ₽` : `${rub.toFixed(2)} ₽`
-}
 
 const DISPLAY_MODES = [
   { id: 'none', label: 'Полностью', icon: FileText, hint: 'посты видны целиком' },
@@ -86,12 +76,12 @@ export function MyChannelTab() {
   )
 
   return (
-    <div className="mx-auto w-full max-w-[600px] px-4 pb-28 pt-5 lg:pt-7">
+    <div className="mx-auto w-full max-w-[680px] px-4 pb-28 pt-5 lg:max-w-[980px] lg:pt-7">
       {/* Заголовок */}
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
         <h1 className="text-[26px] font-bold leading-tight text-tg-text">Мой канал</h1>
         <p className="mt-0.5 text-[13.5px] text-tg-hint">
-          Привязка, статистика, показ в ленте и реклама — всё в одном месте
+          Статистика вашего канала, показ в ленте и продвижение — всё в одном месте
         </p>
       </motion.div>
 
@@ -131,7 +121,9 @@ export function MyChannelTab() {
           )}
 
           <ChannelHero channel={channel!} onReload={load} />
-          <StatsGrid channel={channel!} />
+          {/* Большой дашборд именно этого канала (просмотры, ER, динамика,
+              лучшее время, ритм, топ постов) — плоский, без карточек */}
+          <ChannelCabinet key={channel!.username} username={channel!.username} />
           <DisplaySection channel={channel!} onSaved={load} />
           <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />
         </div>
@@ -368,35 +360,6 @@ function ChannelHero({ channel, onReload }: { channel: MyChannelDTO; onReload: (
 }
 
 /* ------------------------------------------------------------------ */
-/* Статистика                                                          */
-/* ------------------------------------------------------------------ */
-
-function StatsGrid({ channel }: { channel: MyChannelDTO }) {
-  const tiles = [
-    { icon: FileText, value: formatCount(channel.stats.posts), label: 'постов', tint: 'bg-tg-link/12 text-tg-link' },
-    { icon: Users, value: formatCount(channel.subscribersCount), label: 'читателей', tint: 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400' },
-    { icon: Eye, value: formatCount(channel.stats.views24h), label: 'просмотров за 24ч', tint: 'bg-amber-500/12 text-amber-600 dark:text-amber-400' },
-    { icon: Heart, value: formatCount(channel.stats.likes), label: 'лайков', tint: 'bg-rose-500/12 text-rose-500' },
-  ]
-  return (
-    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.04 }}>
-      <SectionTitle icon={BarChart3}>Статистика</SectionTitle>
-      <div className="grid grid-cols-2 gap-2.5">
-        {tiles.map((t) => (
-          <div key={t.label} className="rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-3.5">
-            <span className={cn('flex h-8 w-8 items-center justify-center rounded-xl', t.tint)}>
-              <t.icon className="h-4 w-4" />
-            </span>
-            <div className="mt-2.5 text-[20px] font-bold leading-none tabular-nums text-tg-text">{t.value}</div>
-            <div className="mt-1 text-[12px] leading-tight text-tg-hint">{t.label}</div>
-          </div>
-        ))}
-      </div>
-    </motion.section>
-  )
-}
-
-/* ------------------------------------------------------------------ */
 /* Настройки показа в ленте                                            */
 /* ------------------------------------------------------------------ */
 
@@ -584,133 +547,13 @@ function AdsSection({
         </button>
       </div>
 
-      {/* Шит пополнения (заготовка ЮKassa) */}
-      <TopUpSheet open={topUpOpen} onClose={() => setTopUpOpen(false)} onReload={onReload} />
+      {/* Пополнение: на ПК — целая страница, в миниаппе — шторка; 3 способа оплаты */}
+      <TopUpModal open={topUpOpen} onClose={() => setTopUpOpen(false)} onReload={onReload} />
       {/* Форма кампании */}
       <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} title="Новая кампания">
         <CampaignForm channel={channel} onDone={() => { setFormOpen(false); onReload() }} />
       </BottomSheet>
     </motion.section>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Пополнение: свайпы (1 свайп = 1 ₽), оплата в рублях через ЮKassa    */
-/* ------------------------------------------------------------------ */
-
-/** Пресеты в СВАЙПАХ (от 100 ₽ за операцию — требование эквайринга) */
-const TOPUP_PRESETS = [100, 500, 1000, 5000]
-
-function TopUpSheet({ open, onClose, onReload }: { open: boolean; onClose: () => void; onReload: () => void }) {
-  const [amount, setAmount] = useState(1000) // свайпы
-  const [custom, setCustom] = useState('')
-  const [state, setState] = useState<'idle' | 'busy' | 'created'>('idle')
-  const [paymentId, setPaymentId] = useState<string | null>(null)
-
-  const effective = custom.trim() ? Math.max(0, Math.round(Number(custom) || 0)) : amount
-  const valid = effective >= 100 && effective <= 50_000
-
-  const pay = async () => {
-    if (state === 'busy' || !valid) return
-    setState('busy')
-    try {
-      const r = await api<{ ok: boolean; paymentId: string; confirmationUrl: string | null }>('/api/payments', {
-        method: 'POST',
-        body: JSON.stringify({ amountKop: effective * 100 }),
-      })
-      setPaymentId(r.paymentId)
-      if (r.confirmationUrl) {
-        openTelegram(r.confirmationUrl)
-        onClose()
-        onReload()
-        return
-      }
-      setState('created')
-    } catch (err) {
-      toast.error((err as Error).message || 'Не удалось создать платёж')
-      setState('idle')
-    }
-  }
-
-  return (
-    <BottomSheet open={open} onClose={onClose} title="Пополнить баланс">
-      {state === 'created' ? (
-        <div className="py-2 text-center">
-          <span className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-tg-link/12">
-            <Wallet className="h-7 w-7 text-tg-link" />
-          </span>
-          <div className="mt-3 text-[17px] font-bold text-tg-text">Платёж создан</div>
-          <p className="mx-auto mt-1.5 max-w-[300px] text-[13.5px] leading-relaxed text-tg-hint">
-            Эквайринг ЮKassa подключается — как только оплата пройдёт, свайпы зачислятся
-            автоматически. Номер платежа: <span className="font-mono text-tg-text2">{paymentId}</span>
-          </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="mt-4 h-11 w-full rounded-2xl bg-tg-surface text-[14px] font-semibold text-tg-text active:scale-[0.98]"
-          >
-            Понятно
-          </button>
-        </div>
-      ) : (
-        <>
-          <SheetTitle icon={Wallet} title="Пополнение свайпов" subtitle="1 свайп = 1 ₽ · зачисление после оплаты" />
-          <div className="mt-3 grid grid-cols-4 gap-2">
-            {TOPUP_PRESETS.map((sw) => (
-              <button
-                key={sw}
-                type="button"
-                onClick={() => {
-                  haptic('light')
-                  setAmount(sw)
-                  setCustom('')
-                }}
-                className={cn(
-                  'rounded-xl border py-2.5 text-[13.5px] font-bold transition active:scale-95',
-                  effective === sw
-                    ? 'border-tg-link bg-tg-link/10 text-tg-link'
-                    : 'border-tg-sep/60 bg-tg-bg text-tg-text2',
-                )}
-              >
-                {formatCount(sw)}
-              </button>
-            ))}
-          </div>
-          <div className="mt-2.5">
-            <input
-              type="number"
-              inputMode="numeric"
-              min={100}
-              max={50000}
-              value={custom}
-              onChange={(e) => setCustom(e.target.value)}
-              placeholder="Своя сумма — от 100"
-              aria-label="Сумма пополнения в свайпах"
-              className={cn(
-                INPUT_CLS,
-                custom.trim() && !valid && 'border-rose-400/70 focus:border-rose-400/70',
-              )}
-            />
-            <div className="mt-1 flex justify-between px-1 text-[11.5px] text-tg-hint">
-              <span>{valid ? `= ${formatRub(effective * 100)} к оплате` : 'от 100 до 50 000 свайпов'}</span>
-              <span>1 свайп = 1 ₽</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            onClick={pay}
-            disabled={state === 'busy' || !valid}
-            className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:bg-tg-sep/60 disabled:text-tg-hint"
-          >
-            {state === 'busy' ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Wallet className="h-4.5 w-4.5" />}
-            Пополнить на {formatCount(effective)} {pluralSwipes(effective)}
-          </button>
-          <p className="mt-2 pb-1 text-center text-[11.5px] leading-snug text-tg-hint">
-            Деньги резервируются на эскроу-счёте и списываются только за уникальных читателей
-          </p>
-        </>
-      )}
-    </BottomSheet>
   )
 }
 
@@ -955,7 +798,8 @@ function Metric({ value, label }: { value: string; label: string }) {
 type CampaignDTOView = MyChannelDTO['campaigns'][number]
 
 const INPUT_CLS =
-  'h-11 w-full rounded-xl border border-tg-sep bg-tg-bg px-3.5 text-[14.5px] text-tg-text outline-none placeholder:text-tg-hint focus:border-tg-link'
+  // 16px — iOS не зумит поле при фокусе (ниже 16 зумит) — забота о всех устройствах
+  'h-11 w-full rounded-xl border border-tg-sep bg-tg-bg px-3.5 text-[16px] text-tg-text outline-none placeholder:text-tg-hint focus:border-tg-link'
 
 function SectionTitle({ icon: Icon, children }: { icon: typeof Eye; children: React.ReactNode }) {
   return (
