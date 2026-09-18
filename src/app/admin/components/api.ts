@@ -87,6 +87,7 @@ export interface PanelChannel {
   avatarUrl?: string | null
   status: ChannelStatus
   isPremium: boolean
+  verified: boolean
   categoryId: string | null
   categoryTitle: string | null
   subscribersCount: number

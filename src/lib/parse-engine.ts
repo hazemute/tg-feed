@@ -336,10 +336,10 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
 
 /**
  * Премиум-эмодзи: посты несут маркеры ![e:ID](thumb). Резолвим Bot API, какие
- * ID — анимированные видео-стикеры (кэш в таблице CustomEmoji навсегда),
- * и переписываем их маркеры в ![ev:ID](…) — клиент рендерит <video>.
- * Первый проход по каналу: 1 getCustomEmojiStickers + N getFile на НОВЫЕ id;
- * дальше всё берётся из таблицы — ноль Bot API вызовов.
+ * ID — анимированные (кэш в таблице CustomEmoji навсегда) и переписываем
+ * маркеры: видео-стикеры → ![ev:ID](…), Lottie (.tgs) → ![el:ID](…) — клиент
+ * рендерит <video> / lottie-web. Первый проход по каналу: 1
+ * getCustomEmojiStickers на НОВЫЕ id; дальше всё из таблицы — ноль Bot API.
  */
 async function upgradeCustomEmoji(posts: ParsedPost[]): Promise<ParsedPost[]> {
   if (!botEnabled()) return posts
@@ -358,24 +358,34 @@ async function upgradeCustomEmoji(posts: ParsedPost[]): Promise<ParsedPost[]> {
         const s = stickers.get(id)
         const row = {
           id,
-          kind: s?.video ? 'video' : 'static',
-          fileId: s?.video && s.fileId ? s.fileId : null,
+          kind: s?.video ? 'video' : s?.animated ? 'lottie' : 'static',
+          animated: s?.animated === true,
+          fileId: (s?.video || s?.animated) && s.fileId ? s.fileId : null,
         }
         await db.customEmoji
-          .upsert({ where: { id: row.id }, create: row, update: { kind: row.kind, fileId: row.fileId } })
+          .upsert({
+            where: { id: row.id },
+            create: row,
+            update: { kind: row.kind, animated: row.animated, fileId: row.fileId },
+          })
           .catch(() => {})
         knownMap.set(id, { ...row, fetchedAt: new Date() })
       }
     }
-    const animated = new Set(
-      [...knownMap.values()].filter((r) => r.kind === 'video' && r.fileId).map((r) => r.id),
+    const animated = new Map(
+      [...knownMap.values()]
+        .filter((r) => (r.kind === 'video' || r.kind === 'lottie') && r.fileId)
+        .map((r) => [r.id, r.kind] as const),
     )
     if (animated.size === 0) return posts
     for (const p of posts) {
       if (!p.text.includes('![e:')) continue
-      p.text = p.text.replace(/!\[e:(\d+)\]\(/g, (full, id: string) =>
-        animated.has(id) ? `![ev:${id}](` : full,
-      )
+      p.text = p.text.replace(/!\[e:(\d+)\]\(/g, (full, id: string) => {
+        const k = animated.get(id)
+        if (k === 'video') return `![ev:${id}](`
+        if (k === 'lottie') return `![el:${id}](`
+        return full
+      })
     }
   } catch {
     // резолвер не должен ронять парсинг — эмодзи остаются статичными

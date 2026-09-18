@@ -438,3 +438,6 @@ COMMIT;
 -- Посты с каруселью (ожидается 6):
 -- SELECT count(*) FROM "Post" WHERE "gallery" IS NOT NULL;
 -- ============================================================================
+
+-- v5.5: галочки официальных каналов (курированный список)
+-- UPDATE "Channel" SET "verified" = true WHERE "username" IN ('mash','lenta_ru','by_mts','rian_ru','tass_agency','interfax_news','proglib','habr_com','ostorozhno_novosti','whale_alert','lentachold','tproger_channels','championat','fparf','vedomosti','durov','rbc_news','rusnews');

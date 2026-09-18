@@ -18,6 +18,7 @@ import {
 } from '@/lib/search-history'
 import type { ChannelDTO, PostDTO, SearchResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
+import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
 
 type Filter = 'channels' | 'topics' | 'posts'
 
@@ -459,8 +460,11 @@ export function SearchTab() {
                 <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={44} />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-2">
-                    <span className="truncate text-[15px] font-semibold text-tg-text">
-                      {p.channel.title}
+                    <span className="flex min-w-0 items-center gap-1">
+                      <span className="truncate text-[15px] font-semibold text-tg-text">
+                        {p.channel.title}
+                      </span>
+                      {p.channel.verified && <VerifiedBadge size={13} />}
                     </span>
                     <span className="shrink-0 text-[12px] text-tg-hint">
                       {timeAgoRu(p.publishedAt)}
@@ -512,8 +516,11 @@ function ChannelRow({
         onClick={onOpen}
         className="min-w-0 flex-1 text-left"
       >
-        <span className="block truncate text-[16.5px] font-bold leading-snug text-tg-text">
-          {channel.title}
+        <span className="flex w-full items-center gap-1">
+          <span className="block truncate text-[16.5px] font-bold leading-snug text-tg-text">
+            {channel.title}
+          </span>
+          {channel.verified && <VerifiedBadge size={15} />}
         </span>
         {channel.description && (
           <span className="mt-0.5 line-clamp-2 text-[14px] leading-snug text-tg-hint">

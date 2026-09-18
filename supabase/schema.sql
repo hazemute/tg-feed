@@ -321,3 +321,7 @@ CREATE TABLE IF NOT EXISTS "Comment" (
 );
 CREATE INDEX IF NOT EXISTS "Comment_postId_createdAt_idx" ON "Comment"("postId", "createdAt");
 CREATE INDEX IF NOT EXISTS "Comment_userId_idx" ON "Comment"("userId");
+
+-- v5.5: Lottie-премиум-эмодзи (.tgs) + галочка верификации каналов
+ALTER TABLE "CustomEmoji" ADD COLUMN IF NOT EXISTS "animated" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "verified" BOOLEAN NOT NULL DEFAULT false;

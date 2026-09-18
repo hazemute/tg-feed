@@ -62,6 +62,7 @@ type PageRow = {
   c_membersCount: number | null
   c_subscribersCount: number
   c_isPremium: boolean
+  c_verified: boolean
   c_status: string
   c_teaserMode: string
   c_teaserLimit: number
@@ -107,6 +108,7 @@ function postFromRow(r: PageRow): PostWithChannel {
       membersCount: r.c_membersCount,
       subscribersCount: r.c_subscribersCount,
       isPremium: r.c_isPremium,
+      verified: r.c_verified,
       status: r.c_status,
       teaserMode: r.c_teaserMode,
       teaserLimit: r.c_teaserLimit,
@@ -270,7 +272,8 @@ export async function GET(request: Request) {
                    c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
                    c."avatarUrl"    AS "c_avatarUrl",
                    c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
-                   c."isPremium"    AS "c_isPremium", c."status"     AS "c_status",
+                   c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
+                   c."status"     AS "c_status",
                    c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
                    cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
                    (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
@@ -338,7 +341,8 @@ export async function GET(request: Request) {
                    c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
                    c."avatarUrl"    AS "c_avatarUrl",
                    c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
-                   c."isPremium"    AS "c_isPremium", c."status"     AS "c_status",
+                   c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
+                   c."status"     AS "c_status",
                    c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
                    cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
                    (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",

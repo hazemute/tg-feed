@@ -528,14 +528,19 @@ async function callMethod(method: string, body: Record<string, unknown>): Promis
   }
 }
 
-/** Информация о кастомном эмодзи: анимированный видео-стикер + file_id файла */
-export type CustomEmojiInfo = { video: boolean; fileId: string | null }
+/** Информация о кастомном эмодзи: тип анимации + file_id файла */
+export type CustomEmojiInfo = {
+  video: boolean // is_video — видео-стикер (webm), рендерим <video>
+  animated: boolean // is_animated — Lottie-набор (.tgs), рендерим lottie-web
+  fileId: string | null
+}
 
 /**
  * Премиум-эмодзи через Bot API getCustomEmojiStickers (до 200 id за вызов).
  * Возвращает map: custom_emoji_id → информация о стикере. Анимированные
- * видео-стикеры (is_video) рендерятся миниаппом как <video> через /api/emoji/[id];
- * Lottie-наборы (.tgs) не рендерим без плеера — остаются статичные картинки.
+ * рендерятся миниаппом: is_video → <video> через /api/emoji/[id];
+ * is_animated (.tgs) → lottie-web через тот же роут (gzip-JSON распаковывает
+ * браузер, байты идут через /api/media — CDN-кэш Vercel). Статичные — <img>.
  */
 export async function getCustomEmojiStickers(ids: string[]): Promise<Map<string, CustomEmojiInfo>> {
   const out = new Map<string, CustomEmojiInfo>()
@@ -554,11 +559,20 @@ export async function getCustomEmojiStickers(ids: string[]): Promise<Map<string,
         // ВНИМАНИЕ: file_id у Sticker лежит НА ВЕРХНЕМ УРОВНЕ объекта
         // (вложенного s.file НЕ существует — из-за него 4.4k видео-эмодзи
         // остались с fileId=NULL и никогда не анимировались)
-        result?: Array<{ custom_emoji_id?: string; is_video?: boolean; file_id?: string }>
+        result?: Array<{
+          custom_emoji_id?: string
+          is_video?: boolean
+          is_animated?: boolean
+          file_id?: string
+        }>
       } | null
       for (const s of data?.result ?? []) {
         if (s.custom_emoji_id) {
-          out.set(s.custom_emoji_id, { video: s.is_video === true, fileId: s.file_id ?? null })
+          out.set(s.custom_emoji_id, {
+            video: s.is_video === true,
+            animated: s.is_animated === true,
+            fileId: s.file_id ?? null,
+          })
         }
       }
     } catch {

@@ -11,6 +11,7 @@ import { formatCount, timeAgo } from '@/lib/format'
 import { haptic, openTelegram, sharePost } from '@/lib/tg'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
+import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
 import { RichText } from '@/components/feed/RichText'
 import { PostMedia } from '@/components/feed/PostMedia'
 import { translatedText, TranslateControl, useTranslation } from '@/components/feed/TranslateButton'
@@ -425,6 +426,7 @@ export function PostCard({
               <span className="truncate text-[16.5px] font-bold leading-tight text-tg-text">
                 {ch.title}
               </span>
+              {ch.verified && <VerifiedBadge size={15} />}
               {ch.isPremium && (
                 <Star
                   className="h-3.5 w-3.5 shrink-0 fill-tg-star text-tg-star"

@@ -112,9 +112,20 @@ function Spoiler({
 }
 
 /** Инлайн-эмодзи Telegram — общий ленивый плеер (TelegramEmoji.tsx):
- *  видео-стикеры инициализируются только в зоне видимости, вне экрана — пауза */
-function EmojiSpan({ url, id, animated }: { url: string; id?: string; animated?: boolean }) {
-  return <TgEmoji url={url} id={id} animated={animated} />
+ *  видео-стикеры и Lottie инициализируются только в зоне видимости,
+ *  вне экрана — пауза */
+function EmojiSpan({
+  url,
+  id,
+  animated,
+  lottie,
+}: {
+  url: string
+  id?: string
+  animated?: boolean
+  lottie?: boolean
+}) {
+  return <TgEmoji url={url} id={id} animated={animated} lottie={lottie} />
 }
 
 function SpanView({ span, nested }: { span: Span; nested?: boolean }) {
@@ -149,8 +160,8 @@ function SpanView({ span, nested }: { span: Span; nested?: boolean }) {
     case 'spoiler':
       return <Spoiler v={span.v} kids={kids} nested={nested} />
     case 'emoji':
-      // Премиум-эмодзи Telegram (статика или анимированный видео-стикер)
-      return <EmojiSpan url={span.url} id={span.id} animated={span.animated} />
+      // Премиум-эмодзи Telegram (статика, видео-стикер или Lottie)
+      return <EmojiSpan url={span.url} id={span.id} animated={span.animated} lottie={span.lottie} />
     case 'link':
       if (nested) {
         return (

@@ -67,9 +67,10 @@ export async function GET(request: Request) {
         username: c.username,
         description: c.description,
         avatarColor: c.avatarColor,
-        avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
+        avatarUrl: c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
         status: c.status,
         isPremium: c.isPremium,
+        verified: c.verified,
         categoryId: c.categoryId,
         categoryTitle: c.category?.title ?? null,
         subscribersCount: c.subscribersCount,
@@ -91,6 +92,7 @@ const patchSchema = z.object({
   id: z.string().min(1).max(64),
   status: z.enum(STATUSES).optional(),
   isPremium: z.boolean().optional(),
+  verified: z.boolean().optional(),
 })
 
 /**
@@ -103,25 +105,26 @@ export async function PATCH(request: Request) {
 
   try {
     const parsed = patchSchema.safeParse(await readJson(request))
-    if (!parsed.success) return err('id и status/isPremium обязательны')
-    const { id, status, isPremium } = parsed.data
-    if (status === undefined && isPremium === undefined) {
-      return err('нужно указать status или isPremium')
+    if (!parsed.success) return err('id и status/isPremium/verified обязательны')
+    const { id, status, isPremium, verified } = parsed.data
+    if (status === undefined && isPremium === undefined && verified === undefined) {
+      return err('нужно указать status, isPremium или verified')
     }
 
     const channel = await db.channel.update({
       where: { id },
       data: {
         ...(status !== undefined ? { status } : {}),
+        ...(verified !== undefined ? { verified } : {}),
         // премиум: на 14 дней вперёд при включении, сброс при выключении
         ...(isPremium !== undefined
           ? { isPremium, premiumUntil: isPremium ? new Date(Date.now() + 14 * 24 * 3600 * 1000) : null }
           : {}),
       },
-      select: { id: true, status: true, isPremium: true },
+      select: { id: true, status: true, isPremium: true, verified: true },
     })
 
-    // Инвалидация кэша: статус/премиум влияет на ленту и каталог
+    // Инвалидация кэша: статус/премиум/галочка влияет на ленту и каталог
     await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
 
     return NextResponse.json({ ok: true, channel })

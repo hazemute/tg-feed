@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, Loader2, RefreshCw, Search, SearchX, Star, Trash2 } from 'lucide-react'
+import { AlertTriangle, BadgeCheck, Loader2, RefreshCw, Search, SearchX, Star, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import {
@@ -121,8 +121,11 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
     }
   }, [status, debouncedQ, page, tick, localTick])
 
-  /** Оптимистичный PATCH статуса/премиума с откатом при ошибке. */
-  const patch = async (ch: PanelChannel, body: { status?: ChannelStatus; isPremium?: boolean }) => {
+  /** Оптимистичный PATCH статуса/премиума/галочки с откатом при ошибке. */
+  const patch = async (
+    ch: PanelChannel,
+    body: { status?: ChannelStatus; isPremium?: boolean; verified?: boolean },
+  ) => {
     const snapshot = data
     setSavingId(ch.id)
     setData((prev) =>
@@ -133,6 +136,8 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
       if (body.status) toast.success(`«${ch.title}» — ${statusLabel(body.status)}`)
       if (body.isPremium !== undefined)
         toast.success(`Премиум ${body.isPremium ? 'включён' : 'выключен'} — «${ch.title}»`)
+      if (body.verified !== undefined)
+        toast.success(`Галочка ${body.verified ? 'выдана' : 'снята'} — «${ch.title}»`)
     } catch (e) {
       setData(snapshot)
       if (!isAuthOrNetworkError(e) && e instanceof PanelError) toast.error(e.message)
@@ -256,6 +261,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                     <TableHead className="text-xs text-slate-500">Категория</TableHead>
                     <TableHead className="text-xs text-slate-500">Статус</TableHead>
                     <TableHead className="text-xs text-slate-500">Премиум</TableHead>
+                    <TableHead className="text-xs text-slate-500" title="Официальный канал — синяя галочка в ленте и поиске">Галочка</TableHead>
                     <TableHead className="text-right text-xs text-slate-500">Подписчики</TableHead>
                     <TableHead className="text-right text-xs text-slate-500">Посты</TableHead>
                     <TableHead className="text-xs text-slate-500">Создан</TableHead>
@@ -271,6 +277,26 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                           <div className="max-w-[220px]">
                             <div className="flex items-center gap-1 truncate text-sm font-medium text-slate-800">
                               <span className="truncate">{ch.title}</span>
+                              {ch.verified ? (
+                                <span
+                                  title="Официальный канал"
+                                  className="relative inline-flex shrink-0"
+                                >
+                                  <BadgeCheck className="size-3.5 fill-sky-500 text-sky-500" strokeWidth={0} aria-hidden />
+                                  <svg
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="white"
+                                    strokeWidth="3.4"
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    className="absolute inset-0 size-3.5"
+                                    aria-hidden
+                                  >
+                                    <path d="m9 12 2 2 4-4" />
+                                  </svg>
+                                </span>
+                              ) : null}
                               {ch.isPremium ? (
                                 <Star className="size-3 shrink-0 fill-amber-400 text-amber-400" aria-hidden />
                               ) : null}
@@ -292,6 +318,15 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                           onCheckedChange={(v) => void patch(ch, { isPremium: v })}
                           aria-label={`Премиум: ${ch.title}`}
                           className="data-[state=checked]:bg-emerald-500"
+                        />
+                      </TableCell>
+                      <TableCell>
+                        <Switch
+                          checked={ch.verified}
+                          disabled={savingId === ch.id}
+                          onCheckedChange={(v) => void patch(ch, { verified: v })}
+                          aria-label={`Галочка верификации: ${ch.title}`}
+                          className="data-[state=checked]:bg-sky-500"
                         />
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-slate-700">

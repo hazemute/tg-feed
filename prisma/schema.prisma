@@ -69,6 +69,7 @@ model Channel {
   category         Category  @relation(fields: [categoryId], references: [id])
   isPremium        Boolean   @default(false)
   premiumUntil     DateTime?
+  verified         Boolean   @default(false) // официальный канал (галочка) — вручную через админку
   status           String    @default("active") // active | moderation
   subscribersCount Int       @default(0)
   clicksCount      Int       @default(0) // клики по кнопке [+] подписки
@@ -315,7 +316,8 @@ model SystemSetting {
 // kind: 'video' (анимированный webm) | 'static' (только статичная картинка)
 model CustomEmoji {
   id        String   @id
-  kind      String   @default("static")
+  kind      String   @default("static") // static | video (webm) | lottie (.tgs)
+  animated  Boolean  @default(false) // is_animated из Bot API (Lottie-наборы)
   fileId    String?
   fetchedAt DateTime @updatedAt
 }

@@ -12,6 +12,7 @@ import { openChannelToJoin } from '@/lib/tg-subscribe'
 import { formatCount, timeAgoRu } from '@/lib/format'
 import type { ChannelDTO, PostDTO, RelatedChannelDTO, RelatedChannelsResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
+import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
 import { PostMedia } from '@/components/feed/PostMedia'
 import { ExpandableText } from '@/components/feed/actions'
 
@@ -300,7 +301,10 @@ function ChannelScreen({
               <div className="flex items-center gap-4">
                 <Avatar name={channel.title} color={channel.avatarColor} src={channel.avatarUrl} size={76} />
                 <div className="min-w-0 flex-1">
-                  <h1 className="truncate text-[21px] font-bold leading-tight text-tg-text">{channel.title}</h1>
+                  <h1 className="flex min-w-0 items-center gap-1.5 text-[21px] font-bold leading-tight text-tg-text">
+                    <span className="truncate">{channel.title}</span>
+                    {channel.verified && <VerifiedBadge size={18} />}
+                  </h1>
                   <div className="mt-0.5 text-[14px] text-tg-link">@{channel.username}</div>
                   <div className="mt-1.5 flex items-center gap-4 text-[13.5px] text-tg-hint">
                     {channel.subscribersCount > 0 && (
@@ -629,8 +633,9 @@ function RelatedCard({
       className="relative flex w-[150px] shrink-0 snap-start flex-col items-center gap-2 rounded-2xl border border-tg-sep/60 px-3 py-4"
     >
       <Avatar name={channel.title} color={channel.avatarColor} src={channel.avatarUrl} size={56} />
-      <span className="line-clamp-1 w-full text-center text-[14px] font-bold leading-tight text-tg-text">
-        {channel.title}
+      <span className="line-clamp-1 flex w-full items-center justify-center gap-1 text-center text-[14px] font-bold leading-tight text-tg-text">
+        <span className="truncate">{channel.title}</span>
+        {channel.verified && <VerifiedBadge size={13} />}
       </span>
       <span className="whitespace-nowrap text-[11.5px] leading-none text-tg-hint">
         {formatCount(channel.subscribers)} подписчиков

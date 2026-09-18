@@ -19,6 +19,8 @@ export type ChannelDTO = {
   avatarUrl?: string | null
   subscribersCount: number
   isPremium: boolean
+  /** Официальный канал — синяя галочка (как в Telegram), ставится вручную в админке */
+  verified?: boolean
   status: string
   categorySlug: string | null
   categoryTitle: string | null
@@ -285,6 +287,7 @@ export type RelatedChannelDTO = {
   /** Число подписчиков (короткое имя поля для компактного DTO рельса) */
   subscribers: number
   isPremium: boolean
+  verified?: boolean
   avatarColor?: string
   avatarUrl?: string | null
   categorySlug: string | null

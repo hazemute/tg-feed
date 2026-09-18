@@ -345,7 +345,7 @@ export type Span =
   | { t: 'code'; v: string }
   | { t: 'spoiler'; v: string; kids?: Span[] }
   | { t: 'link'; v: string; href: string; kids?: Span[] }
-  | { t: 'emoji'; url: string; id?: string; animated?: boolean }
+  | { t: 'emoji'; url: string; id?: string; animated?: boolean; lottie?: boolean }
 
 export type Block =
   | { type: 'p'; spans: Span[] }
@@ -379,7 +379,7 @@ export type Block =
  * (метка ≤160 симв., максимум один перенос строки без пустых строк), 10 url, 11 mention.
  */
 const SPAN_RE =
-  /(!\[e(?:v)?(?::\d+)?\]\([^)\s]+\))|(\*\*(?:(?!\*\*)[\s\S])+?\*\*)|((?<![a-zA-Z0-9_])__(?:(?!__)[\s\S])+?__)|(~~(?:(?!~~)[\s\S])+?~~)|(`[^`]+`)|(\|\|(?:(?!\|\|)[\s\S])+?\|\|)|(\^\^(?:(?!\^\^)[\s\S])+?\^\^)|(\[\[[^\]\n]{1,160}\]\]\([^)\s]+\))|(\[(?:[^\]\n]|\n(?!\n)){1,160}\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:])|(@[a-zA-Z][a-zA-Z0-9_]{3,})/g
+  /(!\[e(?:v|l)?(?::\d+)?\]\([^)\s]+\))|(\*\*(?:(?!\*\*)[\s\S])+?\*\*)|((?<![a-zA-Z0-9_])__(?:(?!__)[\s\S])+?__)|(~~(?:(?!~~)[\s\S])+?~~)|(`[^`]+`)|(\|\|(?:(?!\|\|)[\s\S])+?\|\|)|(\^\^(?:(?!\^\^)[\s\S])+?\^\^)|(\[\[[^\]\n]{1,160}\]\]\([^)\s]+\))|(\[(?:[^\]\n]|\n(?!\n)){1,160}\]\([^)\s]+\))|(\bhttps?:\/\/[^\s<>()]+[^\s<>().,!?"';:])|(@[a-zA-Z][a-zA-Z0-9_]{3,})/g
 
 const MAX_SPAN_DEPTH = 3
 
@@ -514,15 +514,16 @@ export function spansOf(line: string, depth = 0): Span[] {
         kids: depth < MAX_SPAN_DEPTH ? spansOf(label, depth + 1) : undefined,
       })
     } else if (m[1] !== undefined) {
-      // ![e](url) / ![e:ID](url) / ![ev:ID](url) — премиум-эмодзи Telegram;
-      // animated=true — Bot API подтвердил видео-стикер, рендерим <video> с /api/emoji/ID
-      const em = m[1].match(/^!\[e(v)?(?::(\d+))?\]\(([^)\s]+)\)$/)
+      // ![e](url) / ![e:ID](url) / ![ev:ID](url) / ![el:ID](url) — премиум-эмодзи Telegram;
+      // ev — видео-стикер (<video>), el — Lottie (.tgs через lottie-web)
+      const em = m[1].match(/^!\[e(v|l)?(?::(\d+))?\]\(([^)\s]+)\)$/)
       if (em) {
         spans.push({
           t: 'emoji',
           url: em[3],
           ...(em[2] ? { id: em[2] } : {}),
-          ...(em[1] ? { animated: true } : {}),
+          ...(em[1] === 'v' ? { animated: true } : {}),
+          ...(em[1] === 'l' ? { lottie: true } : {}),
         })
       }
     } else if (m[10] !== undefined) {
