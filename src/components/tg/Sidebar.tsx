@@ -5,7 +5,8 @@ import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
-import { haptic } from '@/lib/tg'
+import { haptic, userAvatarUrl } from '@/lib/tg'
+import { Avatar } from '@/components/tg/Avatar'
 import { APP_VERSION } from '@/lib/version'
 import type { Tab } from '@/lib/types'
 
@@ -81,9 +82,13 @@ export function Sidebar() {
       <div className="mt-auto px-2">
         {user && (
           <div className="mb-3 flex items-center gap-2 rounded-xl bg-tg-surface/70 p-2.5">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-tg-link/15 text-[11px] font-bold text-tg-link">
-              {(user.isGuest ? 'Ч' : (user.firstName ?? '?')).slice(0, 1).toUpperCase()}
-            </span>
+            {/* Фото профиля (если есть) с фолбэком на инициал — как в профиле */}
+            <Avatar
+              name={user.isGuest ? 'Читатель' : (user.firstName ?? user.username ?? '?')}
+              src={userAvatarUrl(user.id, user.photoUrl)}
+              size={28}
+              className="text-[11px]"
+            />
             <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-tg-text2">
               {user.isGuest ? t('nav.reader') : (user.firstName ?? user.username ?? t('nav.reader'))}
             </span>

@@ -13,8 +13,11 @@ import { bearerToken, verifySessionEdge } from '@/lib/session-edge'
  * 2) Режим техработ: при включённом флаге (Redis sys:maintenance, локальный
  *    кэш 15с) все /api/* отвечают 503 {maintenance:true}, КРОМЕ:
  *    /api/auth (клиент узнаёт статус), /api/panel/* (админка),
- *    /api/health (мониторы). Проходят мимо: админы из ADMIN_TG_IDS и
- *    UID из белого списка sys:maint_pass (проверка JWT в Edge + SISMEMBER).
+ *    /api/health (мониторы), /api/bot|payments/webhook (внешние системы)
+ *    и публичных медиа-GET /api/avatar|media|emoji — <img> не умеет
+ *    Authorization, аватарки/фото не должны отваливаться у допущенных.
+ *    Проходят мимо: админы из ADMIN_TG_IDS и UID из белого списка
+ *    sys:maint_pass (проверка JWT в Edge + SISMEMBER).
  *    HTML-страницы не блокируются — клиент показывает экран техработ.
  *
  * УСТОЙЧИВОСТЬ: у Edge нет доступа к PostgreSQL, поэтому Node-рантайм
@@ -172,8 +175,8 @@ function adminUids(): string[] {
     .map((s) => (s.startsWith('tg_') ? s : `tg_${s}`))
 }
 
-/** Пути, которые работают даже при техработах */
-function maintenanceExempt(path: string): boolean {
+/** Пути, которые не трогаем анти-флудом (внешние системы и мониторинг) */
+function floodExempt(path: string): boolean {
   return (
     path.startsWith('/api/auth') ||
     path.startsWith('/api/panel') ||
@@ -182,6 +185,25 @@ function maintenanceExempt(path: string): boolean {
     // вебхуки — внешние системы: вход через бота и оплата не должны ломаться
     path.startsWith('/api/bot/webhook') ||
     path.startsWith('/api/payments/webhook')
+  )
+}
+
+/**
+ * Пути, которые работают даже при техработах.
+ *
+ * + ПУБЛИЧНЫЕ МЕДИА-GET (avatar/media/emoji): <img>/<video> не умеют
+ * Authorization — иначе у допущенных пользователей при техработах отваливались
+ * ВСЕ аватарки и фото постов (503 на каждый запрос картинок, владелец видел
+ * серые инициалы вместо аватара и «вечный» shimmer вместо фото). Контент этих
+ * эндпоинтов — публичные картинки Telegram (те же t.me), тексты постов
+ * остаются закрыты; у каждого роута свой лимит (guardIp).
+ */
+function maintenanceExempt(path: string): boolean {
+  return (
+    floodExempt(path) ||
+    path.startsWith('/api/avatar') ||
+    path.startsWith('/api/media') ||
+    path.startsWith('/api/emoji')
   )
 }
 
@@ -196,7 +218,7 @@ export async function middleware(request: NextRequest) {
   const ip = clientIp(request)
 
   // --- Слой 0: анти-флуд на все /api/* (только не админ-панель из локальной сети) ---
-  if (!maintenanceExempt(path) && !floodAllowed(ip)) {
+  if (!floodExempt(path) && !floodAllowed(ip)) {
     return NextResponse.json(
       { error: 'too many requests' },
       { status: 429, headers: { 'Retry-After': String(WINDOW_SEC) } },

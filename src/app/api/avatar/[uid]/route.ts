@@ -27,11 +27,39 @@ export const dynamic = 'force-dynamic'
 /** Доверенные хосты аватарок Telegram (redirect только на них) */
 const AVATAR_HOST_RE = /^(?:t\.me|(?:[a-z0-9-]+\.)?telegram\.org|(?:[a-z0-9-]+\.)?telesco\.pe)$/i
 
+/** Хост НАШЕГО Supabase Storage — аватарки каналов заливает туда только наш парсер */
+const STORAGE_HOST = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').hostname || null
+  } catch {
+    return null
+  }
+})()
+
 function isSafePhotoUrl(raw: string): boolean {
   try {
     const u = new URL(raw)
     if (u.protocol !== 'https:') return false
     return AVATAR_HOST_RE.test(u.hostname)
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Редирект для аватарки КАНАЛА: доверенные хосты Telegram + свой Supabase
+ * Storage. БАГФИКС: Storage-ссылки (554 канала, uehhvzutlaxgbpnwmijo.supabase.co)
+ * не проходили isSafePhotoUrl — постоянная аватарка отклонялась, и путь падал
+ * либо в 404 (без photoFileId — серые инициалы), либо в медленную прокси-скачку
+ * байтов через Bot API. Свой Storage доверен по построению: URL ставит только
+ * наш парсер (avatar-store.ts), хост совпадает с NEXT_PUBLIC_SUPABASE_URL.
+ */
+function isSafeChannelAvatarUrl(raw: string): boolean {
+  if (isSafePhotoUrl(raw)) return true
+  if (!STORAGE_HOST) return false
+  try {
+    const u = new URL(raw)
+    return u.protocol === 'https:' && u.hostname === STORAGE_HOST
   } catch {
     return false
   }
@@ -108,7 +136,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       if (!channel) return new NextResponse('not found', { status: 404 })
 
       // Постоянная аватарка из Storage — самый быстрый путь: 302 + долгий кэш
-      if (channel.avatarUrl && isSafePhotoUrl(channel.avatarUrl)) {
+      if (channel.avatarUrl && isSafeChannelAvatarUrl(channel.avatarUrl)) {
         return NextResponse.redirect(channel.avatarUrl, {
           headers: {
             'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',

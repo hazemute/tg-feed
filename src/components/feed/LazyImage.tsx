@@ -7,9 +7,10 @@ import { cn } from '@/lib/utils'
  * Экономное изображение («сбережение трафика»):
  *  • скелетон с shimmer, пока картинка не загружена;
  *  • плавное появление (fade-in 300мс) после загрузки;
- *  • ПОЛНАЯ картинка качается, только когда блок во вьюпорте и пост
- *    задержался на экране ~1.2с — в метро/3G лента листается быстро,
- *    и то, что «пролетели», не тратит трафик (поручение: плохие сети).
+ *  • ПОЛНАЯ картинка качается, когда блок во вьюпорте и пост задержался
+ *    на экране ~0.4с — быстрые сети получают фото почти мгновенно,
+ *    а «пролетевшие» при быстром скролле посты трафик не тратят.
+ *    (Было 1.2с — пользователи видели «фото не грузятся».)
  *
  * eager — без задержки (полный экран поста, лайтбокс, стикеры).
  */
@@ -49,9 +50,9 @@ export function LazyImage({
     let timer: number | null = null
     const io = new IntersectionObserver(
       (entries) => {
-        const visible = (entries[0]?.intersectionRatio ?? 0) >= 0.1
+        const visible = (entries[0]?.intersectionRatio ?? 0) >= 0.05
         if (visible && timer === null) {
-          timer = window.setTimeout(() => setActive(true), eager ? 0 : 1200)
+          timer = window.setTimeout(() => setActive(true), eager ? 0 : 400)
         } else if (!visible && timer !== null) {
           // Улетел с экрана до истечения задержки — откладываем загрузку
           window.clearTimeout(timer)
