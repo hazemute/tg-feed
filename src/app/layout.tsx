@@ -55,6 +55,13 @@ export default function RootLayout({
       data-fontscale="md"
       data-platform="telegram"
     >
+      <head>
+        {/* Предподключение к внешним источникам: аватарки каналов (Supabase
+            Storage) — экономия TLS-хендшейка ~100-300мс на первом экране */}
+        <link rel="preconnect" href={process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://supabase.co'} crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="https://cdn4.telesco.pe" />
+        <link rel="dns-prefetch" href="https://cdn2.telesco.pe" />
+      </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >

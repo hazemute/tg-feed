@@ -18,8 +18,12 @@ import { AdCard } from '@/components/feed/AdCard'
 import { SummarySheet } from '@/components/feed/SummarySheet'
 import { NotificationsSheet } from '@/components/feed/NotificationsSheet'
 
-const PAGE_SIZE = 5
+const PAGE_SIZE = 10 // страниц меньше — запросов меньше, лента заполняется быстрее
 const PTR_THRESHOLD = 62 // тянем вниз на столько, чтобы обновить
+/** Подряд идущие страницы без единого нового поста: после двух — лента кончилась
+ *  (окно пагинации съехало из-за вставки свежих постов: догонять его бессмысленно
+ *  и именно это выглядело как «вечная загрузка» при скролле вниз) */
+const MAX_EMPTY_PAGES = 2
 
 // ---------- Полезности ленты ----------
 
@@ -161,6 +165,8 @@ export function FeedView() {
   // Момент новейшего загруженного поста — для подсчёта «N новых»
   const latestTimeRef = useRef<string>('')
   const seedRef = useRef<string>('')
+  // Счётчик пустых страниц (дедуп съел всё) — сбрасывается при полной перезагрузке
+  const emptyStreakRef = useRef(0)
 
   // ---------- Тулбар ленты: поиск по загруженным постам + фильтры + сортировка ----------
   const [query, setQuery] = useState('')
@@ -340,32 +346,36 @@ export function FeedView() {
         const data = await api<FeedResponse>(
           `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}`,
         )
-        setItems((prev) => {
-          if (replace) {
-            // replace — тоже дедуп: ранк может вернуть один пост дважды в одной странице
-            const uniq: typeof data.items = []
-            const once = new Set<string>()
-            for (const p of data.items) {
-              if (once.has(p.id)) continue
-              once.add(p.id)
-              uniq.push(p)
-            }
-            return stitchNoRepeat(uniq, (p) => p.channel.id)
-          }
-          // дедуп при аппенде: пока листаем страницы, шедулер вставляет новые
-          // посты — окно пагинации съезжает и присылает уже виденные; плюс
-          // сам ответ может содержать дубли — seen пополняется по ходу цикла
-          const seen = new Set(prev.map((p) => p.id))
-          const fresh: typeof data.items = []
-          for (const p of data.items) {
-            if (seen.has(p.id)) continue
-            seen.add(p.id)
-            fresh.push(p)
-          }
-          if (fresh.length === 0) return prev
+        /* Дедуп: внутри ответа (ранк может вернуть пост дважды) и против уже
+           виденных (окно пагинации съезжает — шедулер вставляет новые посты).
+           Считается СИНХРОННО по itemsRef — заодно даёт точное число новых. */
+        const prevList = replace ? [] : itemsRef.current
+        const seen = new Set(prevList.map((p) => p.id))
+        const incoming: typeof data.items = []
+        const once = new Set<string>()
+        for (const p of data.items) {
+          if (once.has(p.id)) continue
+          once.add(p.id)
+          if (!replace && seen.has(p.id)) continue
+          seen.add(p.id)
+          incoming.push(p)
+        }
+        const freshCount = incoming.length
+        if (replace) {
+          setItems(stitchNoRepeat(incoming, (p) => p.channel.id))
+        } else if (freshCount > 0) {
           // стык «видимое | догруженное» + хвост: без повторов каналов подряд
-          return stitchNoRepeat([...prev, ...fresh], (p) => p.channel.id, Math.max(1, prev.length - 1))
-        })
+          setItems((prev) =>
+            stitchNoRepeat([...prev, ...incoming], (p) => p.channel.id, Math.max(1, prev.length - 1)),
+          )
+        }
+        /* Пустая страница = окно пагинации съехало (свежие посты вставлены выше).
+           После MAX_EMPTY_PAGES пустых подряд — честно заканчиваем ленту вместо
+           бесконечной погони за окном (раньше это выглядело как вечный спиннер). */
+        if (replace) emptyStreakRef.current = 0
+        else if (freshCount === 0) emptyStreakRef.current += 1
+        else emptyStreakRef.current = 0
+        if (emptyStreakRef.current >= MAX_EMPTY_PAGES) setHasMore(false)
         // Запоминаем новейший пост (для пилюли «N новых постов») — только если он новее текущего
         const times = data.items.map((x) => x.publishedAt).sort()
         const mx = times[times.length - 1]
@@ -393,7 +403,9 @@ export function FeedView() {
           }
         } else {
           setLoadFailed(true)
-          toast.error('Не удалось загрузить ленту')
+          // тост только при первой ошибке — при скролле вниз у нас есть
+          // ненавязчивая кнопка «Повторить» внизу ленты
+          if (itemsRef.current.length === 0) toast.error('Не удалось загрузить ленту')
         }
       } finally {
         busyRef.current = false
@@ -1075,6 +1087,25 @@ export function FeedView() {
             {loading && (
               <div className="flex justify-center py-6">
                 <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
+              </div>
+            )}
+
+            {/* Ошибка догрузки при скролле вниз: ненавязчивая кнопка вместо
+                вечного ожидания — тап повторяет текущую страницу */}
+            {!loading && hasMore && loadFailed && (
+              <div className="flex justify-center py-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    setLoadFailed(false)
+                    load(page + 1, false)
+                  }}
+                  className="flex h-9 items-center gap-1.5 rounded-full border border-tg-sep bg-tg-surface px-4 text-[13px] font-medium text-tg-link transition active:scale-95"
+                >
+                  <AlertCircle className="h-3.5 w-3.5" aria-hidden />
+                  Не загрузилось — повторить
+                </button>
               </div>
             )}
 

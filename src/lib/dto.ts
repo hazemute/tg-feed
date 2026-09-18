@@ -37,8 +37,11 @@ export function toChannelDTO(
     // течь в 2 строки (line-clamp), а не «в столб»
     description: c.description?.replace(/\s+/g, ' ').trim() ?? null,
     avatarColor: c.avatarColor,
-    // Реальная аватарка канала из Bot API (file_id → прокси); null → инициалы
-    avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
+    // Аватарка: постоянная ссылка из Storage (парсер, og:image) → прокси Bot API
+    // (file_id → getFile) → null (инициалы). Storage-ссылка отдаётся напрямую —
+    // браузер кэширует её без нашего сервера, самый быстрый путь.
+    avatarUrl:
+      c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
     // Реальное число подписчиков из Telegram (getChatMemberCount);
     // для каналов, где Bot API недоступен, — оценка из каталога
     subscribersCount: c.membersCount ?? c.subscribersCount,

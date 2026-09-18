@@ -35,6 +35,9 @@ const NSFW_CHANNEL_RE: RegExp[] = [
   /стриптиз|приватк|сливы?\s?18/i,
   // Узбекские эскорт-объявления: «ДАМ ОЛИШГА КИЗЛАР» (продажа девушек)
   /олишга|olishga|[\s№]кизлар|qizlar\b/i,
+  // Казино/беттинг-спам (турецкий и ру): KOD ZAMANI, SOSYAL CASINO, HARLEY и т.п.
+  /casino|казино|vavada|joycasino|mostbet|1xb(?:e|x)et|melbet|parimatch|fonbet|betting/i,
+  /deneme\s?bonusu|bahis\s?siteleri|slot\s?siteleri|kod\s?zaman|güncel\s?giriş|bonus\s?kodları/i,
 ]
 
 /** Пост-паттерны: спам-текст эскорт/18+ рекламы внутри поста. */
@@ -52,6 +55,9 @@ const NSFW_TEXT_RE: RegExp[] = [
   // Узбекская эскорт-реклама в текстах: «2 Та Киз Ишледи», «дам олишга»
   /(?:киз|qiz|kiz)\s*ишл|(?:ишледи|ishledi)/i,
   /дам\s*олишга|dam\s*olishga/i,
+  // Казино/беттинг-реклама в постах (в т.ч. легальные каналы, публикующие спам-посты)
+  /(?:онлайн\s?)?казино|casino|mostbet|1xb(?:e|x)et|melbet|vavada|pin-?up\s?(?:casino|bet)/i,
+  /deneme\s?bonusu|bahis\s?siteleri|slot\s?siteleri|güncel\s?giriş/i,
 ]
 
 /* ------------------------- JS-проверки (дёшево) ------------------------- */
@@ -99,6 +105,14 @@ export const NSFW_DB_KEYWORDS = [
   'olishga',
   'ишледи',
   'ishledi',
+  // казино/беттинг-спам
+  'casino',
+  'казино',
+  'mostbet',
+  '1xbet',
+  'vavada',
+  'deneme bonusu',
+  'bahis siteleri',
 ] as const
 
 /** Ключевые слова для ПОИСКА КАНДИДАТОВ-КАНАЛОВ (шире постовых — «кизлар»

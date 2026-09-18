@@ -94,7 +94,7 @@ export async function GET(request: Request) {
           username: c.username,
           description: c.description,
           avatarColor: c.avatarColor,
-          avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
+          avatarUrl: c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
           subscribersCount: c.membersCount ?? c.subscribersCount,
           status: c.status,
           categorySlug: c.category.slug,

@@ -35,6 +35,9 @@ export function Avatar({
       <img
         src={src}
         alt={name}
+        loading="lazy"
+        decoding="async"
+        draggable={false}
         onError={() => setBroken(true)}
         className={cn('shrink-0 rounded-full object-cover', className)}
         style={{ width: size, height: size }}

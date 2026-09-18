@@ -122,7 +122,7 @@ function SearchSection() {
                     onClick={() => openTelegram(p.link || p.channel.username)}
                     className="flex w-full items-start gap-3 rounded-xl bg-tg-surface p-3 text-left transition active:scale-[0.99]"
                   >
-                    <Avatar name={p.channel.title} color={p.channel.avatarColor} size={38} />
+                    <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={38} />
                     <span className="min-w-0 flex-1">
                       <span className="flex items-baseline gap-2">
                         <span className="truncate text-[14px] font-semibold text-tg-text">
@@ -261,7 +261,7 @@ function SubscriptionsManager() {
                 className="flex min-w-0 flex-1 items-center gap-3 text-left"
                 aria-label={`Открыть канал ${s.channel.title}`}
               >
-                <Avatar name={s.channel.title} color={s.channel.avatarColor} size={42} />
+                <Avatar name={s.channel.title} color={s.channel.avatarColor} src={s.channel.avatarUrl} size={42} />
                 <span className="min-w-0">
                   <span className="block truncate text-[14px] font-medium text-tg-text">
                     {s.channel.title}

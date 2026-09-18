@@ -6,18 +6,22 @@ import { guardIp } from '@/lib/guard'
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/avatar/[uid] — аватар пользователя.
+ * GET /api/avatar/[uid] — аватар пользователя или канала.
  *
  * <img> не умеет Authorization, поэтому роут публичный (uid — не секрет,
  * выдаётся только картинка профиля; лимит по IP от сканирования).
  *
  * Источники photoUrl:
- *  - "tgfile:<file_id>" — файл из Bot API → getFile → отдаём байты
- *    (file_url временный, кэшируется в Redis 45 мин);
- *  - http(s):// — редирект на CDN-URL ТОЛЬКО доверенных хостов Telegram
- *    (photoUrl демо-пользователя приходит с клиента — редирект на
- *    произвольный URL запрещён: open-redirect/phishing);
+ *  - канал c_<id>: Channel.avatarUrl (постоянная ссылка Supabase Storage,
+ *    заливается парсером) → 302 редирект с долгим кэшем; иначе tgfile:<file_id>
+ *    (Bot API getFile → отдаём байты, file_url кэшируется в Redis 45 мин);
+ *  - пользователь tg_<id>: "tgfile:<file_id>" → getFile → байты; http(s):// —
+ *    редирект ТОЛЬКО на доверенные хосты Telegram (open-redirect защита);
  *  - иначе 404 → клиент рисует инициалы.
+ *
+ * СКОРОСТЬ: channelId → (avatarUrl, photoFileId) кэшируется в памяти процесса
+ * (5 мин / негативный 60с) — каждый запрос аватарки больше не стоит RTT до
+ * дальнего Supabase; повторные круги ленты отдают аватарки мгновенно.
  */
 
 /** Доверенные хосты аватарок Telegram (redirect только на них) */
@@ -33,8 +37,63 @@ function isSafePhotoUrl(raw: string): boolean {
   }
 }
 
+// --- L0-кэш каналов: id → { avatarUrl, photoFileId } (5 мин, негатив 60с) ---
+type ChannelAvatarEntry = { avatarUrl: string | null; photoFileId: string | null; exp: number }
+const chanCache = new Map<string, ChannelAvatarEntry>()
+const CHAN_TTL_MS = 5 * 60_000
+const CHAN_NEG_TTL_MS = 60_000
+const CHAN_MAX = 2_000
+
+function chanCacheGet(id: string): ChannelAvatarEntry | null {
+  const hit = chanCache.get(id)
+  if (hit && hit.exp > Date.now()) return hit
+  if (hit) chanCache.delete(id)
+  return null
+}
+
+function chanCacheSet(id: string, e: Omit<ChannelAvatarEntry, 'exp'>, ttl: number) {
+  if (chanCache.size >= CHAN_MAX) {
+    const now = Date.now()
+    for (const [k, v] of chanCache) if (v.exp <= now) chanCache.delete(k)
+    if (chanCache.size >= CHAN_MAX) {
+      const first = chanCache.keys().next().value
+      if (first !== undefined) chanCache.delete(first)
+    }
+  }
+  chanCache.set(id, { ...e, exp: Date.now() + ttl })
+}
+
+async function channelPhotoOf(channelId: string): Promise<ChannelAvatarEntry | null> {
+  const hit = chanCacheGet(channelId)
+  if (hit) return hit
+  try {
+    const channel = await db.channel.findUnique({
+      where: { id: channelId },
+      select: { avatarUrl: true, photoFileId: true },
+    })
+    if (!channel) return null
+    const entry = {
+      avatarUrl: channel.avatarUrl,
+      photoFileId: channel.photoFileId,
+      exp: Date.now() + (channel.avatarUrl || channel.photoFileId ? CHAN_TTL_MS : CHAN_NEG_TTL_MS),
+    }
+    if (chanCache.size >= CHAN_MAX) {
+      const now = Date.now()
+      for (const [k, v] of chanCache) if (v.exp <= now) chanCache.delete(k)
+      if (chanCache.size >= CHAN_MAX) {
+        const first = chanCache.keys().next().value
+        if (first !== undefined) chanCache.delete(first)
+      }
+    }
+    chanCache.set(channelId, entry)
+    return entry
+  } catch {
+    return null // пул перегружен — отдаём 404, клиент покажет инициалы
+  }
+}
+
 export async function GET(request: Request, ctx: { params: Promise<{ uid: string }> }) {
-  const ip = guardIp(request, { limit: 120, windowMs: 60_000, bucket: 'avatar' })
+  const ip = guardIp(request, { limit: 240, windowMs: 60_000, bucket: 'avatar' })
   if (!ip.ok) return ip.res
 
   const { uid } = await ctx.params
@@ -42,18 +101,39 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
     return new NextResponse('not found', { status: 404 })
 
   try {
-    /* Источник photoUrl: пользователь (tgfile:/https) или канал (tgfile: из getChat) */
-    let photo: string | null = null
+    /* Источник photoUrl: пользователь (tgfile:/https) или канал (Storage/tgfile:) */
     if (uid.startsWith('c_')) {
-      const channel = await db.channel.findUnique({
-        where: { id: uid.slice('c_'.length) },
-        select: { photoFileId: true },
+      const channelId = uid.slice('c_'.length)
+      const channel = await channelPhotoOf(channelId)
+      if (!channel) return new NextResponse('not found', { status: 404 })
+
+      // Постоянная аватарка из Storage — самый быстрый путь: 302 + долгий кэш
+      if (channel.avatarUrl && isSafePhotoUrl(channel.avatarUrl)) {
+        return NextResponse.redirect(channel.avatarUrl, {
+          headers: {
+            'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
+          },
+        })
+      }
+      if (!channel.photoFileId) return new NextResponse('not found', { status: 404 })
+
+      const url = await resolveTelegramFileUrl(channel.photoFileId)
+      if (!url) return new NextResponse('not found', { status: 404 })
+      const img = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+      if (!img.ok || !img.body) return new NextResponse('not found', { status: 404 })
+      const buf = await img.arrayBuffer()
+      const contentType = img.headers.get('content-type') ?? 'image/jpeg'
+      return new NextResponse(buf, {
+        headers: {
+          'Content-Type': /^image\//.test(contentType) ? contentType : 'image/jpeg',
+          'Cache-Control': 'public, max-age=1800, stale-while-revalidate=86400',
+        },
       })
-      photo = channel?.photoFileId ? `tgfile:${channel.photoFileId}` : null
-    } else {
-      const user = await db.user.findUnique({ where: { id: uid }, select: { photoUrl: true } })
-      photo = user?.photoUrl ?? null
     }
+
+    // --- пользователь tg_<id> ---
+    const user = await db.user.findUnique({ where: { id: uid }, select: { photoUrl: true } })
+    const photo = user?.photoUrl ?? null
     if (!photo) return new NextResponse('not found', { status: 404 })
 
     if (photo.startsWith('http')) {

@@ -30,20 +30,40 @@ export async function GET(request: Request) {
 
   const range = request.headers.get('range') ?? undefined
   try {
-    const upstream = await fetch(raw, {
-      headers: {
-        // Telegram CDN отвечает и без браузерных заголовков, но валидный UA надёжнее
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        ...(range ? { Range: range } : {}),
-      },
-      signal: AbortSignal.timeout(25_000),
-    })
+    /*
+     * ТАЙМАУТ ТОЛЬКО НА ЗАГОЛОВКИ, не на тело: AbortSignal.timeout(25s)
+     * обрывал весь стрим — большие видео/голосовые не успевали прокачаться
+     * через сервер за 25с и умирали с «failed to pipe response» прямо у
+     * пользователя («грузится бесконечно»). Теперь: 15с на соединение и
+     * ответные заголовки, после — тело течёт без лимита (видео любое длины),
+     * обрыв клиента отменяет докачку через request.signal.
+     */
+    const connectAc = new AbortController()
+    const connectTimer = setTimeout(() => connectAc.abort(), 15_000)
+    let upstream: Response
+    try {
+      upstream = await fetch(raw, {
+        headers: {
+          // Telegram CDN отвечает и без браузерных заголовков, но валидный UA надёжнее
+          'User-Agent':
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+          ...(range ? { Range: range } : {}),
+        },
+        signal: connectAc.signal,
+      })
+    } finally {
+      clearTimeout(connectTimer)
+    }
 
     if (!upstream.ok && upstream.status !== 206) {
       return new NextResponse('upstream error', { status: upstream.status === 404 ? 404 : 502 })
     }
     if (!upstream.body) return new NextResponse('empty', { status: 502 })
+
+    // Клиент ушёл (закрыл вкладку/листнул дальше) — не качаем хвост у Telegram
+    request.signal.addEventListener('abort', () => {
+      upstream.body?.cancel().catch(() => {})
+    })
 
     const headers = new Headers()
     const copy = (name: string) => {

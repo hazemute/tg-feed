@@ -3,11 +3,14 @@ import { isValidChannelUsername } from '@/lib/server'
 import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
 import { botEnabled, getChatPhotoFileId, getChatMemberCount, getCustomEmojiStickers } from '@/lib/tg-bot'
+import { syncChannelAvatar } from '@/lib/avatar-store'
 import type { NotifiablePost } from '@/lib/tg-bot'
 import { htmlToMarkdownLite } from '@/lib/markdown'
 
 /** TTL обновления аватарок и счётчиков подписчиков каналов (меняются редко — 7 дней) */
 const AVATAR_TTL_MS = 7 * 24 * 60 * 60 * 1000
+/** TTL web-аватарки (og:image → Storage): бесплатно, можно освежать чаще — раз в сутки */
+const AVATAR_WEB_TTL_MS = 24 * 60 * 60 * 1000
 
 /**
  * Движок парсинга Tg Swipe: забирает посты публичных каналов с веб-превью
@@ -522,26 +525,33 @@ export async function runParser(
       }
 
       /*
-       * Аватарка и счётчик подписчиков: Bot API (getChat / getChatMemberCount).
-       * Обновляем только при протухшем TTL (7 дней), а fetchedAt штампуем
-       * ТОЛЬКО за реально полученные данные: сбой Bot API больше не «замораживает»
-       * пустые аватарку/подписчиков на неделю — попытка повторится на следующем прогоне.
+       * Аватарка: БЕСПЛАТНО из уже скачанного HTML (og:image → Supabase Storage,
+       * TTL 24ч — картинка канала меняется редко, sha1 не даёт лишних аплоадов).
+       * Bot API остаётся ФОЛБЭКОМ: если web-аватарки нет/протухла и photoFileId
+       * пуст — тогда getChat (с учётом адаптивного ramp против флуд-банов).
+       * Подписчики — по-прежнему Bot API (getChatMemberCount), TTL 7 дней.
        */
+      const webAvatar = syncChannelAvatar(channel.id, html).catch(() => null)
       if (botEnabled()) {
-        const needAvatar =
-          !channel.photoFileId ||
-          !channel.avatarFetchedAt ||
-          Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS
         const needMembers =
           channel.membersCount == null ||
           !channel.membersFetchedAt ||
           Date.now() - channel.membersFetchedAt.getTime() > AVATAR_TTL_MS
-        if (needAvatar || needMembers) {
+        const webAvatarFresh =
+          !!channel.avatarUrl &&
+          !!channel.avatarFetchedAt &&
+          Date.now() - channel.avatarFetchedAt.getTime() < AVATAR_WEB_TTL_MS
+        const needBotAvatar =
+          !webAvatarFresh &&
+          (!channel.photoFileId ||
+            !channel.avatarFetchedAt ||
+            Date.now() - channel.avatarFetchedAt.getTime() > AVATAR_TTL_MS)
+        if (needMembers || needBotAvatar) {
           const [fileId, members, landing] = await Promise.all([
-            needAvatar ? getChatPhotoFileId(target) : Promise.resolve(null),
+            needBotAvatar ? getChatPhotoFileId(target) : Promise.resolve(null),
             needMembers ? getChatMemberCount(target) : Promise.resolve(null),
             // Анимированная аватарка: в лендинге t.me она приходит <video> вместо <img>
-            needAvatar
+            needBotAvatar
               ? fetch(`https://t.me/${target}`, {
                   headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0' },
                   signal: AbortSignal.timeout(10_000),
@@ -572,6 +582,8 @@ export async function runParser(
             .catch(() => {})
         }
       }
+      // web-аватарка догоняет параллельно с фазой записи постов — не тормозит тик
+      void webAvatar
 
       // Новейшие первыми; дубли отклонит unique tgKey — вставляем, пока не доберём per
       const queue = [...parsed].sort(

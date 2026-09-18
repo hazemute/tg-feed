@@ -33,7 +33,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (token) headers.Authorization = `Bearer ${token}`
 
-  const res = await fetch(path, { cache: 'no-store', ...init, headers })
+  const res = await fetch(path, {
+    cache: 'no-store',
+    ...init,
+    headers,
+    // Запрос не может висеть вечно: без таймаута упавший (зависший) запрос
+    // оставлял спиннер «загрузки постов» навсегда — главный источник бага
+    // «бесконечной загрузки». 20с хватает даже холодному дальнему Supabase.
+    signal: init?.signal ?? AbortSignal.timeout(20_000),
+  })
 
   if (res.status === 401) {
     // Сессия протухла/невалидна — сбрасываем и просим page.tsx пере-авторизоваться

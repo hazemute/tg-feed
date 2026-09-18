@@ -57,6 +57,7 @@ type PageRow = {
   c_description: string | null
   c_avatarColor: string
   c_photoFileId: string | null
+  c_avatarUrl: string | null
   c_membersCount: number | null
   c_subscribersCount: number
   c_isPremium: boolean
@@ -100,6 +101,7 @@ function postFromRow(r: PageRow): PostWithChannel {
       description: r.c_description,
       avatarColor: r.c_avatarColor,
       photoFileId: r.c_photoFileId,
+      avatarUrl: r.c_avatarUrl,
       membersCount: r.c_membersCount,
       subscribersCount: r.c_subscribersCount,
       isPremium: r.c_isPremium,
@@ -262,6 +264,7 @@ export async function GET(request: Request) {
                    c."id"           AS "c_id",   c."title"       AS "c_title",
                    c."username"     AS "c_username", c."description" AS "c_description",
                    c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
+                   c."avatarUrl"    AS "c_avatarUrl",
                    c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
                    c."isPremium"    AS "c_isPremium", c."status"     AS "c_status",
                    c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
@@ -329,6 +332,7 @@ export async function GET(request: Request) {
                    c."id"           AS "c_id",   c."title"       AS "c_title",
                    c."username"     AS "c_username", c."description" AS "c_description",
                    c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
+                   c."avatarUrl"    AS "c_avatarUrl",
                    c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
                    c."isPremium"    AS "c_isPremium", c."status"     AS "c_status",
                    c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",

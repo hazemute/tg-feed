@@ -89,7 +89,7 @@ async function loadChannels(category: string, q: string) {
     username: c.username,
     description: c.description?.replace(/\s+/g, ' ').trim() ?? null,
     avatarColor: c.avatarColor,
-    avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
+    avatarUrl: c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
     subscribersCount: c.membersCount ?? c.subscribersCount,
     isPremium: c.isPremium,
     status: c.status,

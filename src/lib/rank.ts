@@ -94,33 +94,71 @@ export function personalBoost(opts: {
 }
 
 /**
- * Разнообразие ленты: не более MAX_IN_A_ROW постов одного канала подряд.
- * Жадный выбор из отсортированного списка: если текущая серия достигла
- * лимита — берём первый пост другого канала (каналы-многострочники
- * чередуются, а не вытесняют друг друга). Полностью однородный список
- * возвращается как есть (лимит снимается, иначе лента пуста).
+ * Разнообразие ленты: один канал — НЕ подряд и ВИДНО РЕЖЕ, чем он «орёт».
+ *
+ * Жалоба пользователя: «ОДИН и ТОТ ЖЕ канал не повторялся в подряд ПОСТАМИ» —
+ * прежнего «не более 1 подряд» мало: канал, заливший серию из 10 постов,
+ * шёл через один (A B A B A) и забивал ленту. Теперь у канала — cooldown
+ * (сколько ЧУЖИХ постов должны пройти между его постами), растущий с числом
+ * его постов в окне: 2 поста → пауза 2, 3-4 → 3, 5-9 → 4, 10-19 → 6, 20+ → 8.
+ *
+ * Выбор жадный по порядку входа (вход отсортирован по весу — порядок качества
+ * сохраняется): берём первый пост канала, у которого cooldown истёк. Если ВСЕ
+ * каналы на cooldown (мало каналов / короткое окно) — берём пост самого
+ * «забытого» канала (наибольшая пауза с последней выдачи), чтобы не деградировать.
+ * Однородный список (один канал) возвращается как есть.
  */
-const MAX_IN_A_ROW = 1
-
 export function diversify<T>(items: T[], channelIdOf: (item: T) => string): T[] {
+  if (items.length < 3) return [...items]
+
+  // Сколько постов канал имеет в окне → сколько чужих постов ждать между его постами
+  const counts = new Map<string, number>()
+  for (const it of items) {
+    const ch = channelIdOf(it)
+    counts.set(ch, (counts.get(ch) ?? 0) + 1)
+  }
+  const cooldownOf = (ch: string): number => {
+    const n = counts.get(ch) ?? 1
+    if (n <= 2) return 2
+    if (n <= 4) return 3
+    if (n <= 9) return 4
+    if (n <= 19) return 6
+    return 8
+  }
+
   const rest = [...items]
   const out: T[] = []
-  let runChannel: string | null = null
-  let runLen = 0
+  const lastAt = new Map<string, number>()
 
   while (rest.length > 0) {
-    let idx = rest.findIndex((it) => {
-      const ch = channelIdOf(it)
-      return !(ch === runChannel && runLen >= MAX_IN_A_ROW)
-    })
-    if (idx === -1) idx = 0 // весь остаток — один канал: лимит снимаем
-    const [item] = rest.splice(idx, 1)
-    const ch = channelIdOf(item)
-    if (ch === runChannel) runLen++
-    else {
-      runChannel = ch
-      runLen = 1
+    let picked = -1
+    if (out.length === 0) {
+      picked = 0 // самый тяжёлый пост открывает ленту
+    } else {
+      // 1) первый по порядку (по весу) канал с истёкшим cooldown
+      for (let i = 0; i < rest.length; i++) {
+        const ch = channelIdOf(rest[i])
+        const last = lastAt.get(ch)
+        if (last === undefined || out.length - last > cooldownOf(ch)) {
+          picked = i
+          break
+        }
+      }
+      // 2) все на cooldown — самый забытый канал (максимум паузы; при равенстве — выше по весу)
+      if (picked === -1) {
+        let bestAge = -1
+        for (let i = 0; i < rest.length; i++) {
+          const ch = channelIdOf(rest[i])
+          const age = out.length - (lastAt.get(ch) ?? 0)
+          if (age > bestAge) {
+            bestAge = age
+            picked = i
+          }
+        }
+      }
     }
+    const [item] = rest.splice(picked, 1)
+    lastAt.set(channelIdOf(item), out.length)
     out.push(item)
   }
   return out
