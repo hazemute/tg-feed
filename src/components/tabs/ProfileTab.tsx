@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Bell,
   ChevronRight,
+  Headset,
   Info,
   Loader2,
   MousePointerClick,
@@ -33,6 +34,7 @@ import { LANG_LIST, useT } from '@/lib/i18n'
 import { APP_VERSION } from '@/lib/version'
 import { Onboarding } from '@/components/tg/Onboarding'
 import { THEMES, themeName } from '@/lib/themes'
+import { SupportChat } from '@/components/support/SupportChat'
 
 
 /** Элемент списка закладок — приходит из /api/bookmarks с отметкой прочтения */
@@ -55,6 +57,7 @@ export function ProfileTab() {
   const [themesOpen, setThemesOpen] = useState(false)
   const [aboutOpen, setAboutOpen] = useState(false)
   const [privacyOpen, setPrivacyOpen] = useState(false)
+  const [supportOpen, setSupportOpen] = useState(false)
   const [notify, setNotify] = useState(true)
 
   const reload = () => {
@@ -410,6 +413,27 @@ export function ProfileTab() {
             icon={<Info className="h-[22px] w-[22px]" strokeWidth={1.7} />}
             label="О приложении"
             onClick={() => setAboutOpen(true)}
+          />
+        </div>
+      </section>
+
+      {/* Поддержка — в самом низу профиля */}
+      <section className="pt-7 pb-6">
+        <h2 className="px-4 text-[19px] font-bold text-tg-text">{t('support.section')}</h2>
+        <div className="mt-1">
+          <SettingRow
+            icon={<Headset className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label={t('support.profileRow')}
+            right={
+              <span className="flex items-center gap-1 text-[15px] text-tg-hint">
+                {t('support.profileHint')}
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              haptic('light')
+              setSupportOpen(true)
+            }}
             last
           />
         </div>
@@ -495,6 +519,9 @@ export function ProfileTab() {
       <Onboarding open={editOpen} mode="edit" onClose={() => setEditOpen(false)} />
       {/* Галерея тем оформления */}
       <ThemeGallery open={themesOpen} onClose={() => setThemesOpen(false)} />
+
+      {/* Чат поддержки (телеграм-стиль) */}
+      <SupportChat open={supportOpen} onClose={() => setSupportOpen(false)} />
     </div>
   )
 }

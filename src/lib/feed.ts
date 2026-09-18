@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { parseJsonArray } from '@/lib/server'
-import type { AffinityMap } from '@/lib/rank'
 import { getNsfwChannelIds } from '@/lib/moderation'
+import type { AffinityMap } from '@/lib/rank'
 
 /**
  * Общий скоуп ленты для пользователя: активные каналы, минус скрытые,
@@ -18,6 +18,7 @@ type ScopeResult = {
       category?: { slug: string } | { slug: { in: string[] } }
     }
     publishedAt?: { gt: Date }
+    AND?: Array<Record<string, unknown>>
   }
   user: { id: string; categories: string }
   sig: string | null

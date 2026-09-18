@@ -37,6 +37,7 @@ model User {
   advertiser    AdvertiserAccount?
   campaigns     AdCampaign[]
   translations  TranslationLog[]
+  supportThreads SupportThread[]
 }
 
 model Category {
@@ -327,4 +328,36 @@ model PendingPayment {
   updatedAt         DateTime @updatedAt
 
   @@index([userId, createdAt])
+}
+
+// Чат поддержки: у пользователя одна нить (создаётся лениво при первом сообщении).
+// status: ai — отвечает нейросеть; human — обращение передано сотруднику
+// (эскалация), отвечает админ в панели; closed — закрыто.
+model SupportThread {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  status        String   @default("ai") // ai | human | closed
+  unreadAdmin   Int      @default(0) // непрочитанные от пользователя для сотрудника
+  unreadUser    Int      @default(0) // непрочитанные от поддержки для пользователя
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  messages SupportMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([userId])
+}
+
+// Сообщение поддержки. sender: user — автор; ai — нейросеть;
+// admin — сотрудник (админ-панель); system — служебные заметки (эскалация и т.п.)
+model SupportMessage {
+  id        String        @id @default(cuid())
+  threadId  String
+  thread    SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender    String
+  text      String
+  createdAt DateTime      @default(now())
+
+  @@index([threadId, createdAt])
 }

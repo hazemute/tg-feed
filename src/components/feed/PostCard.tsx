@@ -247,10 +247,12 @@ function PostBody({
 /** Пост свежее двух часов — рядом со временем показываем зелёную точку «новое» */
 const FRESH_MS = 2 * 60 * 60 * 1000
 
-/** Приблизительное время чтения текста (мин, из расчёта ~180 слов/мин) */
+/** Приблизительное время чтения текста (мин, из расчёта ~180 слов/мин).
+ *  Возвращаем 0 для коротких текстов: «1 мин» на каждом посте — шум. */
 function readingMinutes(text: string): number {
   const words = text.trim().split(/\s+/).length
-  return Math.max(1, Math.round(words / 180))
+  const minutes = Math.round(words / 180)
+  return words < 400 ? 0 : Math.max(2, minutes)
 }
 
 export function PostCard({
@@ -463,11 +465,18 @@ export function PostCard({
           {formatCount(post.viewsCount)}
           {post.viewsTg != null ? ` ${t('card.inChannel')}` : ` ${t('card.views')}`}
         </span>
-        {post.text.length > 280 && (
-          <span className="shrink-0 tabular-nums" title={t('feed.minRead')}>
-            · {readingMinutes(post.text)} {t('feed.minRead')}
-          </span>
-        )}
+        {(() => {
+          // «N мин» только у реально длинных текстов (≥2 мин) — иначе «1 мин»
+          // прилипает к каждому посту и превращается в шум
+          const mins = post.text.length > 280 ? readingMinutes(post.text) : 0
+          return (
+            mins > 0 && (
+              <span className="shrink-0 tabular-nums" title={t('feed.minRead')}>
+                · {mins} {t('feed.minRead')}
+              </span>
+            )
+          )
+        })()}
         {post.text && <ListenButton postId={post.id} text={post.text} className="ml-1" />}
         {onHide && (
           <button

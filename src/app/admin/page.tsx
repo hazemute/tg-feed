@@ -18,6 +18,7 @@ import {
   UNAUTH_EVENT,
   type OverviewCounts,
   type PanelHealth,
+  type SupportThreadItem,
 } from './components/api'
 import { btnOutlineDark, panelCard } from './components/bits'
 import { AdsTab } from './components/ads-tab'
@@ -25,6 +26,7 @@ import { ChannelsTab } from './components/channels-tab'
 import { LoginScreen } from './components/login-screen'
 import { ModerationTab } from './components/moderation-tab'
 import { OverviewTab } from './components/overview-tab'
+import { SupportTab } from './components/support-tab'
 import { SystemTab } from './components/system-tab'
 import { ToolsTab } from './components/tools-tab'
 import { UsersTab } from './components/users-tab'
@@ -46,7 +48,28 @@ export default function AdminPage() {
   const [modCount, setModCount] = useState<number | null>(null)
   const [apiVersion, setApiVersion] = useState('')
   const [maintOn, setMaintOn] = useState(false)
+  const [supportUnread, setSupportUnread] = useState(0)
   const handleMaintenance = useCallback((on: boolean) => setMaintOn(on), [])
+
+  // Непрочитанные обращения поддержки — бейдж на вкладке (раз в 30с, экономно)
+  useEffect(() => {
+    if (auth !== 'authed') return
+    let alive = true
+    const load = async () => {
+      try {
+        const items = await panelFetch<{ items: SupportThreadItem[] }>('/api/panel/support?unseen=1')
+        if (alive) setSupportUnread(items.items.reduce((acc, t) => acc + t.unreadAdmin, 0))
+      } catch {
+        /* панель переживает недоступность API */
+      }
+    }
+    void load()
+    const timer = setInterval(load, 30_000)
+    return () => {
+      alive = false
+      clearInterval(timer)
+    }
+  }, [auth, tick])
 
   const loadHealth = useCallback(async () => {
     setHealthLoading(true)
@@ -247,6 +270,14 @@ export default function AdminPage() {
             <TabsTrigger value="users" className={TAB_TRIGGER}>
               Пользователи
             </TabsTrigger>
+            <TabsTrigger value="support" className={TAB_TRIGGER}>
+              Поддержка
+              {supportUnread > 0 ? (
+                <span className="ml-1 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {supportUnread}
+                </span>
+              ) : null}
+            </TabsTrigger>
             <TabsTrigger value="ads" className={TAB_TRIGGER}>
               Реклама
             </TabsTrigger>
@@ -274,6 +305,9 @@ export default function AdminPage() {
           </TabsContent>
           <TabsContent value="users" className="mt-4 outline-none">
             <UsersTab tick={tick} onSettled={handleSettled} />
+          </TabsContent>
+          <TabsContent value="support" className="mt-4 outline-none">
+            <SupportTab tick={tick} onSettled={handleSettled} />
           </TabsContent>
           <TabsContent value="ads" className="mt-4 outline-none">
             <AdsTab tick={tick} onSettled={handleSettled} />

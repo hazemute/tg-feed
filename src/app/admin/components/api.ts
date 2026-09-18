@@ -438,3 +438,71 @@ export function fmtUptime(sec: number): string {
   parts.push(`${m}м`)
   return parts.join(' ')
 }
+
+/* ===================== Поддержка (чат с пользователями) ===================== */
+
+export interface SupportUser {
+  id: string
+  username: string | null
+  firstName: string | null
+  lastName: string | null
+  isGuest: boolean
+  photoUrl?: string | null
+}
+
+export interface SupportMsg {
+  id: string
+  sender: 'user' | 'ai' | 'admin' | 'system'
+  text: string
+  createdAt: string
+}
+
+export interface SupportThreadItem {
+  id: string
+  status: 'ai' | 'human' | 'closed'
+  unreadAdmin: number
+  unreadUser: number
+  lastMessageAt: string
+  createdAt: string
+  user: SupportUser
+  lastMessage: { sender: string; text: string; createdAt: string } | null
+}
+
+export interface SupportThreadFull extends Omit<SupportThreadItem, 'lastMessage'> {
+  messages: SupportMsg[]
+}
+
+export async function fetchSupportThreads(unseenOnly = false): Promise<SupportThreadItem[]> {
+  const data = await panelFetch<{ items: SupportThreadItem[] }>(
+    `/api/panel/support${unseenOnly ? '?unseen=1' : ''}`,
+  )
+  return data.items
+}
+
+export async function fetchSupportThread(id: string): Promise<SupportThreadFull> {
+  return panelFetch<SupportThreadFull>(`/api/panel/support/${id}`)
+}
+
+export async function replySupportThread(id: string, text: string): Promise<SupportMsg> {
+  const data = await panelFetch<{ ok: boolean; message: SupportMsg }>(`/api/panel/support/${id}`, {
+    method: 'POST',
+    json: { text },
+  })
+  return data.message
+}
+
+export async function setSupportThreadStatus(id: string, status: 'ai' | 'human' | 'closed'): Promise<void> {
+  await panelFetch<{ ok: boolean }>(`/api/panel/support/${id}`, {
+    method: 'PATCH',
+    json: { status },
+  })
+}
+
+/** Имя пользователя нити: «Имя @username» или «Гость abc123» */
+export function supportUserName(u: SupportUser): string {
+  const name = [u.firstName, u.lastName].filter(Boolean).join(' ').trim()
+  if (name) return name
+  if (u.username) return `@${u.username}`
+  if (u.isGuest) return `Гость · ${u.id.slice(0, 10)}`
+  return u.id.slice(0, 14)
+}

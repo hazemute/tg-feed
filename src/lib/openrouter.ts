@@ -33,18 +33,18 @@ function models(): string[] {
 }
 
 /**
- * Простой текстовый вызов: system + user → string.
+ * Полноценный вызов с историей (мульти-turn: чат поддержки и др.).
  * Бросает ошибку, если ни одна модель не ответила.
  */
-export async function chatSimple(
-  system: string,
-  user: string,
-  opts?: { maxTokens?: number; timeoutMs?: number },
+export async function chatMessages(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number },
 ): Promise<string> {
   const key = process.env.OPENROUTER_API_KEY
   if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const maxTokens = opts?.maxTokens ?? 1200
   const timeoutMs = opts?.timeoutMs ?? 25_000
+  const temperature = opts?.temperature ?? 0.2
 
   let lastError: unknown = null
   for (const model of models()) {
@@ -54,19 +54,10 @@ export async function chatSimple(
         headers: {
           Authorization: `Bearer ${key}`,
           'Content-Type': 'application/json',
-          // OpenRouter просит атрибуцию приложения
           'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
           'X-Title': 'Tg Swipe',
         },
-        body: JSON.stringify({
-          model,
-          max_tokens: maxTokens,
-          temperature: 0.2, // служебные задачи — детерминированность важнее творчества
-          messages: [
-            { role: 'system', content: system },
-            { role: 'user', content: user },
-          ],
-        }),
+        body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
         signal: AbortSignal.timeout(timeoutMs),
       })
       if (!res.ok) {
@@ -84,4 +75,22 @@ export async function chatSimple(
     }
   }
   throw lastError instanceof Error ? lastError : new Error('OpenRouter недоступен')
+}
+
+/**
+ * Простой текстовый вызов: system + user → string.
+ * Бросает ошибку, если ни одна модель не ответила.
+ */
+export async function chatSimple(
+  system: string,
+  user: string,
+  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number },
+): Promise<string> {
+  return chatMessages(
+    [
+      { role: 'system', content: system },
+      { role: 'user', content: user },
+    ],
+    opts,
+  )
 }

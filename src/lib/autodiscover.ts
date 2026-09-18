@@ -1,10 +1,10 @@
 import { db } from '@/lib/db'
-import { redis } from '@/lib/redis'
-import { bumpCache } from '@/lib/redis'
+import { redis, bumpCache } from '@/lib/redis'
 import { emitAppEvent } from '@/lib/events'
 import { isValidChannelUsername } from '@/lib/server'
 import { parseChannelHtml } from '@/lib/parse-engine'
 import { getChatInfo, getChatMemberCount } from '@/lib/tg-bot'
+import { classifyChannelsBatch } from '@/lib/classify'
 
 /**
  * АВТОСБОР КАНАЛОВ — «нажал кнопку, всё остальное делает движок».
@@ -701,7 +701,40 @@ async function processCandidate(
     if (!s.visited.includes(c) && !s.queue.some((q) => q.toLowerCase() === c)) s.queue.push(c)
   }
 
+  // 7) уточнение категории нейросетью (фон): регэксп-присвоение выше — лишь
+  //    предварительное, LLM переоценивает канал по совокупности признаков
+  void refineChannelCategory(channel.id, title, uname, description)
+
   return { ok: true, title, category: slug, posts: addedPosts, members }
+}
+
+/**
+ * Фоновое уточнение категории канала нейросетью (gemini-flash-lite, копейки).
+ * Ошибки тихо проглатываются: остаётся регэксп-категория.
+ */
+async function refineChannelCategory(
+  channelId: string,
+  title: string,
+  username: string,
+  description: string | null,
+): Promise<void> {
+  try {
+    const [cats, channel] = await Promise.all([
+      db.category.findMany({ select: { id: true, slug: true, title: true } }),
+      db.channel.findUnique({ where: { id: channelId }, select: { categoryId: true } }),
+    ])
+    if (!channel) return
+    const map = await classifyChannelsBatch([{ id: channelId, title, username, description }], cats)
+    const slug = map.get(channelId)
+    if (!slug) return
+    const cat = cats.find((c) => c.slug === slug)
+    if (!cat || cat.id === channel.categoryId) return
+    await db.channel.update({ where: { id: channelId }, data: { categoryId: cat.id } })
+    // Категория влияет на ленту/каталог — сбрасываем кэши
+    await bumpCache(['feed', 'tr', 'ch', 'ct']).catch(() => {})
+  } catch {
+    // фон: не критично
+  }
 }
 
 /** нормализация username перед Bot API (защита от подстановки) */

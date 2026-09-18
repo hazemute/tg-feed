@@ -127,6 +127,29 @@ const DICT = {
   'feed.unhideToast': ['Вернуть', 'Undo'],
   'feed.notInterested': ['Не интересно — скрыть пост', 'Not interested — hide post'],
   'feed.minRead': ['мин', 'min read'],
+
+  /* Чат поддержки */
+  'support.title': ['Поддержка', 'Support'],
+  'support.subtitle.ai': ['отвечает нейросеть', 'AI assistant replying'],
+  'support.subtitle.human': ['на связи сотрудник', 'staff member online'],
+  'support.subtitle.closed': ['обращение закрыто', 'request closed'],
+  'support.subtitle.idle': ['онлайн, отвечаем быстро', 'online, quick replies'],
+  'support.back': ['Назад', 'Back'],
+  'support.dialog': ['Чат поддержки', 'Support chat'],
+  'support.input': ['Сообщение…', 'Message…'],
+  'support.send': ['Отправить', 'Send'],
+  'support.welcomeTitle': ['Чем помочь?', 'How can we help?'],
+  'support.welcomeText': [
+    'Задайте вопрос о работе ленты, подписках или каналах. Сложные обращения мы передаём живому сотруднику.',
+    'Ask anything about the feed, subscriptions or channels. Complex requests are escalated to a human teammate.',
+  ],
+  'support.typing': ['Поддержка печатает', 'Support is typing'],
+  'support.loading': ['Загрузка', 'Loading'],
+  'support.staff': ['Сотрудник поддержки', 'Support team'],
+  'support.escalated': ['Обращение передано сотруднику поддержки', 'Your request was passed to a human teammate'],
+  'support.profileRow': ['Чат поддержки', 'Support chat'],
+  'support.profileHint': ['отвечаем быстро', 'we reply fast'],
+  'support.section': ['Поддержка', 'Support'],
 } as const
 
 export type I18nKey = keyof typeof DICT
