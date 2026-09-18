@@ -31,6 +31,7 @@ model User {
   likes         Like[]
   views         PostView[]
   subscriptions Subscription[]
+  channelMutes  ChannelMute[]
   channels      Channel[]      @relation("addedChannels")
   claimed       Channel[]      @relation("claimedChannels")
   bookmarks     Bookmark[]
@@ -91,6 +92,7 @@ model Channel {
   campaigns        AdCampaign[]
 
   @@index([status])
+  mutedBy     ChannelMute[]
 }
 
 model Post {
@@ -160,6 +162,18 @@ model Subscription {
   hidden    Boolean  @default(false) // скрыть канал из общей ленты
   notify    Boolean  @default(true)  // колокольчик: true — все уведомления, false — без звука
   notInterestedAt DateTime? // «Не интересно»: канал взвешивается вниз/убирается из ленты
+  createdAt DateTime @default(now())
+
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channelId])
+}
+
+model ChannelMute {
+  id        String   @id @default(cuid())
+  userId    String
+  channelId String
   createdAt DateTime @default(now())
 
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)

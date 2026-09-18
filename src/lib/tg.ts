@@ -34,6 +34,12 @@ export type TgWebApp = {
   openLink: (url: string, options?: { try_instant_view?: boolean }) => void
   /** Нативное окно оплаты Telegram (инвойсы бота, в т.ч. Stars/XTR) */
   openInvoice?: (url: string, callback?: (status: string) => void) => void
+  /** Публикация в Telegram Stories (Bot API 7.10+): media_url — публичная
+   *  https-картинка; widget_link — кликабельная ссылка под сторис */
+  shareToStory?: (
+    media: string,
+    params?: { text?: string; widget_link?: { url: string; name?: string } },
+  ) => void
   setHeaderColor?: (color: string) => void
   setBackgroundColor?: (color: string) => void
   setBottomBarColor?: (color: string) => void
@@ -258,4 +264,30 @@ export async function sharePost(link: string | null, title: string, postId?: str
   } catch {
     // пользователь отменил шаринг
   }
+}
+
+/**
+ * ПОДЕЛИТЬСЯ ПОСТОМ В TELEGRAM STORIES (запрос владельца, п.4): генерируем
+ * стилизованную картинку поста (/api/story?id=... — PNG 1080×1920 с плашкой
+ * Tg Swipe), открываем нативный редактор сторис через WebApp.shareToStory();
+ * Telegram вешает на сторис КЛИКАБЕЛЬНУЮ ссылку на бота (widget_link) —
+ * друзья переходят в приложение.
+ * На старых клиентах без shareToStory — фолбэк: обычный репост ссылкой.
+ */
+export async function sharePostToStory(postId: string, title: string) {
+  const origin = typeof location !== 'undefined' && location.origin.startsWith('http') ? location.origin : 'https://tg-swipe.vercel.app'
+  const media = `${origin}/api/story?id=${encodeURIComponent(postId)}`
+  const w = tg()
+  if (w?.shareToStory) {
+    try {
+      w.shareToStory(media, {
+        text: `Пост канала «${title}» в Tg Swipe`,
+        widget_link: { url: 'https://t.me/tgswipe_bot', name: 'Tg Swipe' },
+      })
+      return
+    } catch {
+      // клиент отказался (нет прав/старая версия) — фолбэк ниже
+    }
+  }
+  await sharePost(null, title, postId)
 }

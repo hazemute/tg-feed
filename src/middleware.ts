@@ -207,7 +207,10 @@ function maintenanceExempt(path: string): boolean {
     floodExempt(path) ||
     path.startsWith('/api/avatar') ||
     path.startsWith('/api/media') ||
-    path.startsWith('/api/emoji')
+    path.startsWith('/api/emoji') ||
+    // Stories-картинка поста: её скачивает Telegram-клиент при публикации
+    // сторис (п.4 запроса владельца) — тоже публичное медиа-GET
+    path.startsWith('/api/story')
   )
 }
 

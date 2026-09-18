@@ -28,6 +28,7 @@ model User {
   likes         Like[]
   views         PostView[]
   subscriptions Subscription[]
+  channelMutes  ChannelMute[]
   channels      Channel[]
   bookmarks     Bookmark[]
 }
@@ -62,6 +63,7 @@ model Channel {
 
   posts            Post[]
   subscriptions    Subscription[]
+  mutedBy     ChannelMute[]
 }
 
 model Post {
@@ -115,6 +117,18 @@ model Subscription {
   channelId String
   hidden    Boolean  @default(false) // скрыть канал из общей ленты
   notify    Boolean  @default(true)  // колокольчик: true — все уведомления, false — без звука
+  createdAt DateTime @default(now())
+
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channelId])
+}
+
+model ChannelMute {
+  id        String   @id @default(cuid())
+  userId    String
+  channelId String
   createdAt DateTime @default(now())
 
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)

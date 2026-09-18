@@ -1,14 +1,14 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
+import { Camera, Eye, EyeOff, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
 import { api } from '@/lib/api'
 import { formatCount, timeAgo } from '@/lib/format'
-import { haptic, openTelegram, sharePost } from '@/lib/tg'
+import { haptic, openTelegram, sharePost, sharePostToStory } from '@/lib/tg'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
@@ -214,6 +214,140 @@ function PostBody({
         onOpenMore={teaser ? undefined : onOpenMore}
       />
       {teaser && <TeaserCta post={post} />}
+    </div>
+  )
+}
+
+/**
+ * Кнопка «В историю»: камера в градиентном кольце (язык Stories, как в
+ * Instagram/Telegram) — открывает нативный редактор сторис Telegram
+ * со стилизованной картинкой поста (/api/story) и кликабельной ссылкой
+ * на бота. Рядом подпись-счётчик не нужна.
+ */
+export function StoryButton({ postId, title, onClick }: { postId: string; title: string; onClick?: () => void }) {
+  const t = useT()
+  return (
+    <button
+      type="button"
+      data-noswipe
+      onClick={() => {
+        haptic('light')
+        onClick?.()
+        void sharePostToStory(postId, title)
+      }}
+      aria-label={t('post.storyAria')}
+      title={t('post.storyAria')}
+      className="flex items-center gap-1.5 rounded-xl py-1.5 pr-1.5 transition active:scale-90 active:bg-tg-sep/40"
+    >
+      <span
+        aria-hidden
+        className="flex h-[26px] w-[26px] items-center justify-center rounded-full bg-gradient-to-tr from-tg-star to-tg-link p-[2.5px]"
+      >
+        <span className="flex size-full items-center justify-center rounded-full bg-tg-bg">
+          <Camera className="h-[14px] w-[14px] text-tg-link" strokeWidth={2.2} />
+        </span>
+      </span>
+      <span className="text-[13px] font-medium leading-none text-tg-text2">{t('post.story')}</span>
+    </button>
+  )
+}
+
+/**
+ * Горизонтальный ряд действий для ТЕКСТОВЫХ постов (без медиа).
+ * Жалоба владельца: у коротких постов рядом с высоким вертикальным рельсом
+ * оставалось огромное пустое место (рельс ~220px против текста в 1-3 строки).
+ * Горизонтальный ряд под текстом (как в X/Telegram) убирает пустоту полностью
+ * и добавляет кнопку «В историю».
+ */
+function TextActionsRow({
+  post,
+  onLike,
+  onBookmark,
+}: {
+  post: PostDTO
+  onLike: () => void
+  onBookmark: () => void
+}) {
+  const t = useT()
+  const openComments = useApp((s) => s.openComments)
+  return (
+    <div className="mt-1 flex items-center justify-between pr-2" aria-label={t('card.actions')}>
+    <motion.button
+      type="button"
+      data-noswipe
+      whileTap={{ scale: 1.15 }}
+      onClick={() => {
+        onLike()
+        haptic('light')
+      }}
+      aria-label="Нравится"
+      aria-pressed={post.liked}
+      className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2"
+    >
+        <Heart
+          className={cn(
+            'h-[24px] w-[24px] transition-colors',
+            post.liked ? 'fill-tg-like text-tg-like' : 'text-tg-text',
+          )}
+          strokeWidth={post.liked ? 2 : 1.7}
+        />
+        {post.likesCount > 0 && (
+          <span className="text-[13px] font-medium leading-none text-tg-text2 tabular-nums">
+            {formatCount(post.likesCount)}
+          </span>
+        )}
+    </motion.button>
+      <button
+        type="button"
+        data-noswipe
+        onClick={() => {
+          haptic('light')
+          openComments(post)
+        }}
+        aria-label={t('comments.title')}
+        className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2"
+      >
+        <MessageCircle className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
+        {post.commentsCount > 0 && (
+          <span className="text-[13px] font-medium leading-none text-tg-text2 tabular-nums">
+            {formatCount(post.commentsCount)}
+          </span>
+        )}
+      </button>
+      <button
+        type="button"
+        data-noswipe
+        onClick={() => {
+          onBookmark()
+          haptic('light')
+        }}
+        aria-label={t('post.save')}
+        aria-pressed={post.bookmarked}
+        className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2"
+      >
+        <Sparkle
+          className={cn(
+            'h-[24px] w-[24px] transition-colors',
+            post.bookmarked ? 'fill-tg-link text-tg-link' : 'text-tg-text',
+          )}
+          strokeWidth={post.bookmarked ? 2 : 1.7}
+        />
+        {post.bookmarksCount > 0 && (
+          <span className="text-[13px] font-medium leading-none text-tg-text2 tabular-nums">
+            {formatCount(post.bookmarksCount)}
+          </span>
+        )}
+      </button>
+      <StoryButton postId={post.id} title={post.channel.title} />
+      <button
+        type="button"
+        data-noswipe
+        onClick={() => sharePost(post.link, post.channel.title, post.id)}
+        aria-label={t('post.share')}
+        className="flex min-h-[44px] items-center py-1.5"
+      >
+        <Forward className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
+      </button>
     </div>
   )
 }
@@ -464,13 +598,43 @@ export function PostCard({
         <SubscribeCircle subscribed={ch.subscribed} onClick={onSubscribe} />
       </div>
 
-      {/* Медиа + правая панель действий. У текстовых постов без медиа текст стоит
-          рядом с рельсом (компактно), у постов с медиа — на всю ширину под медиа */}
-      <div className="mt-3.5 flex items-start gap-1.5 px-4">
-        <div className="min-w-0 flex-1">
-          {hasVisuals && <PostMedia post={post} hideCards onDoubleTap={onMediaDoubleTap} />}
-          {/* Текст поста без визуала — в одну колонку с рельсом */}
-          {post.text && !hasVisuals && (
+      {/* Медиа + вертикальный рельс (у медиа-постов пустот нет — медиа высокое).
+          ТЕКСТОВЫЕ посты (без медиа) — другая раскладка: текст на всю ширину и
+          ГОРИЗОНТАЛЬНЫЙ ряд действий под ним (вертикальный рельс оставлял
+          огромное пустое место у коротких текстов — жалоба владельца). */}
+      {hasVisuals ? (
+        <div className="mt-3.5 flex items-start gap-1.5 px-4">
+          <div className="min-w-0 flex-1">
+            <PostMedia post={post} hideCards onDoubleTap={onMediaDoubleTap} />
+          </div>
+          <div className="flex w-10 shrink-0 flex-col items-center gap-3.5 pt-0.5" aria-label={t('card.actions')}>
+            <LikeRailButton count={post.likesCount} active={post.liked} onClick={onLike} />
+            <RailButton
+              icon={MessageCircle}
+              label={t('comments.title')}
+              count={post.commentsCount}
+              onClick={() => {
+                haptic('light')
+                openComments(post)
+              }}
+            />
+            <RailButton
+              icon={Sparkle}
+              label={t('post.save')}
+              count={post.bookmarksCount}
+              active={post.bookmarked}
+              onClick={onBookmark}
+            />
+            <RailButton
+              icon={Forward}
+              label={t('post.share')}
+              onClick={() => sharePost(post.link, ch.title, post.id)}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="px-4">
+          {post.text && (
             <div className="pt-0.5">
               <PostBody
                 post={post}
@@ -481,32 +645,9 @@ export function PostCard({
               />
             </div>
           )}
+          <TextActionsRow post={post} onLike={onLike} onBookmark={onBookmark} />
         </div>
-        <div className="flex w-10 shrink-0 flex-col items-center gap-3.5 pt-0.5" aria-label={t('card.actions')}>
-          <LikeRailButton count={post.likesCount} active={post.liked} onClick={onLike} />
-          <RailButton
-            icon={MessageCircle}
-            label={t('comments.title')}
-            count={post.commentsCount}
-            onClick={() => {
-              haptic('light')
-              openComments(post)
-            }}
-          />
-          <RailButton
-            icon={Sparkle}
-            label={t('post.save')}
-            count={post.bookmarksCount}
-            active={post.bookmarked}
-            onClick={onBookmark}
-          />
-          <RailButton
-            icon={Forward}
-            label={t('post.share')}
-            onClick={() => sharePost(post.link, ch.title, post.id)}
-          />
-        </div>
-      </div>
+      )}
 
       {/* Текст поста с визуалом — на всю ширину под медиа */}
       {post.text && hasVisuals && (

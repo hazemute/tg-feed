@@ -176,6 +176,10 @@ export function FeedView() {
   const [dayOnly, setDayOnly] = useState(false)
   const [popularSort, setPopularSort] = useState(false)
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => loadHidden())
+  // «Не интересно» (v5.10): замьютнутые каналы текущей сессии (сервер хранит
+  // полный список в ChannelMute — локальный сет нужен только для мгновенной
+  // фильтрации уже загруженных постов)
+  const [mutedChannels, setMutedChannels] = useState<Set<string>>(new Set())
   // Прогресс чтения ленты (0..1) — обновляется императивно (без ререндера)
   const progressRef = useRef<HTMLDivElement>(null)
 
@@ -188,32 +192,44 @@ export function FeedView() {
     setPopularSort(false)
   }, [])
 
-  /** «Не интересно»: пост исчезает из ленты, тост с кнопкой «Вернуть» */
-  const hidePost = useCallback((id: string) => {
-    setHiddenIds((prev) => {
-      const next = new Set(prev)
-      next.add(id)
-      saveHidden(next)
-      return next
-    })
-    toast(t('feed.hiddenToast'), {
-      action: {
-        label: t('feed.unhideToast'),
-        onClick: () => {
-          setHiddenIds((prev) => {
-            const next = new Set(prev)
-            next.delete(id)
-            saveHidden(next)
-            return next
-          })
+  /** «Не интересно» (v5.10): скрывает ВЕСЬ канал, а не один пост.
+   *  Жалоба владельца: раньше кнопка прятала только пост (локально), и канал
+   *  продолжал лезть в ленту. Теперь: серверный мьют (ChannelMute — фильтр в
+   *  /api/feed с редкими возвращениями) + мгновенная локальная фильтрация.
+   *  Тост с «Вернуть» откатывает мьют. */
+  const hidePost = useCallback(
+    (post: { channel: { id: string; title: string } }) => {
+      const cid = post.channel.id
+      setMutedChannels((prev) => new Set(prev).add(cid))
+      api('/api/subscribe', {
+        method: 'POST',
+        body: JSON.stringify({ channelId: cid, action: 'mute' }),
+      }).catch(() => {})
+      toast(t('feed.channelHiddenToast'), {
+        description: post.channel.title,
+        action: {
+          label: t('feed.unhideToast'),
+          onClick: () => {
+            setMutedChannels((prev) => {
+              const next = new Set(prev)
+              next.delete(cid)
+              return next
+            })
+            api('/api/subscribe', {
+              method: 'POST',
+              body: JSON.stringify({ channelId: cid, action: 'unmute' }),
+            }).catch(() => {})
+          },
         },
-      },
-    })
-  }, [t])
+      })
+    },
+    [t],
+  )
 
-  /** Видимые посты: скрытые + фильтры + поиск + сортировка (клиентски, мгновенно) */
+  /** Видимые посты: мьютнутые каналы + скрытые + фильтры + поиск + сортировка (клиентски, мгновенно) */
   const visibleItems = useMemo(() => {
     let list = items
+    if (mutedChannels.size > 0) list = list.filter((p) => !mutedChannels.has(p.channel.id))
     if (hiddenIds.size > 0) list = list.filter((p) => !hiddenIds.has(p.id))
     if (mediaOnly) {
       list = list.filter(
@@ -241,7 +257,7 @@ export function FeedView() {
       )
     }
     return list
-  }, [items, hiddenIds, mediaOnly, dayOnly, query, popularSort])
+  }, [items, hiddenIds, mutedChannels, mediaOnly, dayOnly, query, popularSort])
 
   // Состояние pull-to-refresh (pull дублируется в ref — замыкания не устаревают)
   const [pull, setPull] = useState(0)
@@ -1088,7 +1104,7 @@ export function FeedView() {
                   onBookmark={() => onBookmark(p)}
                   onSubscribe={() => onSubscribe(p)}
                   onSummary={() => setSummaryPost(p)}
-                  onHide={() => hidePost(p.id)}
+                  onHide={() => hidePost(p)}
                 />
                 {(i + 1) % 10 === 0 && ads.length > 0 && (
                   <AdCard ad={ads[Math.floor(i / 10) % ads.length]} />

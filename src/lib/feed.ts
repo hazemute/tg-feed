@@ -14,6 +14,9 @@ import type { AffinityMap } from '@/lib/rank'
 export type IndexEntry = { i: string; c: string; g: string | null; w: number }
 export type RankedIndex = { entries: IndexEntry[]; total: number }
 
+/** Максимум постов одного канала в окне индекса (разнообразие ленты) */
+const MAX_PER_CHANNEL = 5
+
 /** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
 type IndexWhere = {
   channel: {
@@ -64,7 +67,23 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       }) + rankJitter(p.id),
     }))
     .sort((a, b) => b.w - a.w)
-  return { entries, total: entries.length }
+
+  /*
+   * КАП НА КАНАЛ (разнообразие, жалоба владельца «постоянно одно и то же»):
+   * канал-флудер с серией из 20 постов не должен забивать окно индекса —
+   * в ранжированный список попадают максимум MAX_PER_CHANNEL его ЛУЧШИХ
+   * постов (по глобальному весу). Остальные в этом окне не участвуют:
+   * канал всё равно вернётся новыми выпусками.
+   */
+  const perChannel = new Map<string, number>()
+  const capped: IndexEntry[] = []
+  for (const e of entries) {
+    const n = perChannel.get(e.c) ?? 0
+    if (n >= MAX_PER_CHANNEL) continue
+    perChannel.set(e.c, n + 1)
+    capped.push(e)
+  }
+  return { entries: capped, total: capped.length }
 }
 
 /**
@@ -258,8 +277,9 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   let likes: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
   let bookmarks: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
   let subs: Array<{ channelId: string; notInterestedAt: Date | null }>
+  let mutes: Array<{ channelId: string }>
   try {
-    ;[views, likes, bookmarks, subs] = await db.$transaction([
+    ;[views, likes, bookmarks, subs, mutes] = await db.$transaction([
       db.postView.findMany({
         where: { userId },
         select: {
@@ -285,6 +305,12 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
       db.subscription.findMany({
         where: { userId },
         select: { channelId: true, notInterestedAt: true },
+      }),
+      // «Не интересно» (v5.10): отдельная таблица ChannelMute — кнопка EyeOff
+      // у поста скрывает ВЕСЬ канал из персональной ленты
+      db.channelMute.findMany({
+        where: { userId },
+        select: { channelId: true },
       }),
     ])
   } catch {
@@ -330,7 +356,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     affinity,
     viewedIds: new Set(views.map((v) => v.postId)),
     subscribedIds: new Set(subs.map((s) => s.channelId)),
-    mutedIds: new Set(subs.filter((s) => s.notInterestedAt != null).map((s) => s.channelId)),
+    mutedIds: new Set(mutes.map((m) => m.channelId)),
   }
 
   if (affinityCache.size >= AFFINITY_MAX) {

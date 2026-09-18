@@ -14,6 +14,8 @@ const querySchema = z.object({
   username: z.string().trim().min(1).max(100),
   page: z.coerce.number().int().min(0).catch(0),
   limit: z.coerce.number().int().min(1).max(20).catch(10),
+  /** Вкладка экрана канала (как в Telegram): all — посты, media — фото/видео, links — ссылки */
+  tab: z.enum(['all', 'media', 'links']).catch('all'),
 })
 
 /**
@@ -35,6 +37,7 @@ export async function GET(request: Request) {
     const username = parsed.data.username.replace(/^@/, '').toLowerCase()
     if (!username) return err('username required')
     const { page, limit } = parsed.data
+    const { tab } = parsed.data
 
     const channel = await db.channel.findFirst({
       where: { username },
@@ -42,14 +45,28 @@ export async function GET(request: Request) {
     })
     if (!channel) return err('channel not found', 404)
 
-    const [posts, subRow] = await Promise.all([
+    /* Вкладки фильтруются НА СЕРВЕРЕ (жалоба владельца: «на странице про канал
+        сделай вкладки… а то вниз листается бесконечно») — иначе пагинация
+        смешанных страниц давала рваную выдачу: на «Медиа» попадало 1-2 поста
+        со страницы. total считается по тому же фильтру — hasMore честный. */
+    const postWhere = {
+      channelId: channel.id,
+      ...(tab === 'media'
+        ? { OR: [{ mediaUrl: { not: null } }, { gallery: { not: null } }] }
+        : tab === 'links'
+          ? { link: { not: null } }
+          : {}),
+    }
+
+    const [posts, tabTotal, subRow] = await Promise.all([
       db.post.findMany({
-        where: { channelId: channel.id },
+        where: postWhere,
         orderBy: { publishedAt: 'desc' },
         skip: page * limit,
         take: limit,
         include: { channel: { include: { category: true } }, _count: { select: { bookmarkedBy: true } } },
       }),
+      db.post.count({ where: postWhere }),
       userId
         ? db.subscription.findUnique({
             where: { userId_channelId: { userId, channelId: channel.id } },
@@ -79,7 +96,8 @@ export async function GET(request: Request) {
       channel: toChannelDTO(channel, subscribed, channel._count.posts),
       items,
       page,
-      hasMore: (page + 1) * limit < channel._count.posts,
+      tab,
+      hasMore: (page + 1) * limit < tabTotal,
     })
   } catch (e) {
     console.error('[channel]', e)

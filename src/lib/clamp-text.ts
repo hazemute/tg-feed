@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { blocksOf } from '@/lib/markdown'
 
 /**
  * Обрезка длинных текстов постов «по-человечески» (жалоба владельца: текст
@@ -155,6 +156,71 @@ function balanceMarkers(_text: string, cut: string): string {
   return cut.slice(0, end).replace(/[ \t]+$/, '')
 }
 
+/**
+ * Срез для превью ленты: как cutAtWord, но с ДВУМЯ гарантиями (жалобы
+ * владельца: «еще» уезжало на отдельную строку; у поста с цитатой/списком
+ * в хвосте превью могло остаться ПУСТЫМ):
+ *
+ * 1. «еще» клеится к тексту — RichText ставит trailing-кнопку в ту же строку
+ *    только если последний блок — абзац (p); после цитаты/списка/кода/таблицы
+ *    она рендерится отдельной строкой. Поэтому хвостовые НЕ-абзацы отрезаются,
+ *    пока последний блок не станет абзацем с видимым текстом.
+ * 2. Превью не бывает пустым — если срез выродился (весь превью — цитата
+ *    или другой не-абзац), берётся видимый кусок первого абзаца; если и его
+ *    нет — сырой срез cutAtWord (что-то видимое всегда отрендерится).
+ */
+export function teaserCut(text: string, limit: number): string {
+  let cut = cutAtWord(text, limit)
+
+  // Отрезаем хвостовые блоки не-абзацы (и пустые абзацы из одних переносов)
+  for (let guard = 0; guard < 6; guard++) {
+    const blocks = blocksOf(cut)
+    if (blocks.length === 0) break
+    const last = blocks[blocks.length - 1]
+    const visible = last.type === 'p' ? blockVisibleLength(last) : 0
+    if (last.type === 'p' && visible > 0) break // годный хвост — абзац с текстом
+    const nl = cut.lastIndexOf('\n')
+    if (nl <= 0) {
+      cut = ''
+      break
+    }
+    cut = cut.slice(0, nl).replace(/[ \t]+$/, '')
+  }
+
+  if (cut.length > 0) return cut
+
+  // Фолбэк: видимый кусок ПЕРВОГО абзаца (текст может начинаться цитатой —
+  // тогда превью из цитаты дало бы пустоту или «еще» на своей строке)
+  const paraEnd = text.search(/\n\n/)
+  const firstPara = paraEnd === -1 ? text : text.slice(0, paraEnd)
+  const paraCut = cutAtWord(firstPara, limit)
+  if (blockVisibleLengthSafe(paraCut) > 0) return paraCut
+  // Последний рубеж: сырой срез — что-то видимое отрендерится всегда
+  return cutAtWord(text, Math.max(40, limit))
+}
+
+/** Видимая длина среза (плоская оценка: маркеры стилей ≈ 0, эмодзи ≈ 2 символа) */
+function blockVisibleLengthSafe(cut: string): number {
+  const blocks = blocksOf(cut)
+  let n = 0
+  for (const b of blocks) n += b.type === 'p' ? blockVisibleLength(b) : 0
+  return n
+}
+
+/** Видимая длина p-блока по спанам (плоская, без рендера) */
+function blockVisibleLength(block: Extract<import('@/lib/markdown').Block, { type: 'p' }>): number {
+  let n = 0
+  const walk = (spans: import('@/lib/markdown').Span[]): void => {
+    for (const s of spans) {
+      if ('kids' in s && s.kids?.length) walk(s.kids)
+      if ('v' in s) n += s.v.length
+      if (s.t === 'emoji') n += 2 // эмодзи-картинка занимает место
+    }
+  }
+  walk(block.spans)
+  return n
+}
+
 /** Оценка «сколько символов raw-текста помещается в lines строк» */
 function estimateChars(el: HTMLElement, text: string, lines: number): number {
   const cs = getComputedStyle(el)
@@ -253,7 +319,8 @@ export function useLineTruncate(
       if (h <= maxH) return // целиком помещается — не режем
       if (attemptsRef.current === 0) estRef.current = estimateChars(el, text, lines)
       attemptsRef.current = 1
-      const cand = cutAtWord(text, estRef.current)
+      // teaserCut: последний блок превью — абзац, «еще» клеится к тексту
+      const cand = teaserCut(text, estRef.current)
       if (cand.length < text.length) setCut(cand)
       return
     }
@@ -268,7 +335,7 @@ export function useLineTruncate(
       ) {
         attemptsRef.current++
         estRef.current = Math.min(text.length - 1, Math.round(estRef.current * 1.18))
-        const cand = cutAtWord(text, estRef.current)
+        const cand = teaserCut(text, estRef.current)
         if (cand.length > cut.length) setCut(cand)
       }
       return
@@ -280,12 +347,12 @@ export function useLineTruncate(
       attemptsRef.current > 5
         ? Math.round(estRef.current * 0.5)
         : Math.round(estRef.current * 0.78)
-    const cand = cutAtWord(text, Math.max(40, estRef.current))
+    const cand = teaserCut(text, Math.max(40, estRef.current))
     if (cand.length < cut.length) {
       setCut(cand)
     } else {
       // Предохранитель от залипания: гарантированно короче текущего
-      setCut(cutAtWord(cut, Math.max(40, Math.floor(cut.length * 0.7))))
+      setCut(teaserCut(cut, Math.max(40, Math.floor(cut.length * 0.7))))
     }
   }, [text, cut, lines, enabled])
   /* eslint-enable react-hooks/set-state-in-effect */

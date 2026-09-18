@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Heart, Loader2, Plus, Sparkle } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Heart, ImageOff, Loader2, Plus, Sparkle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,7 @@ import { useApp } from '@/lib/store'
 import { haptic, openTelegram, useBackButton } from '@/lib/tg'
 import { openChannelToJoin } from '@/lib/tg-subscribe'
 import { formatCount, timeAgoRu } from '@/lib/format'
+import { useT } from '@/lib/i18n'
 import type { ChannelDTO, PostDTO, RelatedChannelDTO, RelatedChannelsResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
@@ -17,6 +18,14 @@ import { PostMedia } from '@/components/feed/PostMedia'
 import { ExpandableText } from '@/components/feed/actions'
 
 const PAGE_SIZE = 10
+
+/** Вкладки экрана канала (как в Telegram) — фильтр на сервере (/api/channel?tab=) */
+const CHANNEL_TABS = [
+  { key: 'all', label: 'ch.tabPosts' },
+  { key: 'media', label: 'ch.tabMedia' },
+  { key: 'links', label: 'ch.tabLinks' },
+] as const
+type ChannelTab = (typeof CHANNEL_TABS)[number]['key']
 
 /**
  * Экран канала внутри приложения (киллер-фича: подписка одной кнопкой).
@@ -66,10 +75,12 @@ function ChannelScreen({
   const [items, setItems] = useState<PostDTO[]>([])
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(false)
+  const [tab, setTab] = useState<ChannelTab>('all')
   const bumpFeed = useApp((s) => s.bumpFeed) // синхронизация ленты после подписки/колокольчика в шите
   const [loading, setLoading] = useState(true)
   const [initial, setInitial] = useState(true)
   const [error, setError] = useState(false)
+  const t = useT()
   // Колокольчик уведомлений (актуален только при активной подписке)
   const [notify, setNotify] = useState(true)
   /* Большая СТАТИСТИКА — только для СВОЕГО канала (вкладка «Мой канал»).
@@ -89,7 +100,7 @@ function ChannelScreen({
       busyRef.current = true
       setLoading(true)
       try {
-        const qs = new URLSearchParams({ username, page: String(p), limit: String(PAGE_SIZE) })
+        const qs = new URLSearchParams({ username, page: String(p), limit: String(PAGE_SIZE), tab })
         if (userRef.current) qs.set('userId', userRef.current)
         const data = await api<{ channel: ChannelDTO; items: PostDTO[]; hasMore: boolean }>(
           `/api/channel?${qs.toString()}`,
@@ -117,7 +128,7 @@ function ChannelScreen({
         setTimeout(() => checkRef.current(), 80)
       }
     },
-    [username],
+    [username, tab],
   )
 
   useEffect(() => {
@@ -379,18 +390,56 @@ function ChannelScreen({
             </div>
 
             <>
-              {/* Посты канала */}
-              <div className="mt-3 flex items-center gap-2.5 px-4">
-                <h2 className="text-[15px] font-semibold text-tg-text">Посты</h2>
-                <span className="h-4 w-px bg-tg-sep" aria-hidden />
-                <span className="text-[13.5px] text-tg-hint">сначала новые</span>
+            {/* ВКЛАДКИ (жалоба владельца: «вниз листается бесконечно как будто»):
+                Посты / Медиа / Ссылки — как в Telegram; фильтр серверный.
+                Липкая полоса — держится при прокрутке ленты канала. */}
+            <div className="sticky top-0 z-10 border-b border-tg-sep/60 bg-tg-bg/95 px-3 backdrop-blur">
+              <div className="flex" role="tablist" aria-label={t('ch.tabsAria')}>
+                {CHANNEL_TABS.map((tb) => {
+                  const active = tab === tb.key
+                  return (
+                    <button
+                      key={tb.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => {
+                        if (!active) {
+                          haptic('light')
+                          setTab(tb.key)
+                        }
+                      }}
+                      className={cn(
+                        'relative min-h-[44px] flex-1 px-2 text-[14px] font-semibold transition-colors',
+                        active ? 'text-tg-link' : 'text-tg-hint active:opacity-70',
+                      )}
+                    >
+                      {t(tb.label)}
+                      {active && (
+                        <motion.span
+                          layoutId="ch-tab-underline"
+                          className="absolute inset-x-4 bottom-0 h-[2.5px] rounded-t-full bg-tg-link"
+                          transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                        />
+                      )}
+                    </button>
+                  )
+                })}
               </div>
+            </div>
 
-              <div className="mt-1 divide-y divide-tg-sep/50">
-                {items.map((p) => (
-                  <ChannelPost key={p.id} post={p} onLike={() => onLike(p)} onBookmark={() => onBookmark(p)} />
-                ))}
+            <div className="mt-1 divide-y divide-tg-sep/50">
+              {items.map((p) => (
+                <ChannelPost key={p.id} post={p} onLike={() => onLike(p)} onBookmark={() => onBookmark(p)} />
+              ))}
+            </div>
+
+            {!initial && !loading && items.length === 0 && (
+              <div className="flex flex-col items-center gap-2 py-10 text-center">
+                <ImageOff className="h-7 w-7 text-tg-hint" aria-hidden />
+                <p className="text-[14px] text-tg-hint">{t('ch.tabEmpty')}</p>
               </div>
+            )}
 
               <div ref={sentinelRef} className="h-2" aria-hidden />
 

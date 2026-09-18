@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 const bodySchema = z.object({
   channelId: z.string().min(1).max(64).optional(),
   username: z.string().min(1).max(64).optional(),
-  action: z.enum(['subscribe', 'unsubscribe', 'notify']).optional(),
+  action: z.enum(['subscribe', 'unsubscribe', 'notify', 'mute', 'unmute']).optional(),
 })
 
 /** POST /api/subscribe — подписка в один тап и колокольчик уведомлений.
@@ -19,6 +19,8 @@ const bodySchema = z.object({
  *  - action='subscribe'        → подписаться (идемпотентно)
  *  - action='unsubscribe'      → отписаться (идемпотентно)
  *  - action='notify'           → переключить режим уведомлений активной подписки (toggle)
+ *  - action='mute'             → «Не интересно»: канал УБИРАЕТСЯ из персональной ленты (ChannelMute)
+ *  - action='unmute'           → вернуть канал в ленту
  */
 export async function POST(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'subscribe' })
@@ -57,6 +59,23 @@ export async function POST(request: Request) {
         data: { notify: !existing.notify },
       })
       return NextResponse.json({ ok: true, subscribed: true, notify: updated.notify })
+    }
+
+    // «Не интересно» (v5.10): EyeOff у поста — скрыть ВЕСЬ канал из ленты.
+    // Жалоба владельца: раньше кнопка прятала только один пост (локально),
+    // и канал продолжал лезть. Отдельная таблица ChannelMute — не путается
+    // с подписками (мьютнутый канал НЕ считается подпиской).
+    if (action === 'mute') {
+      await db.channelMute.upsert({
+        where: { userId_channelId: { userId, channelId: channel.id } },
+        create: { userId, channelId: channel.id },
+        update: {},
+      })
+      return NextResponse.json({ ok: true, muted: true })
+    }
+    if (action === 'unmute') {
+      await db.channelMute.deleteMany({ where: { userId, channelId: channel.id } })
+      return NextResponse.json({ ok: true, muted: false })
     }
 
     // Явные действия — идемпотентны (повторный вызов не меняет состояние)

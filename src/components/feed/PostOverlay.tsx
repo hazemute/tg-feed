@@ -1,14 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bookmark, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
+import { ArrowLeft, Bookmark, Camera, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { fullDateLocalized, useT } from '@/lib/i18n'
-import { haptic, openTelegram, sharePost, useBackButton } from '@/lib/tg'
+import { haptic, openTelegram, sharePost, sharePostToStory, useBackButton } from '@/lib/tg'
 import { formatCount, timeAgoRu } from '@/lib/format'
 import { stripMarkdown } from '@/lib/markdown'
 import type { PostDTO } from '@/lib/types'
@@ -567,6 +567,27 @@ export function PostOverlay() {
               >
                 <Forward className="h-[23px] w-[23px] text-tg-text" strokeWidth={1.7} />
                 <span className="text-[13px] font-medium text-tg-text2">{t('post.share')}</span>
+              </button>
+              {/* Поделиться в Telegram Stories: картинка поста + кликабельная ссылка на бота */}
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  void sharePostToStory(current.id, ch.title)
+                }}
+                aria-label={t('post.storyAria')}
+                title={t('post.storyAria')}
+                className="flex items-center gap-1.5 py-1.5"
+              >
+                <span
+                  aria-hidden
+                  className="flex h-[23px] w-[23px] items-center justify-center rounded-full bg-gradient-to-tr from-tg-star to-tg-link p-[2px]"
+                >
+                  <span className="flex size-full items-center justify-center rounded-full bg-tg-bg">
+                    <Camera className="h-[13px] w-[13px] text-tg-link" strokeWidth={2.2} />
+                  </span>
+                </span>
+                <span className="text-[13px] font-medium text-tg-text2">{t('post.story')}</span>
               </button>
               <a
                 href={current.link || `https://t.me/${ch.username}`}

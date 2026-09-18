@@ -59,6 +59,16 @@ const DICT = {
   ],
   'post.summary': ['Краткое содержание', 'Summary'],
   'post.more': ['еще', 'more'],
+  'post.story': ['В историю', 'Story'],
+  'post.storyAria': [
+    'Поделиться постом в Telegram Stories',
+    'Share post to Telegram Stories',
+  ],
+  'ch.tabPosts': ['Посты', 'Posts'],
+  'ch.tabMedia': ['Медиа', 'Media'],
+  'ch.tabLinks': ['Ссылки', 'Links'],
+  'ch.tabsAria': ['Разделы канала', 'Channel sections'],
+  'ch.tabEmpty': ['Здесь пока ничего нет', 'Nothing here yet'],
   'post.readMore': ['Читать пост полностью', 'Read full post'],
   'card.inChannel': ['в канале', 'in channel'],
   'card.views': ['просмотров', 'views'],
@@ -128,8 +138,9 @@ const DICT = {
 
   /* Скрытие поста («Не интересно») */
   'feed.hiddenToast': ['Пост скрыт из ленты', 'Post hidden from feed'],
+  'feed.channelHiddenToast': ['Канал скрыт из ленты', 'Channel hidden from your feed'],
   'feed.unhideToast': ['Вернуть', 'Undo'],
-  'feed.notInterested': ['Не интересно — скрыть пост', 'Not interested — hide post'],
+  'feed.notInterested': ['Не интересно — скрыть канал', 'Not interested — hide channel'],
   'feed.minRead': ['мин', 'min read'],
   'feed.reasonHint': [
     'Пост показан, потому что он вам может понравиться',

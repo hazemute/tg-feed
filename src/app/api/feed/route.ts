@@ -157,7 +157,8 @@ export async function GET(request: Request) {
     const { category, page, limit } = parsed.data
 
     // Мгновенный ответ для недавно отданной страницы (смена вкладок/возврат в ленту):
-    // 45с L0-кэш + свежие персональные флаги поверх (см. src/lib/page-cache.ts)
+    // 45с L0-кэш + свежие персональные флаги поверх (см. src/lib/page-cache.ts).
+    // Часовая серверная ротация сида не конфликтует с кэшем: TTL 45с << 1 часа.
     const seedForCache = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
     const cached = getCachedPage(userId, category, page, limit, seedForCache)
     if (cached) return NextResponse.json({ ...cached, page })
@@ -175,10 +176,10 @@ export async function GET(request: Request) {
         ~2с и грузит пул; TTL 300с + инвалидация famKey при новых постах
         парсером + ПРОГРЕВ ключей парсером/warm'ом (feed-warm.ts) — юзеры
         почти никогда не платят за пересчёт; кросс-инстансный лок в cacheAside
-        не даёт бёрсту запросов умножить холодную пересборку. */
+        не даёт бёрсту запросов умножить холодную пересборку. v4 — кап канала. */
     const indexKey =
       scope.sig !== null
-        ? await famKey('feed', `${category}:v3:${shortHash(scope.sig)}`) // v3 — NSFW-фильтр
+        ? await famKey('feed', `${category}:v4:${shortHash(scope.sig)}`) // v4 — кап канала
         : null // discover — персональный скоуп по интересам, без кэша
 
     const loadIndex = () => computeRankedIndex(scope.where)
@@ -188,8 +189,16 @@ export async function GET(request: Request) {
       : await loadIndex()
     mark('index')
 
-    /* ---------- Персональный слой: аффинити + просмотренное + перемешивание ---------- */
-    const shuffleSeed = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
+    /* ---------- Персональный слой: аффинити + просмотренное + перемешивание ----------
+        РОТАЦИЯ (жалоба владельца «постоянно одно и то же»): если клиент не
+        прислал сид (первая загрузка сессии), сервер подставляет ЧАСОВОЙ ведро —
+        порядок ленты сам вращается каждый час даже без pull-to-refresh,
+        у каждого пользователя свой (сид = userId + час). */
+    const hourBucket = Math.floor(Date.now() / 3_600_000)
+    const effSeed =
+      typeof parsed.data.sh === 'string' && parsed.data.sh.length > 0
+        ? parsed.data.sh
+        : `${userId}:${hourBucket}`
 
     const boosted = index.entries.map((e) => ({
       id: e.i,
@@ -204,12 +213,29 @@ export async function GET(request: Request) {
           affinity: signals.affinity,
           notInterested: signals.mutedIds.has(e.c),
         }) +
-        shuffleNoise(e.i + shuffleSeed),
+        shuffleNoise(e.i + effSeed, e.w),
     }))
     boosted.sort((a, b) => b.w - a.w)
 
+    /* «Не интересно» — ФИЛЬТР, а не штраф: посты замьютнутых каналов
+        исключаются из выдачи. Редкие возвращения — детерминированные:
+        ~4% каналов в день (hash(userId:channel:день) % 25 == 0) остаются,
+        чтобы лента не замыкалась наглухо и канал мог «вернуться». */
+    const muted = signals.mutedIds
+    let visible = boosted
+    if (muted.size > 0) {
+      const dayKey = Math.floor(Date.now() / 86_400_000)
+      visible = boosted.filter((x) => {
+        if (!muted.has(x.cid)) return true
+        let h = 0
+        const s = `${userId}:${x.cid}:${dayKey}`
+        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
+        return h % 25 === 0
+      })
+    }
+
     // Разнообразие: посты одного канала не идут подряд (как в нативных лентах)
-    const ordered = diversify(boosted, (x) => x.cid)
+    const ordered = diversify(visible, (x) => x.cid)
     mark('ranked')
 
     /* ---------- Страница: посты по id из индекса ----------
@@ -348,7 +374,10 @@ export async function GET(request: Request) {
       return dto
     })
 
-    const hasMore = (page + 1) * limit < index.total
+    // Честный hasMore: по ДЛИНЕ персонального порядка (после мьют-фильтра),
+    // а не по глобальному индексу — иначе после фильтра «Не интересно»
+    // лента обещает страницы, которых нет
+    const hasMore = (page + 1) * limit < ordered.length
     putCachedPage(userId, category, page, limit, seedForCache, items, hasMore)
 
     return NextResponse.json({

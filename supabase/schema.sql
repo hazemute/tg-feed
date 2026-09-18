@@ -341,3 +341,18 @@ CREATE TABLE IF NOT EXISTS "Notification" (
   CONSTRAINT "Notification_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE INDEX IF NOT EXISTS "Notification_userId_createdAt_idx" ON "Notification"("userId", "createdAt" DESC);
+
+-- «Не интересно» на уровне канала (v5.10): кнопка EyeOff у поста скрывает
+-- ВЕСЬ канал из персональной ленты (редкие детерминированные возвращения ~4%/день)
+CREATE TABLE IF NOT EXISTS "ChannelMute" (
+    "id"        text        NOT NULL DEFAULT gen_random_uuid()::text,
+    "userId"    text        NOT NULL,
+    "channelId" text        NOT NULL,
+    "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "ChannelMute_pkey" PRIMARY KEY ("id"),
+    CONSTRAINT "ChannelMute_userId_fkey" FOREIGN KEY ("userId")
+        REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "ChannelMute_channelId_fkey" FOREIGN KEY ("channelId")
+        REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "ChannelMute_userId_channelId_key" ON "ChannelMute"("userId", "channelId");
