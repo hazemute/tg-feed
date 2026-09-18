@@ -1,7 +1,7 @@
 'use client'
 
-import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowUp, Bell, Inbox, Loader2, WifiOff } from 'lucide-react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, ArrowUp, Bell, Clock3, EyeOff, Flame, Image as ImageIcon, Inbox, Loader2, Search, WifiOff, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -19,6 +19,64 @@ import { NotificationsSheet } from '@/components/feed/NotificationsSheet'
 
 const PAGE_SIZE = 5
 const PTR_THRESHOLD = 62 // тянем вниз на столько, чтобы обновить
+
+// ---------- Полезности ленты ----------
+
+/** Скрытые посты («Не интересно») — между сессиями, в localStorage */
+const HIDDEN_KEY = 'tgfeed_hidden_posts'
+function loadHidden(): Set<string> {
+  if (typeof window === 'undefined') return new Set()
+  try {
+    const raw = window.localStorage.getItem(HIDDEN_KEY)
+    return raw ? new Set(JSON.parse(raw) as string[]) : new Set()
+  } catch {
+    return new Set()
+  }
+}
+function saveHidden(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(HIDDEN_KEY, JSON.stringify([...ids]))
+  } catch {
+    /* приватный режим — скрытие будет до перезагрузки */
+  }
+}
+
+/** Чип-фильтр тулбара: компактный, активный — с синей подложкой */
+function FilterChip({
+  active,
+  onClick,
+  label,
+  Icon,
+  aria,
+}: {
+  active: boolean
+  onClick: () => void
+  label: string
+  Icon: typeof Clock3
+  aria: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        haptic('light')
+        onClick()
+      }}
+      aria-pressed={active}
+      aria-label={aria}
+      title={aria}
+      className={cn(
+        'flex h-8 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[12.5px] font-medium transition active:scale-95',
+        active
+          ? 'border-tg-link/30 bg-tg-link/10 text-tg-link'
+          : 'border-tg-sep bg-tg-surface text-tg-hint',
+      )}
+    >
+      <Icon className={cn('h-3.5 w-3.5', active && 'text-tg-link')} aria-hidden />
+      {label}
+    </button>
+  )
+}
 
 /**
  * Умная лента: вкладки категорий с синим подчёркиванием (как в макете),
@@ -48,6 +106,79 @@ export function FeedView() {
   const latestTimeRef = useRef<string>('')
   const seedRef = useRef<string>('')
 
+  // ---------- Тулбар ленты: поиск по загруженным постам + фильтры + сортировка ----------
+  const [query, setQuery] = useState('')
+  const [mediaOnly, setMediaOnly] = useState(false)
+  const [dayOnly, setDayOnly] = useState(false)
+  const [popularSort, setPopularSort] = useState(false)
+  const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => loadHidden())
+  // Прогресс чтения ленты (0..1) — обновляется императивно (без ререндера)
+  const progressRef = useRef<HTMLDivElement>(null)
+
+  const filtersActive = query.trim().length > 0 || mediaOnly || dayOnly || popularSort || hiddenIds.size > 0
+
+  const resetFilters = useCallback(() => {
+    setQuery('')
+    setMediaOnly(false)
+    setDayOnly(false)
+    setPopularSort(false)
+  }, [])
+
+  /** «Не интересно»: пост исчезает из ленты, тост с кнопкой «Вернуть» */
+  const hidePost = useCallback((id: string) => {
+    setHiddenIds((prev) => {
+      const next = new Set(prev)
+      next.add(id)
+      saveHidden(next)
+      return next
+    })
+    toast('Пост скрыт из ленты', {
+      action: {
+        label: 'Вернуть',
+        onClick: () => {
+          setHiddenIds((prev) => {
+            const next = new Set(prev)
+            next.delete(id)
+            saveHidden(next)
+            return next
+          })
+        },
+      },
+    })
+  }, [])
+
+  /** Видимые посты: скрытые + фильтры + поиск + сортировка (клиентски, мгновенно) */
+  const visibleItems = useMemo(() => {
+    let list = items
+    if (hiddenIds.size > 0) list = list.filter((p) => !hiddenIds.has(p.id))
+    if (mediaOnly) {
+      list = list.filter(
+        (p) =>
+          (p.media != null && (p.media.url || p.media.name || p.media.question || p.media.link)) ||
+          p.gallery.length > 0,
+      )
+    }
+    if (dayOnly) {
+      const dayAgo = Date.now() - 86_400_000
+      list = list.filter((p) => new Date(p.publishedAt).getTime() >= dayAgo)
+    }
+    const q = query.trim().toLowerCase()
+    if (q) {
+      list = list.filter(
+        (p) =>
+          p.text.toLowerCase().includes(q) ||
+          p.channel.title.toLowerCase().includes(q) ||
+          p.channel.username.toLowerCase().includes(q),
+      )
+    }
+    if (popularSort && list.length > 1) {
+      list = [...list].sort(
+        (a, b) => b.likesCount - a.likesCount || b.viewsCount - a.viewsCount,
+      )
+    }
+    return list
+  }, [items, hiddenIds, mediaOnly, dayOnly, query, popularSort])
+
   // Состояние pull-to-refresh (pull дублируется в ref — замыкания не устаревают)
   const [pull, setPull] = useState(0)
   const [refreshing, setRefreshing] = useState(false)
@@ -76,11 +207,11 @@ export function FeedView() {
   const itemsRef = useRef(items)
   itemsRef.current = items
   // Снимок ленты для свайп-навигации ←/→ в полном экране поста (PostOverlay):
-  // обновляется вместе с лентой (догрузка страниц, свежие посты, лайки) — дёшево,
-  // просто ссылка на текущий массив; оверлей ищет соседей по id.
+  // обновляется вместе с ВИДИМОЙ лентой (с учётом фильтров/скрытых) — оверлей
+  // листает только те посты, которые пользователь реально видит.
   useEffect(() => {
-    setPostQueue(items)
-  }, [items, setPostQueue])
+    setPostQueue(visibleItems)
+  }, [visibleItems, setPostQueue])
   const busyRef = useRef(false)
 
   useEffect(() => {
@@ -252,6 +383,7 @@ export function FeedView() {
     setLoadFailed(false)
     busyRef.current = false
     setFreshCount(0)
+    setQuery('') // поиски разных категорий не смешиваются
     // Stale-while-revalidate: мгновенно показываем кэш, сеть догонит
     void loadFeedCache(category).then((cached) => {
       if (cached.length > 0 && !itemsRef.current.length) {
@@ -278,12 +410,20 @@ export function FeedView() {
     }
   }, [load])
 
-  // Кнопка «наверх» — показываем после прокрутки ленты дальше 700px (passive-листенер
-  // на самом скроллящемся контейнере overflow-y-auto, cleanup при размонтировании)
+  // Кнопка «наверх» — показываем после прокрутки ленты дальше 700px;
+  // там же императивно обновляем тонкий прогресс-бар чтения (без ререндеров)
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    const onScroll = () => setShowTop(el.scrollTop > 700)
+    const onScroll = () => {
+      setShowTop(el.scrollTop > 700)
+      const max = el.scrollHeight - el.clientHeight
+      const p = max > 0 ? Math.min(1, el.scrollTop / max) : 0
+      if (progressRef.current) {
+        progressRef.current.style.transform = `scaleX(${p})`
+        progressRef.current.style.opacity = p > 0.005 ? '1' : '0'
+      }
+    }
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
   }, [])
@@ -670,6 +810,84 @@ export function FeedView() {
           </div>
         </div>
         <div className="h-px w-full bg-tg-sep/60" aria-hidden />
+
+        {/* Тулбар: поиск по загруженным постам + фильтры + сортировка */}
+        <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-1.5" data-noswipe>
+          <div className="relative flex min-w-0 flex-1 items-center">
+            <Search
+              className="pointer-events-none absolute left-2.5 h-4 w-4 text-tg-hint"
+              aria-hidden
+            />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Поиск в ленте"
+              aria-label="Поиск по загруженным постам ленты"
+              className="h-8 w-full rounded-full border border-tg-sep bg-tg-surface pl-8 pr-7 text-[13.5px] text-tg-text outline-none transition-colors placeholder:text-tg-hint focus:border-tg-link/40"
+            />
+            {query.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label="Очистить поиск"
+                className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-tg-sep text-tg-hint active:scale-90"
+              >
+                <X className="h-3 w-3" aria-hidden />
+              </button>
+            )}
+          </div>
+          <FilterChip
+            active={mediaOnly}
+            onClick={() => setMediaOnly((v) => !v)}
+            label="Медиа"
+            Icon={ImageIcon}
+            aria="Только посты с медиа"
+          />
+          <FilterChip
+            active={dayOnly}
+            onClick={() => setDayOnly((v) => !v)}
+            label="24ч"
+            Icon={Clock3}
+            aria="Только посты за сутки"
+          />
+          <FilterChip
+            active={popularSort}
+            onClick={() => setPopularSort((v) => !v)}
+            label="Топ"
+            Icon={Flame}
+            aria="Сначала популярные"
+          />
+        </div>
+
+        {/* Счётчик активных фильтров + сброс */}
+        {filtersActive && (
+          <div className="flex items-center gap-1 px-4 pb-1.5 text-[11.5px] leading-none text-tg-hint" data-noswipe>
+            <span>
+              Показано {visibleItems.length} из {items.length}
+            </span>
+            {(query.trim().length > 0 || mediaOnly || dayOnly || popularSort) && (
+              <button
+                type="button"
+                onClick={resetFilters}
+                className="font-semibold text-tg-link active:opacity-60"
+              >
+                · сбросить
+              </button>
+            )}
+            {hiddenIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => {
+                  setHiddenIds(new Set())
+                  saveHidden(new Set())
+                }}
+                className="font-semibold text-tg-link active:opacity-60"
+              >
+                · вернуть скрытые ({hiddenIds.size})
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       {/* Баннер офлайна: лента из кэша */}
@@ -728,6 +946,14 @@ export function FeedView() {
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
       >
+        {/* Прогресс чтения ленты — волосная полоса под шапкой (ширина = доля прокрутки) */}
+        <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-30 h-[2.5px]">
+          <div
+            ref={progressRef}
+            className="h-full origin-left bg-tg-link/70"
+            style={{ transform: 'scaleX(0)', opacity: 0, transition: 'opacity 150ms ease' }}
+          />
+        </div>
         {/* Мягкая подложка под пилюлей «N новых»: контент под язычком растворяется,
             текст каналов не просвечивает сквозь плашку (фикс наложения на скрине) */}
         {freshCount > 0 && !refreshing && (
@@ -791,10 +1017,33 @@ export function FeedView() {
               Открыть поиск
             </button>
           </div>
+        ) : visibleItems.length === 0 ? (
+          /* Фильтры/поиск отсекли всё — предлагаем сброс */
+          <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-tg-surface">
+              <Search className="h-7 w-7 text-tg-hint" aria-hidden />
+            </span>
+            <p className="text-[15px] font-semibold text-tg-text">Ничего не найдено</p>
+            <p className="text-snippet text-tg-hint">
+              Поиск ищет только по загруженным постам — листайте ленту или сбросьте фильтры
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                resetFilters()
+                setHiddenIds(new Set())
+                saveHidden(new Set())
+              }}
+              className="mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white active:scale-95"
+            >
+              Сбросить фильтры
+            </button>
+          </div>
         ) : (
           <>
             <div className="mx-auto w-full max-w-[600px] lg:border-x lg:border-tg-sep/40">
-            {items.map((p, i) => (
+            {visibleItems.map((p, i) => (
               <Fragment key={p.id}>
                 <PostCard
                   post={p}
@@ -803,12 +1052,13 @@ export function FeedView() {
                   onBookmark={() => onBookmark(p)}
                   onSubscribe={() => onSubscribe(p)}
                   onSummary={() => setSummaryPost(p)}
+                  onHide={() => hidePost(p.id)}
                 />
                 {(i + 1) % 10 === 0 && ads.length > 0 && (
                   <AdCard ad={ads[Math.floor(i / 10) % ads.length]} />
                 )}
                 {/* Волосной разделитель между постами — структура ленты как в нативных клиентах */}
-                {i < items.length - 1 && (
+                {i < visibleItems.length - 1 && (
                   <div className="mx-4 h-px bg-tg-sep/40" aria-hidden />
                 )}
               </Fragment>

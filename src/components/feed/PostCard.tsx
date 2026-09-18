@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Eye, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
+import { Eye, EyeOff, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -244,6 +244,15 @@ function PostBody({
   )
 }
 
+/** Пост свежее двух часов — рядом со временем показываем зелёную точку «новое» */
+const FRESH_MS = 2 * 60 * 60 * 1000
+
+/** Приблизительное время чтения текста (мин, из расчёта ~180 слов/мин) */
+function readingMinutes(text: string): number {
+  const words = text.trim().split(/\s+/).length
+  return Math.max(1, Math.round(words / 180))
+}
+
 export function PostCard({
   post,
   onLike,
@@ -251,6 +260,7 @@ export function PostCard({
   onSubscribe,
   onSummary,
   onViewed,
+  onHide,
   appearDelay,
 }: {
   post: PostDTO
@@ -259,6 +269,8 @@ export function PostCard({
   onSubscribe: () => void
   onSummary: () => void
   onViewed?: (postId: string) => void
+  /** «Не интересно» — скрыть пост из ленты (undefined — кнопка не показывается) */
+  onHide?: () => void
   /** Задержка stagger-появления карточки (сек); undefined — появление без анимации */
   appearDelay?: number
 }) {
@@ -363,9 +375,16 @@ export function PostCard({
         </button>
         <time
           dateTime={post.publishedAt}
-          className="shrink-0 text-[12.5px] text-tg-hint"
+          className="flex shrink-0 items-center gap-1.5 text-[12.5px] text-tg-hint"
           title={new Date(post.publishedAt).toLocaleString(lang === 'en' ? 'en-US' : 'ru-RU')}
         >
+          {Date.now() - new Date(post.publishedAt).getTime() < FRESH_MS && (
+            <span
+              aria-label="Новый пост"
+              title="Новый пост"
+              className="h-2 w-2 rounded-full bg-emerald-500"
+            />
+          )}
           {timeAgo(post.publishedAt, lang)}
         </time>
         <SubscribeCircle subscribed={ch.subscribed} onClick={onSubscribe} />
@@ -419,19 +438,41 @@ export function PostCard({
         </div>
       )}
 
-      {/* Мета-строка (ненавязчивая): просмотры — как в оригинальном канале */}
+      {/* Мета-строка (ненавязчивая): просмотры — как в оригинальном канале;
+          у длинных текстов — время чтения; справа — «Не интересно» (скрыть пост) */}
       <div
         className={cn(
           'flex items-center gap-1.5 px-4 text-[12.5px] text-tg-hint',
           post.text ? 'mt-2' : 'mt-3',
         )}
       >
-        <Eye className="h-3.5 w-3.5" aria-hidden />
+        <Eye className="h-3.5 w-3.5 shrink-0" aria-hidden />
         <span className="tabular-nums">
           {formatCount(post.viewsCount)}
           {post.viewsTg != null ? ` ${t('card.inChannel')}` : ` ${t('card.views')}`}
         </span>
+        {post.text.length > 280 && (
+          <span className="shrink-0 tabular-nums" title="Примерное время чтения">
+            · {readingMinutes(post.text)} мин
+          </span>
+        )}
         {post.text && <ListenButton postId={post.id} text={post.text} className="ml-1" />}
+        {onHide && (
+          <button
+            type="button"
+            data-noswipe
+            onClick={(e) => {
+              e.stopPropagation()
+              haptic('light')
+              onHide()
+            }}
+            aria-label="Не интересно — скрыть пост"
+            title="Не интересно — скрыть пост"
+            className="ml-auto -mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 active:bg-tg-sep/50"
+          >
+            <EyeOff className="h-[15px] w-[15px]" aria-hidden />
+          </button>
+        )}
       </div>
     </>
   )

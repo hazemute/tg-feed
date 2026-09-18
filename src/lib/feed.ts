@@ -9,14 +9,64 @@ import type { AffinityMap } from '@/lib/rank'
  * sig — сигнатура скоупа для Redis-ключа (категория + интересы + скрытые);
  * null для 'discover' (зависит от истории просмотров, кэш не применяется).
  */
-export async function buildFeedScope(userId: string, category: string) {
-  const user = await db.user.findUnique({ where: { id: userId } })
-  if (!user) return null
+type ScopeResult = {
+  where: {
+    channel: {
+      status: 'active'
+      id?: { notIn: string[] }
+      category?: { slug: string } | { slug: { in: string[] } }
+    }
+    publishedAt?: { gt: Date }
+  }
+  user: { id: string; categories: string }
+  sig: string | null
+} | null
 
-  const hidden = await db.subscription.findMany({
-    where: { userId, hidden: true },
-    select: { channelId: true },
-  })
+/**
+ * Кэш скоупа в памяти процесса (60с): скоуп зависит только от (userId, category),
+ * но запрос скоупа — 3-6 RTT до дальнего Supabase. Инвалидация — по TTL;
+ * подписки/интересы меняются редко, лаг 60с неощутим.
+ */
+type ScopeCacheEntry = { data: NonNullable<ScopeResult>; exp: number }
+const scopeCache = new Map<string, ScopeCacheEntry>()
+const SCOPE_TTL_MS = 60_000
+const SCOPE_MAX = 1_000
+
+function cacheKeyOf(userId: string, category: string): string {
+  return `${userId}::${category}`
+}
+
+export async function buildFeedScope(userId: string, category: string): Promise<ScopeResult> {
+  const ckey = cacheKeyOf(userId, category)
+  const hit = scopeCache.get(ckey)
+  if (hit && hit.exp > Date.now()) return hit.data
+
+  const built = await buildFeedScopeUncached(userId, category)
+  if (!built) return null
+
+  if (scopeCache.size >= SCOPE_MAX) {
+    const now = Date.now()
+    for (const [k, e] of scopeCache) if (e.exp <= now) scopeCache.delete(k)
+    if (scopeCache.size >= SCOPE_MAX) {
+      const first = scopeCache.keys().next().value
+      if (first !== undefined) scopeCache.delete(first)
+    }
+  }
+  scopeCache.set(ckey, { data: built, exp: Date.now() + SCOPE_TTL_MS })
+  return built
+}
+
+async function buildFeedScopeUncached(userId: string, category: string) {
+  // Пользователь + скрытые каналы — один batch (дальний регион: каждая
+  // последовательная «(п)роверка» стоит ~1 RTT до Supabase)
+  const [user, hidden] = await db.$transaction([
+    db.user.findUnique({ where: { id: userId } }),
+    db.subscription.findMany({
+      where: { userId, hidden: true },
+      select: { channelId: true },
+    }),
+  ])
+  if (!user) return null
   const hiddenIds = hidden.map((h) => h.channelId)
 
   const where: {
@@ -117,7 +167,7 @@ export async function buildFeedScope(userId: string, category: string) {
  */
 type AffinityCacheEntry = { data: PersonalSignals; exp: number }
 const affinityCache = new Map<string, AffinityCacheEntry>()
-const AFFINITY_TTL_MS = 8_000
+const AFFINITY_TTL_MS = 15_000
 const AFFINITY_MAX = 500
 
 export type PersonalSignals = {

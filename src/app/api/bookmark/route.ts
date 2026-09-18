@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { putFlagsOverride } from '@/lib/page-cache'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 
@@ -33,10 +34,12 @@ export async function POST(request: Request) {
 
     if (existing) {
       await db.bookmark.delete({ where: { id: existing.id } })
-      return NextResponse.json({ bookmarked: false })
+      putFlagsOverride(userId, postId, { bookmarked: false })
+    return NextResponse.json({ bookmarked: false })
     }
 
     await db.bookmark.create({ data: { userId, postId } })
+    putFlagsOverride(userId, postId, { bookmarked: true })
     return NextResponse.json({ bookmarked: true })
   } catch (e) {
     console.error('[bookmark]', e)

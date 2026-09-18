@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { putFlagsOverride } from '@/lib/page-cache'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
         data: { likesCount: { decrement: 1 } },
       })
       // Показываем сумму: реакции исходного поста + локальные лайки
+      putFlagsOverride(userId, postId, { liked: false })
       return NextResponse.json({
         liked: false,
         likesCount: Math.max(0, updated.reactionsTg + updated.likesCount),
@@ -49,6 +51,7 @@ export async function POST(request: Request) {
       where: { id: postId },
       data: { likesCount: { increment: 1 } },
     })
+    putFlagsOverride(userId, postId, { liked: true })
     return NextResponse.json({ liked: true, likesCount: updated.reactionsTg + updated.likesCount })
   } catch (e) {
     console.error('[like]', e)

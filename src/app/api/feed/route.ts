@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
+import type { Channel, Post } from '@prisma/client'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { computeWeight, diversify, personalBoost, rankJitter, shuffleNoise } from '@/lib/rank'
@@ -7,6 +8,7 @@ import { toPostDTO } from '@/lib/dto'
 import { buildFeedScope, loadPersonalSignals } from '@/lib/feed'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
+import { getCachedPage, putCachedPage } from '@/lib/page-cache'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +34,82 @@ async function sponsorChannelIds(): Promise<Map<string, string>> {
   return map
 }
 
+
+/** Строка сырого SQL страницы ленты (одна JOIN-выборка вместо 4 последовательных) */
+type PageRow = {
+  id: string
+  channelId: string
+  text: string
+  mediaUrl: string | null
+  mediaType: string
+  mediaMeta: string | null
+  gallery: string | null
+  link: string | null
+  viewsCount: number
+  viewsTg: number | null
+  reactionsTg: number
+  likesCount: number
+  publishedAt: Date
+  c_id: string
+  c_title: string
+  c_username: string
+  c_description: string | null
+  c_avatarColor: string
+  c_photoFileId: string | null
+  c_membersCount: number | null
+  c_subscribersCount: number
+  c_isPremium: boolean
+  c_status: string
+  c_teaserMode: string
+  c_teaserLimit: number
+  cat_slug: string | null
+  cat_title: string | null
+  bookmarksCount: number | bigint
+  liked: boolean
+  bookmarked: boolean
+}
+
+/** Форма Post & {channel}, ожидаемая toPostDTO */
+type PostWithChannel = Post & {
+  channel: Channel & { category?: { slug: string; title: string } | null }
+}
+
+/** Пересборка строки SQL в форму, которую ожидает toPostDTO.
+ *  SQL выбирает ровно те поля, которые читает toPostDTO/toChannelDTO,
+ *  поэтому сужение типов безопасно. */
+function postFromRow(r: PageRow): PostWithChannel {
+  return {
+    id: r.id,
+    channelId: r.channelId,
+    text: r.text,
+    mediaUrl: r.mediaUrl,
+    mediaType: r.mediaType,
+    mediaMeta: r.mediaMeta,
+    gallery: r.gallery,
+    link: r.link,
+    viewsCount: r.viewsCount,
+    viewsTg: r.viewsTg,
+    reactionsTg: r.reactionsTg,
+    likesCount: r.likesCount,
+    publishedAt: r.publishedAt,
+    channel: {
+      id: r.c_id,
+      title: r.c_title,
+      username: r.c_username,
+      description: r.c_description,
+      avatarColor: r.c_avatarColor,
+      photoFileId: r.c_photoFileId,
+      membersCount: r.c_membersCount,
+      subscribersCount: r.c_subscribersCount,
+      isPremium: r.c_isPremium,
+      status: r.c_status,
+      teaserMode: r.c_teaserMode,
+      teaserLimit: r.c_teaserLimit,
+      category: r.cat_slug ? { slug: r.cat_slug, title: r.cat_title } : null,
+    },
+  } as unknown as PostWithChannel
+}
+
 // Валидация query-параметров. userId из query игнорируется —
 // пользователь берётся ТОЛЬКО из Bearer-сессии (защита от подмены личности).
 const querySchema = z.object({
@@ -51,6 +129,7 @@ const querySchema = z.object({
 type IndexEntry = { i: string; c: string; g: string | null; w: number }
 type RankedIndex = { entries: IndexEntry[]; total: number }
 
+
 /**
  * GET /api/feed?category=all|slug|discover&page=0&limit=6
  *
@@ -66,16 +145,36 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
   const userId = g.uid
 
+  const perf = process.env.FEED_PERF === '1'
+  const t0 = Date.now()
+  const mark = (label: string) => {
+    if (perf) console.log(`[feed-perf] ${label}: ${Date.now() - t0}ms`)
+  }
+
   try {
     const { searchParams } = new URL(request.url)
     const parsed = querySchema.safeParse(Object.fromEntries(searchParams))
     if (!parsed.success) return err('invalid query')
     const { category, page, limit } = parsed.data
 
-    const scope = await buildFeedScope(userId, category)
-    if (!scope) return err('user not found', 404)
+    // Мгновенный ответ для недавно отданной страницы (смена вкладок/возврат в ленту):
+    // 45с L0-кэш + свежие персональные флаги поверх (см. src/lib/page-cache.ts)
+    const seedForCache = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
+    const cached = getCachedPage(userId, category, page, limit, seedForCache)
+    if (cached) return NextResponse.json({ ...cached, page })
 
-    /* ---------- Глобальный индекс: Redis (25с) → Postgres ---------- */
+    // Скоуп и персональные сигналы независимы — идём параллельно (каждый RTT дорог)
+    const [scope, signals] = await Promise.all([
+      buildFeedScope(userId, category),
+      loadPersonalSignals(userId),
+    ])
+    if (!scope) return err('user not found', 404)
+    mark('scope+signals')
+
+    /* ---------- Глобальный индекс: Redis (120с) → Postgres ----------
+        Дальний регион (Supabase eu-central-1): холодный пересчёт индекса стоит
+        ~2с и грузит пул; TTL 120с + инвалидация famKey при новых постах
+        парсером — свежесть не страдает, пул разгружен. */
     const indexKey =
       scope.sig !== null
         ? await famKey('feed', `${category}:v2:${shortHash(scope.sig)}`)
@@ -114,11 +213,11 @@ export async function GET(request: Request) {
     }
 
     const index: RankedIndex = indexKey
-      ? await cacheAside({ key: indexKey, ttlSec: 25, memoryTtlMs: 3000, fetcher: loadIndex })
+      ? await cacheAside({ key: indexKey, ttlSec: 120, memoryTtlMs: 15_000, fetcher: loadIndex })
       : await loadIndex()
+    mark('index')
 
     /* ---------- Персональный слой: аффинити + просмотренное + перемешивание ---------- */
-    const signals = await loadPersonalSignals(userId)
     const shuffleSeed = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
 
     const boosted = index.entries.map((e) => ({
@@ -139,92 +238,135 @@ export async function GET(request: Request) {
 
     // Разнообразие: посты одного канала не идут подряд (как в нативных лентах)
     const ordered = diversify(boosted, (x) => x.cid)
+    mark('ranked')
+
+    /* ---------- Страница: посты по id из индекса ----------
+        Выборка страницы, лайки, закладки и посты спонсоров независимы —
+        уходят ОДНИМ параллельным batch’ем (каждый RTT до дальнего Supabase
+        стоит ~0.3-0.9с: последовательная цепочка и была причиной «тормозов»). */
+    const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
+    const sponsors = page === 0 ? await sponsorChannelIds() : null
+    mark('sponsors-ids')
+
+    const pageRows: PageRow[] = sliceIds.length
+      ? await db.$queryRaw<PageRow[]>`
+            SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
+                   p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
+                   p."likesCount", p."publishedAt",
+                   c."id"           AS "c_id",   c."title"       AS "c_title",
+                   c."username"     AS "c_username", c."description" AS "c_description",
+                   c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
+                   c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
+                   c."isPremium"    AS "c_isPremium", c."status"     AS "c_status",
+                   c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
+                   cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
+                   (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
+                   (l."userId" IS NOT NULL)  AS "liked",
+                   (bm."userId" IS NOT NULL) AS "bookmarked"
+            FROM "Post" p
+            JOIN "Channel" c  ON c."id" = p."channelId"
+            LEFT JOIN "Category" cat ON cat."id" = c."categoryId"
+            LEFT JOIN "Like" l     ON l."postId" = p."id" AND l."userId" = ${userId}
+            LEFT JOIN "Bookmark" bm ON bm."postId" = p."id" AND bm."userId" = ${userId}
+            WHERE p."id" = ANY(${sliceIds}::text[])`
+      : []
+    mark('page-batch')
+
+    // Посты спонсоров — отдельным ходом ПОСЛЕ основного SQL: последовательность
+    // на тёплом соединении (~0.9с) дешевле, чем параллельный запрос, вынуждающий
+    // открывать второе TLS-соединение к пулеру (~1.7с+)
+    const sponsorPosts =
+      sponsors && sponsors.size > 0
+        ? await db.post.findMany({
+            where: {
+              channelId: { in: [...sponsors.keys()] },
+              id: { notIn: [...signals.viewedIds] },
+            },
+            orderBy: { publishedAt: 'desc' },
+            take: 12,
+          })
+        : []
+    mark('sponsor-posts')
 
     /* ---------- Спонсорские каналы: активные CPA-кампании — в первых рядах ----------
         Посты канала с активной кампанией подмешиваются на первые позиции первой
         страницы (ещё не просмотренные). Показ кампании засчитывается сразу. */
-    if (page === 0) {
-      const sponsors = await sponsorChannelIds()
-      if (sponsors.size > 0) {
-        const sponsorPosts = await db.post.findMany({
-          where: {
-            channelId: { in: [...sponsors.keys()] },
-            id: { notIn: [...signals.viewedIds] },
-          },
-          orderBy: { publishedAt: 'desc' },
-          take: 12,
-        })
-        // по свежему посту от каждого спонсора, в начало первой страницы
-        const picked = new Map<string, string>()
-        for (const p of sponsorPosts) {
-          if (picked.size >= 3) break
-          if (!picked.has(p.channelId)) picked.set(p.channelId, p.id)
+    if (sponsors && sponsors.size > 0 && sponsorPosts.length > 0) {
+      // по свежему посту от каждого спонсора, в начало первой страницы
+      const picked = new Map<string, string>()
+      for (const p of sponsorPosts) {
+        if (picked.size >= 3) break
+        if (!picked.has(p.channelId)) picked.set(p.channelId, p.id)
+      }
+      if (picked.size > 0) {
+        const sponIds = [...picked.values()]
+        const sponSet = new Set(sponIds)
+        const rest = ordered.filter((x) => !sponSet.has(x.id))
+        ordered.length = 0
+        ordered.push(...sponIds.map((id) => ({ id, cid: '', w: 0 })), ...rest)
+        // страница уже вырезана из старого порядка — перевырезаем из нового
+        const newSliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
+        const changed = newSliceIds.some((id, i) => sliceIds[i] !== id)
+        if (changed) {
+          const extraRows = await db.$queryRaw<PageRow[]>`
+            SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
+                   p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
+                   p."likesCount", p."publishedAt",
+                   c."id"           AS "c_id",   c."title"       AS "c_title",
+                   c."username"     AS "c_username", c."description" AS "c_description",
+                   c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
+                   c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
+                   c."isPremium"    AS "c_isPremium", c."status"     AS "c_status",
+                   c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
+                   cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
+                   (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
+                   (l."userId" IS NOT NULL)  AS "liked",
+                   (bm."userId" IS NOT NULL) AS "bookmarked"
+            FROM "Post" p
+            JOIN "Channel" c  ON c."id" = p."channelId"
+            LEFT JOIN "Category" cat ON cat."id" = c."categoryId"
+            LEFT JOIN "Like" l     ON l."postId" = p."id" AND l."userId" = ${userId}
+            LEFT JOIN "Bookmark" bm ON bm."postId" = p."id" AND bm."userId" = ${userId}
+            WHERE p."id" = ANY(${newSliceIds}::text[])`
+          pageRows.length = 0
+          pageRows.push(...extraRows)
+          sliceIds.length = 0
+          sliceIds.push(...newSliceIds)
         }
-        if (picked.size > 0) {
-          const sponIds = [...picked.values()]
-          const sponSet = new Set(sponIds)
-          const rest = ordered.filter((x) => !sponSet.has(x.id))
-          ordered.length = 0
-          ordered.push(...sponIds.map((id) => ({ id, cid: '', w: 0 })), ...rest)
-          // показ кампании: один инкремент на загрузку первой страницы
-          await db.adCampaign
-            .updateMany({
-              where: { id: { in: [...sponsors.values()] }, status: 'active' },
-              data: { impressions: { increment: 1 } },
-            })
-            .catch(() => {})
-        }
+        // показ кампании: один инкремент на загрузку первой страницы (не ждем)
+        void db.adCampaign
+          .updateMany({
+            where: { id: { in: [...sponsors.values()] }, status: 'active' },
+            data: { impressions: { increment: 1 } },
+          })
+          .catch(() => {})
       }
     }
 
-    /* ---------- Страница: посты по id из индекса ---------- */
-    const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
-    const slicePosts = sliceIds.length
-      ? await db.post.findMany({
-          where: { id: { in: sliceIds } },
-          include: {
-            channel: { include: { category: true } },
-            _count: { select: { bookmarkedBy: true } },
-          },
-        })
-      : []
+    // Порядок строки результата — как порядок sliceIds
+    const byId = new Map(pageRows.map((r) => [r.id, r]))
+    const rows = sliceIds.map((id) => byId.get(id)).filter((r): r is PageRow => Boolean(r))
 
-    const byId = new Map(slicePosts.map((p) => [p.id, p]))
-    const slice = sliceIds
-      .map((id) => byId.get(id))
-      .filter((p): p is NonNullable<typeof p> => Boolean(p))
-
-    const postIds = slice.map((s) => s.id)
-    const channelIds = [...new Set(slice.map((s) => s.channelId))]
-
-    // $transaction: одно соединение вместо двух параллельных (пул connection_limit=1)
-    const [likes, bookmarks] = await db.$transaction([
-      db.like.findMany({ where: { userId, postId: { in: postIds } }, select: { postId: true } }),
-      db.bookmark.findMany({
-        where: { userId, postId: { in: postIds } },
-        select: { postId: true },
-      }),
-    ])
-
-    const likeSet = new Set(likes.map((l) => l.postId))
-    const bookmarkSet = new Set(bookmarks.map((b) => b.postId))
-
-    const items: PostDTO[] = slice.map((p) =>
-      toPostDTO(
-        p,
+    const items: PostDTO[] = rows.map((r) => {
+      const post = postFromRow(r)
+      return toPostDTO(
+        post,
         {
-          liked: likeSet.has(p.id),
-          bookmarked: bookmarkSet.has(p.id),
-          subscribed: signals.subscribedIds.has(p.channelId),
+          liked: Boolean(r.liked),
+          bookmarked: Boolean(r.bookmarked),
+          subscribed: signals.subscribedIds.has(r.channelId),
         },
-        p._count.bookmarkedBy,
-      ),
-    )
+        Number(r.bookmarksCount),
+      )
+    })
+
+    const hasMore = (page + 1) * limit < index.total
+    putCachedPage(userId, category, page, limit, seedForCache, items, hasMore)
 
     return NextResponse.json({
       items,
       page,
-      hasMore: (page + 1) * limit < index.total,
+      hasMore,
     })
   } catch (e) {
     console.error('[feed]', e)

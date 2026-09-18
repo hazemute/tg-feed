@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bookmark, ChevronLeft, ChevronRight, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
+import { ArrowLeft, Bookmark, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, Send, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -10,6 +10,7 @@ import { useApp } from '@/lib/store'
 import { fullDateLocalized, useT } from '@/lib/i18n'
 import { haptic, openTelegram, sharePost, useBackButton } from '@/lib/tg'
 import { formatCount, timeAgoRu } from '@/lib/format'
+import { stripMarkdown } from '@/lib/markdown'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { RichText } from '@/components/feed/RichText'
@@ -25,6 +26,55 @@ import { SummarySheet } from '@/components/feed/SummarySheet'
  * Лайк/закладка оптимистично обновляют оверлей и рассылают событие
  * tgfeed:post-updated, чтобы лента синхронизировалась без рефетча.
  */
+
+/** Копирование текста поста в буфер (Clipboard API + фолбэк для старых WebView) */
+async function copyPostText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch {
+    try {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      const ok = document.execCommand('copy')
+      ta.remove()
+      return ok
+    } catch {
+      return false
+    }
+  }
+}
+
+/** Кнопка «Копировать текст»: чистый текст поста в буфер обмена */
+function CopyTextButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      type="button"
+      data-noswipe
+      onClick={async () => {
+        haptic('light')
+        const ok = await copyPostText(stripMarkdown(text))
+        if (ok) {
+          setCopied(true)
+          toast.success('Текст скопирован')
+          setTimeout(() => setCopied(false), 1600)
+        } else {
+          toast.error('Не удалось скопировать')
+        }
+      }}
+      aria-label="Копировать текст поста"
+      className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-surface text-[14px] font-semibold text-tg-link active:opacity-70"
+    >
+      {copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
+      {copied ? 'Скопировано' : 'Копировать текст'}
+    </button>
+  )
+}
 
 /** Синхронизация изменений поста с лентой без рефетча */
 export function emitPostUpdated(patch: {
@@ -361,12 +411,13 @@ export function PostOverlay() {
             </div>
             {/* Озвучка поста — крупная кнопка под статистикой */}
             {current.text && (
-              <div className="mt-3 px-4">
+              <div className="mt-3 space-y-2 px-4">
                 <ListenButton
                   postId={current.id}
                   text={current.text}
                   className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-surface text-[14px] font-semibold text-tg-link"
                 />
+                <CopyTextButton text={current.text} />
               </div>
             )}
             {/* Краткое содержание доступно и из полного экрана — у любого длинного текста без тизера */}
