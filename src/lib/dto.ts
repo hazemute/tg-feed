@@ -3,9 +3,12 @@ import type { ChannelDTO, MediaItemDTO, MediaKind, PostDTO } from '@/lib/types'
 import { proxiedMediaUrl } from '@/lib/media'
 import { animatedEmojiKinds } from '@/lib/emoji-registry'
 import { cleanPostText } from '@/lib/text-clean'
+import { effectiveTier, tierAtLeast } from '@/lib/tiers'
 
 type ChannelWithCategory = Channel & {
   category?: { slug: string; title: string } | null
+  /** Включается выборочно (claimedBy с tier/tierUntil) — для бейджа «Premium-автор» (Snap Pro) */
+  claimedBy?: { tier?: string | null; tierUntil?: Date | null } | null
 }
 
 const KNOWN_KINDS: MediaKind[] = [
@@ -30,6 +33,9 @@ export function toChannelDTO(
   subscribed: boolean,
   postsCount?: number,
 ): ChannelDTO {
+  // Snap Pro (v5.17): владелец с активным тиром Pro → бейдж Premium-автора
+  // и его CTA-кнопка в раскрытом посте
+  const proOwner = tierAtLeast(effectiveTier(c.claimedBy ?? null), 'pro')
   return {
     id: c.id,
     title: c.title,
@@ -55,6 +61,9 @@ export function toChannelDTO(
     subscribed,
     teaserMode: c.teaserMode,
     teaserLimit: c.teaserLimit,
+    proOwner,
+    ctaLabel: proOwner ? (c.ctaLabel ?? null) : null, // CTA виден только у Pro-авторов
+    ctaUrl: proOwner ? (c.ctaUrl ?? null) : null,
   }
 }
 

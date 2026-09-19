@@ -16,10 +16,13 @@ import {
   X,
   BarChart3,
   BookOpen,
-  Eye,
+  Check,
   CheckCheck,
+  Eye,
   Heart,
+  Sparkles,
   Star,
+  Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -27,8 +30,8 @@ import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { stripMarkdown } from '@/lib/markdown'
 import { formatCount, pluralRu } from '@/lib/format'
-import { haptic, userAvatarUrl } from '@/lib/tg'
-import type { PostDTO, ProfileStatsResponse, SubscriptionDTO } from '@/lib/types'
+import { haptic, openInvoiceUrl, userAvatarUrl } from '@/lib/tg'
+import type { PostDTO, ProfileStatsResponse, SubscriptionDTO, TiersResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ThemeGallery } from '@/components/tg/ThemeGallery'
@@ -72,6 +75,9 @@ export function ProfileTab() {
   const [supportOpen, setSupportOpen] = useState(false)
   // Предложка/баг (v5.11): отдельный чат напрямую админу, без нейронки
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  // Тарифы Snap (v5.17): шит тарифов + свежие данные тира (для строки и бейджа в шапке)
+  const [tiersOpen, setTiersOpen] = useState(false)
+  const [tiersData, setTiersData] = useState<TiersResponse | null>(null)
 
   const reload = () => {
     if (!user) return
@@ -113,6 +119,9 @@ export function ProfileTab() {
     ? t('profile.reader')
     : [user.firstName, user.lastName].filter(Boolean).join(' ') || t('profile.name')
   const stats = profile?.stats
+  // Тир для UI: если шит тарифов уже грузил свежие данные (GET /api/tiers) —
+  // приоритет им, иначе берём тир из стора (UserDTO.tier)
+  const headerTier = tiersData?.tier ?? user.tier ?? 'free'
 
   const removeBookmark = async (p: PostDTO) => {
     setBookmarks((prev) => (prev ?? []).filter((x) => x.id !== p.id))
@@ -182,6 +191,15 @@ export function ProfileTab() {
                 title="Telegram Premium"
               >
                 <Star className="h-3 w-3 fill-current" /> Premium
+              </span>
+            )}
+            {headerTier !== 'free' && (
+              <span
+                className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-tg-star/15 px-2 py-0.5 text-[11px] font-bold text-tg-star"
+                title={TIER_NAMES[headerTier]}
+              >
+                <Zap className="h-3 w-3 fill-current" />
+                {headerTier === 'plus' ? 'PLUS' : 'PRO'}
               </span>
             )}
           </div>
@@ -427,6 +445,26 @@ export function ProfileTab() {
               </span>
             }
             onClick={() => setThemesOpen(true)}
+          />
+          <SettingRow
+            icon={<Sparkles className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label="Тариф Snap"
+            right={
+              <span className="flex items-center gap-0.5 text-[15px]">
+                <span
+                  className={cn(
+                    headerTier === 'free' ? 'text-tg-hint' : 'font-semibold text-tg-star',
+                  )}
+                >
+                  {TIER_NAMES[headerTier]}
+                </span>
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              haptic('light')
+              setTiersOpen(true)
+            }}
           />
           {/* Одна строка вместо трёх: соглашение/конфиденциальность/о приложении —
               внутри шита «Информация» (приказ владельца: разгрузить профиль) */}
@@ -685,6 +723,9 @@ export function ProfileTab() {
         </div>
       </BottomSheet>
 
+      {/* Тарифы Snap: статус тира, лимит ИИ-поиска, покупка Plus/Pro через Stars */}
+      <TiersSheet open={tiersOpen} onClose={() => setTiersOpen(false)} onLoaded={setTiersData} />
+
       {/* Вход по Telegram (сайт + гости) */}
       <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />
 
@@ -696,6 +737,263 @@ export function ProfileTab() {
       <SupportChat open={supportOpen} onClose={() => setSupportOpen(false)} />
       <SupportChat open={feedbackOpen} onClose={() => setFeedbackOpen(false)} kind="feedback" />
     </div>
+  )
+}
+
+/* ---------- Тарифы Snap (v5.17): статус + покупка Plus/Pro через Stars ---------- */
+
+/** Названия тиров для UI */
+const TIER_NAMES: Record<'free' | 'plus' | 'pro', string> = {
+  free: 'Бесплатный',
+  plus: 'Snap Plus',
+  pro: 'Snap Pro',
+}
+
+/** Фичи тарифных карточек — текст с экрана «Тариф Snap» */
+const PLAN_META: { plan: 'plus' | 'pro'; title: string; features: string[] }[] = [
+  {
+    plan: 'plus',
+    title: 'Snap Plus',
+    features: [
+      'Безлимитный ИИ-поиск',
+      'Режим «Инкогнито» — просмотры скрыты из статистики админов',
+      'Приоритетная скорость медиа',
+      'Анимированные премиум-эмодзи',
+    ],
+  },
+  {
+    plan: 'pro',
+    title: 'Snap Pro',
+    features: [
+      'Всё из Snap Plus',
+      'ИИ-контентщик: пост + картинка + публикация в канал',
+      'Продвижение в ленте 7 раз в неделю',
+      'Бейдж Premium-автора',
+      'Кастомная CTA-кнопка в постах',
+    ],
+  },
+]
+
+/** Копейки → «2 990 ₽» (цены из /api/tiers приходят в копейках) */
+const kopToRub = (kop: number): string => `${(kop / 100).toLocaleString('ru-RU')} ₽`
+
+/**
+ * Шит «Тариф Snap»: карточка текущего тира (с лимитом ИИ-поиска для free),
+ * карточки Plus/Pro с выбором периода (месяц/год) и покупкой через
+ * Telegram Stars — POST /api/tiers отдаёт invoiceUrl, открываем нативный
+ * инвойс через openInvoiceUrl; по оплате ('paid') подтягиваем свежий тир.
+ */
+function TiersSheet({
+  open,
+  onClose,
+  onLoaded,
+}: {
+  open: boolean
+  onClose: () => void
+  onLoaded: (d: TiersResponse) => void
+}) {
+  const [data, setData] = useState<TiersResponse | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [period, setPeriod] = useState<{ plus: 'month' | 'year'; pro: 'month' | 'year' }>({
+    plus: 'month',
+    pro: 'month',
+  })
+  const [buying, setBuying] = useState<'plus' | 'pro' | null>(null)
+
+  // Загружаем состояние тарифов при каждом открытии шита (и по кнопке «Повторить»)
+  useEffect(() => {
+    if (!open) return
+    const ac = new AbortController()
+    setLoading(true)
+    setFailed(false)
+    api<TiersResponse>('/api/tiers', { signal: ac.signal })
+      .then((d) => {
+        setData(d)
+        onLoaded(d)
+        setLoading(false)
+      })
+      .catch((e: unknown) => {
+        if ((e as Error)?.name !== 'AbortError') {
+          setFailed(true)
+          setLoading(false)
+        }
+      })
+    return () => ac.abort()
+  }, [open, reloadKey, onLoaded])
+
+  // Тихое обновление без скелетона: после создания счёта и после оплаты
+  const refresh = () => {
+    api<TiersResponse>('/api/tiers')
+      .then((d) => {
+        setData(d)
+        onLoaded(d)
+      })
+      .catch(() => {})
+  }
+
+  const buy = async (plan: 'plus' | 'pro') => {
+    if (buying) return
+    setBuying(plan)
+    haptic('light')
+    try {
+      const r = await api<{ ok: boolean; invoiceUrl: string; stars: number }>('/api/tiers', {
+        method: 'POST',
+        body: JSON.stringify({ plan, period: period[plan] }),
+      })
+      // Нативное окно оплаты Stars; статус 'paid' → подтягиваем свежий тир
+      openInvoiceUrl(r.invoiceUrl, refresh)
+      toast.success('Счёт создан — подтвердите оплату в Telegram')
+      refresh()
+    } catch (e) {
+      toast.error((e as Error).message || 'Не удалось создать счёт')
+    } finally {
+      setBuying(null)
+    }
+  }
+
+  return (
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="Тариф Snap"
+      subtitle="ИИ-поиск, инкогнито и инструменты для канала"
+    >
+      {loading && (
+        <div className="space-y-3" aria-hidden>
+          <div className="tg-shimmer h-20 rounded-2xl" />
+          <div className="tg-shimmer h-56 rounded-2xl" />
+          <div className="tg-shimmer h-64 rounded-2xl" />
+        </div>
+      )}
+
+      {!loading && failed && (
+        <div className="rounded-2xl bg-tg-surface p-4 text-center">
+          <p className="text-[14.5px] text-tg-hint">Не удалось загрузить тарифы</p>
+          <button
+            type="button"
+            onClick={() => setReloadKey((k) => k + 1)}
+            className="mt-3 h-11 w-full rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+          >
+            Повторить
+          </button>
+        </div>
+      )}
+
+      {!loading && !failed && data && (
+        <>
+          {/* Текущий статус */}
+          <div className="rounded-2xl bg-tg-surface p-4">
+            <p className="text-[15.5px] font-bold text-tg-text">
+              Ваш тариф: {TIER_NAMES[data.tier]}
+            </p>
+            {data.tier !== 'free' && data.tierUntil ? (
+              <p className="mt-1 text-[13.5px] text-tg-hint">
+                активен до{' '}
+                {new Date(data.tierUntil).toLocaleDateString('ru-RU', {
+                  day: 'numeric',
+                  month: 'long',
+                  year: 'numeric',
+                })}
+              </p>
+            ) : data.tier === 'free' && data.aiSearch.limit > 0 ? (
+              <p className="mt-1 text-[13.5px] text-tg-hint">
+                Использовано ИИ-поисков сегодня: {data.aiSearch.used} из {data.aiSearch.limit}
+              </p>
+            ) : null}
+          </div>
+
+          {/* Карточки Plus / Pro */}
+          <div className="mt-3 space-y-3">
+            {PLAN_META.map((meta) => {
+              const price = data.prices[meta.plan]
+              const p = period[meta.plan]
+              return (
+                <div key={meta.plan} className="rounded-2xl bg-tg-surface p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-[17px] font-bold text-tg-text">{meta.title}</span>
+                    {data.tier === meta.plan && (
+                      <span className="shrink-0 rounded-full bg-tg-star/15 px-2 py-0.5 text-[11px] font-bold text-tg-star">
+                        текущий
+                      </span>
+                    )}
+                  </div>
+                  {/* Цена активного периода + альтернатива */}
+                  <div className="mt-2 flex items-baseline gap-1.5">
+                    <span className="text-[21px] font-bold leading-none tabular-nums text-tg-text">
+                      {kopToRub(p === 'month' ? price.monthKop : price.yearKop)}
+                    </span>
+                    <span className="text-[13.5px] text-tg-hint">/ {p === 'month' ? 'мес' : 'год'}</span>
+                  </div>
+                  <p className="mt-0.5 text-[13px] text-tg-hint">
+                    или {kopToRub(p === 'month' ? price.yearKop : price.monthKop)} /{' '}
+                    {p === 'month' ? 'год' : 'мес'}
+                  </p>
+                  <ul className="mt-3 space-y-2">
+                    {meta.features.map((f) => (
+                      <li
+                        key={f}
+                        className="flex items-start gap-2 text-[13.5px] leading-snug text-tg-text2"
+                      >
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" strokeWidth={2.5} />
+                        <span>{f}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  {/* Переключатель периода подписки */}
+                  <div className="mt-3.5 flex rounded-xl bg-tg-sep/40 p-1">
+                    {(['month', 'year'] as const).map((per) => (
+                      <button
+                        key={per}
+                        type="button"
+                        aria-pressed={p === per}
+                        onClick={() => {
+                          setPeriod((prev) =>
+                            meta.plan === 'plus' ? { ...prev, plus: per } : { ...prev, pro: per },
+                          )
+                          haptic('light')
+                        }}
+                        className={cn(
+                          'h-10 flex-1 rounded-lg text-[14px] font-medium transition',
+                          p === per
+                            ? 'bg-tg-bg font-semibold text-tg-text shadow-sm'
+                            : 'text-tg-hint',
+                        )}
+                      >
+                        {per === 'month' ? 'Месяц' : 'Год (выгодно)'}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={buying !== null}
+                    onClick={() => buy(meta.plan)}
+                    className="mt-2.5 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:bg-tg-sep/60 disabled:text-tg-hint"
+                  >
+                    {buying === meta.plan ? (
+                      <>
+                        <Loader2 className="h-4.5 w-4.5 animate-spin" />
+                        Открываем счёт…
+                      </>
+                    ) : (
+                      <>
+                        Оформить за{' '}
+                        {price[p === 'month' ? 'monthStars' : 'yearStars'].toLocaleString('ru-RU')} ⭐
+                      </>
+                    )}
+                  </button>
+                </div>
+              )
+            })}
+          </div>
+
+          <p className="mt-3 text-center text-[12px] leading-snug text-tg-hint">
+            Оплата в Telegram Stars. Подписка действует до конца оплаченного периода.
+          </p>
+        </>
+      )}
+    </BottomSheet>
   )
 }
 

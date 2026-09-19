@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { err } from '@/lib/server'
+import { err, IS_SQLITE } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
 import { stripMarkdown } from '@/lib/markdown'
 import type { ChannelStatsDTO, TopPostDTO } from '@/lib/types'
@@ -53,6 +53,129 @@ type AppViewsRow = { n: number }
 
 const ISO = (d: Date | null | undefined) => (d ? new Date(d).toISOString() : null)
 
+/**
+ * Общая сборка ChannelStatsDTO из сырых агрегатов — используется обоими путями
+ * (Postgres raw SQL и SQLite/JS). Чистая функция: без обращения к БД.
+ */
+function finalizeStats(input: {
+  a: AggRow
+  bins: BinRow[]
+  seriesRows: SeriesRow[]
+  cadenceRows: CadenceRow[]
+  topViews: Parameters<typeof topDto>[0][]
+  topReactions: Parameters<typeof topDto>[0][]
+  appViews: number
+  mediaRows: MediaRow[]
+  members: number | null | undefined
+  subscribers: number | null | undefined
+}): ChannelStatsDTO {
+  const { a, bins, seriesRows, cadenceRows, topViews, topReactions, appViews, mediaRows, members, subscribers } = input
+
+  // --- Медиа-микс ---
+  const mediaMix = mediaRows.map((m) => ({ type: m.type, count: m.count }))
+
+  // --- Гистограммы из бинов ---
+  const weekday = Array.from({ length: 7 }, (_, dow) => {
+    const rows = bins.filter((b) => b.dow === dow)
+    const n = rows.reduce((s, b) => s + b.n, 0)
+    const v = n > 0 ? rows.reduce((s, b) => s + b.v * b.n, 0) / n : 0
+    return { dow, count: n, viewsAvg: Math.round(v) }
+  })
+  const hours = Array.from({ length: 24 }, (_, hour) => {
+    const rows = bins.filter((b) => b.hour === hour)
+    const n = rows.reduce((s, b) => s + b.n, 0)
+    const v = n > 0 ? rows.reduce((s, b) => s + b.v * b.n, 0) / n : 0
+    return { hour, count: n, viewsAvg: Math.round(v) }
+  })
+
+  // --- Лучшее время публикации: бин 3ч × день недели с максимумом
+  //     среднего числа просмотров (только бины с ≥2 постами — честно) ---
+  let bestSlot: ChannelStatsDTO['bestSlot'] = null
+  {
+    const slots = new Map<string, { dow: number; hour: number; wv: number; n: number }>()
+    for (const b of bins) {
+      const slot = Math.floor(b.hour / 3) * 3
+      const key = `${b.dow}:${slot}`
+      const cur = slots.get(key) ?? { dow: b.dow, hour: slot, wv: 0, n: 0 }
+      cur.wv += b.v * b.n
+      cur.n += b.n
+      slots.set(key, cur)
+    }
+    for (const s of slots.values()) {
+      if (s.n < 2) continue
+      const avg = s.wv / s.n
+      if (!bestSlot || avg > bestSlot.viewsAvg) {
+        bestSlot = { dow: s.dow, hour: s.hour, viewsAvg: Math.round(avg), samples: s.n }
+      }
+    }
+  }
+
+  // --- Серии для графиков (хронологически) ---
+  const series = seriesRows
+    .slice()
+    .reverse()
+    .map((r) => ({
+      date: new Date(r.publishedAt).toISOString(),
+      views: r.views,
+      reactions: r.reactions,
+    }))
+
+  // --- Ритм публикаций: 30 дней с нулями ---
+  const cadence: ChannelStatsDTO['cadence'] = []
+  {
+    const byDay = new Map(cadenceRows.map((r) => [new Date(r.d).toISOString().slice(0, 10), r.n]))
+    const today = new Date()
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(today.getTime() - i * 86_400_000)
+      const key = d.toISOString().slice(0, 10)
+      cadence.push({ date: key, count: byDay.get(key) ?? 0 })
+    }
+  }
+
+  // --- Интервалы между постами: (последний - первый) / (posts-1) ---
+  const gapHoursAvg =
+    a.posts > 1 && a.first_at && a.last_at
+      ? (new Date(a.last_at).getTime() - new Date(a.first_at).getTime()) / (a.posts - 1) / 3_600_000
+      : null
+
+  const viewsTotal = a.views_total
+  const erPct = viewsTotal > 0 ? (a.reactions_total / viewsTotal) * 100 : 0
+  // Охват: средние просмотры поста / подписчики канала
+  const reachPct = members && members > 0 ? Math.min(999, (a.views_avg / members) * 100) : null
+
+  return {
+    posts: a.posts,
+    viewsTotal,
+    viewsAvg: Math.round(a.views_avg),
+    viewsMedian: Math.round(a.views_median),
+    viewsMax: a.views_max,
+    reactionsTotal: a.reactions_total,
+    reactionsAvg: a.posts > 0 ? a.reactions_total / a.posts : 0,
+    erPct: Math.round(erPct * 100) / 100,
+    reachPct: reachPct === null ? null : Math.round(reachPct * 10) / 10,
+    likesTotal: a.likes_total,
+    appViews,
+    textLenAvg: Math.round(a.text_len_avg),
+    withTextPct: a.posts > 0 ? Math.round((a.with_text / a.posts) * 100) : 0,
+    firstAt: ISO(a.first_at),
+    lastAt: ISO(a.last_at),
+    activeDays: a.active_days,
+    postsPerDayAvg:
+      a.active_days > 0 ? Math.round((a.posts / a.active_days) * 100) / 100 : 0,
+    gapHoursAvg: gapHoursAvg === null ? null : Math.round(gapHoursAvg * 10) / 10,
+    mediaMix,
+    weekday,
+    hours,
+    bestSlot,
+    series,
+    cadence,
+    topByViews: topViews.map(topDto),
+    topByReactions: topReactions.map(topDto),
+    membersCount: members ?? 0,
+    subscribersCount: subscribers ?? 0,
+  }
+}
+
 function topDto(p: {
   id: string
   text: string
@@ -96,6 +219,103 @@ export async function GET(request: Request) {
     })
     if (!channel) return err('channel not found', 404)
     const cid = channel.id
+
+    /*
+     * SQLite (песочница): не знает ::int/PERCENTILE_CONT/date_trunc/NOW() —
+     * те же агрегаты считаются Prisma-выборкой и в JS. Прод (Postgres) идёт
+     * прежним одним batch-запросом.
+     */
+    if (IS_SQLITE) {
+      const [posts, viewRows] = await Promise.all([
+        db.post.findMany({
+          where: { channelId: cid },
+          orderBy: { publishedAt: 'desc' },
+          select: {
+            id: true, publishedAt: true, text: true, mediaType: true, mediaUrl: true, link: true,
+            viewsTg: true, viewsCount: true, reactionsTg: true, likesCount: true,
+          },
+        }),
+        db.postView.findMany({
+          where: {
+            post: { channelId: cid },
+            // Инкогнито (Snap Plus/Pro): активные платные подписчики не считаются
+            user: {
+              OR: [{ tier: 'free' }, { tierUntil: null }, { tierUntil: { lte: new Date() } }],
+            },
+          },
+          select: { id: true },
+        }),
+      ])
+
+      const viewsOf = (p: { viewsTg: number | null; viewsCount: number }) => p.viewsTg ?? p.viewsCount
+      const viewsList = posts.map(viewsOf)
+      const sorted = [...viewsList].sort((x, y) => x - y)
+      const median = sorted.length === 0 ? 0 : sorted.length % 2 ? sorted[(sorted.length - 1) / 2]! : Math.round(((sorted[sorted.length / 2 - 1] ?? 0) + (sorted[sorted.length / 2] ?? 0)) / 2)
+      const sum = (arr: number[]) => arr.reduce((s, x) => s + x, 0)
+      const chrono = [...posts].sort((x, y) => x.publishedAt.getTime() - y.publishedAt.getTime())
+
+      const agg: AggRow = {
+        posts: posts.length,
+        views_total: sum(viewsList),
+        views_avg: posts.length ? sum(viewsList) / posts.length : 0,
+        views_median: median,
+        views_max: posts.length ? Math.max(...viewsList) : 0,
+        reactions_total: sum(posts.map((p) => p.reactionsTg)),
+        likes_total: sum(posts.map((p) => p.likesCount)),
+        text_len_avg: posts.length ? sum(posts.map((p) => p.text.length)) / posts.length : 0,
+        with_text: posts.filter((p) => p.text.length > 0).length,
+        first_at: chrono[0]?.publishedAt ?? null,
+        last_at: chrono[chrono.length - 1]?.publishedAt ?? null,
+        active_days: new Set(chrono.map((p) => p.publishedAt.toISOString().slice(0, 10))).size,
+      }
+
+      const binsMap = new Map<string, BinRow>()
+      for (const p of posts) {
+        const dow = p.publishedAt.getUTCDay()
+        const hour = p.publishedAt.getUTCHours()
+        const k = `${dow}:${hour}`
+        const cur = binsMap.get(k) ?? { dow, hour, n: 0, v: 0 }
+        cur.v = (cur.v * cur.n + viewsOf(p)) / (cur.n + 1)
+        cur.n += 1
+        binsMap.set(k, cur)
+      }
+      const bins = [...binsMap.values()]
+
+      const seriesRows: SeriesRow[] = posts.slice(0, 40).map((p) => ({
+        publishedAt: p.publishedAt,
+        views: viewsOf(p),
+        reactions: p.reactionsTg,
+      }))
+
+      const cadenceMap = new Map<string, number>()
+      for (const p of posts) {
+        const k = p.publishedAt.toISOString().slice(0, 10)
+        cadenceMap.set(k, (cadenceMap.get(k) ?? 0) + 1)
+      }
+      const cadenceRows: CadenceRow[] = [...cadenceMap.entries()]
+        .filter(([d]) => d >= new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10))
+        .map(([d, n]) => ({ d: new Date(`${d}T00:00:00Z`), n }))
+
+      const mediaMap = new Map<string, number>()
+      for (const p of posts) mediaMap.set(p.mediaType, (mediaMap.get(p.mediaType) ?? 0) + 1)
+      const mediaRows: MediaRow[] = [...mediaMap.entries()]
+        .map(([type, count]) => ({ type, count }))
+        .sort((x, y) => y.count - x.count)
+
+      const rank = (key: 'views' | 'reactions') =>
+        [...posts]
+          .sort((x, y) => (key === 'views' ? viewsOf(y) - viewsOf(x) : y.reactionsTg - x.reactionsTg))
+          .slice(0, 5)
+
+      const topViews = rank('views')
+      const topReactions = rank('reactions')
+      const appViews = viewRows.length
+
+      const a = agg
+      const built = finalizeStats({ a, bins, seriesRows, cadenceRows, topViews, topReactions, appViews, mediaRows, members: channel.membersCount ?? channel.subscribersCount, subscribers: channel.subscribersCount })
+      statsCache.set(username, { data: built, exp: Date.now() + STATS_TTL_MS })
+      return NextResponse.json(built)
+    }
 
     const [agg, bins, seriesRows, cadenceRows, topViews, topReactions, appViewsRows, mediaRows] =
       await db.$transaction([
@@ -167,11 +387,15 @@ export async function GET(request: Request) {
         }),
 
         // ===== Читатели приложения: сколько раз посты канала открывали =====
+        // Инкогнито (Snap Plus/Pro, v5.17): активные платные подписчики
+        // не видны в детальной статистике — только free и истёкшие тир-подписки
         db.$queryRaw<AppViewsRow[]>`
           SELECT COUNT(*)::int AS n
           FROM "PostView" pv
           JOIN "Post" p ON p."id" = pv."postId"
-          WHERE p."channelId" = ${cid}`,
+          JOIN "User" u ON u."id" = pv."userId"
+          WHERE p."channelId" = ${cid}
+            AND (u."tier" = 'free' OR u."tier" IS NULL OR u."tierUntil" IS NULL OR u."tierUntil" <= NOW())`,
 
         // ===== Медиа-микс =====
         db.$queryRaw<MediaRow[]>`
@@ -184,110 +408,21 @@ export async function GET(request: Request) {
     if (!a) return err('channel failed', 500)
     const appViews = appViewsRows[0]?.n ?? 0
 
-    // --- Медиа-микс ---
-    const mediaMix = mediaRows.map((m) => ({ type: m.type, count: m.count }))
-
-    // --- Гистограммы из бинов ---
-    const weekday = Array.from({ length: 7 }, (_, dow) => {
-      const rows = bins.filter((b) => b.dow === dow)
-      const n = rows.reduce((s, b) => s + b.n, 0)
-      const v = n > 0 ? rows.reduce((s, b) => s + b.v * b.n, 0) / n : 0
-      return { dow, count: n, viewsAvg: Math.round(v) }
-    })
-    const hours = Array.from({ length: 24 }, (_, hour) => {
-      const rows = bins.filter((b) => b.hour === hour)
-      const n = rows.reduce((s, b) => s + b.n, 0)
-      const v = n > 0 ? rows.reduce((s, b) => s + b.v * b.n, 0) / n : 0
-      return { hour, count: n, viewsAvg: Math.round(v) }
-    })
-
-    // --- Лучшее время публикации: бин 3ч × день недели с максимумом
-    //     среднего числа просмотров (только бины с ≥2 постами — честно) ---
-    let bestSlot: ChannelStatsDTO['bestSlot'] = null
-    {
-      const slots = new Map<string, { dow: number; hour: number; wv: number; n: number }>()
-      for (const b of bins) {
-        const slot = Math.floor(b.hour / 3) * 3
-        const key = `${b.dow}:${slot}`
-        const cur = slots.get(key) ?? { dow: b.dow, hour: slot, wv: 0, n: 0 }
-        cur.wv += b.v * b.n
-        cur.n += b.n
-        slots.set(key, cur)
-      }
-      for (const s of slots.values()) {
-        if (s.n < 2) continue
-        const avg = s.wv / s.n
-        if (!bestSlot || avg > bestSlot.viewsAvg) {
-          bestSlot = { dow: s.dow, hour: s.hour, viewsAvg: Math.round(avg), samples: s.n }
-        }
-      }
-    }
-
-    // --- Серии для графиков (хронологически) ---
-    const series = seriesRows
-      .slice()
-      .reverse()
-      .map((r) => ({
-        date: new Date(r.publishedAt).toISOString(),
-        views: r.views,
-        reactions: r.reactions,
-      }))
-
-    // --- Ритм публикаций: 30 дней с нулями ---
-    const cadence: ChannelStatsDTO['cadence'] = []
-    {
-      const byDay = new Map(cadenceRows.map((r) => [new Date(r.d).toISOString().slice(0, 10), r.n]))
-      const today = new Date()
-      for (let i = 29; i >= 0; i--) {
-        const d = new Date(today.getTime() - i * 86_400_000)
-        const key = d.toISOString().slice(0, 10)
-        cadence.push({ date: key, count: byDay.get(key) ?? 0 })
-      }
-    }
-
-    // --- Интервалы между постами: (последний - первый) / (posts-1) ---
-    const gapHoursAvg =
-      a.posts > 1 && a.first_at && a.last_at
-        ? (new Date(a.last_at).getTime() - new Date(a.first_at).getTime()) / (a.posts - 1) / 3_600_000
-        : null
-
-    const viewsTotal = a.views_total
-    const erPct = viewsTotal > 0 ? (a.reactions_total / viewsTotal) * 100 : 0
-    // Охват: средние просмотры поста / подписчики канала
-    const members = channel.membersCount ?? channel.subscribersCount
-    const reachPct = members && members > 0 ? Math.min(999, (a.views_avg / members) * 100) : null
-
-    const data: ChannelStatsDTO = {
-      posts: a.posts,
-      viewsTotal,
-      viewsAvg: Math.round(a.views_avg),
-      viewsMedian: Math.round(a.views_median),
-      viewsMax: a.views_max,
-      reactionsTotal: a.reactions_total,
-      reactionsAvg: a.posts > 0 ? a.reactions_total / a.posts : 0,
-      erPct: Math.round(erPct * 100) / 100,
-      reachPct: reachPct === null ? null : Math.round(reachPct * 10) / 10,
-      likesTotal: a.likes_total,
+    const data = finalizeStats({
+      a,
+      bins,
+      seriesRows,
+      cadenceRows,
+      topViews,
+      topReactions,
       appViews,
-      textLenAvg: Math.round(a.text_len_avg),
-      withTextPct: a.posts > 0 ? Math.round((a.with_text / a.posts) * 100) : 0,
-      firstAt: ISO(a.first_at),
-      lastAt: ISO(a.last_at),
-      activeDays: a.active_days,
-      postsPerDayAvg:
-        a.active_days > 0 ? Math.round((a.posts / a.active_days) * 100) / 100 : 0,
-      gapHoursAvg: gapHoursAvg === null ? null : Math.round(gapHoursAvg * 10) / 10,
-      mediaMix,
-      weekday,
-      hours,
-      bestSlot,
-      series,
-      cadence,
-      topByViews: topViews.map(topDto),
-      topByReactions: topReactions.map(topDto),
-      membersCount: channel.membersCount,
-      subscribersCount: channel.subscribersCount,
-    }
+      mediaRows,
+      members: channel.membersCount ?? channel.subscribersCount,
+      subscribers: channel.subscribersCount,
+    })
+    // membersCount/subscribersCount отдаём как есть (могут быть null)
+    data.membersCount = channel.membersCount
+    data.subscribersCount = channel.subscribersCount
 
     if (statsCache.size >= STATS_MAX) {
       const now = Date.now()

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, Bookmark, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, Bookmark, Check, ChevronLeft, ChevronRight, Copy, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -497,6 +497,24 @@ export function PostOverlay() {
                 <Sparkle className="h-4 w-4" aria-hidden />
                 {t('post.summary')}
               </button>
+            )}
+            {/* CTA Pro-автора: полноширинная кнопка-ссылка в самом низу поста
+                (над панелью действий с входом к комментариям). Поля ctaLabel/
+                ctaUrl приходят в DTO только при активном Pro-владельце канала —
+                без них блок не рендерится вовсе (никаких заглушек). */}
+            {ch.ctaLabel && ch.ctaUrl && (
+              <div className="mt-3 px-4">
+                <a
+                  href={ch.ctaUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={() => haptic('light')}
+                  className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white active:opacity-80"
+                >
+                  {ch.ctaLabel}
+                  <ArrowUpRight className="h-4.5 w-4.5" aria-hidden />
+                </a>
+              </div>
             )}
             <div className="h-24" />
             </motion.div>

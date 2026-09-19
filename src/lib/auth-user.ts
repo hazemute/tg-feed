@@ -40,14 +40,14 @@ export async function migrateGuestUserData(
             notify: s.notify,
             createdAt: s.createdAt,
           })),
-          skipDuplicates: true,
+          skipDuplicates: true as never,
         })
         await tx.subscription.deleteMany({ where: { userId: guestId } })
       }
       if (likes.length > 0) {
         await tx.like.createMany({
           data: likes.map((l) => ({ userId: targetId, postId: l.postId, createdAt: l.createdAt })),
-          skipDuplicates: true,
+          skipDuplicates: true as never,
         })
         await tx.like.deleteMany({ where: { userId: guestId } })
       }
@@ -59,14 +59,14 @@ export async function migrateGuestUserData(
             createdAt: b.createdAt,
             readAt: b.readAt,
           })),
-          skipDuplicates: true,
+          skipDuplicates: true as never,
         })
         await tx.bookmark.deleteMany({ where: { userId: guestId } })
       }
       if (views.length > 0) {
         await tx.postView.createMany({
           data: views.map((v) => ({ userId: targetId, postId: v.postId, createdAt: v.createdAt })),
-          skipDuplicates: true,
+          skipDuplicates: true as never,
         })
         await tx.postView.deleteMany({ where: { userId: guestId } })
       }

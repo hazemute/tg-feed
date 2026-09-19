@@ -68,6 +68,10 @@ type PageRow = {
   c_status: string
   c_teaserMode: string
   c_teaserLimit: number
+  c_ctaLabel: string | null
+  c_ctaUrl: string | null
+  c_ownerTier: string | null
+  c_ownerTierUntil: Date | null
   cat_slug: string | null
   cat_title: string | null
   bookmarksCount: number | bigint
@@ -114,6 +118,9 @@ function postFromRow(r: PageRow): PostWithChannel {
       status: r.c_status,
       teaserMode: r.c_teaserMode,
       teaserLimit: r.c_teaserLimit,
+      ctaLabel: r.c_ctaLabel,
+      ctaUrl: r.c_ctaUrl,
+      claimedBy: r.c_ownerTier ? { tier: r.c_ownerTier, tierUntil: r.c_ownerTierUntil } : null,
       category: r.cat_slug ? { slug: r.cat_slug, title: r.cat_title } : null,
     },
   } as unknown as PostWithChannel
@@ -141,6 +148,8 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
                    c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
                    c."status"     AS "c_status",
                    c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
+                   c."ctaLabel"     AS "c_ctaLabel", c."ctaUrl"    AS "c_ctaUrl",
+                   owner."tier"     AS "c_ownerTier", owner."tierUntil" AS "c_ownerTierUntil",
                    cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
                    (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
                    (l."userId" IS NOT NULL)  AS "liked",
@@ -148,6 +157,7 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
             FROM "Post" p
             JOIN "Channel" c  ON c."id" = p."channelId"
             LEFT JOIN "Category" cat ON cat."id" = c."categoryId"
+            LEFT JOIN "User" owner ON owner."id" = c."claimedById"
             LEFT JOIN "Like" l     ON l."postId" = p."id" AND l."userId" = ${userId}
             LEFT JOIN "Bookmark" bm ON bm."postId" = p."id" AND bm."userId" = ${userId}
             WHERE p."id" = ANY(${ids}::text[])`
@@ -157,7 +167,11 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
   const [posts, likes, bookmarks, bookmarkCounts] = await Promise.all([
     db.post.findMany({
       where: { id: { in: ids } },
-      include: { channel: { include: { category: true } } },
+      include: {
+        channel: {
+          include: { category: true, claimedBy: { select: { tier: true, tierUntil: true } } },
+        },
+      },
     }),
     db.like.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
     db.bookmark.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
@@ -202,6 +216,10 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
         c_status: c.status,
         c_teaserMode: c.teaserMode,
         c_teaserLimit: c.teaserLimit,
+        c_ctaLabel: c.ctaLabel,
+        c_ctaUrl: c.ctaUrl,
+        c_ownerTier: c.claimedBy?.tier ?? null,
+        c_ownerTierUntil: c.claimedBy?.tierUntil ?? null,
         cat_slug: c.category?.slug ?? null,
         cat_title: c.category?.title ?? null,
         bookmarksCount: bmCount.get(p.id) ?? 0,

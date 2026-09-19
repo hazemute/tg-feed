@@ -28,6 +28,8 @@ model User {
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
   bannedAt      DateTime? // бан: null — активен; API отвечает 403 banned
   banReason     String?   // причина бана (видна админу)
+  tier          String   @default("free") // free | plus | pro (Snap Plus / Snap Pro)
+  tierUntil     DateTime? // срок действия оплаченного тира
   createdAt     DateTime @default(now())
 
   likes         Like[]
@@ -81,6 +83,10 @@ model Channel {
   claimedById      String?
   claimedBy        User?     @relation("claimedChannels", fields: [claimedById], references: [id])
   claimedAt        DateTime?
+  ctaLabel      String? // Snap Pro: текст CTA-кнопки в раскрытом посте
+  ctaUrl        String? // Snap Pro: ссылка CTA-кнопки (https)
+  styleProfile  String? // Snap Pro: слепок стиля ИИ-ассистента (JSON)
+  styleAt       DateTime? // Snap Pro: когда последний раз сканировали стиль
   teaserMode       String    @default("none")
   teaserLimit      Int       @default(160)
   addedById        String?
@@ -118,6 +124,8 @@ model Post {
   ttsAt       DateTime?
   publishedAt DateTime
   notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API)
+  promotedAt  DateTime? // когда автор протолкнул пост в ленту (Snap Pro ≤7/нед)
+  embedTried  Boolean  @default(false) // бэкфилл медиа через t.me embed уже пробовали
 
   likedBy     Like[]
   viewedBy    PostView[]
@@ -416,11 +424,42 @@ model TranslationLog {
   @@index([postId])
 }
 
+// Вход на сайт через Telegram-бота (каноническая модель из schema.prisma):
+// гость жмёт «Вход по Telegram» → бот /start login_<id> → callback подтверждает
+// попытку, сайт (опрос) выдаёт JWT-сессию реального TG-аккаунта.
 model LoginAttempt {
+  id          String    @id // случайный токен из ссылки-приглашения
+  status      String    @default("pending") // pending | confirmed | used
+  tgUserJson  String?   // снимок tg-user из callback_query (id/username/имя/фото)
+  confirmedAt DateTime?
+  expiresAt   DateTime // 15 минут на подтверждение
+  createdAt   DateTime  @default(now())
+
+  @@index([status, expiresAt])
+}
+
+// ИИ-поиск: журнал для лимита бесплатного тира (3/день)
+model AiSearchLog {
   id        String   @id @default(cuid())
-  ipHash    String
-  success   Boolean  @default(false)
+  userId    String
+  query     String
   createdAt DateTime @default(now())
 
-  @@index([ipHash, createdAt])
+  @@index([userId, createdAt])
+}
+
+// Платежи (на проде — ЮKassa/Stars/TON; локально не используется, но нужен для tsc)
+model PendingPayment {
+  id                String   @id @default(cuid())
+  userId            String
+  amountKop         Int
+  status            String   @default("pending")
+  provider          String   @default("yookassa")
+  purpose           String   @default("balance") // balance | plus_month | plus_year | pro_month | pro_year
+  providerPaymentId String?
+  confirmationUrl   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId, createdAt])
 }

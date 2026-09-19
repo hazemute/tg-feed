@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   ArrowUpRight,
+  Bot,
   Check,
   Copy,
   Eye,
@@ -11,11 +12,14 @@ import {
   FileText,
   Link2,
   Loader2,
+  Lock,
   Megaphone,
+  MousePointerClick,
   Pause,
   Play,
   Plus,
   Radio,
+  Rocket,
   Scissors,
   Send,
   Sparkles,
@@ -26,7 +30,8 @@ import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { formatCount } from '@/lib/format'
+import { formatCount, timeAgoRu } from '@/lib/format'
+import { stripMarkdown } from '@/lib/markdown'
 import { formatSwipes, pluralSwipes } from '@/lib/money'
 import { haptic, openTelegram } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
@@ -34,7 +39,7 @@ import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
-import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
+import type { AiAssistantDraft, MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
 
 /**
  * «Мой канал» — КАБИНЕТ ВЛАДЕЛЬЦА: большая аналитика именно СВОЕГО канала
@@ -76,7 +81,12 @@ export function MyChannelTab() {
       setData(r)
       setActiveId((prev) => prev ?? r.channels[0]?.id ?? null)
     } catch {
-      setData({ channels: [], advertiser: { balanceKop: 0, topupsTotalKop: 0, spentTotalKop: 0 } })
+      setData({
+        channels: [],
+        advertiser: { balanceKop: 0, topupsTotalKop: 0, spentTotalKop: 0 },
+        tier: 'free',
+        promotion: { used: 0, limit: 7, available: false },
+      })
     } finally {
       setLoading(false)
     }
@@ -90,6 +100,10 @@ export function MyChannelTab() {
     () => data?.channels.find((c) => c.id === activeId) ?? data?.channels[0] ?? null,
     [data, activeId],
   )
+
+  // Тариф и лимит продвижения приходят из GET /api/mychannel (E2E берёт их оттуда же)
+  const tier = data?.tier ?? 'free'
+  const promotion = data?.promotion ?? { used: 0, limit: 7, available: false }
 
   return (
     <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain px-4 pb-28 pt-5 lg:px-6 lg:pt-7">
@@ -190,8 +204,25 @@ export function MyChannelTab() {
                   лучшее время, ритм, топ постов) — плоский, без карточек */
               <ChannelCabinet key={channel!.username} username={channel!.username} title={channel!.title} />
             )}
-            {tab === 'display' && <DisplaySection channel={channel!} onSaved={load} />}
-            {tab === 'ads' && <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />}
+            {tab === 'display' && (
+              <div className="space-y-5">
+                <DisplaySection channel={channel!} onSaved={load} />
+                <CtaSection key={channel!.id} channel={channel!} tier={tier} />
+                <AiAssistantSection key={channel!.id} channel={channel!} tier={tier} />
+              </div>
+            )}
+            {tab === 'ads' && (
+              <div className="space-y-5">
+                <PromotionSection
+                  key={channel!.id}
+                  channel={channel!}
+                  tier={tier}
+                  promotion={promotion}
+                  onReload={load}
+                />
+                <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />
+              </div>
+            )}
           </motion.div>
         </div>
       )}
@@ -529,6 +560,525 @@ function DisplaySection({ channel, onSaved }: { channel: MyChannelDTO; onSaved: 
           {dirty ? 'Сохранить настройки' : 'Сохранено'}
         </button>
       </div>
+    </motion.section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Snap Pro: общие блоки апгрейда                                      */
+/* ------------------------------------------------------------------ */
+
+/** 402 pro_required: api() кидает Error(data.error) — message ровно 'pro_required' */
+function proRequired(err: unknown): boolean {
+  return (err as Error)?.message === 'pro_required'
+}
+
+/** Заблокированная возможность (не-pro): замок + кнопка апгрейда */
+function LockedCard({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+      <div className="flex items-start gap-3">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-tg-link/12">
+          <Lock className="h-5 w-5 text-tg-link" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[15px] font-bold text-tg-text">{title}</div>
+          <p className="mt-0.5 text-[13px] leading-relaxed text-tg-hint">{text}</p>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => {
+          haptic('light')
+          toast.info('Тарифы — в профиле')
+        }}
+        className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14px] font-semibold text-white transition active:scale-[0.98]"
+      >
+        <Sparkles className="h-4 w-4" />
+        Включить в Snap Pro
+      </button>
+    </div>
+  )
+}
+
+/** Компактная апгрейд-подсказка (показывается после 402 pro_required) */
+function UpgradeNote({ className }: { className?: string }) {
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between gap-3 rounded-2xl border border-dashed border-tg-link/40 bg-tg-link/[0.06] px-3.5 py-2.5',
+        className,
+      )}
+    >
+      <span className="text-[12.5px] leading-snug text-tg-text2">Эта возможность входит в тариф Snap Pro</span>
+      <button
+        type="button"
+        onClick={() => {
+          haptic('light')
+          toast.info('Тарифы — в профиле')
+        }}
+        className="shrink-0 rounded-full bg-tg-link px-3.5 py-1.5 text-[12px] font-bold text-white transition active:scale-95"
+      >
+        Тарифы
+      </button>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* CTA-кнопка (Snap Pro)                                               */
+/* ------------------------------------------------------------------ */
+
+function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
+  const pro = tier === 'pro'
+  const [label, setLabel] = useState(channel.ctaLabel ?? '')
+  const [url, setUrl] = useState(channel.ctaUrl ?? '')
+  const [busy, setBusy] = useState(false)
+  const [needPro, setNeedPro] = useState(false)
+  // Очистка: пустой текст не отправляем (на сервере min 2) — кнопка просто неактивна
+  const valid = label.trim().length >= 2 && /^https:\/\//i.test(url.trim())
+
+  const save = async () => {
+    if (busy || !valid) return
+    setBusy(true)
+    try {
+      await api('/api/mychannel', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'cta',
+          channelId: channel.id,
+          ctaLabel: label.trim(),
+          ctaUrl: url.trim(),
+        }),
+      })
+      haptic('success')
+      toast.success('CTA-кнопка сохранена')
+    } catch (err) {
+      if (proRequired(err)) {
+        setNeedPro(true)
+        toast.error('CTA-кнопка доступна на тарифе Snap Pro')
+      } else {
+        toast.error((err as Error).message || 'Не удалось сохранить')
+      }
+      haptic('error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
+      <SectionTitle icon={MousePointerClick}>Кнопка действия (CTA)</SectionTitle>
+      {pro ? (
+        <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+          <p className="text-[12.5px] leading-relaxed text-tg-hint">
+            Появляется в конце раскрытых постов канала: ведите читателя на сайт, бота или в закреп.
+          </p>
+          <div className="mt-3 space-y-2.5">
+            <Field label="Текст кнопки">
+              <input
+                value={label}
+                onChange={(e) => setLabel(e.target.value.slice(0, 30))}
+                maxLength={30}
+                placeholder="Подписаться"
+                className={INPUT_CLS}
+              />
+            </Field>
+            <Field label="Ссылка (https)">
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                type="url"
+                inputMode="url"
+                placeholder="https://t.me/my_channel"
+                className={INPUT_CLS}
+              />
+            </Field>
+          </div>
+          {/* Живое превью кнопки */}
+          {label.trim().length >= 2 && (
+            <div className="mt-3 rounded-xl bg-tg-bg px-3 py-3 text-center">
+              <span className="inline-block rounded-full bg-tg-link px-4 py-1.5 text-[13px] font-semibold text-white">
+                {label.trim()}
+              </span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={save}
+            disabled={busy || !valid}
+            className={cn(
+              'mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-2xl text-[14px] font-semibold transition active:scale-[0.98]',
+              valid ? 'bg-tg-link text-white' : 'cursor-default bg-tg-sep/50 text-tg-hint',
+            )}
+          >
+            {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
+            Сохранить
+          </button>
+          {needPro && <UpgradeNote className="mt-3" />}
+        </div>
+      ) : (
+        <LockedCard
+          title="Кнопка действия (CTA)"
+          text="Появляется в конце раскрытых постов канала — ведите читателя на сайт, бота или в закреп."
+        />
+      )}
+    </motion.section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* ИИ-ассистент (Snap Pro)                                             */
+/* ------------------------------------------------------------------ */
+
+function AiAssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
+  const pro = tier === 'pro'
+  const [prompt, setPrompt] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [lateStage, setLateStage] = useState(false)
+  const [draft, setDraft] = useState<AiAssistantDraft | null>(null)
+  const [publishing, setPublishing] = useState(false)
+  const [published, setPublished] = useState(false)
+  const [publishedLink, setPublishedLink] = useState<string | null>(null)
+  const [needPro, setNeedPro] = useState(false)
+
+  // Скелетон генерации: через 3с меняем текст этапа на «Рисует картинку…»
+  useEffect(() => {
+    if (!busy) {
+      setLateStage(false)
+      return
+    }
+    const id = window.setTimeout(() => setLateStage(true), 3000)
+    return () => window.clearTimeout(id)
+  }, [busy])
+
+  const generate = async (p?: string) => {
+    if (busy) return
+    setBusy(true)
+    setDraft(null)
+    setPublished(false)
+    setPublishedLink(null)
+    setNeedPro(false)
+    try {
+      const r = await api<AiAssistantDraft>('/api/ai/assistant', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'generate', channelId: channel.id, prompt: p?.trim() || undefined }),
+      })
+      setDraft(r)
+      haptic('success')
+    } catch (err) {
+      if (proRequired(err)) {
+        setNeedPro(true)
+        toast.error('ИИ-ассистент доступен на тарифе Snap Pro')
+      } else {
+        toast.error((err as Error).message || 'Не удалось создать пост')
+      }
+      haptic('error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const publish = async () => {
+    if (!draft || publishing) return
+    setPublishing(true)
+    try {
+      const r = await api<{ ok: boolean; link?: string; error?: string }>('/api/ai/assistant', {
+        method: 'POST',
+        body: JSON.stringify({
+          action: 'publish',
+          channelId: channel.id,
+          text: draft.text,
+          imageUrl: draft.imageUrl,
+        }),
+      })
+      if (r.ok) {
+        haptic('success')
+        toast.success('Опубликовано в Telegram')
+        setPublished(true)
+        setPublishedLink(r.link ?? null)
+        setDraft(null) // черновик очищен — остаётся только ссылка на пост
+        setPrompt('')
+      } else {
+        toast.error(r.error || 'Не удалось опубликовать')
+        haptic('error')
+      }
+    } catch (err) {
+      toast.error((err as Error).message || 'Не удалось опубликовать')
+      haptic('error')
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  return (
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
+      <SectionTitle icon={Bot}>ИИ-ассистент</SectionTitle>
+      {pro ? (
+        <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+          <input
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            maxLength={300}
+            placeholder="О чём пост? (необязательно)"
+            aria-label="О чём пост"
+            className={INPUT_CLS}
+          />
+          <button
+            type="button"
+            onClick={() => generate(prompt)}
+            disabled={busy}
+            className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14.5px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
+          >
+            {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Sparkles className="h-4.5 w-4.5" />}
+            Придумать пост
+          </button>
+
+          {/* Генерация: скелетон с меняющимся текстом этапа */}
+          {busy && (
+            <div className="mt-3 rounded-2xl border border-tg-sep/50 bg-tg-bg p-3.5" role="status" aria-live="polite">
+              <div className="h-4 w-3/4 rounded-full tg-shimmer" />
+              <div className="mt-2 h-4 w-full rounded-full tg-shimmer" />
+              <div className="mt-2 h-4 w-5/6 rounded-full tg-shimmer" />
+              <div className="mt-3 h-32 w-full rounded-2xl tg-shimmer" />
+              <div className="mt-2.5 flex items-center gap-1.5 text-[12.5px] text-tg-hint">
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                {lateStage ? 'Рисует картинку…' : 'ИИ изучает стиль канала и тренды…'}
+              </div>
+            </div>
+          )}
+
+          {/* Черновик поста */}
+          {!busy && draft && (
+            <div className="mt-3 rounded-2xl border border-tg-sep/50 bg-tg-bg p-3.5">
+              <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-tg-text">{draft.text}</div>
+              {draft.imageUrl && (
+                <img
+                  src={draft.imageUrl}
+                  alt=""
+                  loading="lazy"
+                  className="mt-3 w-full rounded-xl border border-tg-sep"
+                />
+              )}
+              {draft.imagePending && (
+                <div className="mt-2 rounded-xl bg-tg-star/[0.08] px-3 py-2 text-[12px] leading-snug text-tg-hint">
+                  Картинка досоздаётся — можно публиковать, или подождите и повторите
+                </div>
+              )}
+              {draft.styleAnalyzed && (
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-tg-link/10 px-2.5 py-1 text-[11.5px] font-semibold text-tg-link">
+                  <Sparkles className="h-3 w-3" />
+                  Стиль канала изучен
+                </div>
+              )}
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={publish}
+                  disabled={publishing}
+                  className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
+                >
+                  {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                  Опубликовать в канал
+                </button>
+                <button
+                  type="button"
+                  onClick={() => generate(prompt)}
+                  disabled={publishing}
+                  className="h-11 shrink-0 rounded-2xl bg-tg-surface px-3.5 text-[13px] font-semibold text-tg-text2 transition active:scale-95"
+                >
+                  Ещё вариант
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraft(null)
+                    setPrompt('')
+                  }}
+                  aria-label="Отменить черновик"
+                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-tg-surface text-tg-hint transition active:scale-95"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Успешная публикация: строка + ссылка на пост в Telegram */}
+          {!busy && !draft && published && (
+            <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-tg-sep/50 bg-tg-bg px-3.5 py-3">
+              <span className="flex min-w-0 items-center gap-2 text-[13.5px] font-semibold text-tg-text">
+                <Check className="h-4 w-4 shrink-0 text-tg-link" />
+                Пост опубликован
+              </span>
+              {publishedLink && (
+                <a
+                  href={publishedLink}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="flex h-9 shrink-0 items-center gap-1 rounded-xl bg-tg-link/10 px-3 text-[13px] font-semibold text-tg-link transition active:scale-95"
+                >
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                  Открыть пост
+                </a>
+              )}
+            </div>
+          )}
+
+          {needPro && <UpgradeNote className="mt-3" />}
+        </div>
+      ) : (
+        <LockedCard
+          title="Автономный ИИ-контентщик"
+          text="Придумывает посты в вашем стиле, рисует картинки и публикует в канал"
+        />
+      )}
+    </motion.section>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Продвижение в ленте (Snap Pro, ≤7/нед)                              */
+/* ------------------------------------------------------------------ */
+
+function PromotionSection({
+  channel,
+  tier,
+  promotion,
+  onReload,
+}: {
+  channel: MyChannelDTO
+  tier: 'free' | 'plus' | 'pro'
+  promotion: MyChannelResponse['promotion']
+  onReload: () => void
+}) {
+  const pro = tier === 'pro'
+  const [posts, setPosts] = useState<PostDTO[] | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+  const [needPro, setNeedPro] = useState(false)
+  const limitReached = promotion.used >= promotion.limit
+
+  // Последние 10 постов канала: публичный роут экрана канала (GET /api/channel?username=…&limit=10)
+  useEffect(() => {
+    if (!pro) return
+    let alive = true
+    api<{ items: PostDTO[] }>(`/api/channel?username=${encodeURIComponent(channel.username)}&limit=10`)
+      .then((r) => {
+        if (alive) setPosts(r.items)
+      })
+      .catch(() => {
+        if (alive) setPosts([])
+      })
+    return () => {
+      alive = false
+    }
+  }, [pro, channel.username])
+
+  const promote = async (postId: string) => {
+    if (busyId) return
+    setBusyId(postId)
+    try {
+      const r = await api<{ ok: boolean; used: number; limit: number }>('/api/mychannel', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'promote', channelId: channel.id, postId }),
+      })
+      haptic('success')
+      toast.success(`Продвинуто (${r.used} из ${r.limit})`)
+      onReload() // свежий promotion.used из GET /api/mychannel
+    } catch (err) {
+      const m = (err as Error).message || ''
+      if (proRequired(err)) {
+        setNeedPro(true)
+        toast.error('Продвижение доступно на тарифе Snap Pro')
+      } else if (/лимит/i.test(m)) {
+        toast.error('Лимит недели исчерпан')
+      } else {
+        toast.error(m || 'Не удалось продвинуть')
+      }
+      haptic('error')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}>
+      <SectionTitle icon={Rocket}>Продвижение в ленте</SectionTitle>
+      {pro ? (
+        <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+          <p className="text-[12.5px] leading-relaxed text-tg-hint">
+            Протолкните пост в первые ряды ленты — буст температуры на сутки.
+          </p>
+
+          {/* Недельный счётчик */}
+          <div className="mt-3">
+            <div className="flex items-center justify-between text-[12.5px] font-medium text-tg-text2">
+              <span>Использовано на этой неделе</span>
+              <span className="tabular-nums text-tg-hint">
+                {promotion.used} из {promotion.limit}
+              </span>
+            </div>
+            <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-tg-sep/50">
+              <div
+                className="h-full rounded-full bg-gradient-to-r from-tg-link to-tg-star transition-all duration-500"
+                style={{
+                  width: `${Math.min(100, Math.round((promotion.used / Math.max(1, promotion.limit)) * 100))}%`,
+                }}
+              />
+            </div>
+          </div>
+
+          {/* Последние посты канала */}
+          <div className="mt-3 space-y-2">
+            {posts === null ? (
+              <div className="h-[68px] rounded-2xl tg-shimmer" />
+            ) : posts.length === 0 ? (
+              <p className="py-2 text-center text-[13px] text-tg-hint">У канала пока нет постов в Tg Swipe</p>
+            ) : (
+              posts.map((p) => (
+                <div
+                  key={p.id}
+                  className="flex items-center gap-2.5 rounded-2xl border border-tg-sep/40 bg-tg-bg p-2.5"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="line-clamp-2 text-[13px] leading-snug text-tg-text2">
+                      {stripMarkdown(p.text).replace(/\s+/g, ' ').trim() || 'Медиа-пост'}
+                    </p>
+                    <div className="mt-0.5 text-[11.5px] text-tg-hint">
+                      {timeAgoRu(p.publishedAt)} · {formatCount(p.viewsCount)} просмотров
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => promote(p.id)}
+                    disabled={busyId !== null || limitReached}
+                    className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-tg-surface px-3 text-[12.5px] font-semibold text-tg-link transition active:scale-95 disabled:opacity-50"
+                  >
+                    {busyId === p.id ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Rocket className="h-3.5 w-3.5" />
+                    )}
+                    Продвинуть
+                  </button>
+                </div>
+              ))
+            )}
+          </div>
+
+          {limitReached && (
+            <p className="mt-2.5 text-[12px] leading-snug text-tg-hint">
+              Лимит недели исчерпан — новое продвижение откроется через 7 дней после последнего.
+            </p>
+          )}
+          {needPro && <UpgradeNote className="mt-3" />}
+        </div>
+      ) : (
+        <LockedCard
+          title="Продвижение в ленте"
+          text="Поднимайте свои посты в первых рядах ленты — до 7 раз в неделю."
+        />
+      )}
     </motion.section>
   )
 }

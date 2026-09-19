@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { useApp } from '@/lib/store'
 
 /**
  * TelegramEmojiRenderer — переиспользуемый рендерер премиум-эмодзи Telegram.
@@ -20,6 +21,12 @@ import { cn } from '@/lib/utils'
  * и рендерит эмодзи inline: видео — <video autoplay loop muted>, Lottie —
  * lottie-web (ленивый чанк, gzip распаковывает браузер), статичные — <img>.
  * Размер вписан в строку текста (1.35em), высота строк не ломается.
+ *
+ * Гейтинг Snap Plus/Pro: анимированные эмодзи (ev/el → <video>/lottie-web)
+ * проигрываются только у подписчиков платных тиров; free всегда получает
+ * статичную версию — <img> с thumb-URL из маркера (маркеры ev/el хранят тот
+ * же thumb, что и e: апгрейд переписывает только префикс). Без thumb —
+ * пустышка. Статичный путь не грузит ни lottie-чанк, ни видео.
  */
 
 /** Маркеры эмодзи в тексте из БД: ![ev:ID](url) | ![el:ID](url) | ![e:ID](url) | ![e](url) */
@@ -194,6 +201,12 @@ export function TgEmoji({
   const [broken, setBroken] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const { ref, initedOnce, visible } = useEmojiVisibility()
+  /*
+   * Гейтинг тиров: анимации (видео/lottie) — только Snap Plus/Pro.
+   * Селектор возвращает boolean, поэтому перерисовка случается лишь при
+   * фактической смене доступа, а не при любом чихе в сторе.
+   */
+  const allowAnimated = useApp((s) => s.user?.tier === 'plus' || s.user?.tier === 'pro')
 
   // Пауза вне зоны видимости / автозапуск при появлении (autoplay + loop)
   useEffect(() => {
@@ -203,8 +216,11 @@ export function TgEmoji({
     else v.pause()
   }, [visible])
 
-  const wantVideo = animated && id && !broken
-  const wantLottie = lottie && id && !broken && CAN_GZIP
+  // Без доступа (free) анимационные маркеры проваливаются в статичную ветку
+  // ниже: <img src={thumb}>. LottieEmoji при этом не монтируется вовсе —
+  // динамический импорт lottie-web не срабатывает, <video> не создаётся.
+  const wantVideo = allowAnimated && animated && id && !broken
+  const wantLottie = allowAnimated && lottie && id && !broken && CAN_GZIP
 
   if (wantLottie) return <LottieEmoji id={id} fallbackUrl={url} />
 

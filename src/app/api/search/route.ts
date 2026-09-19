@@ -5,9 +5,15 @@ import { toPostDTO } from '@/lib/dto'
 import { guardPublic } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { isNsfwText, getNsfwChannelIds } from '@/lib/moderation'
+import { IS_SQLITE } from '@/lib/server'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
+
+/** insensitive-фрагмент contains, совместимый и с Postgres, и с SQLite (см. lib/moderation.ts) */
+function ci(value: string): Record<string, unknown> {
+  return IS_SQLITE ? { contains: value } : { contains: value, mode: 'insensitive' as const }
+}
 
 // Публичный поиск; сессия опциональна — от неё зависят только лайк/закладка.
 const querySchema = z.object({
@@ -46,7 +52,7 @@ export async function GET(request: Request) {
       fetcher: async (): Promise<PostDTO[]> => {
         const posts = await db.post.findMany({
           where: {
-            text: { contains: needle, mode: 'insensitive' },
+            text: ci(needle),
             channel: { status: 'active', id: { notIn: await getNsfwChannelIds() } },
           },
           include: { channel: { include: { category: true } } },

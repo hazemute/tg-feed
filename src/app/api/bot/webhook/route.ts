@@ -213,6 +213,28 @@ function escapeHtml(s: string): string {
 async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message']>['successful_payment']>, chatId?: number) {
   if (sp.currency !== 'XTR') return // другая валюта нам не приходила и не нужна
   const parts = (sp.invoice_payload ?? '').split(':')
+
+  // Тарифный платёж: tier:<uid>:<purpose>:<paymentId> (purpose = plus_month|...)
+  if (parts.length === 4 && parts[0] === 'tier') {
+    const [, uid, purpose, paymentId] = parts
+    const payment = await db.pendingPayment.findUnique({ where: { id: paymentId } }).catch(() => null)
+    if (!payment || payment.userId !== uid || payment.provider !== 'stars') return
+    if (typeof sp.total_amount === 'number' && sp.total_amount !== payment.amountKop / 100) {
+      console.error('[bot/webhook] tier stars amount mismatch', { paymentId, expected: payment.amountKop / 100, got: sp.total_amount })
+      return
+    }
+    const credited = await creditPendingPayment(payment.id, sp.telegram_payment_charge_id ?? null)
+    if (credited && chatId) {
+      const label = purpose?.startsWith('pro') ? 'Snap Pro' : 'Snap Plus'
+      await botCall('sendMessage', {
+        chat_id: chatId,
+        text: `⭐️ Оплата получена — тариф <b>${label}</b> активирован. Приятного чтения!`,
+        parse_mode: 'HTML',
+      })
+    }
+    return
+  }
+
   // topup:<uid>:<swipes>:<paymentId>
   if (parts.length !== 4 || parts[0] !== 'topup') return
   const [, uid, swipesStr, paymentId] = parts

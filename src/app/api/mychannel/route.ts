@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { isValidChannelUsername } from '@/lib/server'
+import { PRO_PROMOTE_HOT_BOOST, PRO_PROMOTE_WEEKLY_LIMIT, tierAtLeast, tierOfUser } from '@/lib/tiers'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,6 +22,8 @@ export const dynamic = 'force-dynamic'
  *  - claimStart  {username}      → {code} — показать код-слово с инструкцией
  *  - claimVerify {username,code} → {ok} — проверка поста с кодом на t.me/s
  *  - settings    {channelId, teaserMode, teaserLimit, categorySlug?} — настройки
+ *  - cta         {channelId, ctaLabel, ctaUrl} — CTA-кнопка в постах (Snap Pro)
+ *  - promote     {channelId, postId} — протолкнуть пост в ленту (Snap Pro ≤7/нед)
  */
 
 const bodySchema = z.discriminatedUnion('action', [
@@ -36,6 +39,17 @@ const bodySchema = z.discriminatedUnion('action', [
     teaserMode: z.enum(['none', 'cut', 'blur']),
     teaserLimit: z.number().int().min(60).max(600).optional(),
     categorySlug: z.string().trim().max(40).optional(),
+  }),
+  z.object({
+    action: z.literal('cta'),
+    channelId: z.string().min(1),
+    ctaLabel: z.string().trim().min(2).max(30),
+    ctaUrl: z.string().trim().url().max(300),
+  }),
+  z.object({
+    action: z.literal('promote'),
+    channelId: z.string().min(1),
+    postId: z.string().min(1),
   }),
 ])
 
@@ -73,7 +87,18 @@ export async function GET(request: Request) {
       channels.map(async (c) => {
         const [posts, views24h, likes, bookmarks, lastPost, campaigns] = await Promise.all([
           db.post.count({ where: { channelId: c.id } }),
-          db.postView.count({ where: { post: { channelId: c.id }, createdAt: { gte: since24h } } }),
+          // Инкогнито (Snap Plus/Pro): просмотры подписчиков с активным платным
+          // тиром НЕ видны в детальной статистике админов — считаем только free
+          // и истёкшие подписки (filter совпадает с lib/tiers effectiveTier)
+          db.postView.count({
+            where: {
+              post: { channelId: c.id },
+              createdAt: { gte: since24h },
+              user: {
+                OR: [{ tier: 'free' }, { tierUntil: { lte: new Date() } }],
+              },
+            },
+          }),
           db.like.count({ where: { post: { channelId: c.id } } }),
           db.bookmark.count({ where: { post: { channelId: c.id } } }),
           db.post.findFirst({
@@ -101,6 +126,9 @@ export async function GET(request: Request) {
           categoryTitle: c.category.title,
           teaserMode: c.teaserMode,
           teaserLimit: c.teaserLimit,
+          ctaLabel: c.ctaLabel,
+          ctaUrl: c.ctaUrl,
+          styleAt: c.styleAt?.toISOString() ?? null,
           stats: {
             posts,
             views24h,
@@ -130,12 +158,26 @@ export async function GET(request: Request) {
     )
 
     const account = await db.advertiserAccount.findUnique({ where: { userId: g.uid } })
+
+    // Продвижение (Snap Pro): сколько протолкнуто за последние 7 дней
+    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000)
+    const tier = await tierOfUser(g.uid)
+    const promotedUsed = await db.post.count({
+      where: { channel: { claimedById: g.uid }, promotedAt: { gte: weekAgo } },
+    })
+
     return NextResponse.json({
       channels: result,
       advertiser: {
         balanceKop: account?.balanceKop ?? 0,
         topupsTotalKop: account?.topupsTotalKop ?? 0,
         spentTotalKop: account?.spentTotalKop ?? 0,
+      },
+      tier,
+      promotion: {
+        used: promotedUsed,
+        limit: PRO_PROMOTE_WEEKLY_LIMIT,
+        available: tierAtLeast(tier, 'pro'),
       },
     })
   } catch (e) {
@@ -242,6 +284,52 @@ export async function POST(request: Request) {
     // settings
     const channel = await db.channel.findUnique({ where: { id: d.channelId } })
     if (!channel || channel.claimedById !== g.uid) return err('Канал не привязан к вам', 403)
+
+    if (d.action === 'cta') {
+      // CTA-кнопка — Snap Pro: текст + https-ссылка в раскрытом посте
+      const tier = await tierOfUser(g.uid)
+      if (!tierAtLeast(tier, 'pro')) {
+        return NextResponse.json(
+          { error: 'pro_required', message: 'CTA-кнопка доступна на тарифе Snap Pro' },
+          { status: 402 },
+        )
+      }
+      if (!/^https:\/\//i.test(d.ctaUrl)) return err('Ссылка должна начинаться с https://')
+      await db.channel.update({
+        where: { id: channel.id },
+        data: { ctaLabel: d.ctaLabel, ctaUrl: d.ctaUrl },
+      })
+      return NextResponse.json({ ok: true })
+    }
+
+    if (d.action === 'promote') {
+      // Протолкнуть пост в общую ленту: Snap Pro — до 7 раз в неделю
+      // (обычные каналы — раз в месяц; здесь только Pro-путь кабинета)
+      const tier = await tierOfUser(g.uid)
+      if (!tierAtLeast(tier, 'pro')) {
+        return NextResponse.json(
+          { error: 'pro_required', message: 'Продвижение 7 раз в неделю — на тарифе Snap Pro' },
+          { status: 402 },
+        )
+      }
+      const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000)
+      const used = await db.post.count({
+        where: { channel: { claimedById: g.uid }, promotedAt: { gte: weekAgo } },
+      })
+      if (used >= PRO_PROMOTE_WEEKLY_LIMIT) {
+        return err('Лимит продвижений на этой неделе исчерпан (7 из 7)', 429)
+      }
+      const post = await db.post.findFirst({
+        where: { id: d.postId, channelId: channel.id },
+        select: { id: true },
+      })
+      if (!post) return err('Пост не найден', 404)
+      await db.post.update({
+        where: { id: post.id },
+        data: { promotedAt: new Date(), hotScore: { increment: PRO_PROMOTE_HOT_BOOST } },
+      })
+      return NextResponse.json({ ok: true, used: used + 1, limit: PRO_PROMOTE_WEEKLY_LIMIT })
+    }
 
     const data: Record<string, unknown> = { teaserMode: d.teaserMode }
     if (d.teaserLimit != null) data.teaserLimit = d.teaserLimit

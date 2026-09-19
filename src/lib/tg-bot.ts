@@ -528,6 +528,72 @@ async function callMethod(method: string, body: Record<string, unknown>): Promis
   }
 }
 
+/**
+ * Публикация поста в реальный Telegram-канал (Snap Pro, ИИ-ассистент:
+ * кнопка «Одобрить» → пост улетает в канал админа).
+ *
+ * Бот должен быть АДМИНИСТРАТОРОМ канала с правом публикации — иначе Bot API
+ * вернёт ошибку 403 «bot is not a member / not enough rights» (текст ошибки
+ * возвращаем владельцу, чтобы он добавил бота).
+ * Возвращает ссылку на опубликованный пост (t.me/<username>/<message_id>).
+ */
+export async function botPublishToChannel(
+  username: string,
+  text: string,
+  imageUrl?: string | null,
+): Promise<{ ok: boolean; link?: string; error?: string }> {
+  if (!botEnabled()) return { ok: false, error: 'Бот не настроен — публикация недоступна' }
+  if (botBanned()) return { ok: false, error: 'Bot API на паузе, попробуйте позже' }
+  await hydrateBotBan()
+
+  const chatId = `@${username.replace(/^@/, '')}`
+  const plain = text.slice(0, 4000)
+
+  const call = async (method: string, body: Record<string, unknown>) => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      })
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean
+        result?: { message_id?: number }
+        description?: string
+      } | null
+      if (res.status === 429) {
+        const retry = Number((data as { parameters?: { retry_after?: number } } | null)?.parameters?.retry_after ?? 30)
+        await markBotBan(retry)
+      }
+      if (data?.ok && data.result?.message_id != null) {
+        return { ok: true as const, messageId: data.result.message_id }
+      }
+      return { ok: false as const, error: data?.description ?? `HTTP ${res.status}` }
+    } catch (e) {
+      return { ok: false as const, error: String((e as Error)?.message ?? e) }
+    }
+  }
+
+  // С картинкой — sendPhoto (картинка по прямой https-ссылке), текст caption'ом;
+  // без — обычный sendMessage. parse_mode HTML: поддерживаем <b>/<i>/<a>.
+  const r = imageUrl
+    ? await call('sendPhoto', {
+        chat_id: chatId,
+        photo: imageUrl,
+        caption: plain,
+        parse_mode: 'HTML',
+      })
+    : await call('sendMessage', {
+        chat_id: chatId,
+        text: plain,
+        parse_mode: 'HTML',
+      })
+
+  if (!r.ok) return { ok: false, error: r.error ?? 'Telegram отклонил публикацию' }
+  return { ok: true, link: `https://t.me/${username.replace(/^@/, '')}/${r.messageId}` }
+}
+
 /** Информация о кастомном эмодзи: тип анимации + file_id файла */
 export type CustomEmojiInfo = {
   video: boolean // is_video — видео-стикер (webm), рендерим <video>

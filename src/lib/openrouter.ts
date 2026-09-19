@@ -224,7 +224,7 @@ export async function chatStream(
 export async function chatSimple(
   system: string,
   user: string,
-  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number },
+  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number; models?: string[] },
 ): Promise<string> {
   return chatMessages(
     [

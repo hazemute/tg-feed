@@ -1,8 +1,12 @@
 import { db } from '@/lib/db'
+import { parseTierPurpose, tierExpiryFor } from '@/lib/tiers'
 
 /**
- * Общая проводка зачисления свайпов: pending → succeeded атомарно,
- * эскроу-баланс рекламодателя растёт ровно один раз (идемпотентность).
+ * Общая проводка зачисления: pending → succeeded атомарно.
+ *  - purpose='balance' (пополнение эскроу): баланс рекламодателя растёт ровно
+ *    один раз (идемпотентность);
+ *  - purpose='plus_month'/'pro_year'/… (тариф Snap): срок действия тира
+ *    продлевается от текущего tierUntil (или от «сейчас», если подписки не было).
  * Используется вебхуком ЮKassa, зачислением Telegram Stars и проверкой TON.
  */
 export async function creditPendingPayment(
@@ -20,9 +24,27 @@ export async function creditPendingPayment(
     if (claimed.count === 0) return false // уже зачислен — повтор безопасен
     const payment = await tx.pendingPayment.findUnique({
       where: { id: paymentId },
-      select: { userId: true, amountKop: true },
+      select: { userId: true, amountKop: true, purpose: true },
     })
     if (!payment) return false
+
+    // Тарифный платёж: активируем/продлеваем тир вместо зачисления на баланс
+    const tierPurpose = parseTierPurpose(payment.purpose)
+    if (tierPurpose) {
+      const user = await tx.user.findUnique({
+        where: { id: payment.userId },
+        select: { tierUntil: true },
+      })
+      await tx.user.update({
+        where: { id: payment.userId },
+        data: {
+          tier: tierPurpose.plan,
+          tierUntil: tierExpiryFor(user?.tierUntil ?? null, tierPurpose.period),
+        },
+      })
+      return true
+    }
+
     await tx.advertiserAccount.upsert({
       where: { userId: payment.userId },
       update: {

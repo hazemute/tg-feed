@@ -28,6 +28,9 @@ model User {
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
   bannedAt      DateTime? // бан: null — активен; API отвечает 403 banned
   banReason     String?   // причина бана (видна админу)
+  // === Тарифы Tg Swipe: free | plus (Snap Plus) | pro (Snap Pro) ===
+  tier          String   @default("free")
+  tierUntil     DateTime? // срок действия оплаченного тира (null у free); истёкший → ведёт себя как free
   createdAt     DateTime @default(now())
 
   likes         Like[]
@@ -78,6 +81,11 @@ model Channel {
   status           String    @default("active") // active | moderation
   subscribersCount Int       @default(0)
   clicksCount      Int       @default(0) // клики по кнопке [+] подписки
+  // === Snap Pro (владелец — Pro-пользователь): CTA-кнопка в постах и ИИ-ассистент ===
+  ctaLabel      String? // текст кастомной кнопки в раскрытом посте (например «Забрать бонус»)
+  ctaUrl        String? // ссылка кнопки (https)
+  styleProfile  String? // цифровой слепок ИИ-ассистента: {tone,topics,style,at} (JSON)
+  styleAt       DateTime? // когда последний раз сканировали стиль (30 последних постов)
   // === «Мой канал»: владение и гибкие настройки показа ===
   claimedById      String? // пользователь, доказавший владение каналом
   claimedBy        User?     @relation("claimedChannels", fields: [claimedById], references: [id])
@@ -124,6 +132,7 @@ model Post {
   ttsAt        DateTime? // когда сгенерирована озвучка (для инвалидации при смене текста)
   publishedAt DateTime
   notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
+  promotedAt  DateTime? // когда автор протолкнул пост в ленту (Snap Pro: ≤7 раз в неделю)
 
   embedTried  Boolean  @default(false) // бэкфилл медиа через t.me/<u>/<id>?embed=1 уже пробовали
   likedBy     Like[]
@@ -351,10 +360,22 @@ model PendingPayment {
   amountKop         Int
   status            String   @default("pending") // pending | succeeded | canceled
   provider          String   @default("yookassa")
+  purpose           String   @default("balance") // balance | plus_month | plus_year | pro_month | pro_year
   providerPaymentId String?
   confirmationUrl   String?
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+// Журнал ИИ-поисков (умный поиск ленты): лимиты бесплатного тира (3/день)
+// считаются по строкам за текущие сутки UTC. Гостям — тоже (сессия guest_<deviceId>).
+model AiSearchLog {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
 }

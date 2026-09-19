@@ -29,7 +29,7 @@ export const dynamic = 'force-dynamic'
  *      (безопасно: только фиксированные строки из supabase/schema.sql)
  */
 
-type Body = { action?: unknown; enabled?: unknown; userId?: unknown; tgId?: unknown; version?: unknown }
+type Body = { action?: unknown; enabled?: unknown; userId?: unknown; tgId?: unknown; version?: unknown; tier?: unknown; days?: unknown }
 
 function str(v: unknown, max: number): string | null {
   return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null
@@ -145,6 +145,23 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true, userId: uid, allowed: true })
       }
 
+      case 'setTier': {
+        // Выдать/снять тариф вручную (поддержка, промо): { userId, tier, days }
+        const userId = str(body.userId, 80)
+        const tier = str(body.tier, 8)
+        const days = Number(body.days ?? 30)
+        if (!userId) return err('userId required')
+        if (tier !== 'free' && tier !== 'plus' && tier !== 'pro') return err('tier: free|plus|pro')
+        if (!Number.isFinite(days) || days < 0 || days > 3650) return err('days: 0..3650')
+        const until = tier === 'free' ? null : new Date(Date.now() + days * 24 * 3600 * 1000)
+        const user = await db.user.update({
+          where: { id: userId },
+          data: { tier, tierUntil: until },
+          select: { id: true, tier: true, tierUntil: true },
+        })
+        return NextResponse.json({ ok: true, user: { ...user, tierUntil: user.tierUntil?.toISOString() ?? null } })
+      }
+
       case 'resetCache': {
         await bumpCache([...CACHE_FAMILIES])
         return NextResponse.json({ ok: true, families: CACHE_FAMILIES })
@@ -157,12 +174,28 @@ export async function POST(request: Request) {
        */
       case 'applyMigration': {
         const version = str(body.version, 16)
-        if (version !== 'v5.15') return err('unknown migration')
-        const stmts: string[] = [
-          `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlag" text`,
-          `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlagAt" timestamptz`,
-          `CREATE INDEX IF NOT EXISTS "Post_aiFlag_idx" ON "Post" ("aiFlag")`,
-        ]
+        if (version !== 'v5.15' && version !== 'v5.17') return err('unknown migration')
+        const stmts: string[] =
+          version === 'v5.15'
+            ? [
+                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlag" text`,
+                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlagAt" timestamptz`,
+                `CREATE INDEX IF NOT EXISTS "Post_aiFlag_idx" ON "Post" ("aiFlag")`,
+              ]
+            : [
+                // v5.17: тарифы Snap Plus/Pro + ИИ-поиск + ИИ-ассистент + CTA + продвижение
+                `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tier" text NOT NULL DEFAULT 'free'`,
+                `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tierUntil" timestamptz`,
+                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "ctaLabel" text`,
+                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "ctaUrl" text`,
+                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "styleProfile" text`,
+                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "styleAt" timestamptz`,
+                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "promotedAt" timestamptz`,
+                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "hotScore" double precision NOT NULL DEFAULT 0`,
+                `ALTER TABLE "PendingPayment" ADD COLUMN IF NOT EXISTS "purpose" text NOT NULL DEFAULT 'balance'`,
+                `CREATE TABLE IF NOT EXISTS "AiSearchLog" ("id" text PRIMARY KEY, "userId" text NOT NULL, "query" text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+                `CREATE INDEX IF NOT EXISTS "AiSearchLog_userId_createdAt_idx" ON "AiSearchLog" ("userId", "createdAt" DESC)`,
+              ]
         const applied: string[] = []
         for (const sql of stmts) {
           await db.$executeRawUnsafe(sql)

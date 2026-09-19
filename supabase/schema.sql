@@ -405,3 +405,23 @@ CREATE INDEX IF NOT EXISTS "Upload_ownerId_createdAt_idx" ON "Upload"("ownerId",
 ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlag" text;
 ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlagAt" timestamptz;
 CREATE INDEX IF NOT EXISTS "Post_aiFlag_idx" ON "Post" ("aiFlag");
+
+-- v5.17: тарифы Snap Plus / Snap Pro + ИИ-поиск + ИИ-ассистент + CTA + продвижение
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tier" text NOT NULL DEFAULT 'free';
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tierUntil" timestamptz;
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "ctaLabel" text;
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "ctaUrl" text;
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "styleProfile" text;
+ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "styleAt" timestamptz;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "promotedAt" timestamptz;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "hotScore" double precision NOT NULL DEFAULT 0;
+ALTER TABLE "PendingPayment" ADD COLUMN IF NOT EXISTS "purpose" text NOT NULL DEFAULT 'balance';
+
+CREATE TABLE IF NOT EXISTS "AiSearchLog" (
+    "id"        text        NOT NULL,
+    "userId"    text        NOT NULL,
+    "query"     text        NOT NULL,
+    "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "AiSearchLog_pkey" PRIMARY KEY ("id")
+);
+CREATE INDEX IF NOT EXISTS "AiSearchLog_userId_createdAt_idx" ON "AiSearchLog"("userId", "createdAt" DESC);

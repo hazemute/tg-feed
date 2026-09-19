@@ -30,6 +30,11 @@ export type ChannelDTO = {
   teaserMode: string
   /** Сколько символов показывать в режиме cut */
   teaserLimit: number
+  /** Владелец канала с активным тиром Snap Pro (бейдж Premium-автора) */
+  proOwner?: boolean
+  /** CTA-кнопка Pro-автора в раскрытом посте (текст + https-ссылка) */
+  ctaLabel?: string | null
+  ctaUrl?: string | null
 }
 
 export type SubscriptionDTO = {
@@ -177,6 +182,11 @@ export type MyChannelDTO = {
   categoryTitle: string
   teaserMode: string
   teaserLimit: number
+  /** CTA-кнопка в конце раскрытых постов (Snap Pro) */
+  ctaLabel: string | null
+  ctaUrl: string | null
+  /** Когда ИИ-ассистент анализировал стиль канала (ISO, null — ещё не анализировал) */
+  styleAt: string | null
   stats: {
     posts: number
     views24h: number
@@ -191,6 +201,10 @@ export type MyChannelDTO = {
 export type MyChannelResponse = {
   channels: MyChannelDTO[]
   advertiser: AdvertiserDTO
+  /** Тариф владельца канала (учитывает срок подписки) */
+  tier: 'free' | 'plus' | 'pro'
+  /** Продвижение в ленте (Snap Pro): потрачено/лимит за последние 7 дней */
+  promotion: { used: number; limit: number; available: boolean }
 }
 
 /** Живая статистика площадки для шита продвижения (GET /api/ads/stats) */
@@ -212,6 +226,40 @@ export type UserDTO = {
   isPremium?: boolean
   languageCode?: string | null
   categories: string[]
+  /** Тариф: free | plus (Snap Plus) | pro (Snap Pro) — активный (с учётом срока) */
+  tier?: 'free' | 'plus' | 'pro'
+  /** Срок действия оплаченного тира (ISO) */
+  tierUntil?: string | null
+}
+
+/** Ответ GET /api/tiers — состояние тарифа и лимита ИИ-поиска */
+export type TiersResponse = {
+  tier: 'free' | 'plus' | 'pro'
+  tierUntil: string | null
+  aiSearch: { used: number; limit: number; remaining: number | null }
+  prices: Record<
+    'plus' | 'pro',
+    { monthKop: number; yearKop: number; monthStars: number; yearStars: number }
+  >
+  methods: { card: boolean; stars: boolean; ton: boolean }
+}
+
+/** Ответ POST /api/ai/search — умный поиск: ответ нейросети + посты-источники */
+export type AiSearchResponse = {
+  answer: string
+  sources: PostDTO[]
+  /** Осталось поисков сегодня (null — безлимит, plus/pro) */
+  remaining: number | null
+  cached?: boolean
+}
+
+/** Ответ POST /api/ai/assistant (action=generate) — черновик поста для канала */
+export type AiAssistantDraft = {
+  text: string
+  imageUrl: string | null
+  /** Проверка картинки не успела — URL можно показать, публикация проверит ещё раз */
+  imagePending?: boolean
+  styleAnalyzed?: boolean
 }
 
 export type FeedResponse = {

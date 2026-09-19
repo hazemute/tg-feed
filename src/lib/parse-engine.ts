@@ -7,6 +7,7 @@ import { botEnabled, getChatPhotoFileId, getChatMemberCount, getCustomEmojiStick
 import { syncChannelAvatar } from '@/lib/avatar-store'
 import { isAdCliche } from '@/lib/moderation'
 import { cleanPostText } from '@/lib/text-clean'
+import { PRO_INITIAL_BOOST, effectiveTier, tierAtLeast } from '@/lib/tiers'
 import type { NotifiablePost } from '@/lib/tg-bot'
 import { htmlToMarkdownLite } from '@/lib/markdown'
 
@@ -487,7 +488,10 @@ export async function runParser(
    */
   const parseOneChannel = async (target: string): Promise<void> => {
     try {
-      const channel = await db.channel.findUnique({ where: { username: target } })
+      const channel = await db.channel.findUnique({
+        where: { username: target },
+        include: { claimedBy: { select: { tier: true, tierUntil: true } } },
+      })
       if (!channel) {
         processed++
         const r = { username: target, added: 0, error: 'канал не найден в базе' }
@@ -644,6 +648,11 @@ export async function runParser(
           viewsTg: p.viewsTg,
           reactionsTg: p.reactionsTg,
           publishedAt: p.publishedAt,
+          // Snap Pro (v5.17): посты Pro-авторов получают стартовый буст
+          // температуры — при прочих равных выходят выше в общей ленте
+          hotScore: tierAtLeast(effectiveTier(channel.claimedBy ?? null), 'pro')
+            ? PRO_INITIAL_BOOST
+            : 0,
         }
 
         // Дубликат заранее известен по карте существующих — сразу апдейт без

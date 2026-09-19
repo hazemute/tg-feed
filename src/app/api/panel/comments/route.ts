@@ -3,8 +3,14 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { IS_SQLITE } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
+
+/** insensitive-фрагмент contains, совместимый и с Postgres, и с SQLite (см. lib/moderation.ts) */
+function ci(value: string): Record<string, unknown> {
+  return IS_SQLITE ? { contains: value } : { contains: value, mode: 'insensitive' as const }
+}
 
 /**
  * Модерация комментариев (админка, x-admin-key).
@@ -32,13 +38,14 @@ export async function GET(request: Request) {
 
   try {
     const rows = await db.comment.findMany({
+      // SQLite (локальная песочница) не знает mode:'insensitive' — ci() совместим с обеими БД
       where: q
         ? {
             OR: [
-              { text: { contains: q, mode: 'insensitive' } },
-              { user: { username: { contains: q.replace(/^@/, ''), mode: 'insensitive' } } },
-              { user: { firstName: { contains: q, mode: 'insensitive' } } },
-              { user: { lastName: { contains: q, mode: 'insensitive' } } },
+              { text: ci(q) },
+              { user: { username: ci(q.replace(/^@/, '')) } },
+              { user: { firstName: ci(q) } },
+              { user: { lastName: ci(q) } },
             ],
           }
         : undefined,
