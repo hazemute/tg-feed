@@ -26,6 +26,48 @@ const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
 /** Владелец бота (премиум-аккаунт-посредник): только его business-подключения принимаются */
 const BOT_OWNER_TG_ID = 7851246214
 
+/* ------------------- Самолечение allowed_updates ------------------- */
+
+const HEAL_KEY = 'webhook_selfheal_v1'
+let healChecked = false // in-memory: 1 раз на инстанс
+
+/**
+ * Если вебхук зарегистрирован СТАРОМ setWebhook (без business_connection в
+ * allowed_updates), Telegram молча НЕ шлёт business_connection — и подключение
+ * «секретаря» никогда не доедет. При первом же апдейте перерегистрируем вебхук
+ * сами (тот же URL + secret, drop_pending_updates=false — ничего не теряем).
+ */
+async function healWebhookAllowedUpdates(request: Request): Promise<void> {
+  try {
+    const done = await db.botSetting.findUnique({ where: { key: HEAL_KEY } })
+    if (done) return
+    if (!BOT_TOKEN()) return
+    const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || new URL(request.url).origin
+    const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${origin}/api/bot/webhook`,
+        ...(secret ? { secret_token: secret } : {}),
+        allowed_updates: ['message', 'callback_query', 'business_connection'],
+        max_connections: 40,
+      }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json().catch(() => null)) as { ok?: boolean } | null
+    if (data?.ok) {
+      const now = new Date().toISOString()
+      await db.botSetting
+        .upsert({ where: { key: HEAL_KEY }, create: { key: HEAL_KEY, value: now }, update: { value: now } })
+        .catch(() => {})
+      console.log('[bot/webhook] allowed_updates self-healed: +business_connection')
+    }
+  } catch (e) {
+    console.error('[bot/webhook] webhook self-heal failed (retry on next instance)', e)
+  }
+}
+
 /* ------------------------- Типы апдейтов (минимум) ------------------------- */
 
 type TgFrom = {
@@ -297,6 +339,12 @@ export async function POST(request: Request) {
     }
   }
 
+  // Самолечение allowed_updates (1 раз на инстанс; no-op если уже healed)
+  if (!healChecked) {
+    healChecked = true
+    await healWebhookAllowedUpdates(request)
+  }
+
   let update: TgUpdate
   try {
     update = (await request.json()) as TgUpdate
@@ -314,6 +362,21 @@ export async function POST(request: Request) {
           userId: bc.user.id,
           isEnabled: bc.is_enabled !== false,
         }).catch(() => {})
+      } else {
+        // Диагностика: подключение с ЧУЖОГО аккаунта — сохраним, чтобы владелец
+        // мог понять, с какого ID он реально подключил бота
+        await db.botSetting
+          .upsert({
+            where: { key: 'business_connection_rejected' },
+            create: {
+              key: 'business_connection_rejected',
+              value: JSON.stringify({ id: bc.id, userId: bc.user.id, isEnabled: bc.is_enabled !== false, at: new Date().toISOString() }),
+            },
+            update: {
+              value: JSON.stringify({ id: bc.id, userId: bc.user.id, isEnabled: bc.is_enabled !== false, at: new Date().toISOString() }),
+            },
+          })
+          .catch(() => {})
       }
       return NextResponse.json({ ok: true })
     }
