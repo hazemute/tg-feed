@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { creditPendingPayment } from '@/lib/payments'
 import { botSendRich, setBusinessConnection } from '@/lib/tg-emoji'
+import { externalOrigin } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -42,7 +43,7 @@ async function healWebhookAllowedUpdates(request: Request): Promise<void> {
     const done = await db.botSetting.findUnique({ where: { key: HEAL_KEY } })
     if (done) return
     if (!BOT_TOKEN()) return
-    const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || new URL(request.url).origin
+    const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || externalOrigin(request)
     const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/setWebhook`, {
       method: 'POST',

@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { err, readJson } from '@/lib/server'
+import { err, externalOrigin, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { logAdmin } from '@/lib/admin-log'
 import {
@@ -29,6 +29,9 @@ export const dynamic = 'force-dynamic'
  *        ушло: business / bot_premium / bot_plain.
  * POST { action:'business', id? } — вручную задать/сбросить business_connection_id
  *        (обычно он приходит сам вебхуком при подключении чат-бота в настройках).
+ * POST { action:'setwebhook' } — перерегистрировать вебхук с правильными
+ *        allowed_updates (+business_connection). Ответ содержит сырой результат
+ *        setWebhook + getWebhookInfo — видно реальную ошибку, если есть.
  */
 
 const OWNER_TG_ID = 7851246214
@@ -46,6 +49,9 @@ const bodySchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('business'),
     id: z.string().max(80).optional().nullable(),
+  }),
+  z.object({
+    action: z.literal('setwebhook'),
   }),
 ])
 
@@ -129,6 +135,41 @@ export async function POST(request: Request) {
       if (!r.ok) return err(r.error ?? 'Не удалось отправить тест')
       await logAdmin('bot_test', String(chatId), { via: r.via })
       return NextResponse.json({ ok: true, via: r.via })
+    }
+
+    /* ---------- Перерегистрация вебхука (вручную) ---------- */
+    if (d.action === 'setwebhook') {
+      const token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
+      if (!token) return err('TELEGRAM_BOT_TOKEN не задан на сервере', 500)
+      const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || externalOrigin(request)
+      const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
+      const set = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          url: `${origin}/api/bot/webhook`,
+          ...(secret ? { secret_token: secret } : {}),
+          allowed_updates: ['message', 'callback_query', 'business_connection'],
+          max_connections: 40,
+        }),
+        signal: AbortSignal.timeout(10_000),
+      })
+        .then((r) => r.json() as Promise<{ ok?: boolean; description?: string; result?: unknown }>)
+        .catch((e) => ({ ok: false, description: String((e as Error)?.message ?? e) }))
+      const info = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`, {
+        signal: AbortSignal.timeout(10_000),
+      })
+        .then((r) => r.json() as Promise<{ ok?: boolean; result?: Record<string, unknown> }>)
+        .catch(() => null)
+      if (set.ok) {
+        const now = new Date().toISOString()
+        // Тот же флаг, что и у самолечения в вебхуке — чтобы не дублировал
+        await db.botSetting
+          .upsert({ where: { key: 'webhook_selfheal_v1' }, create: { key: 'webhook_selfheal_v1', value: now }, update: { value: now } })
+          .catch(() => {})
+      }
+      await logAdmin('bot_setwebhook', origin, { ok: set.ok === true })
+      return NextResponse.json({ ok: set.ok === true, origin, setWebhook: set, webhookInfo: info?.result ?? null })
     }
 
     /* ---------- Business-connection вручную ---------- */

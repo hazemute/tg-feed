@@ -18,6 +18,28 @@ export function unauthorized() {
   return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
 }
 
+/**
+ * Внешний origin запроса на серверной платформе (Vercel и т.п.).
+ * request.url может быть внутренним (localhost/internal host) — берём
+ * x-forwarded-host/proto, которые прокси проставляет надёжно.
+ */
+export function externalOrigin(request: Request): string {
+  const host =
+    request.headers.get('x-forwarded-host') ??
+    request.headers.get('host') ??
+    (() => {
+      try {
+        return new URL(request.url).host
+      } catch {
+        return ''
+      }
+    })()
+  const proto =
+    request.headers.get('x-forwarded-proto') ??
+    (host.startsWith('localhost') || host.startsWith('127.') ? 'http' : 'https')
+  return `${proto}://${host}`
+}
+
 export function tooMany(retryAfterSec: number) {
   return NextResponse.json(
     { error: 'too many requests' },
