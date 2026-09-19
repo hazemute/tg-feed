@@ -71,7 +71,7 @@ function PostsSparkline({ values }: { values: number[] }) {
       </div>
       <svg
         viewBox={`0 0 ${w} ${h}`}
-        className="h-16 w-full max-w-[420px]"
+        className="h-16 min-w-0 flex-1"
         preserveAspectRatio="none"
         role="img"
         aria-label="Публикации по дням за 14 дней"
@@ -141,8 +141,8 @@ export function OverviewTab({
 
   if (loading && !data) {
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
+      <div className="space-y-5">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-4 xl:gap-5">
           {Array.from({ length: 8 }, (_, i) => (
             <div key={i} className="h-[86px] rounded-xl border border-slate-200 bg-slate-50" />
           ))}
@@ -183,7 +183,7 @@ export function OverviewTab({
   const c = data.counts
 
   return (
-    <motion.div variants={staggerContainer} initial="hidden" animate="show" className="space-y-4">
+    <motion.div variants={staggerContainer} initial="hidden" animate="show" className="space-y-5">
       {/* Live-статус панели (SSE) */}
       <motion.div
         variants={fadeUp}
@@ -211,7 +211,7 @@ export function OverviewTab({
       {/* Метрики */}
       <motion.div
         variants={staggerContainer}
-        className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-3 sm:gap-4 xl:grid-cols-4 xl:gap-5"
       >
         <MetricCard
           icon={Users}
@@ -256,7 +256,7 @@ export function OverviewTab({
       </motion.div>
 
       {/* Спарклайн публикаций + просмотры за сутки */}
-      <motion.div variants={fadeUp} className="grid gap-3 lg:grid-cols-2">
+      <motion.div variants={fadeUp} className="grid gap-4 lg:grid-cols-2 xl:gap-5">
         <div className="rounded-xl border border-slate-200 bg-white p-4">
           <p className="mb-3 text-sm font-medium text-slate-800">Публикации · 14 дней</p>
           <PostsSparkline
@@ -302,7 +302,7 @@ export function OverviewTab({
       </motion.div>
 
       {/* Списки */}
-      <motion.div variants={staggerContainer} className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3">
+      <motion.div variants={staggerContainer} className="grid gap-4 lg:grid-cols-2 xl:grid-cols-3 xl:gap-5">
         <motion.div variants={fadeUp}>
           <Card className={panelCard}>
             <CardHeader>

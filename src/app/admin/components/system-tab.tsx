@@ -161,7 +161,7 @@ export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMai
   const allowUsers = data.allow.users
 
   return (
-    <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-4">
+    <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-5">
       {/* ------------------- Техработы ------------------- */}
       <Card className={cn(panelCard, maintOn && 'border-amber-300 ring-1 ring-amber-200')}>
         <CardHeader>

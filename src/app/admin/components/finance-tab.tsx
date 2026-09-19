@@ -135,7 +135,7 @@ export function FinanceTab({ tick, onSettled }: { tick: number; onSettled?: () =
   const maxEngagement = Math.max(1, eng?.mau ?? 1)
 
   return (
-    <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-4">
+    <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-5">
       {loading && !data ? (
         <Card className={panelCard}>
           <CardContent className="flex items-center justify-center py-12">

@@ -139,7 +139,7 @@ export function ToolsTab({
   }
 
   return (
-    <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-4">
+    <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-5">
       {/* Автосбор: одна кнопка — движок сам находит каналы */}
       <AutoparseCard />
 

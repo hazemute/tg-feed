@@ -161,11 +161,11 @@ export function MetricCard({
   return (
     <motion.div
       variants={fadeUp}
-      className="rounded-xl border border-slate-200 bg-white p-4"
+      className="rounded-xl border border-slate-200 bg-white p-4 xl:p-5"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-xl font-semibold tabular-nums text-slate-900">
+          <div className="text-xl font-semibold tabular-nums text-slate-900 xl:text-2xl">
             {fmtNum(value)}
           </div>
           <div className="mt-0.5 truncate text-xs text-slate-500">{label}</div>
