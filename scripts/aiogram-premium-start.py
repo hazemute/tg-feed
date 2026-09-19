@@ -40,15 +40,11 @@ TME_APP_URL = "https://t.me/tgswipe_bot/tgswipe"
 CHANNEL_URL = "https://t.me/SnapTeamDev"
 
 # ── Библиотека премиум-эмодзи (custom_emoji_id) ─────────────────────────
+# ВНИМАНИЕ: проверено getCustomEmojiStickers — из присланного списка валиден
+# ТОЛЬКО notebook; остальные Telegram НЕ знает (sendMessage → DOCUMENT_INVALID).
+# Реальные ID: юзер шлёт боту премиум-эмодзи → entities custom_emoji → ID.
 EMOJI = {
-    "fire": "5432110534282151111",      # 🔥 Fire animated (огонь)
-    "star": "5432110534282152222",      # ⭐ Blue Star (синяя звезда)
-    "rocket": "5433890253483321901",    # 🚀 Rocket (ракета)
-    "notebook": "5456140674028019486",  # 📖 Notebook (книга/блокнот)
-    "thumbsup": "5432110534282153333",  # 👍 Thumbs up (палец вверх)
-    "alert": "5456140674028019123",     # ⚠️ Alert (восклицательный знак)
-    "lightning": "5432110534282154444", # ⚡ Lightning (молния)
-    "wave": "5432110534282155555",      # 👋 Waving hand (машущая рука)
+    "notebook": "5456140674028019486",  # 📖 Notebook — ЕДИНСТВЕННЫЙ валидный
 }
 
 
@@ -57,12 +53,14 @@ def premium(emoji_id: str, fallback: str) -> str:
     return f'<tg-emoji emoji-id="{emoji_id}">{fallback}</tg-emoji>'
 
 
-# ── Сообщение /start: обычные эмодзи → премиальные аналоги ──────────────
+# ── Сообщение /start: премиум только для ВАЛИДИРОВАННЫХ ID ──────────────
+# Невалидный ID в <tg-emoji> ломает ВСЁ сообщение (Bad Request:
+# DOCUMENT_INVALID) — эмодзи без проверенного ID остаются юникодом.
 WELCOME_TEXT = (
-    f"{premium(EMOJI['wave'], '👋')} <b>Привет!</b> Это умная лента.\n"
-    f"{premium(EMOJI['lightning'], '⚡')} Свайпай по интересам.\n"
+    f"👋 <b>Привет!</b> Это умная лента.\n"
+    f"⚡ Свайпай по интересам.\n"
     f"{premium(EMOJI['notebook'], '📖')} Читай каналы без подписок.\n"
-    f"{premium(EMOJI['rocket'], '🚀')} Продвигай свой канал в топ."
+    f"🚀 Продвигай свой канал в топ."
 )
 
 # В кнопках — только Unicode (Telegram Bot API не рендерит tg-emoji в кнопках)

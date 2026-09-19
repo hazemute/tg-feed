@@ -79,16 +79,15 @@ export const DEFAULT_SLOTS: Array<{ slot: string; emoji: string; label: string }
  * БИБЛИОТЕКА ПРЕМИУМ-ЭМОДЗИ (custom_emoji_id по слотам).
  * Заполняется в пустые слоты при первом чтении; очистка слота админом
  * фиксируется в BotSetting ('bot_emoji_cleared') и автозаполнение её не трогает.
+ *
+ * ВНИМАНИЕ (проверено getCustomEmojiStickers на проде, v5.23.1): из списка,
+ * присланного владельцем, валиден ТОЛЬКО book (5456140674028019486) —
+ * остальные 7 ID Telegram НЕ знает (.sendMessage с ними → DOCUMENT_INVALID).
+ * Реальные ID пополняются ЗАХВАТОМ: юзер/владелец шлёт боту премиум-эмодзи →
+ * вебхук пишет в captured (см. ниже) → панель «Бот» → «В слот».
  */
 export const DEFAULT_EMOJI_IDS: Record<string, string> = {
-  wave: '5432110534282155555', // 👋 Waving hand (машущая рука)
-  fire: '5432110534282151111', // 🔥 Fire animated (огонь)
-  star: '5432110534282152222', // ⭐ Blue Star (синяя звезда)
-  rocket: '5433890253483321901', // 🚀 Rocket (ракета)
-  book: '5456140674028019486', // 📖 Notebook (книга/блокнот)
-  zap: '5432110534282154444', // ⚡ Lightning (молния)
-  thumbsup: '5432110534282153333', // 👍 Thumbs up (палец вверх)
-  alert: '5456140674028019123', // ⚠️ Alert (восклицательный знак)
+  book: '5456140674028019486', // 📖 Notebook (книга/блокнот) — ЕДИНСТВЕННЫЙ валидный из списка владельца
 }
 
 /* ------------------------- кэш слотов ------------------------- */
@@ -153,6 +152,11 @@ export function invalidateSlotsCache(): void {
 /**
  * Обернуть юникод-эмодзи с известными custom_emoji_id в <tg-emoji>.
  * HTML уже валиден (parse_mode=HTML), теги не ломают остальную разметку.
+ *
+ * ВАЖНО: невалидный custom_emoji_id ломает ВСЁ sendMessage (Bad Request:
+ * DOCUMENT_INVALID) — поэтому ID валидируются через getCustomEmojiStickers
+ * при вставке в слот (панель), а захваченные из сообщений приходят только
+ * из реальных entities Telegram и существуют по определению.
  */
 export async function premiumText(text: string): Promise<string> {
   const map = await premiumMap()
