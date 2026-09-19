@@ -3,8 +3,10 @@ import { db } from '@/lib/db'
 import { creditPendingPayment } from '@/lib/payments'
 import {
   addCapturedEmoji,
+  botSendPhotoRich,
   botSendRich,
   listCapturedEmoji,
+  premiumText,
   setBusinessConnection,
 } from '@/lib/tg-emoji'
 import { externalOrigin } from '@/lib/server'
@@ -178,36 +180,33 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
     attempt && attempt.status === 'pending' && attempt.expiresAt.getTime() > Date.now()
 
   if (!valid) {
-    await botCall('sendMessage', {
-      chat_id: chatId,
-      text:
-        '⌛️ Эта ссылка для входа уже недействительна — она живёт 15 минут из соображений безопасности.\n\nОткройте Tg Swipe и нажмите «Вход по Telegram» ещё раз — новая ссылка создаётся в один тап.',
-      parse_mode: 'HTML',
-    })
+    await botSendRich(
+      chatId,
+      '⚠️ <b>Эта ссылка для входа уже недействительна</b> — она живёт 15 минут из соображений безопасности.\n\n✨ Откройте Tg Swipe и нажмите «Вход по Telegram» ещё раз — новая ссылка создаётся в один тап.',
+    )
     return
   }
 
-  await botCall('sendMessage', {
-    chat_id: chatId,
-    text: `<b>${escapeHtml(nameOf(from))}</b>, подтверждите вход в <b>Tg Swipe</b>.\n\nОдно нажатие — и ваш профиль, подписки и сохранённые посты откроются на сайте и в приложении. Пароли не нужны: доступ подтверждается вашим Telegram.`,
-    parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [
+  await botSendRich(
+    chatId,
+    `<b>${escapeHtml(nameOf(from))}</b>, подтверждите вход в <b>Tg Swipe</b>. 🔐\n\n✅ Одно нажатие — и ваш профиль, подписки и сохранённые посты откроются на сайте и в приложении. 🚀 Пароли не нужны: доступ подтверждается вашим Telegram.`,
+    {
+      keyboard: [
         [{ text: '✅ Это я, войти', callback_data: `login:${token}` }],
         [{ text: '🌐 Открыть Tg Swipe', url: SITE_URL }],
       ],
     },
-  })
+  )
 }
 
-/** Приветственный /start без параметра — премиум-эмодзи + кнопка подписки */
+/** Приветственный /start — КАРТИНКА + премиум-подпись + кнопки */
 async function handleStart(from: TgFrom | undefined, chatId?: number) {
   if (!chatId) return
   const name = escapeHtml(nameOf(from))
-  await botSendRich(
+  await botSendPhotoRich(
     chatId,
     [
-      '👋 <b>Привет, ' + name + '!</b> Это <b>Tg Swipe</b> — умная лента Telegram-каналов.',
+      `👋 <b>Привет, ${name}!</b>`,
       '',
       '⚡ Свайпай по интересам.',
       '📖 Читай каналы без подписок.',
@@ -362,10 +361,13 @@ async function handleLoginCallback(
 
   // Убираем кнопку «Войти» (чтобы не жмакали повторно), оставляем ссылку на сайт
   if (msgChatId && msgId) {
+    const doneText = await premiumText(
+      `✅ <b>${escapeHtml(nameOf(from))}</b>, вы вошли в Tg Swipe!\n\n🎉 Лента, подписки и сохранённые посты уже ждут вас — открывайте и читайте. Аккаунт закреплён за вашим Telegram: вход больше не потребуется.`,
+    )
     void botCall('editMessageText', {
       chat_id: msgChatId,
       message_id: msgId,
-      text: `✅ <b>${escapeHtml(nameOf(from))}</b>, вы вошли в Tg Swipe!\n\nЛента, подписки и сохранённые посты уже ждут вас — открывайте и читайте. Аккаунт закреплён за вашим Telegram: вход больше не потребуется.`,
+      text: doneText,
       parse_mode: 'HTML',
       reply_markup: {
         inline_keyboard: [[{ text: '📖 Читать ленту', url: SITE_URL }]],
@@ -401,11 +403,10 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
     const credited = await creditPendingPayment(payment.id, sp.telegram_payment_charge_id ?? null)
     if (credited && chatId) {
       const label = purpose?.startsWith('pro') ? 'Tg Swipe Pro' : 'Tg Swipe Plus'
-      await botCall('sendMessage', {
-        chat_id: chatId,
-        text: `⭐️ Оплата получена — тариф <b>${label}</b> активирован. Приятного чтения!`,
-        parse_mode: 'HTML',
-      })
+      await botSendRich(
+        chatId,
+        `⭐️ Оплата получена — тариф <b>${label}</b> активирован. 🎉 Приятного чтения!`,
+      )
     }
     return
   }
@@ -427,14 +428,15 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
 
   const credited = await creditPendingPayment(payment.id, sp.telegram_payment_charge_id ?? null)
   if (credited && chatId) {
-    await botCall('sendMessage', {
-      chat_id: chatId,
-      text: `⭐️ Платёж получен — <b>${swipes} свайпов</b> зачислено на баланс продвижения.\n\nОткройте «Мой канал» в Tg Swipe, чтобы запустить кампанию.`,
-      parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [[{ text: 'Продвинуть канал', url: SITE_URL }]],
+    await botSendRich(
+      chatId,
+      `⭐️ Платёж получен — <b>${swipes} свайпов</b> зачислено на баланс продвижения. 🚀\n\n📖 Откройте «Мой канал» в Tg Swipe, чтобы запустить кампанию.`,
+      {
+        keyboard: [
+          [{ text: '🚀 Продвинуть канал', url: SITE_URL }],
+        ],
       },
-    })
+    )
   }
 }
 

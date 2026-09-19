@@ -6,6 +6,7 @@ import { guardAdmin } from '@/lib/guard'
 import { logAdmin } from '@/lib/admin-log'
 import {
   DEFAULT_SLOTS,
+  botSendPhotoRich,
   botSendRich,
   ensureSeeded,
   forgetCapturedEmoji,
@@ -66,6 +67,9 @@ const bodySchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('test'),
     chatId: z.number().int().optional(),
+  }),
+  z.object({
+    action: z.literal('testphoto'),
   }),
   z.object({
     action: z.literal('richprobe'),
@@ -224,6 +228,31 @@ export async function POST(request: Request) {
         premiumError: r.premiumError ?? null,
         diag: diag ?? null,
       })
+    }
+
+    /* ---------- Проба приветственного фото (/start) ---------- */
+    if (d.action === 'testphoto') {
+      const r = await botSendPhotoRich(
+        OWNER_TG_ID,
+        [
+          '👋 <b>Привет!</b>',
+          '',
+          '⚡ Свайпай по интересам.',
+          '📖 Читай каналы без подписок.',
+          '🚀 Продвигай свой канал в топ.',
+          '',
+          '🧪 Так выглядит /start у пользователей — картинка + премиум-эмодзи.',
+        ].join('\n'),
+        {
+          keyboard: [
+            [{ text: '✨ Подписаться на Telegram', url: 'https://t.me/SnapTeamDev' }],
+            [{ text: '📖 Открыть Swipe', url: TME_APP_URL }],
+          ],
+        },
+      )
+      if (!r.ok) return err(r.error ?? 'Не удалось отправить фото')
+      await logAdmin('bot_testphoto', 'owner', { via: r.via })
+      return NextResponse.json({ ok: true, via: r.via })
     }
 
     /* ---------- Проба нового Bot API: sendRichMessage (styled-кнопки + эмодзи в кнопках) ---------- */

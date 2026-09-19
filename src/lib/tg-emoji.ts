@@ -76,18 +76,32 @@ export const DEFAULT_SLOTS: Array<{ slot: string; emoji: string; label: string }
 ]
 
 /**
- * БИБЛИОТЕКА ПРЕМИУМ-ЭМОДЗИ (custom_emoji_id по слотам).
+ * БИБЛИТЕКА ПРЕМИУМ-ЭМОДЗИ (custom_emoji_id по слотам).
  * Заполняется в пустые слоты при первом чтении; очистка слота админом
  * фиксируется в BotSetting ('bot_emoji_cleared') и автозаполнение её не трогает.
  *
- * ВНИМАНИЕ (проверено getCustomEmojiStickers на проде, v5.23.1): из списка,
- * присланного владельцем, валиден ТОЛЬКО book (5456140674028019486) —
- * остальные 7 ID Telegram НЕ знает (.sendMessage с ними → DOCUMENT_INVALID).
- * Реальные ID пополняются ЗАХВАТОМ: юзер/владелец шлёт боту премиум-эмодзи →
- * вебхук пишет в captured (см. ниже) → панель «Бот» → «В слот».
- */
+ * ИСТОЧНИК (v5.24): пак RestrictedEmoji (t.me/addemoji/RestrictedEmoji),
+ * карта из открытого дампа github.com/uuigww/telegram_emoji_for_llm —
+ * ВСЕ 14 ID провалидированы getCustomEmojiStickers на проде (v5.24).
+ * Из исходного списка владельца остался только book (остальные 7 — фиктивные,
+ * Telegram их не знал → DOCUMENT_INVALID). alert ⚠️ в паке нет — юникод.
+ * Пополнение: захват из сообщений (вебхук → панель «В слот»). */
 export const DEFAULT_EMOJI_IDS: Record<string, string> = {
-  book: '5456140674028019486', // 📖 Notebook (книга/блокнот) — ЕДИНСТВЕННЫЙ валидный из списка владельца
+  wave: '5472055112702629499', // 👋
+  fire: '5420315771991497307', // 🔥
+  star: '5435957248314579621', // ⭐
+  sparkles: '5472164874886846699', // ✨
+  rocket: '5445284980978621387', // 🚀
+  heart: '5449505950283078474', // ❤️
+  bell: '5242628160297641831', // 🔔
+  book: '5456140674028019486', // 📖 — оригинал владельца (валиден)
+  check: '5427009714745517609', // ✅
+  crown: '5467406098367521267', // 👑
+  zap: '5431449001532594346', // ⚡
+  party: '5436040291507247633', // 🎉
+  link: '5375129357373165375', // 🔗
+  chat: '5465300082628763143', // 💬
+  thumbsup: '5469770542288478598', // 👍
 }
 
 /* ------------------------- кэш слотов ------------------------- */
@@ -364,4 +378,118 @@ export async function botSendRich(
         businessError,
         premiumError: r2.description,
       }
+}
+
+/* ------------------------- фото-сообщения (/start) ------------------------- */
+
+/** Публичный URL приветственной картинки (public/tgswipe-welcome.png) */
+export function startPhotoUrl(): string {
+  const base =
+    process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, '') || 'https://tg-swipe.vercel.app'
+  return `${base}/tgswipe-welcome.png`
+}
+
+const PHOTO_FILE_ID_KEY = 'start_photo_file_id'
+
+async function getStartPhotoFileId(): Promise<string> {
+  const row = await db.botSetting
+    .findUnique({ where: { key: PHOTO_FILE_ID_KEY } })
+    .catch(() => null)
+  return row?.value ?? ''
+}
+
+/** Как и tgCall, но возвращает result — нужен ради file_id из sendPhoto */
+async function tgCallFull(
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<{ ok: boolean; description?: string; result?: unknown }> {
+  if (!BOT_TOKEN()) return { ok: false, description: 'TELEGRAM_BOT_TOKEN не задан' }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = (await res.json().catch(() => null)) as
+      | { ok?: boolean; description?: string; result?: unknown }
+      | null
+    if (data?.ok) return { ok: true, result: data.result }
+    return { ok: false, description: data?.description ?? `HTTP ${res.status}` }
+  } catch (e) {
+    return { ok: false, description: String((e as Error)?.message ?? e) }
+  }
+}
+
+export type PhotoSendResult = {
+  ok: boolean
+  via: 'photo' | 'text'
+  error?: string
+}
+
+/**
+ * Фото с премиум-подписью для /start: файл file_id из кэша → URL → фото с
+ * обычной подписью → текстовое сообщение. Картинку Telegram качает один раз
+ * и дальше отдаёт по file_id (мгновенно). Никогда не бросает.
+ */
+export async function botSendPhotoRich(
+  chatId: number | string,
+  captionHtml: string,
+  opts: SendOpts = {},
+): Promise<PhotoSendResult> {
+  const caption = opts.skipPremiumWrap ? captionHtml : await premiumText(captionHtml)
+  const reply_markup = opts.keyboard ? { inline_keyboard: opts.keyboard } : undefined
+
+  // 1) Закэшированный file_id — самый быстрый путь
+  const cached = await getStartPhotoFileId()
+  if (cached) {
+    const r = await tgCallFull('sendPhoto', {
+      chat_id: chatId,
+      photo: cached,
+      caption,
+      parse_mode: 'HTML',
+      ...(reply_markup ? { reply_markup } : {}),
+    })
+    if (r.ok) return { ok: true, via: 'photo' }
+  }
+
+  // 2) Отправка по URL — Telegram скачает картинку сам
+  const r2 = await tgCallFull('sendPhoto', {
+    chat_id: chatId,
+    photo: startPhotoUrl(),
+    caption,
+    parse_mode: 'HTML',
+    ...(reply_markup ? { reply_markup } : {}),
+  })
+  if (r2.ok) {
+    // Сохраняем file_id самой большой версии фото для будущих отправок
+    const photo = (r2.result as { photo?: Array<{ file_id?: string }> } | undefined)?.photo
+    const fid = Array.isArray(photo) ? photo[photo.length - 1]?.file_id : undefined
+    if (fid) {
+      await db.botSetting
+        .upsert({
+          where: { key: PHOTO_FILE_ID_KEY },
+          create: { key: PHOTO_FILE_ID_KEY, value: fid },
+          update: { value: fid },
+        })
+        .catch(() => {})
+    }
+    return { ok: true, via: 'photo' }
+  }
+
+  // 3) Подпись с tg-emoji не прошла (или картинка не скачалась) — фото с чистой подписью
+  const r3 = await tgCallFull('sendPhoto', {
+    chat_id: chatId,
+    photo: startPhotoUrl(),
+    caption: stripTgEmoji(captionHtml),
+    parse_mode: 'HTML',
+    ...(reply_markup ? { reply_markup } : {}),
+  })
+  if (r3.ok) return { ok: true, via: 'photo' }
+
+  // 4) Совсем без картинки: текстовое сообщение с тем же текстом и кнопками
+  const t = await botSendRich(chatId, captionHtml, { ...opts, skipPremiumWrap: true })
+  return t.ok
+    ? { ok: true, via: 'text' }
+    : { ok: false, via: 'text', error: t.error ?? r3.description ?? r2.description }
 }

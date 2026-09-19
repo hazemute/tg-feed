@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Bot, Inbox, Loader2, PlugZap, RefreshCw, Send, Sparkles, Trash2 } from 'lucide-react'
+import { Bot, Inbox, ImageIcon, Loader2, PlugZap, RefreshCw, Send, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -49,6 +49,7 @@ export function BotTab({ tick, onSettled }: TabProps) {
   const [bcChecking, setBcChecking] = useState(false)
   const [bcVerdict, setBcVerdict] = useState<string | null>(null)
   const [probing, setProbing] = useState(false)
+  const [photoTesting, setPhotoTesting] = useState(false)
   const [adoptSlot, setAdoptSlot] = useState<Record<string, string>>({})
 
   const load = useCallback(() => {
@@ -122,6 +123,20 @@ export function BotTab({ tick, onSettled }: TabProps) {
       toast.error((e as Error).message || 'Проба не удалась')
     } finally {
       setProbing(false)
+    }
+  }
+
+  const runPhotoTest = async () => {
+    setPhotoTesting(true)
+    try {
+      const r = await panelFetch<{ ok: boolean; via: string }>('/api/panel/bot', {
+        json: { action: 'testphoto' },
+      })
+      toast.success(`Фото-/start отправлен (${r.via === 'photo' ? 'картинка + подпись' : 'текстом — фолбэк'})`)
+    } catch (e) {
+      toast.error((e as Error).message || 'Фото-тест не удался')
+    } finally {
+      setPhotoTesting(false)
     }
   }
 
@@ -452,6 +467,16 @@ export function BotTab({ tick, onSettled }: TabProps) {
             >
               {testing ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
               Тест-сообщение владельцу
+            </button>
+            <button
+              type="button"
+              onClick={() => void runPhotoTest()}
+              disabled={photoTesting}
+              title="Отправить владельцу приветствие как на /start: картинка + премиум-подпись + кнопки"
+              className="flex h-10 items-center gap-2 rounded-lg border border-emerald-600 px-4 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
+            >
+              {photoTesting ? <Loader2 className="size-4 animate-spin" /> : <ImageIcon className="size-4" />}
+              Фото-тест
             </button>
             <button
               type="button"
