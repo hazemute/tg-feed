@@ -34,6 +34,12 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE TABLE IF NOT EXISTS "AiSearchLog" ("id" text PRIMARY KEY, "userId" text NOT NULL, "query" text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE INDEX IF NOT EXISTS "AiSearchLog_userId_createdAt_idx" ON "AiSearchLog" ("userId", "createdAt" DESC)`,
   ],
+  'v5.18': [
+    // v5.18: аудит-журнал админ-панели (выдача подписок, баны, операции)
+    `CREATE TABLE IF NOT EXISTS "AdminLog" ("id" text PRIMARY KEY, "action" text NOT NULL, "target" text NOT NULL, "meta" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "AdminLog_createdAt_idx" ON "AdminLog" ("createdAt" DESC)`,
+    `CREATE INDEX IF NOT EXISTS "AdminLog_action_createdAt_idx" ON "AdminLog" ("action", "createdAt" DESC)`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -53,6 +59,7 @@ const CRITICAL: Array<[string, string | null]> = [
   ['Post', 'aiFlag'],
   ['PendingPayment', 'purpose'],
   ['AiSearchLog', null],
+  ['AdminLog', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -66,7 +73,7 @@ export async function checkSchema(): Promise<SchemaState> {
       SELECT c.table_name, c.column_name
       FROM information_schema.columns c
       WHERE c.table_schema = 'public' AND (
-        c.table_name = 'AiSearchLog' OR
+        c.table_name = 'AiSearchLog' OR c.table_name = 'AdminLog' OR
         (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil')) OR
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
@@ -118,7 +125,7 @@ export async function ensureAppSchema(opts?: { force?: boolean }): Promise<{ ok:
   return { ok: st.ok, applied, missing: st.missing }
 }
 
-/** Именованная миграция из панели (v5.15 | v5.17). Возвращает число применённых шагов. */
+/** Именованная миграция из панели (v5.15 | v5.17 | v5.18). Возвращает число применённых шагов. */
 export async function applyNamedMigration(version: string): Promise<number> {
   const stmts = MIGRATIONS[version]
   if (!stmts) throw new Error('unknown migration')

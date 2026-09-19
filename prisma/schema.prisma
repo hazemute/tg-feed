@@ -380,6 +380,20 @@ model AiSearchLog {
   @@index([userId, createdAt])
 }
 
+// Журнал действий администратора (аудит панели): выдача/отзыв подписок,
+// баны, правки балансов, быстрые операции. Пишется автоматически из
+// /api/panel/* — по нему работает вкладка «Журнал».
+model AdminLog {
+  id        String   @id @default(cuid())
+  action    String // tier_grant | tier_revoke | tier_extend | ban | unban | swipes | premium_on | premium_off | bypass_on | bypass_off | ops
+  target    String // userId / @username / пост
+  meta      String? // JSON-снимок параметров (tier, days, reason…)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+}
+
 // Вход на сайт через Telegram-бота: гость на сайте жмёт «Вход по Telegram»,
 // открывает бота (/start login_<id>), жмёт inline-кнопку «Войти» — вебхук
 // подтверждает попытку, сайт (опрос) выдаёт JWT-сессию реального TG-аккаунта.

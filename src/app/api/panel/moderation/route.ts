@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { bumpCache } from '@/lib/redis'
+import { logAdmin } from '@/lib/admin-log'
 
 export const dynamic = 'force-dynamic'
 
@@ -69,6 +70,7 @@ export async function POST(request: Request) {
 
     // Инвалидация кэша: состав активных каналов изменился
     await bumpCache(['feed', 'tr', 'ct', 'ch', 'sr'])
+    await logAdmin('moderation', channel.title, { channelId, action, username: null })
 
     return NextResponse.json({ ok: true, channel })
   } catch (e) {

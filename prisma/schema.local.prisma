@@ -448,6 +448,18 @@ model AiSearchLog {
   @@index([userId, createdAt])
 }
 
+// Журнал действий администратора (аудит панели) — идентично schema.prisma
+model AdminLog {
+  id        String   @id @default(cuid())
+  action    String // tier_grant | tier_revoke | tier_extend | ban | unban | swipes | premium_on | premium_off | bypass_on | bypass_off | ops
+  target    String // userId / @username / пост
+  meta      String? // JSON-снимок параметров (tier, days, reason…)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+}
+
 // Платежи (на проде — ЮKassa/Stars/TON; локально не используется, но нужен для tsc)
 model PendingPayment {
   id                String   @id @default(cuid())

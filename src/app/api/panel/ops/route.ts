@@ -7,6 +7,7 @@ import { bumpCache } from '@/lib/redis'
 import { clearPageCache } from '@/lib/page-cache'
 import { getChatCard } from '@/lib/tg-bot'
 import { classifyChannelsBatch } from '@/lib/classify'
+import { logAdmin } from '@/lib/admin-log'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -57,6 +58,11 @@ export async function POST(request: Request) {
     const parsed = opsSchema.safeParse(await readJson(request))
     if (!parsed.success) return err('invalid action')
 
+    // Аудит: каждая успешная быстрая операция попадает в журнал
+    const d = parsed.data as { action: string; username?: string; target?: string }
+    const audit = async (message: string) =>
+      logAdmin('ops', d.username ?? d.target ?? '-', { op: d.action, message })
+
     switch (parsed.data.action) {
       /* ---------- Скрыть/вернуть канал ---------- */
       case 'hide_channel':
@@ -69,6 +75,7 @@ export async function POST(request: Request) {
           data: { status: parsed.data.action === 'hide_channel' ? 'paused' : 'active' },
         })
         await invalidateFeed()
+        await audit(`Канал «${channel.title}» скрыт из ленты и каталога`)
         return NextResponse.json({
           ok: true,
           message:
@@ -96,6 +103,7 @@ export async function POST(request: Request) {
           },
         })
         await invalidateFeed()
+        await audit('Карточка канала обновлена')
         return NextResponse.json({
           ok: true,
           message: `Карточка обновлена: ${card.members != null ? `${card.members} подписчиков` : 'подписчики недоступны'}, ${card.photoFileId ? 'аватар есть' : 'аватара нет'}`,
@@ -136,6 +144,7 @@ export async function POST(request: Request) {
         }
         await db.channel.update({ where: { id: channel.id }, data: { categoryId: target.id } })
         await invalidateFeed()
+        await audit(`Тема канала изменена на «${target.title}»`)
         return NextResponse.json({ ok: true, message: `Тема канала изменена на «${target.title}»` })
       }
 
@@ -147,6 +156,7 @@ export async function POST(request: Request) {
         if (!post) return err(`пост ${key} в базе не найден`, 404)
         await db.post.delete({ where: { id: post.id } })
         await invalidateFeed()
+        await audit(`Пост ${key} удалён из ленты`)
         return NextResponse.json({ ok: true, message: `Пост ${key} удалён из ленты` })
       }
     }

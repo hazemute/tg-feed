@@ -30,6 +30,8 @@ export async function GET(request: Request) {
         isGuest: true,
         isPremium: true,
         languageCode: true,
+        tier: true,
+        tierUntil: true,
         createdAt: true,
       },
     })

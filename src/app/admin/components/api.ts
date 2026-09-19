@@ -155,12 +155,18 @@ export interface PanelUser {
   bannedAt?: string | null
   banReason?: string | null
   swipes?: number
+  /** v5.18: подписка Snap (tier — действующий, истёкший приходит как 'free') */
+  tier?: 'free' | 'plus' | 'pro'
+  tierUntil?: string | null
   createdAt: string
   likes: number
   subscriptions: number
   bookmarks: number
   views: number
 }
+
+/** v5.18: фильтры списка пользователей */
+export type UsersFilter = 'all' | 'tg' | 'guests' | 'banned' | 'plus' | 'pro' | 'paid' | 'expiring'
 
 export interface UsersResponse {
   items: PanelUser[]
@@ -537,18 +543,106 @@ export async function setSupportThreadStatus(id: string, status: 'ai' | 'human' 
   })
 }
 
-/** v5.11: действия модерации пользователя (бан/баланс/премиум) */
+/** v5.11: действия модерации пользователя (бан/баланс/премиум) + v5.18 подписки */
 export async function userAction(
   payload:
     | { action: 'ban'; userId: string; reason?: string }
     | { action: 'unban'; userId: string }
     | { action: 'swipes'; userId: string; swipes: number }
-    | { action: 'premium'; userId: string },
+    | { action: 'premium'; userId: string }
+    | { action: 'tier'; userId: string; tier: 'plus' | 'pro'; days: number; mode: 'grant' }
+    | { action: 'tier'; userId: string; mode: 'revoke' },
 ): Promise<void> {
   await panelFetch<{ ok: boolean }>('/api/panel/users', {
     method: 'PATCH',
     json: payload,
   })
+}
+
+/* ===================== Подписки Snap Plus/Pro (v5.18) ===================== */
+
+export interface SubscriptionsMetrics {
+  activePlus: number
+  activePro: number
+  expiring3d: number
+  expiring7d: number
+  granted: number
+  extended: number
+  revoked: number
+}
+
+export interface SubscriberItem {
+  id: string
+  username: string | null
+  firstName: string | null
+  lastName: string | null
+  isGuest: boolean
+  tier: 'plus' | 'pro'
+  tierUntil: string | null
+  createdAt: string
+}
+
+export interface RecentTierPayment {
+  userId: string
+  username: string | null
+  firstName: string | null
+  lastName: string | null
+  amountKop: number
+  purpose: string
+  createdAt: string
+}
+
+export interface SubscriptionsResponse {
+  metrics: SubscriptionsMetrics
+  items: SubscriberItem[]
+  recentPayments: RecentTierPayment[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export function fetchSubscriptions(params: { q?: string; page?: number; view?: 'active' | 'expiring' }): Promise<SubscriptionsResponse> {
+  const sp = new URLSearchParams()
+  if (params.q?.trim()) sp.set('q', params.q.trim())
+  if (params.page && params.page > 1) sp.set('page', String(params.page))
+  if (params.view === 'expiring') sp.set('view', 'expiring')
+  const qs = sp.toString()
+  return panelFetch<SubscriptionsResponse>(`/api/panel/subscriptions${qs ? `?${qs}` : ''}`)
+}
+
+/** Быстрая выдача подписки по ID или @username со вкладки «Подписки» */
+export function grantSubscription(payload: {
+  userId?: string
+  handle?: string
+  tier: 'plus' | 'pro'
+  days: number
+  reason?: string
+}): Promise<{ ok: boolean; userId: string; tier: string; tierUntil: string | null }> {
+  return panelFetch('/api/panel/subscriptions', { method: 'POST', json: payload })
+}
+
+/* ===================== Журнал действий (v5.18) ===================== */
+
+export interface AuditItem {
+  id: string
+  action: string
+  target: string
+  meta: Record<string, unknown> | null
+  createdAt: string
+}
+
+export interface AuditResponse {
+  items: AuditItem[]
+  total: number
+  page: number
+  pageSize: number
+  byAction: Record<string, number>
+}
+
+export type AuditGroup = 'all' | 'tier' | 'moderation' | 'users'
+
+export function fetchAudit(group: AuditGroup, page = 1): Promise<AuditResponse> {
+  return panelFetch<AuditResponse>(`/api/panel/audit?group=${group}&page=${page}`)
 }
 
 /* ===================== Финансы и вовлечённость ===================== */
@@ -611,6 +705,8 @@ export interface PanelUserInfo {
     isGuest: boolean
     isPremium: boolean
     languageCode: string | null
+    tier?: string | null
+    tierUntil?: string | null
     createdAt: string
   }
   stats: { views: number; likes: number; bookmarks: number; subscriptions: number }

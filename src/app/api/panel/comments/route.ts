@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { IS_SQLITE } from '@/lib/server'
+import { logAdmin } from '@/lib/admin-log'
 
 export const dynamic = 'force-dynamic'
 
@@ -131,6 +132,7 @@ export async function DELETE(request: Request) {
     })
 
     if (!result) return err('comment not found', 404)
+    await logAdmin('comment', parsed.data.id, { op: 'delete_comment', postId: null })
     return NextResponse.json({ ok: true, commentsCount: result.commentsCount })
   } catch (e) {
     console.error('[panel/comments DELETE]', e)

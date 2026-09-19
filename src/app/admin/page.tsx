@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
+  Gem,
   Headset,
+  History,
   LayoutDashboard,
   Lightbulb,
   LogOut,
@@ -37,11 +39,13 @@ import {
 } from './components/api'
 import { btnOutlineDark } from './components/bits'
 import { AdsTab } from './components/ads-tab'
+import { AuditTab } from './components/audit-tab'
 import { ChannelsTab } from './components/channels-tab'
 import { FinanceTab } from './components/finance-tab'
 import { LoginScreen } from './components/login-screen'
 import { ModerationTab } from './components/moderation-tab'
 import { OverviewTab } from './components/overview-tab'
+import { SubscriptionsTab } from './components/subscriptions-tab'
 import { SupportTab } from './components/support-tab'
 import { SystemTab } from './components/system-tab'
 import { ToolsTab } from './components/tools-tab'
@@ -51,9 +55,11 @@ type AuthState = 'checking' | 'authed' | 'anon'
 type TabKey =
   | 'overview'
   | 'finance'
+  | 'subscriptions'
   | 'channels'
   | 'moderation'
   | 'users'
+  | 'audit'
   | 'support'
   | 'feedback'
   | 'ads'
@@ -278,6 +284,7 @@ export default function AdminPage() {
   }> = [
     { key: 'overview', label: 'Обзор', icon: LayoutDashboard },
     { key: 'finance', label: 'Финансы', icon: Wallet },
+    { key: 'subscriptions', label: 'Подписки', icon: Gem },
     { key: 'channels', label: 'Каналы', icon: Tv },
     {
       key: 'moderation',
@@ -287,6 +294,7 @@ export default function AdminPage() {
       badgeTone: 'amber',
     },
     { key: 'users', label: 'Пользователи', icon: Users },
+    { key: 'audit', label: 'Журнал', icon: History },
     {
       key: 'support',
       label: 'Поддержка',
@@ -318,12 +326,16 @@ export default function AdminPage() {
         return <OverviewTab tick={tick} onSettled={handleSettled} onCounts={handleCounts} />
       case 'finance':
         return <FinanceTab tick={tick} onSettled={handleSettled} />
+      case 'subscriptions':
+        return <SubscriptionsTab tick={tick} onSettled={handleSettled} />
       case 'channels':
         return <ChannelsTab tick={tick} onSettled={handleSettled} />
       case 'moderation':
         return <ModerationTab tick={tick} onSettled={handleSettled} onCount={handleModerationCount} />
       case 'users':
         return <UsersTab tick={tick} onSettled={handleSettled} />
+      case 'audit':
+        return <AuditTab tick={tick} onSettled={handleSettled} />
       case 'support':
         return <SupportTab tick={tick} onSettled={handleSettled} />
       case 'feedback':
