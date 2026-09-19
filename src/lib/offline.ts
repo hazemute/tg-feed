@@ -60,13 +60,16 @@ async function set(key: string, value: unknown): Promise<void> {
   }
 }
 
-export async function loadFeedCache(category: string): Promise<PostDTO[]> {
-  const items = await get<PostDTO[]>(`feed:${category}`)
+export async function loadFeedCache(category: string, lang = 'any'): Promise<PostDTO[]> {
+  // lang='any' — совместимость со старым ключом feed:<category>
+  const key = lang === 'any' ? `feed:${category}` : `feed:${category}:${lang}`
+  const items = await get<PostDTO[]>(key)
   return Array.isArray(items) ? items : []
 }
 
 /** Сохраняем первые CACHE_LIMIT постов ленты категории */
-export async function saveFeedCache(category: string, items: PostDTO[]): Promise<void> {
+export async function saveFeedCache(category: string, items: PostDTO[], lang = 'any'): Promise<void> {
   if (items.length === 0) return
-  await set(`feed:${category}`, items.slice(0, CACHE_LIMIT))
+  const key = lang === 'any' ? `feed:${category}` : `feed:${category}:${lang}`
+  await set(key, items.slice(0, CACHE_LIMIT))
 }

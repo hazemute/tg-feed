@@ -3,16 +3,19 @@ import { parseJsonArray } from '@/lib/server'
 import { getNsfwChannelIds, nsfwPostNotIn } from '@/lib/moderation'
 import { computeWeight, rankJitter } from '@/lib/rank'
 import { looksLikeGarbage } from '@/lib/text-clean'
+import { detectLang } from '@/lib/lang'
 import type { AffinityMap } from '@/lib/rank'
 
 // ------------------------- Глобальный индекс ленты -------------------------
 
 /**
- * Запись глобального индекса: id поста, id канала, id категории, вес.
+ * Запись глобального индекса: id поста, id канала, id категории, вес, язык.
  * Кэшируется для ВСЕХ пользователей (вес — глобальное качество поста),
  * персонализация применяется на каждом запросе поверх этих данных.
+ * l — язык поста (lang.ts): фильтр «Русский / Другие» режет индекс на сервере,
+ * чтобы пагинация и hasMore были честными.
  */
-export type IndexEntry = { i: string; c: string; g: string | null; w: number }
+export type IndexEntry = { i: string; c: string; g: string | null; w: number; l: 'ru' | 'foreign' | 'und' }
 export type RankedIndex = { entries: IndexEntry[]; total: number }
 
 /** Максимум постов одного канала в окне индекса (разнообразие ленты) */
@@ -69,6 +72,7 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       i: p.id,
       c: p.channelId,
       g: p.channel.categoryId,
+      l: detectLang(p.text),
       w: computeWeight({
         likesCount: p.likesCount,
         reactionsTg: p.reactionsTg,

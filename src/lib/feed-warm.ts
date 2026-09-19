@@ -51,9 +51,9 @@ async function warmOnce(): Promise<number> {
   let warmed = 0
   for (const category of categories) {
     if (warmed > 0 && Date.now() > deadline) break
-    // Формула ключа — ТОЧНО как в /api/feed: `${category}:v5:${shortHash(sig)}`
+    // Формула ключа — ТОЧНО как в /api/feed: `${category}:v6:${shortHash(sig)}`
     const sig = `${category}||`
-    const key = await famKey('feed', `${category}:v5:${shortHash(sig)}`)
+    const key = await famKey('feed', `${category}:v6:${shortHash(sig)}`)
     try {
       await cacheAside({
         key,

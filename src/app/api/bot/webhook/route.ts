@@ -182,14 +182,31 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
   if (!valid) {
     await botSendRich(
       chatId,
-      '⚠️ <b>Эта ссылка для входа уже недействительна</b> — она живёт 15 минут из соображений безопасности.\n\n✨ Откройте Tg Swipe и нажмите «Вход по Telegram» ещё раз — новая ссылка создаётся в один тап.',
+      [
+        '⚠️ <b>Ссылка для входа устарела</b>',
+        '',
+        'Она действует 15 минут — так безопаснее.',
+        '',
+        '✨ Просто начните вход заново: откройте Tg Swipe и нажмите «Вход по Telegram» — новая ссылка придёт в тот же момент.',
+      ].join('\n'),
     )
     return
   }
 
   await botSendRich(
     chatId,
-    `<b>${escapeHtml(nameOf(from))}</b>, подтверждите вход в <b>Tg Swipe</b>. 🔐\n\n✅ Одно нажатие — и ваш профиль, подписки и сохранённые посты откроются на сайте и в приложении. 🚀 Пароли не нужны: доступ подтверждается вашим Telegram.`,
+    [
+      `🔐 <b>Подтверждение входа</b>`,
+      '',
+      `Привет, ${escapeHtml(nameOf(from))}! Вы запрашивали вход в <b>Tg Swipe</b>.`,
+      '',
+      '✅ Одно нажатие кнопки ниже — и в приложении откроются:',
+      '  • ваш профиль и подписки',
+      '  • сохранённые посты',
+      '  • баланс и продвижение канала',
+      '',
+      '🛡 Пароли не нужны — всё подтверждается вашим Telegram.',
+    ].join('\n'),
     {
       keyboard: [
         [{ text: '✅ Это я, войти', callback_data: `login:${token}` }],
@@ -208,11 +225,13 @@ async function handleStart(from: TgFrom | undefined, chatId?: number) {
     [
       `👋 <b>Привет, ${name}!</b>`,
       '',
-      '⚡ Свайпай по интересам.',
-      '📖 Читай каналы без подписок.',
-      '🚀 Продвигай свой канал в топ.',
+      'Это <b>Tg Swipe</b> — умная лента Telegram.',
       '',
-      '✨ Подпишись на наш канал — там новости, обновления и фишки:',
+      '⚡ <b>Свайпай</b> — лента подстраивается под твои интересы',
+      '📖 <b>Читай</b> любые каналы без подписок',
+      '🚀 <b>Продвигай</b> свой канал в топ ленты',
+      '',
+      '✨ Подпишись на наш канал — новости, обновления и фишки первыми:',
     ].join('\n'),
     {
       keyboard: [
@@ -275,9 +294,12 @@ async function handleCustomEmojiCapture(msg: NonNullable<TgUpdate['message']>): 
       msg.chat.id,
       [
         `📌 ${found.length > 1 ? `Захвачено ${found.length} ID` : 'Захвачен custom_emoji_id'}:`,
+        '',
         lines,
         '',
-        'Вставьте в слот: панель → Бот → «Захваченные» → «В слот», либо /emojis — текущие слоты.',
+        '────────────',
+        'Куда вставить: панель → Бот → «Захваченные» → «В слот».',
+        'Текущие слоты: /emojis',
       ].join('\n'),
     ).catch(() => {})
   }
@@ -307,11 +329,13 @@ async function handleEmojisCommand(from: TgFrom | undefined, chatId?: number) {
   await botSendRich(
     chatId,
     [
-      `⚙️ <b>Слоты премиум-эмодзи (${filled}/${rows.length})</b>`,
+      `⚙️ <b>Слоты премиум-эмодзи</b> — ${filled}/${rows.length} заполнено`,
+      '',
       ...(slotLines.length > 0 ? slotLines : ['—']),
       '',
-      `📌 <b>Захваченные из сообщений</b>${captured.length > 0 ? '' : ' — пока пусто'}:`,
-      ...(capLines.length > 0 ? capLines : []),
+      '────────────',
+      `📌 <b>Захваченные из сообщений</b>${captured.length > 0 ? ':' : ' — пока пусто'}`,
+      ...(capLines.length > 0 ? ['', ...capLines] : []),
     ].join('\n'),
   ).catch(() => {})
 }
@@ -362,7 +386,13 @@ async function handleLoginCallback(
   // Убираем кнопку «Войти» (чтобы не жмакали повторно), оставляем ссылку на сайт
   if (msgChatId && msgId) {
     const doneText = await premiumText(
-      `✅ <b>${escapeHtml(nameOf(from))}</b>, вы вошли в Tg Swipe!\n\n🎉 Лента, подписки и сохранённые посты уже ждут вас — открывайте и читайте. Аккаунт закреплён за вашим Telegram: вход больше не потребуется.`,
+      [
+        `✅ <b>Готово, ${escapeHtml(nameOf(from))} — вы вошли!</b>`,
+        '',
+        '🎉 Лента, подписки и сохранённые посты уже синхронизированы с вашим аккаунтом.',
+        '',
+        'Аккаунт закреплён за этим Telegram — повторный вход не потребуется. Приятного чтения!',
+      ].join('\n'),
     )
     void botCall('editMessageText', {
       chat_id: msgChatId,
@@ -405,7 +435,13 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
       const label = purpose?.startsWith('pro') ? 'Tg Swipe Pro' : 'Tg Swipe Plus'
       await botSendRich(
         chatId,
-        `⭐️ Оплата получена — тариф <b>${label}</b> активирован. 🎉 Приятного чтения!`,
+        [
+          '⭐️ <b>Оплата получена</b>',
+          '',
+          `Тариф <b>${label}</b> активирован — все премиум-функции уже открыты.`,
+          '',
+          '🎉 Приятного чтения!',
+        ].join('\n'),
       )
     }
     return
@@ -430,7 +466,13 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
   if (credited && chatId) {
     await botSendRich(
       chatId,
-      `⭐️ Платёж получен — <b>${swipes} свайпов</b> зачислено на баланс продвижения. 🚀\n\n📖 Откройте «Мой канал» в Tg Swipe, чтобы запустить кампанию.`,
+      [
+        '⭐️ <b>Платёж получен</b>',
+        '',
+        `🚀 <b>${swipes} свайпов</b> зачислено на баланс продвижения.`,
+        '',
+        '📖 Запустить кампанию можно в «Мой канал» → «Продвижение».',
+      ].join('\n'),
       {
         keyboard: [
           [{ text: '🚀 Продвинуть канал', url: SITE_URL }],

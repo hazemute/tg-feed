@@ -7,6 +7,7 @@ import { diversify, personalBoost, shuffleNoise } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
 import { buildFeedScope, loadPersonalSignals, computeRankedIndex } from '@/lib/feed'
 import type { RankedIndex } from '@/lib/feed'
+import { detectLang, langPasses } from '@/lib/lang'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { getCachedPage, putCachedPage } from '@/lib/page-cache'
@@ -238,6 +239,9 @@ const querySchema = z.object({
   /** Сид перемешивания: клиент меняет его при каждом обновлении ленты —
    *  при повторном открытии лента показывается в ДРУГОМ порядке */
   sh: z.string().max(24).optional(),
+  /** Фильтр языка (v5.25): any — всё, ru — русский сегмент, foreign — прочие языки.
+   *  Посты без букв (мемы-картинки) проходят в любом режиме (см. src/lib/lang.ts). */
+  lang: z.enum(['any', 'ru', 'foreign']).catch('any'),
 })
 
 /**
@@ -265,13 +269,13 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const parsed = querySchema.safeParse(Object.fromEntries(searchParams))
     if (!parsed.success) return err('invalid query')
-    const { category, page, limit } = parsed.data
+    const { category, page, limit, lang } = parsed.data
 
     // Мгновенный ответ для недавно отданной страницы (смена вкладок/возврат в ленту):
     // 45с L0-кэш + свежие персональные флаги поверх (см. src/lib/page-cache.ts).
     // Часовая серверная ротация сида не конфликтует с кэшем: TTL 45с << 1 часа.
     const seedForCache = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
-    const cached = getCachedPage(userId, category, page, limit, seedForCache)
+    const cached = getCachedPage(userId, category, page, limit, seedForCache, lang)
     if (cached) return NextResponse.json({ ...cached, page })
 
     // Скоуп и персональные сигналы независимы — идём параллельно (каждый RTT дорог)
@@ -290,7 +294,7 @@ export async function GET(request: Request) {
         не даёт бёрсту запросов умножить холодную пересборку. v4 — кап канала. */
     const indexKey =
       scope.sig !== null
-        ? await famKey('feed', `${category}:v5:${shortHash(scope.sig)}`) // v5 — ИИ-модерация + новые веса
+        ? await famKey('feed', `${category}:v6:${shortHash(scope.sig)}`) // v6 — язык в записи индекса (фильтр «Русский/Другие»)
         : null // discover — персональный скоуп по интересам, без кэша
 
     const loadIndex = () => computeRankedIndex(scope.where)
@@ -299,6 +303,13 @@ export async function GET(request: Request) {
       ? await cacheAside({ key: indexKey, ttlSec: 300, memoryTtlMs: 15_000, fetcher: loadIndex })
       : await loadIndex()
     mark('index')
+
+    /* ---------- Фильтр языка (v5.25): «Русский / Другие» ----------
+        Режем индекс ДО персонализации и диверсификации: тогда пагинация,
+        hasMore и «разные каналы подряд» считаются уже по отфильтрованному
+        списку. Посты без букв (und) проходят в любом режиме. */
+    const scopedEntries =
+      lang === 'any' ? index.entries : index.entries.filter((e) => langPasses(e.l, lang))
 
     /* ---------- Персональный слой: аффинити + просмотренное + перемешивание ----------
         РОТАЦИЯ (жалоба владельца «постоянно одно и то же»): если клиент не
@@ -311,7 +322,7 @@ export async function GET(request: Request) {
         ? parsed.data.sh
         : `${userId}:${hourBucket}`
 
-    const boosted = index.entries.map((e) => ({
+    const boosted = scopedEntries.map((e) => ({
       id: e.i,
       cid: e.c,
       w:
@@ -365,19 +376,21 @@ export async function GET(request: Request) {
     const promoSet: Set<string> = new Set()
     const promotedPosts =
       page === 0
-        ? await db.post.findMany({
-            where: {
-              promotedAt: { gt: new Date(Date.now() - 24 * 3_600_000) },
-              channel: { status: 'active' },
-              AND: [
-                ...nsfwPostNotIn(),
-                { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
-              ],
-            },
-            orderBy: { promotedAt: 'desc' },
-            take: 3,
-            select: { id: true, channelId: true },
-          })
+        ? (
+            await db.post.findMany({
+              where: {
+                promotedAt: { gt: new Date(Date.now() - 24 * 3_600_000) },
+                channel: { status: 'active' },
+                AND: [
+                  ...nsfwPostNotIn(),
+                  { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+                ],
+              },
+              orderBy: { promotedAt: 'desc' },
+              take: 6,
+              select: { id: true, channelId: true, text: true },
+            })
+          ).filter((p) => langPasses(detectLang(p.text), lang)) // язык фильтра уважают и платные посты
         : []
     if (promotedPosts.length > 0) {
       for (const p of promotedPosts) promoSet.add(p.id)
@@ -400,19 +413,21 @@ export async function GET(request: Request) {
     // открывать второе TLS-соединение к пулеру (~1.7с+)
     const sponsorPosts =
       sponsors && sponsors.size > 0
-        ? await db.post.findMany({
-            where: {
-              channelId: { in: [...sponsors.keys()] },
-              id: { notIn: [...signals.viewedIds, ...promoSet] },
-              AND: [
-                ...nsfwPostNotIn(), // CPA-спам тоже проходит гигиену текста
-                // ИИ-модерация: реклама не должна вести на junk/nsfw-посты
-                { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
-              ],
-            },
-            orderBy: { publishedAt: 'desc' },
-            take: 12,
-          })
+        ? (
+            await db.post.findMany({
+              where: {
+                channelId: { in: [...sponsors.keys()] },
+                id: { notIn: [...signals.viewedIds, ...promoSet] },
+                AND: [
+                  ...nsfwPostNotIn(), // CPA-спам тоже проходит гигиену текста
+                  // ИИ-модерация: реклама не должна вести на junk/nsfw-посты
+                  { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+                ],
+              },
+              orderBy: { publishedAt: 'desc' },
+              take: 12,
+            })
+          ).filter((p) => langPasses(detectLang(p.text), lang))
         : []
     mark('sponsor-posts')
 
@@ -485,7 +500,7 @@ export async function GET(request: Request) {
     // а не по глобальному индексу — иначе после фильтра «Не интересно»
     // лента обещает страницы, которых нет
     const hasMore = (page + 1) * limit < ordered.length
-    putCachedPage(userId, category, page, limit, seedForCache, items, hasMore)
+    putCachedPage(userId, category, page, limit, seedForCache, lang, items, hasMore)
 
     return NextResponse.json({
       items,

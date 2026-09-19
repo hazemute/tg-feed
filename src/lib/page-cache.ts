@@ -23,8 +23,8 @@ type Flags = { liked?: boolean; bookmarked?: boolean }
 const overrides = new Map<string, { flags: Flags; exp: number }>()
 const OVERRIDE_TTL_MS = 10 * 60_000
 
-const keyOf = (uid: string, category: string, page: number, limit: number, seed: string) =>
-  `${uid}|${category}|${page}|${limit}|${seed}`
+const keyOf = (uid: string, category: string, page: number, limit: number, seed: string, lang: string) =>
+  `${uid}|${category}|${page}|${limit}|${seed}|${lang}`
 
 /** Взять страницу из кэша (применяя свежие персональные флаги); null — промах */
 export function getCachedPage(
@@ -33,10 +33,11 @@ export function getCachedPage(
   page: number,
   limit: number,
   seed: string,
+  lang: string,
 ): { items: PostDTO[]; hasMore: boolean } | null {
-  const hit = pages.get(keyOf(uid, category, page, limit, seed))
+  const hit = pages.get(keyOf(uid, category, page, limit, seed, lang))
   if (!hit || hit.exp <= Date.now()) {
-    if (hit) pages.delete(keyOf(uid, category, page, limit, seed))
+    if (hit) pages.delete(keyOf(uid, category, page, limit, seed, lang))
     return null
   }
   const items = hit.items.map((p) => {
@@ -53,6 +54,7 @@ export function putCachedPage(
   page: number,
   limit: number,
   seed: string,
+  lang: string,
   items: PostDTO[],
   hasMore: boolean,
 ) {
@@ -64,7 +66,7 @@ export function putCachedPage(
       if (first !== undefined) pages.delete(first)
     }
   }
-  pages.set(keyOf(uid, category, page, limit, seed), {
+  pages.set(keyOf(uid, category, page, limit, seed, lang), {
     items,
     hasMore,
     exp: Date.now() + PAGE_TTL_MS,

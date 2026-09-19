@@ -150,6 +150,13 @@ const DICT = {
   'toolbar.dayAria': ['Только посты за сутки', 'Posts from the last 24 hours only'],
   'toolbar.top': ['Топ', 'Top'],
   'toolbar.topAria': ['Сначала популярные', 'Popular first'],
+  'toolbar.lang': ['Язык', 'Language'],
+  'toolbar.langAria': [
+    'Фильтр по языку: тап — все языки → русский → другие',
+    'Language filter: tap — all → Russian → other languages',
+  ],
+  'toolbar.langRu': ['Русский', 'Russian'],
+  'toolbar.langOther': ['Другие', 'Other'],
   'toolbar.shownPrefix': ['Показано', 'Showing'],
   'toolbar.of': ['из', 'of'],
   'toolbar.reset': ['сбросить', 'reset'],

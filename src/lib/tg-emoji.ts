@@ -229,7 +229,7 @@ export async function listCapturedEmoji(): Promise<CapturedEmoji[]> {
 /** Дописать захваченные эмодзи (дедуп по id, новейшие сверху, максимум 100) */
 export async function addCapturedEmoji(items: CapturedEmoji[]): Promise<void> {
   if (items.length === 0) return
-  const cur = await listCapturedEmoji().catch(() => [])
+  const cur = await listCapturedEmoji().catch((): CapturedEmoji[] => [])
   const byId = new Map(cur.map((c) => [c.id, c]))
   for (const it of items) byId.set(it.id, it)
   const next = [...byId.values()]

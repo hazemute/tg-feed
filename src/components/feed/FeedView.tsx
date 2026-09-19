@@ -1,7 +1,7 @@
 'use client'
 
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { AlertCircle, ArrowUp, Bell, Clock3, EyeOff, Flame, Image as ImageIcon, Inbox, Loader2, Search, WifiOff, X } from 'lucide-react'
+import { AlertCircle, ArrowUp, Bell, Clock3, EyeOff, Flame, Image as ImageIcon, Inbox, Languages, Loader2, Search, WifiOff, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { useT } from '@/lib/i18n'
@@ -10,6 +10,7 @@ import { api, getSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
 import { loadFeedCache, saveFeedCache } from '@/lib/offline'
+import type { LangFilter } from '@/lib/lang'
 import { openChannelToJoin } from '@/lib/tg-subscribe'
 import type { AdDTO, FeedResponse, NotificationsResponse, PostDTO } from '@/lib/types'
 import { PostCard } from '@/components/feed/PostCard'
@@ -42,6 +43,30 @@ function saveHidden(ids: Set<string>) {
     window.localStorage.setItem(HIDDEN_KEY, JSON.stringify([...ids]))
   } catch {
     /* приватный режим — скрытие будет до перезагрузки */
+  }
+}
+
+/**
+ * Фильтр языка ленты (v5.25): выбор пользователя между «всё / русский / другие».
+ * Живёт в localStorage — это ПРЕДПОЧТЕНИЕ, как язык интерфейса: не сбрасывается
+ * кнопкой «сбросить фильтры» и переживает перезагрузку.
+ */
+const LANG_KEY = 'tgfeed_lang'
+const LANG_CYCLE: LangFilter[] = ['any', 'ru', 'foreign']
+function loadLangPref(): LangFilter {
+  if (typeof window === 'undefined') return 'any'
+  try {
+    const raw = window.localStorage.getItem(LANG_KEY)
+    return raw === 'ru' || raw === 'foreign' ? raw : 'any'
+  } catch {
+    return 'any'
+  }
+}
+function saveLangPref(v: LangFilter) {
+  try {
+    window.localStorage.setItem(LANG_KEY, v)
+  } catch {
+    /* приватный режим */
   }
 }
 
@@ -178,6 +203,10 @@ export function FeedView() {
   const [mediaOnly, setMediaOnly] = useState(false)
   const [dayOnly, setDayOnly] = useState(false)
   const [popularSort, setPopularSort] = useState(false)
+  // Языковой фильтр (серверный): режет ленту в /api/feed, поэтому пагинация честная
+  const [lang, setLang] = useState<LangFilter>(() => loadLangPref())
+  const langRef = useRef(lang)
+  langRef.current = lang
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => loadHidden())
   // «Не интересно» (v5.10): замьютнутые каналы текущей сессии (сервер хранит
   // полный список в ChannelMute — локальный сет нужен только для мгновенной
@@ -194,6 +223,19 @@ export function FeedView() {
     setDayOnly(false)
     setPopularSort(false)
   }, [])
+
+  /** Язык ленты: один тап циклит все → русский → другие → все (без выпадающих
+   *  меню — тулбар не перегружается, выбор всегда виден на самом чипе).
+   *  Предпочтение сохраняется в localStorage и НЕ сбрасывается «сбросить фильтры». */
+  const cycleLang = useCallback(() => {
+    setLang((prev) => {
+      const next = LANG_CYCLE[(LANG_CYCLE.indexOf(prev) + 1) % LANG_CYCLE.length]
+      saveLangPref(next)
+      return next
+    })
+  }, [])
+  const langLabel =
+    lang === 'ru' ? t('toolbar.langRu') : lang === 'foreign' ? t('toolbar.langOther') : t('toolbar.lang')
 
   /** «Не интересно» (v5.10): скрывает ВЕСЬ канал, а не один пост.
    *  Жалоба владельца: раньше кнопка прятала только пост (локально), и канал
@@ -372,7 +414,7 @@ export function FeedView() {
            дефолт обрубал ответ ровно в момент, когда сервер почти отвечал.
            «Бесконечной загрузки» нет: ниже авто-ретрай и статус-пилюля. */
         const data = await api<FeedResponse>(
-          `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}`,
+          `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}&lang=${langRef.current}`,
           { signal: AbortSignal.timeout(45_000) },
         )
         /* Дедуп: внутри ответа (ранк может вернуть пост дважды) и против уже
@@ -416,9 +458,9 @@ export function FeedView() {
         setPage(p)
         setOffline(false)
         setLoadFailed(false)
-        // Кэшируем свежую страницу (офлайн-режим)
-        if (replace) void saveFeedCache(category, data.items)
-        else void saveFeedCache(category, [...itemsRef.current, ...data.items])
+        // Кэшируем свежую страницу (офлайн-режим) — раздельно по языку
+        if (replace) void saveFeedCache(category, data.items, langRef.current)
+        else void saveFeedCache(category, [...itemsRef.current, ...data.items], langRef.current)
       } catch (e) {
         // Таймаут первой страницы (холодный кэш) — ОДИН тихий ретрай, прежде чем
         // показывать ошибку: сервер почти всегда успевает со второй попытки
@@ -460,7 +502,7 @@ export function FeedView() {
         setTimeout(() => checkRef.current(), 80)
       }
     },
-    [category],
+    [category, lang],
   )
 
   /**
@@ -496,9 +538,9 @@ export function FeedView() {
     setInitial(true)
     setLoadFailed(false)
     busyRef.current = false
-    setQuery('') // поиски разных категорий не смешиваются
+    setQuery('') // поиски разных категорий/языков не смешиваются
     // Stale-while-revalidate: мгновенно показываем кэш, сеть догонит
-    void loadFeedCache(category).then((cached) => {
+    void loadFeedCache(category, lang).then((cached) => {
       if (cached.length > 0 && !itemsRef.current.length) {
         setItems(cached)
         setInitial(false)
@@ -506,7 +548,7 @@ export function FeedView() {
     })
     load(0, true)
     scrollRef.current?.scrollTo({ top: 0 })
-  }, [user, category, feedVersion, load])
+  }, [user, category, lang, feedVersion, load])
 
   // События сети: при возврате онлайна — тихо обновить ленту
   useEffect(() => {
@@ -550,7 +592,7 @@ export function FeedView() {
     if (!latestTimeRef.current || !userRef.current) return
     try {
       const r = await api<FeedResponse & { count: number }>(
-        `/api/feed/fresh?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&after=${encodeURIComponent(latestTimeRef.current)}`,
+        `/api/feed/fresh?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&after=${encodeURIComponent(latestTimeRef.current)}&lang=${langRef.current}`,
       )
       if (r.items.length > 0) {
         // Тихий аппенд в низ: без прыжков скролла, без тостов — посты просто
@@ -930,9 +972,11 @@ export function FeedView() {
         </div>
         <div className="h-px w-full bg-tg-sep/60" aria-hidden />
 
-        {/* Тулбар: поиск по загруженным постам + фильтры + сортировка */}
-        <div className="flex items-center gap-1.5 px-3 pb-1.5 pt-1.5" data-noswipe>
-          <div className="relative flex min-w-0 flex-1 items-center">
+        {/* Тулбар (v5.25): поиск — отдельной строкой на всю ширину, чипы — ниже.
+            Одной строкой поиск + 4 чипа на телефоне сжимали поле до бесполезного —
+            разнос даёт воздух, ничего не прячется и не сжимается. */}
+        <div className="px-3 pb-0.5 pt-1.5" data-noswipe>
+          <div className="relative flex min-w-0 items-center">
             <Search
               className="pointer-events-none absolute left-2.5 h-4 w-4 text-tg-hint"
               aria-hidden
@@ -955,6 +999,8 @@ export function FeedView() {
               </button>
             )}
           </div>
+        </div>
+        <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-1.5 pt-1" data-noswipe>
           <FilterChip
             active={mediaOnly}
             onClick={() => setMediaOnly((v) => !v)}
@@ -975,6 +1021,13 @@ export function FeedView() {
             label={t('toolbar.top')}
             Icon={Flame}
             aria={t('toolbar.topAria')}
+          />
+          <FilterChip
+            active={lang !== 'any'}
+            onClick={cycleLang}
+            label={langLabel}
+            Icon={Languages}
+            aria={t('toolbar.langAria')}
           />
         </div>
 

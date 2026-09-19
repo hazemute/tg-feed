@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { buildFeedScope } from '@/lib/feed'
+import { detectLang, langPasses } from '@/lib/lang'
 import { diversify } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
 import { guardAuth } from '@/lib/guard'
@@ -19,6 +20,9 @@ const querySchema = z.object({
     .min(1)
     .max(64)
     .refine((v) => !Number.isNaN(new Date(v).getTime()), { message: 'after (ISO date) required' }),
+  /** Фильтр языка — пилюля «N новых» обязана совпадать с видимой лентой,
+   *  иначе счётчик показывает посты, которых пользователь не увидит */
+  lang: z.enum(['any', 'ru', 'foreign']).catch('any'),
 })
 
 /**
@@ -36,7 +40,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const parsed = querySchema.safeParse(Object.fromEntries(searchParams))
     if (!parsed.success) return err('after (ISO date) required')
-    const { category, after } = parsed.data
+    const { category, after, lang } = parsed.data
     const afterDate = new Date(after)
 
     const scope = await buildFeedScope(userId, category)
@@ -72,17 +76,19 @@ export async function GET(request: Request) {
     const bookmarkSet = new Set(bookmarks.map((b) => b.postId))
     const subSet = new Set(subs.map((s) => s.channelId))
 
-    const items: PostDTO[] = posts.map((p) =>
-      toPostDTO(
-        p,
-        {
-          liked: likeSet.has(p.id),
-          bookmarked: bookmarkSet.has(p.id),
-          subscribed: subSet.has(p.channelId),
-        },
-        p._count.bookmarkedBy,
-      ),
-    )
+    const items: PostDTO[] = posts
+      .filter((p) => langPasses(detectLang(p.text), lang))
+      .map((p) =>
+        toPostDTO(
+          p,
+          {
+            liked: likeSet.has(p.id),
+            bookmarked: bookmarkSet.has(p.id),
+            subscribed: subSet.has(p.channelId),
+          },
+          p._count.bookmarkedBy,
+        ),
+      )
 
     /*
      * Разнообразие: один канал — НЕ подряд даже в свежей пачке. Канал мог
