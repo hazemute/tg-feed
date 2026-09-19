@@ -278,13 +278,13 @@ export async function GET(request: Request) {
     const cached = getCachedPage(userId, category, page, limit, seedForCache, lang)
     if (cached) return NextResponse.json({ ...cached, page })
 
-    // Скоуп и персональные сигналы независимы — идём параллельно (каждый RTT дорог)
-    const [scope, signals] = await Promise.all([
-      buildFeedScope(userId, category),
-      loadPersonalSignals(userId),
-    ])
+    // Скоуп нужен первым (из него ключ индекса); сигналы и индекс — параллельно:
+    // тяжёлая транзакция сигналов прячется под выборкой индекса (v5.27 —
+    // раньше сигналы ждали индекс последовательно, каждая цепочка RTT до
+    // дальнего Supabase — это и была основная часть «всё грузится медленно»)
+    const scope = await buildFeedScope(userId, category)
     if (!scope) return err('user not found', 404)
-    mark('scope+signals')
+    mark('scope')
 
     /* ---------- Глобальный индекс: Redis (300с + прогрев) → Postgres ----------
         Дальний регион (Supabase eu-central-1): холодный пересчёт индекса стоит
@@ -299,10 +299,12 @@ export async function GET(request: Request) {
 
     const loadIndex = () => computeRankedIndex(scope.where)
 
-    const index: RankedIndex = indexKey
-      ? await cacheAside({ key: indexKey, ttlSec: 300, memoryTtlMs: 15_000, fetcher: loadIndex })
-      : await loadIndex()
-    mark('index')
+    const indexPromise: Promise<RankedIndex> = indexKey
+      ? cacheAside({ key: indexKey, ttlSec: 300, memoryTtlMs: 15_000, fetcher: loadIndex })
+      : loadIndex()
+
+    const [index, signals] = await Promise.all([indexPromise, loadPersonalSignals(userId)])
+    mark('index+signals')
 
     /* ---------- Фильтр языка (v5.25): «Русский / Другие» ----------
         Режем индекс ДО персонализации и диверсификации: тогда пагинация,
@@ -332,6 +334,7 @@ export async function GET(request: Request) {
           categoryId: e.g,
           subscribed: signals.subscribedIds.has(e.c),
           viewed: signals.viewedIds.has(e.i),
+          viewedAtMs: signals.viewedAt.get(e.i),
           affinity: signals.affinity,
           notInterested: signals.mutedIds.has(e.c),
         }) +

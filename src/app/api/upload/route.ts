@@ -17,6 +17,16 @@ export const dynamic = 'force-dynamic'
 const ALLOWED = new Set(['image/webp', 'image/jpeg', 'image/png'])
 const MAX_BYTES = 350_000
 
+/**
+ * Ранний кап по content-length ДО чтения тела (413): заявленный размер больше
+ * ~1MB не может быть валидным телом (data-URL ≤350KB картинки ≈ 500KB base64
+ * + JSON-обёртка) — не читаем его в память вовсе. Точная проверка размера —
+ * ниже по zod max(500_000) и пересчёту base64 → bytes ≤ MAX_BYTES.
+ */
+const UPLOAD_BODY_HARD_CAP = 1_000_000
+/** Кап для readJson: 500KB data-URL + JSON-обёртка, с запасом, но без излишеств */
+const UPLOAD_JSON_MAX_BYTES = 600_000
+
 const bodySchema = z.object({
   data: z
     .string()
@@ -32,7 +42,11 @@ export async function POST(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    const parsed = bodySchema.safeParse(await readJson(request))
+    const declared = Number(request.headers.get('content-length') ?? '')
+    if (Number.isFinite(declared) && declared > UPLOAD_BODY_HARD_CAP) {
+      return err('image too large (≤350KB)', 413)
+    }
+    const parsed = bodySchema.safeParse(await readJson(request, { maxBytes: UPLOAD_JSON_MAX_BYTES }))
     if (!parsed.success) return err('invalid image (webp/jpeg/png ≤350KB)')
     const mime = parsed.data.data.slice(5, parsed.data.data.indexOf(';'))
     if (!ALLOWED.has(mime)) return err('unsupported mime')

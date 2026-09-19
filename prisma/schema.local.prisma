@@ -31,6 +31,9 @@ model User {
   tier          String   @default("free") // free | plus | pro (Snap Plus / Snap Pro)
   tierUntil     DateTime? // срок действия оплаченного тира
   badges        String   @default("[]") // v5.19: JSON-массив слагов бейджей (lib/badges.ts)
+  profilePalette String  @default("crimson") // v5.27: обложка профиля (lib/profile-style.ts)
+  profileBg      String  @default("none") // v5.27: фон обложки (узор/анимация)
+  profileFrame   String  @default("none") // v5.27: рамка аватара
   createdAt     DateTime @default(now())
 
   @@index([tier])

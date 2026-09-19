@@ -71,6 +71,51 @@ function saveLangPref(v: LangFilter) {
 }
 
 /**
+ * Прогрев языковых вариантов (v5.27 — «зачем загрузка при выборе языка?»).
+ * После каждой успешной загрузки страницы 0 тихо тянутся страницы 0 ДВУХ
+ * других режимов языка с тем же сидом: сервер кладёт их в L0-кэш страницы,
+ * а результаты держим и в памяти клиента. Тап по чипу языка подменяет ленту
+ * МГНОВЕННО (0 мс по прогретому варианту), без скелетона и без запроса.
+ * Бонус: прогрев окупается на сервере — индекс ленты уже собран, L0-кэш
+ * тёплый для всех пользователей того же разреза.
+ */
+type PrefetchEntry = { data: FeedResponse; exp: number }
+const langPrefetch = new Map<string, PrefetchEntry>()
+const langPrefetchInflight = new Set<string>()
+const LANG_PREFETCH_TTL_MS = 90_000
+
+function prefetchKeyOf(userId: string, category: string, lang: LangFilter, seed: string): string {
+  return `${userId}|${category}|${lang}|${seed}`
+}
+
+function prefetchOtherLangs(current: LangFilter, userId: string, category: string, seed: string): void {
+  for (const l of LANG_CYCLE) {
+    if (l === current) continue
+    const key = prefetchKeyOf(userId, category, l, seed)
+    const hit = langPrefetch.get(key)
+    if (hit && hit.exp > Date.now()) continue
+    if (langPrefetchInflight.has(key)) continue
+    langPrefetchInflight.add(key)
+    api<FeedResponse>(
+      `/api/feed?userId=${encodeURIComponent(userId)}&category=${encodeURIComponent(category)}&page=0&limit=${PAGE_SIZE}&sh=${seed}&lang=${l}`,
+      { signal: AbortSignal.timeout(30_000) },
+    )
+      .then((d) => {
+        // амортизированная чистка протухших записей (карта крошечная — 2 ключа на разрез)
+        if (langPrefetch.size > 24) {
+          const now = Date.now()
+          for (const [k, e] of langPrefetch) if (e.exp <= now) langPrefetch.delete(k)
+        }
+        langPrefetch.set(key, { data: d, exp: Date.now() + LANG_PREFETCH_TTL_MS })
+      })
+      .catch(() => {
+        /* тихо — переключение языка просто пойдёт обычным путём */
+      })
+      .finally(() => langPrefetchInflight.delete(key))
+  }
+}
+
+/**
  * Разнообразие ленты на клиенте: один и тот же канал — НЕ подряд. Работает
  * поверх серверного diversify и ловит ВСЕ источники повторов: стыки страниц,
  * тихий аппенд свежих постов, дедуп при «съехавшем» окне пагинации, офлайн-кэш.
@@ -132,12 +177,15 @@ function FilterChip({
   label,
   Icon,
   aria,
+  busy = false,
 }: {
   active: boolean
   onClick: () => void
   label: string
   Icon: typeof Clock3
   aria: string
+  /** короткая фоновая операция — иконка сменяется мини-спиннером (без блокировки чипа) */
+  busy?: boolean
 }) {
   return (
     <button
@@ -156,7 +204,11 @@ function FilterChip({
           : 'border-tg-sep bg-tg-surface text-tg-hint',
       )}
     >
-      <Icon className={cn('h-3.5 w-3.5', active && 'text-tg-link')} aria-hidden />
+      {busy ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-tg-link" aria-hidden />
+      ) : (
+        <Icon className={cn('h-3.5 w-3.5', active && 'text-tg-link')} aria-hidden />
+      )}
       {label}
     </button>
   )
@@ -207,6 +259,9 @@ export function FeedView() {
   const [lang, setLang] = useState<LangFilter>(() => loadLangPref())
   const langRef = useRef(lang)
   langRef.current = lang
+  // Смена языка идёт БЕЗ скелетона: старая лента остаётся на экране, сверху —
+  // тонкий индикатор; прогретый вариант (prefetch) подменяется мгновенно
+  const [langSwitching, setLangSwitching] = useState(false)
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => loadHidden())
   // «Не интересно» (v5.10): замьютнутые каналы текущей сессии (сервер хранит
   // полный список в ChannelMute — локальный сет нужен только для мгновенной
@@ -400,15 +455,24 @@ export function FeedView() {
   }, [loadNotifData])
 
   const load = useCallback(
-    async (p: number, replace: boolean, isRetry = false) => {
+    async (
+      p: number,
+      replace: boolean,
+      isRetry = false,
+      opts?: { silent?: boolean; keepSeed?: boolean },
+    ) => {
       if (!userRef.current || busyRef.current) return
       busyRef.current = true
-      setLoading(true)
+      // silent (смена языка): лента остаётся на экране — спиннеры не мигаем
+      if (!opts?.silent) setLoading(true)
       const slowTimer = setTimeout(() => setSlowLoad(true), 7000)
       try {
         // Новый сид перемешивания при каждой полной перезагрузке ленты —
-        // «Обновить» показывает ДРУГИЙ порядок постов; внутри сессии порядок стабилен
-        if (replace || !seedRef.current) seedRef.current = Math.random().toString(36).slice(2, 12)
+        // «Обновить» показывает ДРУГИЙ порядок постов; внутри сессии порядок стабилен.
+        // keepSeed (смена языка): сид сохраняем — страница уже прогрета сервером
+        // и prefetch’ем ровно с этим сидом, ответ приходит мгновенно.
+        if ((replace && !opts?.keepSeed) || !seedRef.current)
+          seedRef.current = Math.random().toString(36).slice(2, 12)
         /* Свой терпеливый таймаут 45с вместо дефолтных 20с из api(): холодная
            пересборка ленты (дальний Supabase, пустой индекс) занимает ~20-35с —
            дефолт обрубал ответ ровно в момент, когда сервер почти отвечал.
@@ -459,8 +523,12 @@ export function FeedView() {
         setOffline(false)
         setLoadFailed(false)
         // Кэшируем свежую страницу (офлайн-режим) — раздельно по языку
-        if (replace) void saveFeedCache(category, data.items, langRef.current)
-        else void saveFeedCache(category, [...itemsRef.current, ...data.items], langRef.current)
+        if (replace) {
+          void saveFeedCache(category, data.items, langRef.current)
+          // Прогрев двух других языковых вариантов: их страница 0 ляжет и в
+          // серверный L0-кэш, и в клиентскую память — смена языка станет мгновенной
+          void prefetchOtherLangs(langRef.current, userRef.current.id, category, seedRef.current)
+        } else void saveFeedCache(category, [...itemsRef.current, ...data.items], langRef.current)
       } catch (e) {
         // Таймаут первой страницы (холодный кэш) — ОДИН тихий ретрай, прежде чем
         // показывать ошибку: сервер почти всегда успевает со второй попытки
@@ -502,7 +570,7 @@ export function FeedView() {
         setTimeout(() => checkRef.current(), 80)
       }
     },
-    [category, lang],
+    [category],
   )
 
   /**
@@ -548,7 +616,70 @@ export function FeedView() {
     })
     load(0, true)
     scrollRef.current?.scrollTo({ top: 0 })
-  }, [user, category, lang, feedVersion, load])
+    // ЯЗЫК НЕ В ЗАВИСИМОСТЯХ (v5.27): его смена обрабатывается ниже отдельным
+    // эффектом — без скелетона и ресета, мгновенной подменой прогретого варианта
+  }, [user, category, feedVersion, load])
+
+  /* ---------- Смена языка: мгновенно, без «зачем загрузка» ----------
+   * 1) прогретый prefetch — подмена без сети (0 мс);
+   * 2) офлайн-кэш этого языка — мгновенный stale-paint, сеть догонит;
+   * 3) сеть с тем же сидом — сервер отвечает из L0-кэша страницы (тепло от прогрева).
+   * Старая лента всё это время на экране, сверху тонкий индикатор. */
+  const langSwitchSeqRef = useRef(0)
+  const langInitialRef = useRef(true)
+  useEffect(() => {
+    if (langInitialRef.current) {
+      langInitialRef.current = false // на монтировании лента грузится основным эффектом
+      return
+    }
+    if (!userRef.current) return
+    const category_ = category
+    const seq = ++langSwitchSeqRef.current
+    setLangSwitching(true)
+    const run = async () => {
+      try {
+        // Если уже идёт загрузка (смена категории/refresh) — ждём её конца,
+        // иначе busyRef съест наш запрос и язык разъедется с данными
+        for (let i = 0; busyRef.current && i < 200; i++) {
+          await new Promise((r) => setTimeout(r, 150))
+        }
+        if (seq !== langSwitchSeqRef.current || !userRef.current) return
+        const uid = userRef.current.id
+
+        // 1) Мгновенная подмена прогретого варианта
+        const hit = langPrefetch.get(prefetchKeyOf(uid, category_, lang, seedRef.current))
+        if (hit && hit.exp > Date.now()) {
+          const seen = new Set<string>()
+          const incoming: PostDTO[] = []
+          for (const p of hit.data.items) {
+            if (!seen.has(p.id)) {
+              seen.add(p.id)
+              incoming.push(p)
+            }
+          }
+          setItems(stitchNoRepeat(incoming, (p) => p.channel.id))
+          emptyStreakRef.current = 0
+          setPage(0)
+          setHasMore(hit.data.hasMore)
+          setLoadFailed(false)
+          setOffline(false)
+          void saveFeedCache(category_, incoming, lang)
+          return
+        }
+
+        // 2) Stale-paint из офлайн-кэша (если текущий экран пуст)
+        void loadFeedCache(category_, lang).then((cached) => {
+          if (cached.length > 0 && !itemsRef.current.length) setInitial(false)
+        })
+
+        // 3) Сеть: тот же сид → серверный L0-кэш тёплый от прогрева
+        await load(0, true, false, { silent: true, keepSeed: true })
+      } finally {
+        if (seq === langSwitchSeqRef.current) setLangSwitching(false)
+      }
+    }
+    void run()
+  }, [lang])
 
   // События сети: при возврате онлайна — тихо обновить ленту
   useEffect(() => {
@@ -1028,6 +1159,7 @@ export function FeedView() {
             label={langLabel}
             Icon={Languages}
             aria={t('toolbar.langAria')}
+            busy={langSwitching}
           />
         </div>
 
@@ -1098,6 +1230,13 @@ export function FeedView() {
             style={{ transform: 'scaleX(0)', opacity: 0, transition: 'opacity 150ms ease' }}
           />
         </div>
+        {/* Смена языка (v5.27): тонкая бегущая полоска вместо скелетона — лента
+            остаётся на экране, новый вариант подменяется как только готов */}
+        {langSwitching && (
+          <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 z-40 h-[2.5px] overflow-hidden">
+            <div className="prof-langbar h-full w-1/4 bg-tg-link/80" />
+          </div>
+        )}
         {/* Индикатор pull-to-refresh */}
         <motion.div
           initial={false}

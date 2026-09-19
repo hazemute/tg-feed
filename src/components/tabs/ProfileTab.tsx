@@ -11,6 +11,7 @@ import {
   Lightbulb,
   Loader2,
   MousePointerClick,
+  Pencil,
   Radio,
   Send,
   Settings,
@@ -23,8 +24,6 @@ import {
   Eye,
   Heart,
   Sparkles,
-  Star,
-  Zap,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -45,6 +44,8 @@ import { THEMES, themeName } from '@/lib/themes'
 import { SupportChat } from '@/components/support/SupportChat'
 import { UserBadges } from '@/components/badges/UserBadges'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
+import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
+import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 
 
 /** Элемент списка закладок — приходит из /api/bookmarks с отметкой прочтения */
@@ -83,6 +84,8 @@ export function ProfileTab() {
   // Тарифы Snap (v5.17): шит тарифов + свежие данные тира (для строки и бейджа в шапке)
   const [tiersOpen, setTiersOpen] = useState(false)
   const [tiersData, setTiersData] = useState<TiersResponse | null>(null)
+  // Оформление профиля (v5.27): отдельная полная страница кастомайзера
+  const [customizerOpen, setCustomizerOpen] = useState(false)
 
   const reload = () => {
     if (!user) return
@@ -127,6 +130,10 @@ export function ProfileTab() {
   // Тир для UI: если шит тарифов уже грузил свежие данные (GET /api/tiers) —
   // приоритет им, иначе берём тир из стора (UserDTO.tier)
   const headerTier = tiersData?.tier ?? user.tier ?? 'free'
+  // «В Tg Swipe с {месяц год}» — дата регистрации из UserDTO.createdAt (v5.27)
+  const memberSinceLabel = user.createdAt
+    ? new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(new Date(user.createdAt))
+    : null
 
   const removeBookmark = async (p: PostDTO) => {
     setBookmarks((prev) => (prev ?? []).filter((x) => x.id !== p.id))
@@ -173,54 +180,63 @@ export function ProfileTab() {
       {/* Центрированная колонка: на широких мониторах секции профиля не должны
           растягиваться на весь экран (жалоба «слишком растянуто») */}
       <div className="mx-auto w-full max-w-[880px]">
-      {/* Заголовок */}
-      <header className="px-4 pb-2 pt-4">
-        <h1 className="text-screen-title text-tg-text">Профиль</h1>
-      </header>
+      {/* Шапка-обложка (v5.27): палитра/узор/рамка из каталога оформления,
+          ава по центру торчит наполовину из обложки — имя и статус идут ниже.
+          Внешний заголовок «Профиль» убран: обложка сама говорит за себя. */}
+      <section aria-label="Профиль">
+        <ProfileHeaderCover
+          paletteId={user.style?.palette}
+          bgId={user.style?.bg}
+          frameId={user.style?.frame}
+          avatarName={name}
+          avatarSrc={userAvatarUrl(user.id, user.photoUrl)}
+          avatarSize={88}
+          tier={user.tier}
+          isPremium={user.isPremium}
+          className="h-28 sm:h-32"
+        >
+          {/* Настройки интерфейса — слева-сверху */}
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Настройки интерфейса"
+            className="absolute left-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/25 text-white backdrop-blur transition active:scale-90"
+          >
+            <Settings className="h-4.5 w-4.5" />
+          </button>
+          {/* Оформление профиля (кастомайзер) — справа-сверху */}
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light')
+              setCustomizerOpen(true)
+            }}
+            aria-label="Оформление профиля"
+            className="absolute right-3 top-3 flex h-9 w-9 items-center justify-center rounded-full bg-black/25 text-white backdrop-blur transition active:scale-90"
+          >
+            <Pencil className="h-4.5 w-4.5" />
+          </button>
+        </ProfileHeaderCover>
 
-      {/* Пользователь */}
-      <section className="flex items-center gap-4 px-4 pt-2">
-        <Avatar
-          name={name}
-          color="#0a84ff"
-          src={userAvatarUrl(user.id, user.photoUrl)}
-          size={80}
-          className="ring-2 ring-tg-sep/70"
-        />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5">
-            <span className="truncate text-[22px] font-bold leading-tight text-tg-text">{name}</span>
-            {user.isPremium && (
-              <span
-                className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-tg-star/15 px-2 py-0.5 text-[11px] font-bold text-tg-star"
-                title="Telegram Premium"
-              >
-                <Star className="h-3 w-3 fill-current" /> Premium
-              </span>
-            )}
-            {headerTier !== 'free' && (
-              <span
-                className="inline-flex shrink-0 items-center gap-0.5 rounded-full bg-tg-star/15 px-2 py-0.5 text-[11px] font-bold text-tg-star"
-                title={TIER_NAMES[headerTier]}
-              >
-                <Zap className="h-3 w-3 fill-current" />
-                {headerTier === 'plus' ? 'PLUS' : 'PRO'}
-              </span>
-            )}
+        {/* Ава выступает из обложки на size/2 (44px) → отступ под неё, всё по центру */}
+        <div className="flex flex-col items-center px-4 pt-[54px] text-center">
+          <div className="flex max-w-full items-center justify-center gap-1.5">
+            <h1 className="truncate text-[20px] font-bold leading-tight text-tg-text">{name}</h1>
+            <ProfileTierChips tier={headerTier} isPremium={user.isPremium} />
           </div>
-          {/* v5.19: бейджи статуса (разработчик/менеджер/спонсор…) — отдаёт /api/auth */}
+          {/* v5.19: бейджи статуса (разработчик/менеджер/спонсор…) — по центру */}
           {user.badges && user.badges.length > 0 && (
-            <div className="mt-1.5">
+            <div className="mt-1.5 flex justify-center">
               <UserBadges badges={user.badges} max={5} />
             </div>
           )}
-          <div className="mt-0.5 truncate text-[15.5px] text-tg-hint">
+          <div className="mt-0.5 truncate text-[15px] text-tg-hint">
             {user.username ? `@${user.username}` : user.isGuest ? t('profile.subGuestHint') : t('profile.noUsername')}
           </div>
           {!user.isGuest && (
             <div className="mt-1 flex items-center gap-1 text-[12px] font-medium text-tg-link">
               <ShieldCheck className="h-3.5 w-3.5" />
-              Telegram аккаунт подтверждён
+              {memberSinceLabel ? `В Tg Swipe с ${memberSinceLabel}` : 'Telegram подтверждён'}
             </div>
           )}
           {user.isGuest && (
@@ -237,14 +253,6 @@ export function ProfileTab() {
             </button>
           )}
         </div>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          aria-label="Настройки интерфейса"
-          className="flex h-11 w-11 items-center justify-center rounded-full text-tg-text active:bg-tg-surface"
-        >
-          <Settings className="h-[26px] w-[26px]" strokeWidth={1.7} />
-        </button>
       </section>
 
       {/* Статистика */}
@@ -776,8 +784,24 @@ export function ProfileTab() {
         </div>
       </BottomSheet>
 
-      {/* Тарифы Snap: статус тира, лимит ИИ-поиска, покупка Plus/Pro через Stars */}
-      <TiersSheet open={tiersOpen} onClose={() => setTiersOpen(false)} onLoaded={setTiersData} />
+      {/* Тарифы Snap: статус тира, лимит ИИ-поиска, покупка Plus/Pro через Stars.
+          Из кастомайзера (z-90) шит открывается поверх — z-95, иначе слой под страницей */}
+      <TiersSheet
+        open={tiersOpen}
+        zClass={customizerOpen ? 'z-[95]' : undefined}
+        onClose={() => setTiersOpen(false)}
+        onLoaded={setTiersData}
+      />
+
+      {/* Оформление профиля (v5.27): полная страница с вкладками Палитры/Фон/Рамка.
+          Монтируется только при открытии — локальный стиль инициализируется свежими данными */}
+      {customizerOpen && (
+        <ProfileCustomizer
+          open
+          onClose={() => setCustomizerOpen(false)}
+          onOpenTiers={() => setTiersOpen(true)}
+        />
+      )}
 
       {/* Вход по Telegram (сайт + гости) */}
       <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />
@@ -840,10 +864,13 @@ function TiersSheet({
   open,
   onClose,
   onLoaded,
+  zClass,
 }: {
   open: boolean
   onClose: () => void
   onLoaded: (d: TiersResponse) => void
+  /** z-класс контейнера (нужен z-[95] при открытии поверх кастомайзера z-90) */
+  zClass?: string
 }) {
   const [data, setData] = useState<TiersResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -934,6 +961,7 @@ function TiersSheet({
     <BottomSheet
       open={open}
       onClose={onClose}
+      zClass={zClass}
       title="Тариф Snap"
       subtitle="ИИ-поиск, инкогнито и инструменты для канала"
     >

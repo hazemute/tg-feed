@@ -59,6 +59,12 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE TABLE IF NOT EXISTS "BotEmoji" ("slot" text PRIMARY KEY, "emoji" text NOT NULL, "customEmojiId" text NOT NULL DEFAULT '', "updatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE TABLE IF NOT EXISTS "BotSetting" ("key" text PRIMARY KEY, "value" text NOT NULL, "updatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   ],
+  'v5.27': [
+    // v5.27: кастомизация профиля — палитра обложки, фон, рамка аватара
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profilePalette" text NOT NULL DEFAULT 'crimson'`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBg" text NOT NULL DEFAULT 'none'`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileFrame" text NOT NULL DEFAULT 'none'`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -80,6 +86,9 @@ const CRITICAL: Array<[string, string | null]> = [
   ['AiSearchLog', null],
   ['AdminLog', null],
   ['User', 'badges'],
+  ['User', 'profilePalette'],
+  ['User', 'profileBg'],
+  ['User', 'profileFrame'],
   ['Notification', 'commentId'],
   ['BotEmoji', null],
   ['BotSetting', null],
@@ -97,7 +106,7 @@ export async function checkSchema(): Promise<SchemaState> {
       FROM information_schema.columns c
       WHERE c.table_schema = 'public' AND (
         c.table_name = 'AiSearchLog' OR c.table_name = 'AdminLog' OR
-        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges')) OR
+        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame')) OR
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR

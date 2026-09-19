@@ -276,6 +276,8 @@ const AFFINITY_MAX = 500
 export type PersonalSignals = {
   affinity: AffinityMap
   viewedIds: Set<string>
+  /** postId → время последнего просмотра (мс) — прогрессивный штраф за просмотренное */
+  viewedAt: Map<string, number>
   subscribedIds: Set<string>
   /** Каналы, скрытые кнопкой «Не интересно» — сильный минус в ранжировании */
   mutedIds: Set<string>
@@ -290,7 +292,12 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
    * последовательное выполнение — устраняет P2024 «Timed out fetching a new
    * connection from the connection pool» при connection_limit=1.
    */
-  let views: Array<{ postId: string; dwellMs: number; post: { channelId: string; channel: { categoryId: string | null } } }>
+  let views: Array<{
+    postId: string
+    dwellMs: number
+    createdAt: Date
+    post: { channelId: string; channel: { categoryId: string | null } }
+  }>
   let likes: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
   let bookmarks: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
   let subs: Array<{ channelId: string; notInterestedAt: Date | null }>
@@ -302,6 +309,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
         select: {
           postId: true,
           dwellMs: true,
+          createdAt: true,
           post: { select: { channelId: true, channel: { select: { categoryId: true } } } },
         },
         orderBy: { createdAt: 'desc' },
@@ -339,6 +347,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     const empty: PersonalSignals = {
       affinity: { channels: new Map(), categories: new Map() },
       viewedIds: new Set(),
+      viewedAt: new Map(),
       subscribedIds: new Set(),
       mutedIds: new Set(),
     }
@@ -356,22 +365,32 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     const cat = row.post?.channel?.categoryId
     if (cat) affinity.categories.set(cat, (affinity.categories.get(cat) ?? 0) + w)
   }
-  for (const v of views) {
-    /*
-     * Сигналы интереса: просмотр = 1; ДОЛГОЕ ЧТЕНИЕ усиливает сигнал —
-     * каждые полные 10с dwell добавляют +1 (кап +4, т.е. «дочитал 40с+» = 5).
-     * Лайк/закладка = 3 (осознанное действие, но одно; долгое чтение нескольких
-     * постов канала может перевесить).
-     */
-    const dwellW = Math.min(4, Math.floor((v.dwellMs ?? 0) / 10_000))
-    bump(v, 1 + dwellW)
+  /* Рецент-веса (v5.27 — «алгоритмы не правильные»): сигнал интереса гаснет со
+   * временем (полураспад ~3 недели, exp(-возраст/21д)). Вчерашний просмотр
+   * значит в разы больше, чем месячной давности — рекомендации следуют за
+   * ТЕКУЩИМ вкусом, а не за историей годичной давности. */
+  const recency = (at: Date): number => {
+    const ageDays = Math.max(0, (Date.now() - at.getTime()) / 86_400_000)
+    return Math.exp(-ageDays / 21)
   }
-  for (const l of likes) bump(l, 3)
-  for (const b of bookmarks) bump(b, 3)
+  const viewedAt = new Map<string, number>()
+  for (const v of views) {
+    const rec = recency(v.createdAt)
+    /* Сигналы интереса: просмотр = 1; ДОЛГОЕ ЧТЕНИЕ усиливает сигнал — каждые
+     * полные 10с dwell добавляют +1 (кап +4, т.е. «дочитал 40с+» = 5). */
+    const dwellW = Math.min(4, Math.floor((v.dwellMs ?? 0) / 10_000))
+    bump(v, (1 + dwellW) * (0.35 + 0.65 * rec))
+    const prev = viewedAt.get(v.postId)
+    const at = v.createdAt.getTime()
+    if (prev === undefined || at > prev) viewedAt.set(v.postId, at)
+  }
+  for (const l of likes) bump(l, 3 * (0.4 + 0.6 * recency(l.createdAt)))
+  for (const b of bookmarks) bump(b, 3 * (0.4 + 0.6 * recency(b.createdAt)))
 
   const data: PersonalSignals = {
     affinity,
     viewedIds: new Set(views.map((v) => v.postId)),
+    viewedAt,
     subscribedIds: new Set(subs.map((s) => s.channelId)),
     mutedIds: new Set(mutes.map((m) => m.channelId)),
   }

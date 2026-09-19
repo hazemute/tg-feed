@@ -14,12 +14,14 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // Anti-scan: не раскрываем стек (X-Powered-By: Next.js) в ответах
+  poweredByHeader: false,
   // Security-заголовки на все ответы (в т.ч. статику).
   // ВАЖНО: X-Frame-Options НЕ ставим — мини-апп работает в iframe Telegram Web
   // (web.telegram.org). Вместо него — CSP frame-ancestors с allowlist Telegram.
   async headers() {
     const frameAncestors =
-      "frame-ancestors 'self' https://web.telegram.org https://webk.telegram.org https://webz.telegram.org https://telegram.org https://*.telegram.org https://localhost:8080 http://localhost:8080;";
+      "frame-ancestors 'self' https://web.telegram.org https://webk.telegram.org https://webz.telegram.org https://telegram.org https://*.telegram.org https://*.t.me https://localhost:8080 http://localhost:8080;";
     return [
       {
         source: "/:path*",

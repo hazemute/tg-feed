@@ -236,6 +236,24 @@ export type UserDTO = {
   tierUntil?: string | null
   /** v5.19: бейджи (developer/manager/moderator/sponsor/vip/early) */
   badges?: string[]
+  /** v5.27: дата регистрации — строка «В Tg Swipe с …» в шапке профиля */
+  createdAt?: string
+  /** v5.27: оформление профиля */
+  style?: { palette: string; bg: string; frame: string }
+}
+
+/** Ответ GET /api/user/[uid] — публичный профиль (без приватных полей) */
+export type PublicProfileResponse = {
+  id: string
+  name: string
+  username: string | null
+  photoUrl: string | null
+  isPremium: boolean
+  tier: 'free' | 'plus' | 'pro'
+  badges: string[]
+  memberSince: string // ISO createdAt
+  stats: { comments: number; likesReceived: number }
+  style: { palette: string; bg: string; frame: string }
 }
 
 /** Ответ GET /api/tiers — состояние тарифа и лимита ИИ-поиска */

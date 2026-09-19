@@ -80,13 +80,33 @@ export function isValidChannelUsername(username: string): boolean {
 }
 
 /** Безопасный парсинг JSON-тела запроса (без исключений) */
-/** Максимальный размер JSON-тела (байт) — защита от memory-абуза */
-const MAX_JSON_BYTES = 1_000_000
 
-export async function readJson<T = Record<string, unknown>>(request: Request): Promise<T> {
+/**
+ * Кап размера JSON-тела по умолчанию (байт/символов ASCII) — защита от
+ * memory-абуза: заявленный content-length проверяется ДО чтения тела.
+ * Роуты с крупными телами (например /api/upload с base64-картинкой) передают
+ * свой кап вторым аргументом: readJson(request, { maxBytes: 600_000 }).
+ */
+const READ_JSON_DEFAULT_MAX_BYTES = 64_000
+
+export type ReadJsonOpts = { maxBytes?: number }
+
+/**
+ * Парсит JSON-тело; при любой ошибке/превышении капа возвращает {} (НЕ бросает:
+ * часть вызовов вне try/catch, см. /api/translate/stream). Кап по content-length
+ * отсекает крупное тело до чтения — дешёвый ранний отказ.
+ */
+export async function readJson<T = Record<string, unknown>>(
+  request: Request,
+  opts?: ReadJsonOpts,
+): Promise<T> {
+  const maxBytes = Math.max(1, Math.floor(opts?.maxBytes ?? READ_JSON_DEFAULT_MAX_BYTES))
   try {
+    // Предварительный кап: заголовок отсутствует/кривой → Number('')=0, пропускаем
+    const declared = Number(request.headers.get('content-length') ?? '')
+    if (Number.isFinite(declared) && declared > maxBytes) return {} as T
     const text = await request.text()
-    if (text.length > MAX_JSON_BYTES) return {} as T
+    if (text.length > maxBytes) return {} as T
     return JSON.parse(text) as T
   } catch {
     return {} as T

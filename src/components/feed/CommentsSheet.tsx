@@ -652,9 +652,25 @@ function CommentRow({
   flashId?: string | null
 }) {
   const t = useT()
+  const openUserProfile = useApp((s) => s.openUserProfile)
   const tmp = c.id.startsWith('tmp_')
   const avatarSize = isReply ? 28 : 36
   const flash = flashId === c.id
+  // Ширина колонки авы (ава + зазор внешнего gap-2.5): контент коммента сидит
+  // на этом отступе, ава вытягивается в него кнопкой автора изнутри
+  const authorIndent = avatarSize + 10
+
+  // Тап по автору (ава/имя — одна кнопка): у гостя профиля нет, остальным —
+  // открываем публичный профиль (глобальный шит UserProfileSheet)
+  const openAuthorProfile = () => {
+    const id = c.author.id
+    if (id.startsWith('guest_')) {
+      toast('У гостя нет профиля — вход по Telegram открывает профиль')
+      return
+    }
+    haptic('light')
+    openUserProfile(id)
+  }
 
   return (
     <div
@@ -665,12 +681,25 @@ function CommentRow({
         !flash && 'transition-colors duration-1000',
       )}
     >
-      <Avatar name={c.author.name} src={c.author.avatarUrl} size={avatarSize} />
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1" style={{ paddingLeft: authorIndent }}>
         <div className="flex items-center gap-2">
-          <span className={cn('truncate text-tg-text', isReply ? 'text-[12.5px]' : 'text-[13.5px]', 'font-semibold')}>
-            {c.author.name}
-          </span>
+          {/* Ава + имя — ОДНА кнопка: тап открывает публичный профиль автора.
+              Ава позиционируется абсолютно там, где стояла колонка авы (top:0
+              относительно кнопки = верх строки), поэтому бейджи/время/текст
+              не сдвигаются ни на пиксель */}
+          <button
+            type="button"
+            onClick={openAuthorProfile}
+            aria-label={`Профиль ${c.author.name}`}
+            className="relative flex min-w-0 items-center text-left active:opacity-70"
+          >
+            <span className="absolute top-0" style={{ left: -authorIndent }} aria-hidden>
+              <Avatar name={c.author.name} src={c.author.avatarUrl} size={avatarSize} />
+            </span>
+            <span className={cn('truncate text-tg-text', isReply ? 'text-[12.5px]' : 'text-[13.5px]', 'font-semibold')}>
+              {c.author.name}
+            </span>
+          </button>
           {/* v5.19: бейджи автора (разработчик/менеджер/спонсор…) — компактные иконки */}
           {c.author.badges && c.author.badges.length > 0 && (
             <UserBadges badges={c.author.badges} max={isReply ? 1 : 2} compact />

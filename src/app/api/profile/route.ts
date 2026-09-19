@@ -37,6 +37,8 @@ export async function GET(request: Request) {
         isPremium: user.isPremium,
         languageCode: user.languageCode,
         categories: parseJsonArray(user.categories),
+        createdAt: user.createdAt.toISOString(),
+        style: { palette: user.profilePalette, bg: user.profileBg, frame: user.profileFrame },
       },
       stats: { likes, subscriptions, views, bookmarks },
     }

@@ -135,7 +135,15 @@ export type AffinityMap = {
 const CHANNEL_BOOST = 22
 const CATEGORY_BOOST = 10
 const SUBSCRIBED_BOOST = 12
-const VIEWED_PENALTY = 5000 // гарантированно вниз, но пост не теряется совсем
+/** Свежепросмотренный пост (≤48ч) — гарантированно вниз, но не теряется совсем */
+const VIEWED_PENALTY = 5000
+/** Просмотренное 2-7 суток назад — заметно вниз, но способно вернуться */
+const VIEWED_PENALTY_MID = 2200
+/** Давнопросмотренное (>7 суток) — мягкий штраф: пост снова «новый» через неделю,
+ *  иначе у активного читателя лента выгорая до хвостового мусора (жалоба
+ *  «рекомендации не работают» — при плоском штрафе 5000 почти весь индекс
+ *  из 400 постов уходил в низ и лента показывала только остатки) */
+const VIEWED_PENALTY_SOFT = 900
 /**
  * «Не интересно» у канала. Владелец (v5.10): «если я нажал не интересно то
  * очевидно посты с этого канала не должны показываться либо редко» — раньше
@@ -146,7 +154,22 @@ const VIEWED_PENALTY = 5000 // гарантированно вниз, но по�
  * «возвращенцев» — они идут глубоко в хвост.
  */
 export const NOT_INTERESTED_PENALTY = 2400
-const EXPLORATION_BONUS = 7 // неизведанная категория — шанс пробиться в ленту (микро-открытия)
+const EXPLORATION_BONUS = 12 // неизведанная категория — шанс пробиться в ленту (микро-открытия)
+const UNSEEN_CHANNEL_BONUS = 4 // канал, с которым ещё не было взаимодействий — мягкое «открывашка» каналов
+
+/**
+ * Прогрессивный штраф за просмотренное (v5.27):
+ * только что посмотрел (≤48ч) — жёсткий 5000 (не показывать одно и то же),
+ * 2-7 суток — средний, старше недели — мягкий: пост за неделю «остывает»
+ * и может честно вернуться в ленту (пересечение с новым трафиком не обнуляет историю).
+ */
+export function viewedPenalty(viewedAtMs?: number): number {
+  if (!viewedAtMs) return VIEWED_PENALTY_SOFT
+  const ageH = Math.max(0, (Date.now() - viewedAtMs) / 3_600_000)
+  if (ageH <= 48) return VIEWED_PENALTY
+  if (ageH <= 24 * 7) return VIEWED_PENALTY_MID
+  return VIEWED_PENALTY_SOFT
+}
 
 /**
  * Персональная прибавка к глобальному весу поста.
@@ -167,6 +190,8 @@ export function personalBoost(opts: {
   viewed: boolean
   affinity: AffinityMap
   notInterested?: boolean
+  /** Когда пост был просмотрен (мс) — для прогрессивного штрафа; нет данных — плоский мягкий */
+  viewedAtMs?: number
 }): number {
   const channelAff = opts.affinity.channels.get(opts.channelId) ?? 0
   // логарифм: 1-е взаимодействия важны, 100-й просмотр того же канала не должен
@@ -177,7 +202,7 @@ export function personalBoost(opts: {
     : 0
   const categoryScore = Math.log1p(categoryAff) * CATEGORY_BOOST
   const subScore = opts.subscribed ? SUBSCRIBED_BOOST : 0
-  const viewedPenalty = opts.viewed ? VIEWED_PENALTY : 0
+  const viewedPenaltyScore = opts.viewed ? viewedPenalty(opts.viewedAtMs) : 0
   const notInterestedPenalty = opts.notInterested ? NOT_INTERESTED_PENALTY : 0
   // Бонус открытия действует, только когда у пользователя уже есть история:
   // у новорождённого аккаунта все категории «неизведанные» — бонус не нужен
@@ -186,12 +211,16 @@ export function personalBoost(opts: {
     hasHistory && !opts.viewed && categoryAff === 0 && opts.categoryId !== null
       ? EXPLORATION_BONUS
       : 0
+  // «Открывашка» каналов: знакомые категории, но нетронутый канал — шанс найти нового автора
+  const unseenChannel =
+    hasHistory && !opts.viewed && channelAff === 0 ? UNSEEN_CHANNEL_BONUS : 0
   return (
     channelScore +
     categoryScore +
     subScore +
-    exploration -
-    viewedPenalty -
+    exploration +
+    unseenChannel -
+    viewedPenaltyScore -
     notInterestedPenalty
   )
 }

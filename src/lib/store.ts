@@ -46,6 +46,11 @@ interface AppState {
   shareSheetOpen: boolean
   openShareSheet: (post: PostDTO) => void
   closeShareSheet: () => void
+  /** Публичный профиль другого человека (глобальный шит): id или null — закрыт.
+   *  Открывается тапом по автору комментария (аватар/имя). */
+  profileUserId: string | null
+  openUserProfile: (uid: string) => void
+  closeUserProfile: () => void
   setUser: (u: UserDTO | null) => void
   setAuthReady: (v: boolean) => void
   setTab: (t: Tab) => void
@@ -157,6 +162,10 @@ export const useApp = create<AppState>((set, get) => ({
   shareSheetOpen: false,
   openShareSheet: (post) => set({ shareSheetPost: post, shareSheetOpen: true }),
   closeShareSheet: () => set({ shareSheetOpen: false }),
+  // Публичный профиль: просто кладём id — шит UserProfileSheet сам подтянет данные
+  profileUserId: null,
+  openUserProfile: (uid) => set({ profileUserId: uid }),
+  closeUserProfile: () => set({ profileUserId: null }),
   setUser: (user) => set({ user, interests: user?.categories ?? [] }),
   setAuthReady: (authReady) => set({ authReady }),
   setTab: (tab) => set({ tab }),

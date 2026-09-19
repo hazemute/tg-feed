@@ -28,11 +28,23 @@ export const dynamic = 'force-dynamic'
  * Регистрация: scripts/set-webhook.ts (URL + secret_token).
  * Если задан TELEGRAM_WEBHOOK_SECRET — проверяем заголовок
  * x-telegram-bot-api-secret-token (Telegram присылает secret_token из setWebhook).
+ *
+ * Харденинг (после секретной проверки, бизнес-логика не тронута):
+ *  • секрет НЕ задан в env — warn в лог раз в 60с (дыра: вебхук принимает
+ *    любого; реальный Telegram с secret_token при этом продолжает работать);
+ *  • content-type строго application/json — иначе 415 (Telegram шлёт JSON);
+ *  • content-length > 512KB — 413 (апдейты Telegram ≤ ~256KB, больше — мусор).
  */
 
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
 /** Владелец бота (премиум-аккаунт-посредник): только его business-подключения принимаются */
 const BOT_OWNER_TG_ID = 7851246214
+
+/** Реальные апдейты Telegram максимум ~256KB — всё, что больше, мусор */
+const WEBHOOK_MAX_BYTES = 512 * 1024
+/** Антиспам предупреждений о незаданном секрете: не чаще раза в 60с */
+const SECRET_WARN_INTERVAL_MS = 60_000
+let lastSecretWarnAt = 0
 
 /* ------------------- Самолечение allowed_updates ------------------- */
 
@@ -492,6 +504,28 @@ export async function POST(request: Request) {
     if (got !== secret) {
       return NextResponse.json({ ok: false }, { status: 401 })
     }
+  } else if (Date.now() - lastSecretWarnAt > SECRET_WARN_INTERVAL_MS) {
+    // Дыра в конфигурации: без секрета вебхук отвечает ЛЮБОму отправителю
+    // (ложные апдейты тратят БД/вызовы Bot API). Не спамим — раз в 60с.
+    lastSecretWarnAt = Date.now()
+    console.warn(
+      '[bot/webhook] TELEGRAM_WEBHOOK_SECRET не задан — вебхук принимает запросы без проверки подлинности (задай secret_token в setWebhook)',
+    )
+  }
+
+  // Content-type: Telegram шлёт строго application/json; прочее — сканеры/мусор
+  const contentType = (request.headers.get('content-type') ?? '')
+    .split(';')[0]
+    .trim()
+    .toLowerCase()
+  if (contentType !== 'application/json') {
+    return NextResponse.json({ ok: false }, { status: 415 })
+  }
+
+  // Кап размера тела по заявленному content-length (до чтения тела)
+  const declaredLen = Number(request.headers.get('content-length') ?? '')
+  if (Number.isFinite(declaredLen) && declaredLen > WEBHOOK_MAX_BYTES) {
+    return NextResponse.json({ ok: false }, { status: 413 })
   }
 
   // Самолечение allowed_updates (1 раз на инстанс; no-op если уже healed)

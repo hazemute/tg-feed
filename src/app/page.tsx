@@ -24,6 +24,7 @@ import { FeedView } from '@/components/feed/FeedView'
  * грузится при первом открытии; прогрев вероятных — в idle-эффекте ниже.
  */
 const CommentsSheet = dynamic(() => import('@/components/feed/CommentsSheet').then((m) => m.CommentsSheet), { ssr: false })
+const UserProfileSheet = dynamic(() => import('@/components/profile/UserProfileSheet').then((m) => m.UserProfileSheet), { ssr: false })
 const ChannelSheet = dynamic(() => import('@/components/feed/ChannelSheet').then((m) => m.ChannelSheet), { ssr: false })
 const PostOverlay = dynamic(() => import('@/components/feed/PostOverlay').then((m) => m.PostOverlay), { ssr: false })
 const ShareSheet = dynamic(() => import('@/components/feed/ShareSheet').then((m) => m.ShareSheet), { ssr: false })
@@ -208,6 +209,7 @@ export default function Home() {
     const t = window.setTimeout(() => {
       void import('@/components/feed/PostOverlay')
       void import('@/components/feed/CommentsSheet')
+      void import('@/components/profile/UserProfileSheet')
       void import('@/components/tabs/SearchTab')
       void import('@/components/tabs/TrendingTab')
       void import('@/components/tabs/ProfileTab')
@@ -339,6 +341,8 @@ export default function Home() {
       <GlobalLoginSheet />
       {/* Комментарии под постом (глобально: лента и полный экран поста) */}
       <CommentsSheet />
+      {/* Публичный профиль по тапу на автора комментария (ава/имя) */}
+      <UserProfileSheet />
     </div>
   )
 }

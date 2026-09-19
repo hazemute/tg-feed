@@ -5,8 +5,22 @@ import { bearerToken, verifySessionEdge } from '@/lib/session-edge'
 /**
  * Слой Edge-middleware:
  *
+ * 0) АНТИСКАН (слой −1): дешёвый RegExp-тест pathname на зонды сканеров
+ *    (wp-admin, .php, .git, .env, phpunit, actuator, бэкапы…) → мгновенный
+ *    404 без тел. Проверка ДО анти-флуда: мусор не тратит лимиты и не
+ *    засоряет flood-Map. 404, а не 403 — не раскрываем существование WAF.
+ *
+ * 0.5) SECURITY-ЗАГОЛОВКИ на все ответы (harden()): nosniff, Referrer-Policy,
+ *    Permissions-Policy, X-DNS-Prefetch-Control. На HTML (не /api) ещё
+ *    CSP frame-ancestors с allowlist Telegram (НЕ X-Frame-Options — мини-апп
+ *    всегда грузится в iframe web.telegram.org / t.me, его фрейминг ломать
+ *    нельзя). HSTS на /api не дублируем (ставит платформа), для HTML тоже
+ *    не дублируем — next.config.ts уже ставит глобальный max-age=63072000.
+ *
  * 1) Глобальный анти-флуд (in-memory, слой 0): окно 60с, 300 req/мин с IP
  *    на ВСЕ /api/* — ноль команд Redis, ловит дудос-флуд до любых расходов.
+ *    POST/PUT/DELETE считаются за 2 запроса (апишные мутации дороже GET —
+ *    запись в БД/Redis), GET/HEAD за 1.
  *    Redis-лимиты чувствительных эндпоинтов остаются слоем 1 (единый лимит
  *    на все инстансы), guard.ts — слоем 2 (per-user, в каждом роуте).
  *
@@ -93,11 +107,15 @@ const FLOOD_BLOCK_MS = 60_000 // повторное окно после сраб
 type FloodEntry = { count: number; windowStart: number; blockedUntil: number }
 const flood = new Map<string, FloodEntry>()
 
-function floodAllowed(ip: string): boolean {
+/**
+ * weight: GET/HEAD = 1, POST/PUT/DELETE = 2 — мутации дороже (БД/Redis-запись),
+ * чтобы апишные POST-атаки упирались в лимит вдвое быстрее. Окно/блок те же.
+ */
+function floodAllowed(ip: string, weight = 1): boolean {
   const now = Date.now()
   const e = flood.get(ip)
   if (!e) {
-    flood.set(ip, { count: 1, windowStart: now, blockedUntil: 0 })
+    flood.set(ip, { count: weight, windowStart: now, blockedUntil: 0 })
     return true
   }
   if (e.blockedUntil > now) return false
@@ -105,7 +123,7 @@ function floodAllowed(ip: string): boolean {
     e.count = 0
     e.windowStart = now
   }
-  e.count += 1
+  e.count += weight
   if (e.count > FLOOD_LIMIT) {
     e.blockedUntil = now + FLOOD_BLOCK_MS
     return false
@@ -238,21 +256,104 @@ function maintenanceExempt(path: string): boolean {
   )
 }
 
+// ----------------- Слой −1: анти-скан (зонды сканеров/ботов) -----------------
+
+/**
+ * Один компиля RegExp на модуль, один .test(pathname) на запрос — копеечно.
+ * Список — классические зонды (WordPress/PHP-стек, VCS/секреты, Java/CGI-консоли,
+ * бэкапы и дампы БД). Легитимных путей приложения с такими подстроками нет
+ * (проверено по src/app/**). /.well-known/security.txt сознательно НЕ блокируем.
+ * Расширения .zip/.sql/.bak — в public/ таких файлов нет, а статика Next
+ * живёт в /_next/static (исключена из matcher'а).
+ */
+const SCANNER_PROBE = new RegExp(
+  [
+    // WordPress / PHP-стек
+    'wp-admin', 'wp-login', 'wp-content', 'wp-includes', 'phpmyadmin', '\\.php$', 'xmlrpc',
+    // VCS, секреты, конфиги
+    '/\\.git', '/\\.env$', '/\\.aws', 'vendor/phpunit', 'config\\.json$',
+    // Java/CGI-консоли и админки сервисов
+    '/cgi-bin/', '\\.aspx$', '\\.jsp$', '\\.cgi$', '/actuator', 'jmx-console', '/solr',
+    'admin/config\\.php',
+    // бэкапы и дампы
+    '/backup', '\\.sql$', '\\.bak$', '\\.zip$',
+  ].join('|'),
+  'i',
+)
+
+// ----------------- Security-заголовки на ВСЕ ответы -----------------
+
+/** База: на каждый ответ middleware (и 4xx, и next()) */
+const BASE_SECURITY_HEADERS: Array<[string, string]> = [
+  ['X-Content-Type-Options', 'nosniff'],
+  ['Referrer-Policy', 'strict-origin-when-cross-origin'],
+  ['Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()'],
+  ['X-DNS-Prefetch-Control', 'off'],
+]
+
+/**
+ * Только для не-/api (HTML/статика): фреймить нас разрешено СТРОГО доменам
+ * Telegram — страница мини-аппа всегда живёт в их iframe. X-Frame-Options
+ * принципиально НЕ ставим (DENY/SAMEORIGIN сломал бы мини-апп), CSP
+ * frame-ancestors достаточно и гибче. HSTS не дублируем: next.config.ts
+ * уже ставит Strict-Transport-Security глобально (max-age=63072000).
+ */
+const HTML_SECURITY_HEADERS: Array<[string, string]> = [
+  [
+    'Content-Security-Policy',
+    "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://telegram.org https://*.t.me",
+  ],
+]
+
+function harden(res: NextResponse, html: boolean): NextResponse {
+  for (const [k, v] of BASE_SECURITY_HEADERS) res.headers.set(k, v)
+  if (html) for (const [k, v] of HTML_SECURITY_HEADERS) res.headers.set(k, v)
+  return res
+}
+
 export const config = {
-  matcher: ['/api/:path*'],
+  // 1) весь /api/* — старая логика (флуд/бан/техработы);
+  // 2) всё остальное, КРОМЕ служебной статики Next и тяжёлой картинки
+  //    welcome (негативный lookahead — официальный синтаксис matcher'а):
+  //    ловим сканер-зонды и расставляем security-заголовки на страницах.
+  matcher: [
+    '/api/:path*',
+    '/((?!_next/static|_next/image|favicon.ico|tgswipe-welcome.png).*)',
+  ],
 }
 
 export async function middleware(request: NextRequest) {
-  if (request.method === 'OPTIONS') return NextResponse.next()
-
   const path = request.nextUrl.pathname
+  const isApi = path === '/api' || path.startsWith('/api/')
+
+  // CORS-preflight не считаем ничем — но заголовки всё равно ставим
+  if (request.method === 'OPTIONS') return harden(NextResponse.next(), !isApi)
+
+  // --- Слой −1: сканер-зонды → мгновенный 404 (ДО флуд-счётчиков:
+  //     мусор не тратит лимиты и не попадает в flood-Map) ---
+  if (SCANNER_PROBE.test(path)) {
+    return harden(new NextResponse(null, { status: 404 }), !isApi)
+  }
+
+  // --- Не-/api (страницы, public-статика): только заголовки, дальше не идём —
+  //     флуд/бан/техработы остаются логикой API ---
+  if (!isApi) {
+    return harden(NextResponse.next(), true)
+  }
+
   const ip = clientIp(request)
 
-  // --- Слой 0: анти-флуд на все /api/* (только не админ-панель из локальной сети) ---
-  if (!floodExempt(path) && !floodAllowed(ip)) {
-    return NextResponse.json(
-      { error: 'too many requests' },
-      { status: 429, headers: { 'Retry-After': String(WINDOW_SEC) } },
+  // --- Слой 0: анти-флуд на все /api/* (только не админ-панель из локальной сети).
+  //     POST/PUT/DELETE — вес 2 (мутации дороже), GET/HEAD — 1. ---
+  const floodWeight =
+    request.method === 'POST' || request.method === 'PUT' || request.method === 'DELETE' ? 2 : 1
+  if (!floodExempt(path) && !floodAllowed(ip, floodWeight)) {
+    return harden(
+      NextResponse.json(
+        { error: 'too many requests' },
+        { status: 429, headers: { 'Retry-After': String(WINDOW_SEC) } },
+      ),
+      false,
     )
   }
 
@@ -271,9 +372,12 @@ export async function middleware(request: NextRequest) {
         const hits = await redis.incr(key)
         if (hits === 1) await redis.expire(key, WINDOW_SEC + 5)
         if (hits > rule.limit) {
-          return NextResponse.json(
-            { error: 'too many requests' },
-            { status: 429, headers: { 'Retry-After': String(WINDOW_SEC) } },
+          return harden(
+            NextResponse.json(
+              { error: 'too many requests' },
+              { status: 429, headers: { 'Retry-After': String(WINDOW_SEC) } },
+            ),
+            false,
           )
         }
       } catch {
@@ -297,7 +401,10 @@ export async function middleware(request: NextRequest) {
       try {
         const session = await verifySessionEdge(bearer)
         if (session && (await isBannedEdge(session.uid))) {
-          return NextResponse.json({ error: 'banned', banned: true }, { status: 403 })
+          return harden(
+            NextResponse.json({ error: 'banned', banned: true }, { status: 403 }),
+            false,
+          )
         }
       } catch {
         // сессия невалидна — дальше штатные проверки роутов
@@ -313,12 +420,15 @@ export async function middleware(request: NextRequest) {
       allowed = await maintenanceAllowed(session.uid)
     }
     if (!allowed) {
-      return NextResponse.json(
-        { error: 'maintenance', maintenance: true },
-        { status: 503, headers: { 'Retry-After': '120' } },
+      return harden(
+        NextResponse.json(
+          { error: 'maintenance', maintenance: true },
+          { status: 503, headers: { 'Retry-After': '120' } },
+        ),
+        false,
       )
     }
   }
 
-  return NextResponse.next()
+  return harden(NextResponse.next(), false)
 }

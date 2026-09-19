@@ -33,6 +33,10 @@ model User {
   tierUntil     DateTime? // срок действия оплаченного тира (null у free); истёкший → ведёт себя как free
   // === Бейджи (v5.19): JSON-массив слагов — developer/manager/moderator/sponsor/vip/early (lib/badges.ts) ===
   badges        String   @default("[]")
+  // === Оформление профиля (v5.27): обложка-палитра, фон обложки, рамка аватара ===
+  profilePalette String @default("crimson")
+  profileBg      String @default("none")
+  profileFrame   String @default("none")
   createdAt     DateTime @default(now())
 
   @@index([tier])

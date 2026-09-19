@@ -60,6 +60,8 @@ export async function GET(request: Request) {
       tier: effectiveTier(user),
       tierUntil: user.tierUntil?.toISOString() ?? null,
       badges: parseBadges(user.badges),
+      style: { palette: user.profilePalette, bg: user.profileBg, frame: user.profileFrame },
+      createdAt: user.createdAt.toISOString(),
     }
     return NextResponse.json({
       user: dto,
@@ -158,6 +160,8 @@ export async function POST(request: Request) {
       tier: effectiveTier(user),
       tierUntil: user.tierUntil?.toISOString() ?? null,
       badges: parseBadges(user.badges),
+      style: { palette: user.profilePalette, bg: user.profileBg, frame: user.profileFrame },
+      createdAt: user.createdAt.toISOString(),
     }
 
     return NextResponse.json({ user: dto, token, bot: botUsername ? { username: botUsername } : null, maintenance })
