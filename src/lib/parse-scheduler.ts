@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { bumpCache } from '@/lib/redis'
 import { bgImageOf } from '@/lib/parse-engine'
 import { getChatCard } from '@/lib/tg-bot'
+import { IS_SQLITE } from '@/lib/server'
 
 /**
  * Адаптивный шедулер парсинга — постоянное отслеживание новых постов
@@ -158,18 +159,39 @@ export async function refreshChannelCards(explicitLimit?: number): Promise<Cards
   const limit = Math.min(Math.max(explicitLimit ?? cardRamp, 1), Math.max(cardRamp, 1))
   let rows: Array<{ id: string; username: string }> = []
   try {
-    rows = await db.$queryRawUnsafe<Array<{ id: string; username: string }>>(
-      `SELECT c."id", c."username" FROM "Channel" c
-        WHERE c."status" = 'active'
-          AND ( c."photoFileId" IS NULL OR c."membersCount" IS NULL
-                OR c."avatarFetchedAt" IS NULL OR c."membersFetchedAt" IS NULL
-                OR c."avatarFetchedAt" < now() - interval '7 days'
-                OR c."membersFetchedAt" < now() - interval '7 days' )
-        ORDER BY c."avatarFetchedAt" NULLS FIRST, c."membersFetchedAt" NULLS FIRST,
-                 c."subscribersCount" DESC
-        LIMIT $1`,
-      limit,
-    )
+    if (IS_SQLITE) {
+      // SQLite: нет interval/NULLS FIRST/$1 — эквивалентная выборка Prisma
+      const cutoff = new Date(Date.now() - 7 * 86_400_000)
+      rows = await db.channel.findMany({
+        where: {
+          status: 'active',
+          OR: [
+            { photoFileId: null },
+            { membersCount: null },
+            { avatarFetchedAt: null },
+            { membersFetchedAt: null },
+            { avatarFetchedAt: { lt: cutoff } },
+            { membersFetchedAt: { lt: cutoff } },
+          ],
+        },
+        orderBy: { subscribersCount: 'desc' },
+        select: { id: true, username: true },
+        take: limit,
+      })
+    } else {
+      rows = await db.$queryRawUnsafe<Array<{ id: string; username: string }>>(
+        `SELECT c."id", c."username" FROM "Channel" c
+          WHERE c."status" = 'active'
+            AND ( c."photoFileId" IS NULL OR c."membersCount" IS NULL
+                  OR c."avatarFetchedAt" IS NULL OR c."membersFetchedAt" IS NULL
+                  OR c."avatarFetchedAt" < now() - interval '7 days'
+                  OR c."membersFetchedAt" < now() - interval '7 days' )
+          ORDER BY c."avatarFetchedAt" NULLS FIRST, c."membersFetchedAt" NULLS FIRST,
+                   c."subscribersCount" DESC
+          LIMIT $1`,
+        limit,
+      )
+    }
   } catch {
     return { refreshed: 0, scanned: 0 }
   }
