@@ -7,31 +7,50 @@ import { cacheGet, cacheSet, shortHash } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import { looksLikeGarbage } from '@/lib/text-clean'
 import { stripMarkdown } from '@/lib/markdown'
-import { chatSimple, openRouterEnabled } from '@/lib/openrouter'
+import { chatSimple, chatWithTools, openRouterEnabled, type ChatMsg } from '@/lib/openrouter'
 import { aiSearchAllowance } from '@/lib/tiers'
 import { toPostDTO } from '@/lib/dto'
+import { schemasFor, toolBy, type ToolExecResult, searchSystemPrompt, type ToolCtx } from '@/lib/ai-tools'
+import { sseStream } from '@/lib/sse'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * УМНЫЙ ИИ-ПОИСК (v5.17).
+ * УМНЫЙ ИИ-ПОИСК — v5.21: два режима.
  *
- * Пользователь пишет обычный вопрос («что там с биткоином за два дня?») —
- * нейросеть перечитывает свежие посты (последние 3 суток), вычленяет суть
- * и отвечает 3–4 строками. Под ответом — карточки постов-источников.
+ * 1) POST { q, category? } — одиночный вопрос (legacy, совместимость):
+ *    дайджест свежих постов → ответ + карточки источников.
+ * 2) POST { action:'chat', messages[] } — ЧАТ с инструментами (SSE):
+ *    модель сама зовёт search_posts / read_post / get_trending,
+ *    понимает контекст («где она», кто пользователь) и уточняющие вопросы.
  *
- * ЛИМИТЫ: free — 3 поиска в сутки (UTC, таблица AiSearchLog); Snap Plus/Pro —
- * безлимит. Повтор того же запроса в течение 10 минут идёт из кэша и НЕ
- * списывает лимит (кэш проверяется до учёта).
- *
- * Ответ строится ТОЛЬКО по постам из базы — без выдумок: в промпте нумерованный
- * дайджест, модель обязана сослаться на использованные номера (SOURCES).
+ * ЛИМИТЫ (режим q): free — 3/сутки; Plus/Pro — безлимит. Кэш 10 мин не списывает.
+ * ЛИМИТЫ (чат): только авторизованные; free — 3/сутки (aiSearchLog на вопрос).
  */
 
-const bodySchema = z.object({
-  q: z.string().trim().min(3).max(300),
-  category: z.string().trim().max(40).optional(),
+const chatSchema = z.object({
+  action: z.literal('chat'),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().min(1).max(4000),
+      }),
+    )
+    .min(1)
+    .max(24),
 })
+
+const bodySchema = z.discriminatedUnion('action', [
+  chatSchema,
+  z.object({
+    action: z.literal('ask').default('ask'),
+    q: z.string().trim().min(3).max(300),
+    category: z.string().trim().max(40).optional(),
+  }),
+])
+
+const MAX_LOOP = 4
 
 /** Сколько свежих постов читает модель (каждый обрезан до 320 символов) */
 const DIGEST_LIMIT = 36
@@ -46,7 +65,6 @@ type SearchPayload = {
 async function buildAnswer(q: string, categorySlug: string | undefined): Promise<SearchPayload> {
   const since = new Date(Date.now() - 3 * 24 * 60 * 60_000)
 
-  // Кандидаты: свежие, прошедшие ИИ-модерацию, активный канал, нужная категория
   const candidates = await db.post.findMany({
     where: {
       publishedAt: { gte: since },
@@ -62,7 +80,6 @@ async function buildAnswer(q: string, categorySlug: string | undefined): Promise
     take: 220,
   })
 
-  // Ранжируем кандидатов: свежесть + вовлечённость, мусор и коротышей сразу вон
   const scored = candidates
     .filter((p) => {
       const t = stripMarkdown(p.text).trim()
@@ -102,7 +119,6 @@ async function buildAnswer(q: string, categorySlug: string | undefined): Promise
 
   const raw = await chatSimple(system, user, { maxTokens: 320, timeoutMs: 30_000, temperature: 0.2 })
 
-  // Парсим хвост SOURCES: N, M, K
   const m = raw.match(/SOURCES\s*:\s*([0-9,\s]+)/i)
   const answer = (m ? raw.slice(0, m.index) : raw).replace(/SOURCES\s*:[\s\S]*/i, '').trim()
   const idxs = (m?.[1] ?? '')
@@ -111,10 +127,21 @@ async function buildAnswer(q: string, categorySlug: string | undefined): Promise
     .filter((n) => Number.isInteger(n) && n >= 1 && n <= scored.length)
 
   const sourceIds = idxs.slice(0, 6).map((n) => scored[n - 1]!.p.id)
-  // Фолбэк: модель не сослалась — берём топ-3 по рейтингу
   const finalIds = sourceIds.length > 0 ? sourceIds : scored.slice(0, 3).map((s) => s.p.id)
 
   return { answer, sourceIds: finalIds }
+}
+
+/** Посты-источники → PostDTO (валидные, активные каналы) */
+async function sourcesDTO(ids: string[]) {
+  if (ids.length === 0) return []
+  const sourcePosts = await db.post.findMany({
+    where: { id: { in: ids }, channel: { status: 'active' } },
+    include: { channel: { include: { category: true } } },
+  })
+  const byId = new Map(sourcePosts.map((p) => [p.id, p]))
+  const ordered = ids.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => Boolean(p))
+  return ordered.map((p) => toPostDTO(p, { liked: false, bookmarked: false, subscribed: false }))
 }
 
 export async function POST(request: Request) {
@@ -124,9 +151,102 @@ export async function POST(request: Request) {
   try {
     const parsed = bodySchema.safeParse(await readJson(request))
     if (!parsed.success) return err('Опишите вопрос — от 3 символов')
-    const { q, category } = parsed.data
+    const d = parsed.data
 
     if (!openRouterEnabled()) return err('ИИ-поиск временно недоступен', 503)
+
+    /* ================= РЕЖИМ ЧАТА (SSE, инструменты) ================= */
+    if (d.action === 'chat') {
+      if (!g.uid) return err('Войдите через Telegram', 401)
+
+      const allowance = await aiSearchAllowance(g.uid)
+      if (!allowance.allowed) {
+        return NextResponse.json(
+          {
+            error: 'ai_search_limit',
+            message: 'Лимит ИИ-поиска на сегодня исчерпан (3 в день)',
+            tier: allowance.tier,
+          },
+          { status: 402 },
+        )
+      }
+
+      const user = await db.user.findUnique({
+        where: { id: g.uid },
+        select: { firstName: true, lastName: true, username: true },
+      })
+      const userName =
+        [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+        (user?.username ? `@${user.username}` : 'читатель')
+
+      const sys = searchSystemPrompt({ userName, tier: allowance.tier })
+      const history: ChatMsg[] = [
+        { role: 'system', content: sys },
+        ...d.messages.map((m) => ({ role: m.role, content: m.content }) as ChatMsg),
+      ]
+      const ctx: ToolCtx = { uid: g.uid, kind: 'search' }
+      const meta: Record<string, unknown> = { steps: [], sourceIds: [] as string[] }
+      const steps = meta.steps as Array<{ tool: string; label: string; ok: boolean }>
+      const sourceIds = meta.sourceIds as string[]
+
+      return sseStream(async (send) => {
+        let messages = history
+        try {
+          for (let i = 0; i < MAX_LOOP; i++) {
+            const r = await chatWithTools(messages, schemasFor('search'), {
+              maxTokens: 1000,
+              timeoutMs: 60_000,
+              temperature: 0.3,
+            })
+            if (r.toolCalls.length === 0) {
+              const sources = await sourcesDTO(sourceIds.slice(0, 6))
+              send('done', { reply: r.content || 'Не нашёл — переформулируйте вопрос.', ...meta, sources })
+              return
+            }
+            messages = [...messages, { role: 'assistant', content: r.content || '', toolCalls: r.toolCalls }]
+            for (const call of r.toolCalls) {
+              const def = toolBy(call.name, 'search')
+              const label = def?.label ?? `Ищу: ${call.name}…`
+              send('status', { tool: call.name, label })
+              let args: Record<string, unknown> = {}
+              try {
+                args = JSON.parse(call.args || '{}') as Record<string, unknown>
+              } catch {
+                /* инструмент вернёт ошибку сам */
+              }
+              const res = def
+                ? await def.exec(args, ctx).catch((e): ToolExecResult => ({ ok: false, data: `Ошибка инструмента: ${(e as Error).message}` }))
+                : { ok: false, data: `Неизвестный инструмент: ${call.name}` }
+              const ids = (res.meta?.sourceIds as string[] | undefined) ?? []
+              for (const id of ids) if (!sourceIds.includes(id)) sourceIds.push(id)
+              steps.push({ tool: call.name, label, ok: res.ok })
+              messages = [
+                ...messages,
+                { role: 'tool', content: res.data.slice(0, 3000), toolCallId: call.id, name: call.name },
+              ]
+            }
+          }
+          // Цикл исчерпан — финальный ответ без инструментов
+          const tail = await chatWithTools(
+            [
+              ...messages,
+              { role: 'user', content: '[система] Больше не вызывай инструменты — ответь текстом по найденному.' },
+            ],
+            [],
+            { maxTokens: 800, timeoutMs: 45_000, temperature: 0.3 },
+          )
+          const sources = await sourcesDTO(sourceIds.slice(0, 6))
+          send('done', { reply: tail.content || 'Не нашёл — переформулируйте вопрос.', ...meta, sources })
+        } catch (e) {
+          console.error('[ai/search chat]', e)
+          send('error', { message: 'Нейросеть не ответила — попробуйте ещё раз' })
+        }
+      })
+    }
+
+    /* ================= Одиночный вопрос (legacy) ================= */
+    const q = 'q' in d ? d.q : ''
+    const category = 'category' in d ? d.category : undefined
 
     // Лимит до генерации: free — 3/сутки; plus/pro — безлимит
     const allowance = g.uid ? await aiSearchAllowance(g.uid) : null
@@ -149,26 +269,13 @@ export async function POST(request: Request) {
       payload = await buildAnswer(q, category)
       fromCache = false
       await cacheSet(cacheKey, payload, 600).catch(() => {})
-      // Реальный вызов LLM — списываем лимит (гостям без сессии нечего списывать)
       if (g.uid) {
         await db.aiSearchLog.create({ data: { userId: g.uid, query: q.slice(0, 300) } }).catch(() => {})
       }
     }
 
-    // Источники → полноценные PostDTO (валидные, активные каналы)
-    const ids = payload.sourceIds ?? []
-    const sourcePosts =
-      ids.length > 0
-        ? await db.post.findMany({
-            where: { id: { in: ids }, channel: { status: 'active' } },
-            include: { channel: { include: { category: true } } },
-          })
-        : []
-    const byId = new Map(sourcePosts.map((p) => [p.id, p]))
-    const ordered = ids.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => Boolean(p))
-    const sources = ordered.map((p) => toPostDTO(p, { liked: false, bookmarked: false, subscribed: false }))
+    const sources = await sourcesDTO(payload.sourceIds ?? [])
 
-    // Сколько осталось после этого поиска (кэш не расходует)
     let remaining: number | null = null
     if (allowance) {
       const after = fromCache

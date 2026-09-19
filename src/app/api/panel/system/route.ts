@@ -12,7 +12,7 @@ import {
   setMaintenance,
   setMaintenanceAllowed,
 } from '@/lib/maintenance'
-import { applyNamedMigration } from '@/lib/ensure-schema'
+import { applyNamedMigration, MIGRATIONS } from '@/lib/ensure-schema'
 
 export const dynamic = 'force-dynamic'
 
@@ -176,7 +176,7 @@ export async function POST(request: Request) {
        */
       case 'applyMigration': {
         const version = str(body.version, 16)
-        if (version !== 'v5.15' && version !== 'v5.17' && version !== 'v5.18' && version !== 'v5.19') return err('unknown migration')
+        if (!version || !Object.keys(MIGRATIONS).includes(version)) return err('unknown migration')
         const applied = await applyNamedMigration(version)
         return NextResponse.json({ ok: true, version, applied })
       }

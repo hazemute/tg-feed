@@ -220,6 +220,7 @@ export async function POST(request: Request) {
         title: me.name,
         body: text,
         postId,
+        commentId: created.c.id,
         channelUsername: post.channel.username,
       })
     }
@@ -234,6 +235,7 @@ export async function POST(request: Request) {
           title: post.channel.title,
           body: `${me.name}: ${text}`,
           postId,
+          commentId: created.c.id,
           channelUsername: post.channel.username,
         })
       }

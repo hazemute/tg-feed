@@ -5,6 +5,7 @@ import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { logAdmin } from '@/lib/admin-log'
 import { BADGES, BADGE_LIST, parseBadges, serializeBadges, type BadgeSlug } from '@/lib/badges'
+import { emitAppEvent } from '@/lib/events'
 
 export const dynamic = 'force-dynamic'
 
@@ -212,6 +213,7 @@ export async function POST(request: Request) {
         await db.notification.create({
           data: { userId, type: 'system', title, body: bodyText },
         })
+        emitAppEvent('notif:new', { userId })
       } catch (e) {
         console.error('[panel/badges] notify failed', (e as Error).message)
       }

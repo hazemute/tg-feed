@@ -3,31 +3,51 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import { chatSimple, openRouterEnabled } from '@/lib/openrouter'
+import { chatSimple, chatWithTools, openRouterEnabled, type ChatMsg } from '@/lib/openrouter'
 import { pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-image'
 import { botPublishToChannel } from '@/lib/tg-bot'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { stripMarkdown } from '@/lib/markdown'
+import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx } from '@/lib/ai-tools'
+import { sseStream } from '@/lib/sse'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * АВТОНОМНЫЙ ИИ-АССИСТЕНТ канала (Snap Pro, v5.17).
+ * ИИ-АССИСТЕНТ канала (Snap Pro) — v5.21: полноценный ЧАТ с инструментами.
  *
- * Личный ИИ-контентщик: читает последние 30 постов канала и запоминает стиль
- * (Tone of Voice), смотрит свежие тренды ленты, пишет готовый пост в стиле
- * автора и рисует к нему картинку (pollinations, бесплатно). По кнопке
- * «Одобрить» пост улетает в РЕАЛЬНЫЙ Telegram-канал через Bot API.
- *
- * POST { action }:
+ * Режимы POST { action }:
+ *  - 'chat'     { channelId, messages[] } → SSE-поток: статусы инструментов,
+ *                 финальный ответ, метаданные (draft/imageUrl/publishedLink).
+ *                 Модель сама решает, какие инструменты вызвать
+ *                 (create_post_draft / generate_image / publish_post /
+ *                 get_channel_stats / get_trending / analyze_channel_style).
  *  - 'style'    { channelId }              → проанализировать стиль (30 постов)
- *  - 'generate' { channelId, prompt? }     → черновик: текст + картинка
+ *  - 'generate' { channelId, prompt? }     → legacy: черновик текст + картинка
  *  - 'publish'  { channelId, text, imageUrl? } → опубликовать в TG-канал
  *
  * Требует тир Snap Pro у владельца канала (402 pro_required иначе).
  */
 
+const MAX_LOOP = 4 // максимум последовательных вызовов инструментов
+const MAX_HISTORY = 20 // сообщений истории от клиента
+
+const chatSchema = z.object({
+  action: z.literal('chat'),
+  channelId: z.string().min(1),
+  messages: z
+    .array(
+      z.object({
+        role: z.enum(['user', 'assistant']),
+        content: z.string().min(1).max(4000),
+      }),
+    )
+    .min(1)
+    .max(MAX_HISTORY),
+})
+
 const bodySchema = z.discriminatedUnion('action', [
+  chatSchema,
   z.object({ action: z.literal('style'), channelId: z.string().min(1) }),
   z.object({
     action: z.literal('generate'),
@@ -42,12 +62,7 @@ const bodySchema = z.discriminatedUnion('action', [
   }),
 ])
 
-type StyleProfile = {
-  tone: string
-  topics: string
-  style: string
-  at: string
-}
+type StyleProfile = { tone: string; topics: string; style: string; at: string }
 
 const STYLE_TTL_DAYS = 7 // слепок стиля живёт неделю, потом пересканируем
 
@@ -76,7 +91,6 @@ async function analyzeStyle(channelId: string, username: string): Promise<StyleP
     .join('\n')
 
   if (digest.length < 80) {
-    // Постов мало — нейтральный слепок, ассистент всё равно работает
     return { tone: 'нейтральный', topics: 'общие темы канала', style: 'короткие посты, без сложного сленга', at: new Date().toISOString() }
   }
 
@@ -94,7 +108,27 @@ async function analyzeStyle(channelId: string, username: string): Promise<StyleP
   return { tone, topics, style, at: new Date().toISOString() }
 }
 
-/** Тренды ленты: топ-10 свежих постов за 3 дня по вовлечённости */
+/** Инструмент analyze_channel_style ищет исполнитель через globalThis (реестр без циклических импортов) */
+function registerStyleExecutor(): void {
+  const g = globalThis as unknown as {
+    __aiAnalyzeStyle?: (channelId: string) => Promise<{ tone: string; topics: string; style: string } | null>
+  }
+  g.__aiAnalyzeStyle = async (channelId: string) => {
+    const ch = await db.channel.findUnique({ where: { id: channelId }, select: { username: true } })
+    if (!ch) return null
+    try {
+      const p = await analyzeStyle(channelId, ch.username)
+      await db.channel
+        .update({ where: { id: channelId }, data: { styleProfile: JSON.stringify(p), styleAt: new Date() } })
+        .catch(() => {})
+      return { tone: p.tone, topics: p.topics, style: p.style }
+    } catch {
+      return null
+    }
+  }
+}
+
+/** Тренды ленты: топ-10 свежих постов за 3 дня по вовлечённости (legacy) */
 async function trendingDigest(): Promise<string> {
   const since = new Date(Date.now() - 3 * 24 * 3600 * 1000)
   const posts = await db.post.findMany({
@@ -136,6 +170,112 @@ export async function POST(request: Request) {
     const channel = await db.channel.findUnique({ where: { id: d.channelId } })
     if (!channel || channel.claimedById !== g.uid) return err('Канал не привязан к вам', 403)
 
+    /* ---------- Чат с инструментами (SSE) ---------- */
+    if (d.action === 'chat') {
+      registerStyleExecutor()
+      const user = await db.user.findUnique({
+        where: { id: g.uid },
+        select: { firstName: true, lastName: true, username: true },
+      })
+      const userName =
+        [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
+        (user?.username ? `@${user.username}` : 'автор канала')
+
+      const weeklyUsed = await db.post.count({
+        where: { channelId: channel.id, promotedAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
+      })
+
+      const sys = assistantSystemPrompt({
+        userName,
+        tier,
+        channelTitle: channel.title,
+        channelUsername: channel.username,
+        channelDescription: channel.description,
+        categoryTitle: channel.categoryId ? null : null, // категория подтягивается в статистике
+        style: styleFresh(channel),
+        weeklyPromo: { used: weeklyUsed, limit: 7 },
+      })
+
+      const history: ChatMsg[] = [
+        { role: 'system', content: sys },
+        ...d.messages.map((m) => ({ role: m.role, content: m.content }) as ChatMsg),
+      ]
+
+      const ctx: ToolCtx = { uid: g.uid, kind: 'assistant', channelId: channel.id }
+      const meta: Record<string, unknown> = { steps: [] }
+      const steps = meta.steps as Array<{ tool: string; label: string; ok: boolean }>
+
+      return sseStream(async (send) => {
+        let messages = history
+        try {
+          for (let i = 0; i < MAX_LOOP; i++) {
+            const r = await chatWithTools(messages, schemasFor('assistant'), {
+              maxTokens: 1400,
+              timeoutMs: 60_000,
+              temperature: 0.6,
+            })
+            if (r.toolCalls.length === 0) {
+              // Финальный ответ
+              send('done', { reply: r.content || 'Готово!', ...meta, model: r.model })
+              return
+            }
+            // Эхо вызова + статусы + исполнение
+            messages = [
+              ...messages,
+              { role: 'assistant', content: r.content || '', toolCalls: r.toolCalls },
+            ]
+            for (const call of r.toolCalls) {
+              const def = toolBy(call.name, 'assistant')
+              const label = def?.label ?? `Вызываю ${call.name}…`
+              send('status', { tool: call.name, label })
+              let args: Record<string, unknown> = {}
+              try {
+                args = JSON.parse(call.args || '{}') as Record<string, unknown>
+              } catch {
+                /* аргументы битые — инструмент сам вернёт ошибку */
+              }
+              const res = def
+                ? await def.exec(args, ctx).catch((e): ToolExecResult => ({ ok: false, data: `Ошибка инструмента: ${(e as Error).message}` }))
+                : { ok: false, data: `Неизвестный инструмент: ${call.name}` }
+              if (res.meta) {
+                if (res.meta.draftText) meta.draftText = res.meta.draftText
+                if (res.meta.draftTopic) meta.draftTopic = res.meta.draftTopic
+                if (res.meta.imageUrl) meta.imageUrl = res.meta.imageUrl
+                if (res.meta.imagePending !== undefined) meta.imagePending = res.meta.imagePending
+                if (res.meta.publishedLink) meta.publishedLink = res.meta.publishedLink
+              }
+              steps.push({ tool: call.name, label, ok: res.ok })
+              messages = [
+                ...messages,
+                {
+                  role: 'tool',
+                  content: res.data.slice(0, 3000),
+                  toolCallId: call.id,
+                  name: call.name,
+                },
+              ]
+            }
+          }
+          // Цикл исчерпан — просим финальный ответ без инструментов
+          const tail = await chatWithTools(
+            [
+              ...messages,
+              {
+                role: 'user',
+                content: '[система] Инструментов больше не вызывай — дай финальный ответ текстом.',
+              },
+            ],
+            [],
+            { maxTokens: 900, timeoutMs: 45_000, temperature: 0.6 },
+          )
+          send('done', { reply: tail.content || 'Готово!', ...meta })
+        } catch (e) {
+          console.error('[ai/assistant chat]', e)
+          send('error', { message: 'Нейросеть не ответила — попробуйте ещё раз' })
+        }
+      })
+    }
+
     /* ---------- Анализ стиля ---------- */
     if (d.action === 'style') {
       const profile = await analyzeStyle(channel.id, channel.username)
@@ -146,7 +286,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: true, profile })
     }
 
-    /* ---------- Генерация черновика ---------- */
+    /* ---------- Генерация черновика (legacy — быстрый путь без чата) ---------- */
     if (d.action === 'generate') {
       let style = styleFresh(channel)
       let styleAnalyzed = false
@@ -180,14 +320,13 @@ export async function POST(request: Request) {
       const clean = text.replace(/^["«»]+|["»]+$/g, '').trim()
       if (clean.length < 30) return err('Нейросеть вернула пустой пост — попробуйте ещё раз', 502)
 
-      // Картинка: промпт из сути поста (минимализм), URL бесплатный, проверяем отдачу
       const imgPrompt = `clean minimal editorial illustration, telegram post cover, about: ${clean.slice(0, 160)}`
       const imageUrl = pollinationsImageUrl(imgPrompt)
       const imageOk = await verifyImageUrl(imageUrl).catch(() => false)
 
       return NextResponse.json({
         text: clean,
-        imageUrl: imageOk ? imageUrl : imageUrl, // URL детерминирован — публикация повторно проверит
+        imageUrl: imageOk ? imageUrl : imageUrl,
         imagePending: !imageOk,
         styleAnalyzed,
       })
@@ -198,7 +337,6 @@ export async function POST(request: Request) {
     if (imageUrl) {
       const ok = await verifyImageUrl(imageUrl).catch(() => false)
       if (!ok) {
-        // Картинка так и не сгенерировалась — публикуем без неё, текст важнее
         return NextResponse.json({
           ok: false,
           publishedWithoutImage: true,

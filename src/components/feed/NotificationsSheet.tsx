@@ -353,10 +353,11 @@ function ActivityRow({ item, onAfterNavigate }: { item: NotificationDTO; onAfter
       case 'comment':
       case 'reply':
       case 'comment_like':
-        // Комментарий/ответ/лайк под постом → сразу открываем комментарии
+        // Комментарий/ответ/лайк под постом → комментарии на ЭТОМ комментарии:
+        // ветка раскроется, экран доскроллится и строка подсветится (v5.21)
         if (item.postId) {
           onAfterNavigate()
-          openCommentsById(item.postId)
+          openCommentsById(item.postId, 0, item.commentId ?? null)
         } else if (item.channelUsername) {
           onAfterNavigate()
           openChannel(item.channelUsername)
@@ -374,7 +375,20 @@ function ActivityRow({ item, onAfterNavigate }: { item: NotificationDTO; onAfter
         onAfterNavigate()
         goToTab('mychannel')
         break
+      case 'system':
+        // Системные события (бейдж, подписка): показываем профиль
+        onAfterNavigate()
+        goToTab('profile')
+        break
       default:
+        // Любое прочее уведомление со ссылкой на пост тоже ведёт к посту
+        if (item.postId) {
+          onAfterNavigate()
+          openCommentsById(item.postId, 0, item.commentId ?? null)
+        } else if (item.channelUsername) {
+          onAfterNavigate()
+          openChannel(item.channelUsername)
+        }
         break
     }
   }

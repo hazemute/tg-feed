@@ -246,7 +246,7 @@ export default function AdminPage() {
 
   if (auth === 'checking') {
     return (
-      <div data-adm-theme={theme || undefined} className="flex min-h-screen flex-col items-center justify-center gap-3">
+      <div data-adm-theme={theme || 'light'} className="flex min-h-screen flex-col items-center justify-center gap-3">
         <img src="/logo.svg" alt="" className="h-10 w-10 animate-pulse" />
         <p className="text-xs text-slate-500">Проверка доступа…</p>
       </div>
@@ -255,7 +255,7 @@ export default function AdminPage() {
 
   if (auth === 'anon') {
     return (
-      <div data-adm-theme={theme || undefined}>
+      <div data-adm-theme={theme || 'light'}>
         <LoginScreen onSuccess={handleLoginSuccess} />
       </div>
     )
@@ -387,7 +387,7 @@ export default function AdminPage() {
   )
 
   return (
-    <div data-adm-theme={theme || undefined} className="min-h-screen">
+    <div data-adm-theme={theme || 'light'} className="min-h-screen">
       {/* Шапка */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
         <div className="flex h-14 w-full items-center gap-3 px-4 md:px-6 xl:px-10">
@@ -446,7 +446,7 @@ export default function AdminPage() {
           в админ панели не красиво» */}
       <div className="flex w-full items-start gap-5 px-4 md:px-6 xl:gap-8 xl:px-10">
         <aside className="sticky top-[72px] mt-4 hidden w-52 shrink-0 flex-col gap-1 lg:flex">
-          <nav className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-2" aria-label="Разделы панели">
+          <nav className="flex flex-col gap-1 p-1" aria-label="Разделы панели">
             {NAV.map(({ key, label, icon: Icon, badge, badgeTone }) => {
               const isActive = active === key
               return (
@@ -480,7 +480,7 @@ export default function AdminPage() {
               )
             })}
           </nav>
-          <div className="mt-3 rounded-xl border border-slate-200 bg-white p-3">
+          <div className="mt-3 p-1">
             <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
               <MonitorCog className="size-3.5" aria-hidden /> Тема панели
             </p>

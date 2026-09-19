@@ -47,6 +47,12 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "User_tier_idx" ON "User" ("tier")`,
     `CREATE INDEX IF NOT EXISTS "User_createdAt_idx" ON "User" ("createdAt" DESC)`,
   ],
+  'v5.21': [
+    // v5.21: deep-link уведомлений — тап по уведомлению открывает комментарии
+    // на конкретном комментарии (ветка раскрывается, экран скроллится к нему)
+    `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "commentId" text`,
+    `CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification" ("userId", "readAt")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -68,6 +74,7 @@ const CRITICAL: Array<[string, string | null]> = [
   ['AiSearchLog', null],
   ['AdminLog', null],
   ['User', 'badges'],
+  ['Notification', 'commentId'],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -85,7 +92,8 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges')) OR
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
-        (c.table_name = 'PendingPayment' AND c.column_name = 'purpose')
+        (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR
+        (c.table_name = 'Notification' AND c.column_name = 'commentId')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()

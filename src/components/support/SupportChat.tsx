@@ -9,6 +9,7 @@ import { haptic } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
 import { uploadImage } from '@/lib/upload'
 import { RichText } from '@/components/feed/RichText'
+import { ChatInput } from '@/components/ai/ChatInput'
 import { cn } from '@/lib/utils'
 
 /**
@@ -443,7 +444,7 @@ export function SupportChat({
         </div>
       )}
 
-      {/* Поле ввода как в Telegram */}
+            {/* Поле ввода в стиле Telegram (v5.21): скрепка + слитая капсула + микрофон/отправка */}
       <footer className="shrink-0 border-t border-tg-sep/60 bg-tg-surface/80 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-md">
         <div className="flex items-end gap-2">
           <input
@@ -467,31 +468,16 @@ export function SupportChat({
           >
             <Paperclip className="h-5 w-5" />
           </button>
-          <textarea
+          <ChatInput
+            className="flex-1"
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault()
-                void send()
-              }
-            }}
-            rows={1}
+            onChange={setDraft}
+            onSend={() => void send()}
+            busy={sending}
             maxLength={2000}
             placeholder={isFeedback ? t('feedback.input') : t('support.input')}
-            aria-label={isFeedback ? t('feedback.input') : t('support.input')}
-            className="max-h-28 min-h-[40px] flex-1 resize-none rounded-[20px] bg-tg-bg px-4 py-2.5 text-snippet text-tg-text outline-none placeholder:text-tg-hint focus:ring-1 focus:ring-tg-link/40"
+            sendLabel={t('support.send')}
           />
-          <button
-            type="button"
-            data-noswipe
-            onClick={() => void send()}
-            disabled={(!draft.trim() && pending.length === 0) || sending}
-            aria-label={t('support.send')}
-            className="flex size-[42px] shrink-0 items-center justify-center rounded-full bg-tg-link text-white transition disabled:opacity-35 active:scale-90"
-          >
-            <ArrowUp className="h-5 w-5" />
-          </button>
         </div>
       </footer>
     </motion.div>

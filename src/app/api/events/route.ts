@@ -51,6 +51,13 @@ export async function GET(request: Request) {
       const onPostsNew = (payload: unknown) => send('posts:new', payload)
       appBus().on('posts:new', onPostsNew)
 
+      // notif:new — толчок бейджу колокольчика; событие адресное:
+      // пушим только тому SSE-клиенту, чей userId совпал с получателем
+      const onNotifNew = (payload: { userId: string }) => {
+        if (payload.userId === session.uid) send('notif:new', { ok: true })
+      }
+      appBus().on('notif:new', onNotifNew)
+
       const heartbeat = setInterval(() => {
         if (closed) return
         try {
@@ -65,6 +72,7 @@ export async function GET(request: Request) {
         closed = true
         clearInterval(heartbeat)
         appBus().off('posts:new', onPostsNew)
+        appBus().off('notif:new', onNotifNew)
         try {
           controller.close()
         } catch {

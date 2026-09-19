@@ -1,11 +1,11 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronRight, History, Plus, Search, Trash2, TrendingUp, X, Check, Sparkles } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { api, getSessionToken } from '@/lib/api'
+import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { stripMarkdown } from '@/lib/markdown'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
@@ -16,9 +16,10 @@ import {
   removeSearchQuery,
   saveSearchQuery,
 } from '@/lib/search-history'
-import type { AiSearchResponse, ChannelDTO, PostDTO, SearchResponse } from '@/lib/types'
+import type { ChannelDTO, PostDTO, SearchResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
+import { AiChat } from '@/components/ai/AiChat'
 
 type Filter = 'channels' | 'topics' | 'posts'
 
@@ -28,18 +29,11 @@ const FILTERS: { id: Filter; label: string }[] = [
   { id: 'posts', label: 'Посты' },
 ]
 
-/** Состояние умного ИИ-поиска: покой → загрузка → ответ / ошибка / лимит (402) */
-type AiSearchState =
-  | { phase: 'idle' }
-  | { phase: 'loading'; q: string }
-  | { phase: 'done'; q: string; answer: string; sources: PostDTO[]; remaining: number | null }
-  | { phase: 'error'; q: string; message: string }
-  | { phase: 'limit'; q: string; message: string }
-
 /**
  * Экран «Поиск» по макету: крупный заголовок, поле, чипы Каналы/Темы/Посты,
- * каталог каналов с кнопками «+ Подписаться» + умный ИИ-поиск (ответ нейросети
- * по свежим постам с карточками-источниками).
+ * каталог каналов с кнопками «+ Подписаться» + ОТДЕЛЬНЫЙ ЧАТ ИИ-ПОИСКА
+ * (v5.21): кнопка «Спросить ИИ» открывает полноценный чат с инструментами,
+ * markdown и источниками.
  */
 export function SearchTab() {
   const { user, categories, setCategory, setTab, openChannel, searchSeed, clearSearchSeed, openAuthGate } =
@@ -67,11 +61,9 @@ export function SearchTab() {
   // Тренды «Сейчас обсуждают» (топ-8 хэштегов: клики за 72ч + фолбэк из постов)
   const [trending, setTrending] = useState<{ tag: string; clicks: number }[] | null>(null)
 
-  // Умный ИИ-поиск: ответ нейросети по свежим постам + карточки-источники.
-  // Без автозапуска — только кнопка/Enter: реальный вызов LLM тратит дневной лимит.
-  const [ai, setAi] = useState<AiSearchState>({ phase: 'idle' })
-  // Защита от двойного тапа: повторный запрос не уйдёт, пока идёт текущий
-  const aiBusyRef = useRef(false)
+  // ОТДЕЛЬНЫЙ ЧАТ ИИ-поиска (v5.21): открыт/закрыт + seed-запрос для автоотправки
+  const [aiChatOpen, setAiChatOpen] = useState(false)
+  const [aiSeed, setAiSeed] = useState<string | null>(null)
 
   // Топ каналов по подписчикам — для рельса «Популярные каналы»
   const topChannels = useMemo(() => {
@@ -98,13 +90,6 @@ export function SearchTab() {
   const postResults = posts && posts.q === query && query.length >= 2 ? posts.items : null
   // Блок истории — при фокусе поля и пустом запросе (иначе на его месте рельс популярных)
   const showHistory = q === '' && inputFocused && recent.length > 0
-  // ИИ-блок показываем, пока пользователь на том же запросе, на который ИИ отвечал
-  const aiShown = ai.phase !== 'idle' && ai.q === query
-  // Кнопка ИИ: активна при вопросе ≥3 символов; во время запроса и для уже
-  // отвеченного вопроса — disabled (повтор не дублируем, лимит не тратим)
-  const aiButtonDisabled =
-    query.length < 3 || ai.phase === 'loading' || (ai.phase === 'done' && ai.q === query)
-
   const userId = user?.id
 
   /** Единая точка поиска по постам (используется дебаунсом и сабмитом) */
@@ -163,69 +148,13 @@ export function SearchTab() {
     runPostsSearch(rq) // мгновенный запуск; повторный дебаунс с тем же термом безвреден (seq)
   }
 
-  /**
-   * Умный ИИ-поиск: POST /api/ai/search с Bearer-сессией.
-   * Прямой fetch вместо api(): обёртка не прокидывает HTTP-статус, а для
-   * 402-лимита нужен именно он. Токен/заголовки — ровно как внутри api().
-   * Запуск ТОЛЬКО вручную (кнопка/Enter) — лимит free 3/сутки.
-   */
-  const runAiSearch = async (raw: string) => {
-    const term = raw.trim()
-    if (term.length < 3 || aiBusyRef.current) return
-    // Тот же вопрос уже отвечен — повторный вызов не дублируем (лимит не тратим)
-    if (ai.phase === 'done' && ai.q === term) return
-    aiBusyRef.current = true
-    setAi({ phase: 'loading', q: term })
-    let serverMsg: string | null = null
-    try {
-      const token = getSessionToken()
-      const res = await fetch('/api/ai/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({ q: term }),
-        cache: 'no-store',
-        // LLM может думать до ~30с — таймаут с запасом, как у стримов в apiStream
-        signal: AbortSignal.timeout(60_000),
-      })
-      if (res.status === 402) {
-        const data = (await res.json().catch(() => ({}))) as { message?: string }
-        const msg = data.message ?? 'Лимит ИИ-поиска на сегодня исчерпан (3 в день)'
-        if (user?.isGuest) {
-          setAi({ phase: 'idle' })
-          openAuthGate('ai_search') // шторка «Продолжите задавать вопросы ИИ»
-        } else {
-          toast.error(msg)
-          setAi({ phase: 'limit', q: term, message: msg })
-        }
-        return
-      }
-      if (!res.ok) {
-        const data = (await res.json().catch(() => ({}))) as { error?: string }
-        serverMsg = data.error ?? null
-        throw new Error('ai_search_failed')
-      }
-      const data = (await res.json()) as AiSearchResponse
-      setAi({ phase: 'done', q: term, answer: data.answer, sources: data.sources, remaining: data.remaining })
-    } catch {
-      const msg = serverMsg ?? 'Нейросеть не ответила — попробуйте ещё раз'
-      toast.error(msg)
-      setAi({ phase: 'error', q: term, message: msg })
-    } finally {
-      aiBusyRef.current = false
-    }
-  }
-
-  /** Enter в поле (submit формы): сохраняем запрос всегда, ищем сразу; вопрос ≥3 символов — ещё и ИИ-поиск */
+  /** Enter в поле (submit формы): сохраняем запрос всегда, ищем сразу */
   const submitSearch = () => {
     const term = q.trim()
     if (!term) return
     haptic('light')
     setRecent(saveSearchQuery(term)) // сабмит сохраняет даже при пустых результатах
     runPostsSearch(term)
-    if (term.length >= 3) runAiSearch(term) // Enter — второй способ запуска ИИ
     inputRef.current?.blur() // прячем клавиатуру — смотрим результаты
   }
 
@@ -376,17 +305,14 @@ export function SearchTab() {
             type="button"
             onClick={() => {
               haptic('light')
-              inputRef.current?.blur() // прячем клавиатуру — смотрим ответ ИИ
-              runAiSearch(query)
+              inputRef.current?.blur() // прячем клавиатуру — смотрим чат ИИ
+              setAiSeed(query.length >= 3 ? query : null) // с текущим запросом — автоотправка
+              setAiChatOpen(true)
             }}
-            disabled={aiButtonDisabled}
             aria-label="Спросить ИИ"
-            className={cn(
-              'flex h-10 shrink-0 items-center gap-1.5 rounded-full px-4 text-[15px] font-medium transition active:scale-95',
-              aiButtonDisabled ? 'bg-tg-surface text-tg-hint' : 'bg-tg-link text-white',
-            )}
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[15px] font-medium text-white transition active:scale-95"
           >
-            <Sparkles className={cn('h-4 w-4', ai.phase === 'loading' && 'animate-pulse')} />
+            <Sparkles className="h-4 w-4" />
             Спросить ИИ
           </button>
         </div>
@@ -539,81 +465,8 @@ export function SearchTab() {
       {filter === 'posts' && (
         <section className="mt-2 pb-6" aria-label="Посты">
           {/* Умный ИИ-поиск: скелетон / ответ с источниками / лимит / ошибка — НАД обычной выдачей */}
-          {aiShown && ai.phase === 'loading' && (
-            <AiFade className="px-4 pb-2 pt-3" ariaLive="polite">
-              <div className="rounded-2xl border border-tg-sep border-l-2 border-l-tg-link bg-tg-surface px-4 py-3.5">
-                <div className="flex items-center gap-1.5">
-                  <Sparkles className="h-4 w-4 animate-pulse text-tg-link" />
-                  <span className="text-[13px] font-semibold text-tg-link">ИИ читает посты…</span>
-                </div>
-                <div className="mt-3 space-y-2.5" aria-hidden>
-                  <div className="tg-shimmer h-3.5 w-11/12 rounded-md" />
-                  <div className="tg-shimmer h-3.5 w-4/5 rounded-md" />
-                  <div className="tg-shimmer h-3.5 w-2/3 rounded-md" />
-                </div>
-              </div>
-            </AiFade>
-          )}
-
-          {aiShown && ai.phase === 'done' && (
-            <AiFade className="px-4 pb-2 pt-3" ariaLive="polite">
-              <div className="overflow-hidden rounded-2xl border border-tg-sep border-l-2 border-l-tg-link bg-tg-surface">
-                <div className="px-4 pb-3.5 pt-3">
-                  <div className="flex items-center gap-1.5">
-                    <Sparkles className="h-4 w-4 shrink-0 text-tg-link" />
-                    <span className="text-[13px] font-semibold text-tg-link">ИИ-ответ</span>
-                  </div>
-                  <p className="mt-2 whitespace-pre-line text-[15px] leading-relaxed text-tg-text">
-                    <TypedText key={ai.q} text={ai.answer} />
-                  </p>
-                </div>
-                {ai.sources.length > 0 && (
-                  <div className="border-t border-tg-sep/60">
-                    <div className="px-4 pb-0.5 pt-2.5 text-[12px] font-semibold uppercase tracking-wide text-tg-hint">
-                      Источники
-                    </div>
-                    {ai.sources.slice(0, 6).map((p, i) => (
-                      <AiSourceRow
-                        key={p.id}
-                        post={p}
-                        index={i}
-                        onOpen={() => openChannel(p.channel.username)}
-                      />
-                    ))}
-                  </div>
-                )}
-                {ai.remaining !== null && (
-                  <div className="border-t border-tg-sep/60 px-4 py-2.5 text-[12.5px] text-tg-hint">
-                    Осталось ИИ-поисков сегодня: {ai.remaining}
-                  </div>
-                )}
-              </div>
-            </AiFade>
-          )}
-
-          {aiShown && ai.phase === 'limit' && (
-            <AiFade className="px-4 pb-2 pt-3">
-              <div className="rounded-2xl border border-tg-sep border-l-2 border-l-tg-link bg-tg-surface px-4 py-3.5">
-                <div className="flex items-start gap-2">
-                  <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-tg-star" />
-                  <p className="flex-1 text-[14px] leading-snug text-tg-text">{ai.message}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => toast.info('Тарифы — в профиле')}
-                  className="mt-3 flex h-10 items-center rounded-full bg-tg-star px-4 text-[14px] font-bold text-white transition active:scale-95"
-                >
-                  Snap Plus — безлимит
-                </button>
-              </div>
-            </AiFade>
-          )}
-
-          {aiShown && ai.phase === 'error' && (
-            <AiFade className="px-4 pb-2 pt-3">
-              <p className="text-[14px] leading-snug text-tg-like">{ai.message}</p>
-            </AiFade>
-          )}
+          {/* ОТДЕЛЬНЫЙ ЧАТ ИИ-поиска (v5.21): кнопка «Спросить ИИ» выше открывает
+              полноэкранный чат с инструментами, markdown и источниками — inline-блок больше не нужен */}
 
           {query.length < 2 ? (
             <Empty text="Введите запрос — найдём нужный пост" />
@@ -656,6 +509,15 @@ export function SearchTab() {
         </section>
       )}
       </div>
+
+      {/* ОТДЕЛЬНЫЙ ЧАТ ИИ-поиска (v5.21): полноэкранный, с инструментами/markdown/источниками */}
+      <AiChat
+        kind="search"
+        open={aiChatOpen}
+        onClose={() => setAiChatOpen(false)}
+        seedQuery={aiSeed}
+        onSeedConsumed={() => setAiSeed(null)}
+      />
     </div>
   )
 }
@@ -746,76 +608,6 @@ function Empty({ text }: { text: string }) {
     <div className="px-8 py-14 text-center">
       <p className="text-[15px] font-medium text-tg-hint">{text}</p>
     </div>
-  )
-}
-
-/* ---------- Умный ИИ-поиск: обёртки и карточки ---------- */
-
-/** Появление ИИ-блока: fade+slide 200ms — как у «Недавних запросов» */
-function AiFade({
-  children,
-  className,
-  ariaLive,
-}: {
-  children: ReactNode
-  className?: string
-  ariaLive?: 'polite' | 'assertive'
-}) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: -6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.2, ease: 'easeOut' }}
-      className={className}
-      aria-live={ariaLive}
-    >
-      {children}
-    </motion.div>
-  )
-}
-
-/** Посимвольная «печать» ответа ИИ: setInterval ~15мс/символ — без framer-motion, чтобы не лагало */
-function TypedText({ text }: { text: string }) {
-  const [shown, setShown] = useState(0)
-  useEffect(() => {
-    if (text.length === 0) return
-    let n = 0
-    const iv = setInterval(() => {
-      n += 1
-      setShown(n)
-      if (n >= text.length) clearInterval(iv)
-    }, 15)
-    return () => clearInterval(iv)
-  }, [text])
-  return <>{text.slice(0, shown)}</>
-}
-
-/** Компактная карточка поста-источника (аватар 36, тап — открыть канал) */
-function AiSourceRow({ post, index, onOpen }: { post: PostDTO; index: number; onOpen: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onOpen}
-      aria-label={`Открыть канал ${post.channel.title}`}
-      className={cn(
-        'flex w-full items-start gap-2.5 px-4 py-2.5 text-left transition active:bg-tg-surface2/50',
-        index > 0 && 'border-t border-tg-sep/60',
-      )}
-    >
-      <Avatar name={post.channel.title} color={post.channel.avatarColor} src={post.channel.avatarUrl} size={36} />
-      <span className="min-w-0 flex-1">
-        <span className="flex items-baseline gap-1.5">
-          <span className="flex min-w-0 items-center gap-1">
-            <span className="truncate text-[14px] font-semibold text-tg-text">{post.channel.title}</span>
-            {post.channel.verified && <VerifiedBadge size={12} />}
-          </span>
-          <span className="shrink-0 text-[11.5px] text-tg-hint">{timeAgoRu(post.publishedAt)}</span>
-        </span>
-        <span className="mt-0.5 line-clamp-2 text-[13px] leading-snug text-tg-hint">
-          {post.text ? stripMarkdown(post.text) || 'медиа-пост' : 'медиа-пост'}
-        </span>
-      </span>
-    </button>
   )
 }
 

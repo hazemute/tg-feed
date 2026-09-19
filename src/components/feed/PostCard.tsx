@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, Forward, Heart, MessageCircle, Send, Sparkle, Star } from 'lucide-react'
+import { Eye, EyeOff, Forward, Heart, MessageCircle, Rocket, Send, Sparkle, Star } from 'lucide-react'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -336,7 +336,7 @@ function recommendReason(
   interests: string[],
   lang: 'ru' | 'en',
 ): { key: 'interests' | 'popular' | 'new'; label: string } | null {
-  if (post.sponsored || post.channel.subscribed) return null
+  if (post.sponsored || post.promoted || post.channel.subscribed) return null
   const ageH = Math.max(0, (Date.now() - new Date(post.publishedAt).getTime()) / 3_600_000)
   const inInterests =
     post.channel.categorySlug !== null && interests.includes(post.channel.categorySlug)
@@ -557,6 +557,16 @@ export function PostCard({
               Реклама
             </span>
           )}
+          {/* Промо-пост (Snap Pro): заметная плашка продвижения */}
+          {post.promoted && (
+            <span
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-500 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-white shadow-sm"
+              title="Пост продвинут автором канала"
+            >
+              <Rocket className="h-3 w-3" aria-hidden />
+              Продвинуто
+            </span>
+          )}
           {Date.now() - new Date(post.publishedAt).getTime() < FRESH_MS && (
             <span
               aria-label="Новый пост"
@@ -702,10 +712,11 @@ export function PostCard({
 
   // Stagger-появление: только для первой партии постов при первичной загрузке
   // (appearDelay приходит из FeedView), остальные посты — без анимации.
+  const cardShell = cn('pb-5 pt-4', post.promoted && 'promoted-card')
   return appear >= 0 ? (
     <motion.article
       ref={rootRef}
-      className="pb-5 pt-4"
+      className={cardShell}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.3, ease: 'easeOut', delay: appear }}
@@ -713,7 +724,7 @@ export function PostCard({
       {body}
     </motion.article>
   ) : (
-    <article ref={rootRef} className="pb-5 pt-4">
+    <article ref={rootRef} className={cardShell}>
       {body}
     </article>
   )

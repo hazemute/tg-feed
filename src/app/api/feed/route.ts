@@ -353,11 +353,45 @@ export async function GET(request: Request) {
         Выборка страницы, лайки, закладки и посты спонсоров независимы —
         уходят ОДНИМ параллельным batch’ем (каждый RTT до дальнего Supabase
         стоит ~0.3-0.9с: последовательная цепочка и была причиной «тормозов»). */
-    const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
     const sponsors = page === 0 ? await sponsorChannelIds() : null
     let sponSet: Set<string> | null = null
     mark('sponsors-ids')
 
+    /* ---------- Промо-посты (Snap Pro «Продвинуть»): ПЕРВЫМИ В ЛЮБОЙ КАТЕГОРИИ ----------
+        Автор заплатил за продвижение — пост вставляется в САМОЕ начало первой
+        страницы (выше спонсоров и органики), в любом разрезе ленты, независимо
+        от просмотренности/маутов. Окно промо — 24 часа с момента продвижения;
+        после — пост остаётся высоко за счёт веса (rank.ts PROMO_BONUS 48ч). */
+    const promoSet: Set<string> = new Set()
+    const promotedPosts =
+      page === 0
+        ? await db.post.findMany({
+            where: {
+              promotedAt: { gt: new Date(Date.now() - 24 * 3_600_000) },
+              channel: { status: 'active' },
+              AND: [
+                ...nsfwPostNotIn(),
+                { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+              ],
+            },
+            orderBy: { promotedAt: 'desc' },
+            take: 3,
+            select: { id: true, channelId: true },
+          })
+        : []
+    if (promotedPosts.length > 0) {
+      for (const p of promotedPosts) promoSet.add(p.id)
+      const promoEntries = promotedPosts.map((p) => ({ id: p.id, cid: p.channelId, w: 0 }))
+      const rest = ordered.filter((x) => !promoSet.has(x.id))
+      const merged = diversify([...promoEntries, ...rest], (x) => x.cid)
+      ordered.length = 0
+      ordered.push(...merged)
+    }
+    mark('promo-merge')
+
+    // Страница вырезается ПОСЛЕ промо-вставки: промо-посты обязаны попасть
+    // на текущую страницу первыми (особенно страница 0)
+    const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
     const pageRows: PageRow[] = await fetchPageRows(sliceIds, userId)
     mark('page-batch')
 
@@ -369,7 +403,7 @@ export async function GET(request: Request) {
         ? await db.post.findMany({
             where: {
               channelId: { in: [...sponsors.keys()] },
-              id: { notIn: [...signals.viewedIds] },
+              id: { notIn: [...signals.viewedIds, ...promoSet] },
               AND: [
                 ...nsfwPostNotIn(), // CPA-спам тоже проходит гигиену текста
                 // ИИ-модерация: реклама не должна вести на junk/nsfw-посты
@@ -386,7 +420,7 @@ export async function GET(request: Request) {
         Посты канала с активной кампанией подмешиваются на первые позиции первой
         страницы (ещё не просмотренные). Показ кампании засчитывается сразу. */
     if (sponsors && sponsors.size > 0 && sponsorPosts.length > 0) {
-      // по свежему посту от каждого спонсора, в начало первой страницы
+      // по свежему посту от каждого спонсора, в начало первой страницы (сразу после промо)
       const picked = new Map<string, string>()
       for (const p of sponsorPosts) {
         if (picked.size >= 3) break
@@ -396,7 +430,7 @@ export async function GET(request: Request) {
         const sponIds = [...picked.values()]
         const sponSetLocal = new Set(sponIds)
         sponSet = sponSetLocal
-        const rest = ordered.filter((x) => !sponSetLocal.has(x.id))
+        const rest = ordered.filter((x) => !sponSetLocal.has(x.id) && !promoSet.has(x.id))
         /* Спонсорские посты несут РЕАЛЬНЫЙ channelId (раньше cid:'' делал их
             «невидимыми» для диверсификатора — спонсор мог встать рядом с
             органикой того же канала). Пересобираем с повторным diversify:
@@ -442,6 +476,8 @@ export async function GET(request: Request) {
       )
       // Спонсорский пост помечается честной меткой «Реклама» в карточке
       if (sponSet?.has(r.id)) dto.sponsored = true
+      // Промо-пост (Snap Pro): подсветка «Продвинуто» в карточке
+      if (promoSet.has(r.id)) dto.promoted = true
       return dto
     })
 

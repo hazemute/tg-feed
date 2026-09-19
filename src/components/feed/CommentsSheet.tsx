@@ -16,6 +16,7 @@ import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { emitPostUpdated } from '@/components/feed/PostOverlay'
 import { UserBadges } from '@/components/badges/UserBadges'
+import { ChatInput } from '@/components/ai/ChatInput'
 
 /**
  * Комментарии под постом (глобальный шит) — TikTok-стиль (v5.14):
@@ -72,6 +73,8 @@ export function CommentsSheet() {
   const post = useApp((s) => s.commentsPost)
   const closeComments = useApp((s) => s.closeComments)
   const patchCommentsPost = useApp((s) => s.patchCommentsPost)
+  const focusId = useApp((s) => s.commentsFocusId)
+  const clearCommentsFocus = useApp((s) => s.clearCommentsFocus)
   const user = useApp((s) => s.user)
   const openAuthGate = useApp((s) => s.openAuthGate)
 
@@ -87,7 +90,10 @@ export function CommentsSheet() {
   /** Кому отвечаем: null — новый корневой комментарий */
   const [replyTo, setReplyTo] = useState<{ parentCommentId: string; rootId: string; name: string } | null>(null)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [flashId, setFlashId] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const itemsRef = useRef(items)
+  itemsRef.current = items
 
   const open = !!post
 
@@ -127,6 +133,62 @@ export function CommentsSheet() {
     setExpanded(new Set())
     void load(post.id, undefined, sessionSort)
   }, [post?.id, load])
+
+  /* ---------- Deep-link из уведомлений: скролл к комментарию ----------
+   * focusId (тап по уведомлению comment/reply/comment_like) → после загрузки
+   * списка находим комментарий; если это ответ, чья ветка ещё не раскрыта —
+   * последовательно раскрываем ветки корней и пересматриваем; скроллим к
+   * строке, подсвечиваем и снимаем фокус. */
+  useEffect(() => {
+    if (!post || !focusId || loading || items.length === 0) return
+    let cancelled = false
+    const findIn = (list: CommentDTO[]): CommentDTO | null => {
+      for (const c of list) {
+        if (c.id === focusId) return c
+        const r = c.replies?.find((x) => x.id === focusId)
+        if (r) return r
+      }
+      return null
+    }
+    const scrollNow = (id: string) => {
+      if (cancelled) return
+      const el = document.getElementById(`comment-${id}`)
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        setFlashId(id)
+        window.setTimeout(() => setFlashId((f) => (f === id ? null : f)), 2600)
+      }
+      clearCommentsFocus()
+    }
+    const jump = async () => {
+      const direct = findIn(itemsRef.current)
+      if (direct) {
+        window.setTimeout(() => scrollNow(direct.id), 120)
+        return
+      }
+      // Не нашли — комментарий внутри нераскрытой ветки: последовательно
+      // раскрываем корни с ответами (лимит 12 — защита от огромных страниц)
+      let roots = itemsRef.current.filter((c) => c.repliesCount > 0).slice(0, 12)
+      for (const root of roots) {
+        if (cancelled) return
+        if ((root.replies?.length ?? 0) >= root.repliesCount) continue // уже весь загружен
+        await loadReplies(root, true)
+        await new Promise((r) => window.setTimeout(r, 60)) // даём setState отработать
+        const found = findIn(itemsRef.current)
+        if (found) {
+          window.setTimeout(() => scrollNow(found.id), 120)
+          return
+        }
+        roots = itemsRef.current.filter((c) => c.repliesCount > 0).slice(0, 12)
+      }
+      if (!cancelled) clearCommentsFocus() // не нашли (старая страница/удалён) — тихо снимаем
+    }
+    void jump()
+    return () => {
+      cancelled = true
+    }
+     
+  }, [post?.id, focusId, loading, items.length])
 
   const switchSort = (s: 'new' | 'top') => {
     if (!post || s === sessionSort) return
@@ -466,6 +528,7 @@ export function CommentsSheet() {
                         onDelete={doDelete}
                         onToggle={toggleReplies}
                         onLoadMoreReplies={(root) => void loadReplies(root, true)}
+                        flashId={flashId}
                       />
                     </motion.li>
                   ))}
@@ -508,47 +571,26 @@ export function CommentsSheet() {
                     </button>
                   </div>
                 )}
-                <div className="flex items-end gap-2">
-                  <div className="relative flex-1">
-                    <textarea
-                      ref={inputRef}
-                      value={draft}
-                      onChange={(e) => {
-                        setDraft(e.target.value)
-                        const el = e.target
-                        el.style.height = 'auto'
-                        el.style.height = `${Math.min(el.scrollHeight, 120)}px`
-                      }}
-                      onKeyDown={onInputKeyDown}
-                      rows={1}
-                      maxLength={MAX_LEN + 50}
-                      placeholder={replyTo ? t('comments.replyPlaceholder') : t('comments.placeholder')}
-                      aria-label={replyTo ? t('comments.replyPlaceholder') : t('comments.placeholder')}
-                      className="max-h-[120px] w-full resize-none rounded-2xl bg-tg-surface py-2.5 pl-3.5 pr-12 text-[14.5px] leading-snug text-tg-text placeholder:text-tg-hint focus:outline-none"
-                    />
-                    {draft.length > MAX_LEN - 100 && (
-                      <span
-                        className={cn(
-                          'absolute bottom-2.5 right-3 text-[11px] tabular-nums',
-                          draft.length > MAX_LEN ? 'text-red-500' : 'text-tg-hint',
-                        )}
-                      >
-                        {MAX_LEN - draft.length}
-                      </span>
+                {/* v5.21: слитое поле ввода в стиле Telegram (микрофон ⇄ отправка) */}
+                {draft.length > MAX_LEN - 100 && (
+                  <span
+                    className={cn(
+                      'mb-1.5 ml-auto block w-fit text-[11px] font-medium tabular-nums',
+                      draft.length > MAX_LEN ? 'text-red-500' : 'text-tg-hint',
                     )}
-                  </div>
-                  <motion.button
-                    type="button"
-                    data-noswipe
-                    whileTap={{ scale: 0.88 }}
-                    onClick={() => void doSend()}
-                    disabled={!draft.trim() || sending || draft.length > MAX_LEN}
-                    aria-label={t('comments.send')}
-                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tg-link text-white transition disabled:opacity-40"
                   >
-                    {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" aria-hidden /> : <ArrowUp className="h-5 w-5" strokeWidth={2.4} />}
-                  </motion.button>
-                </div>
+                    {MAX_LEN - draft.length}
+                  </span>
+                )}
+                <ChatInput
+                  value={draft}
+                  onChange={setDraft}
+                  onSend={() => void doSend()}
+                  busy={sending}
+                  maxLength={MAX_LEN + 50}
+                  placeholder={replyTo ? t('comments.replyPlaceholder') : t('comments.placeholder')}
+                  sendLabel={t('comments.send')}
+                />
               </>
             )}
           </div>
@@ -589,6 +631,7 @@ function CommentRow({
   onToggle,
   onLoadMoreReplies,
   isReply = false,
+  flashId = null,
 }: {
   c: CommentDTO
   expanded?: boolean
@@ -599,13 +642,23 @@ function CommentRow({
   onToggle?: (root: CommentDTO) => void
   onLoadMoreReplies?: (root: CommentDTO) => void
   isReply?: boolean
+  /** id комментария, подсвечиваемого при переходе из уведомлений (deep-link) */
+  flashId?: string | null
 }) {
   const t = useT()
   const tmp = c.id.startsWith('tmp_')
   const avatarSize = isReply ? 28 : 36
+  const flash = flashId === c.id
 
   return (
-    <div className="flex gap-2.5">
+    <div
+      id={`comment-${c.id}`}
+      className={cn(
+        'flex gap-2.5 rounded-2xl p-1 -m-1',
+        flash && 'bg-tg-link/[0.12] ring-1 ring-tg-link/40 transition-none',
+        !flash && 'transition-colors duration-1000',
+      )}
+    >
       <Avatar name={c.author.name} src={c.author.avatarUrl} size={avatarSize} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
@@ -674,6 +727,7 @@ function CommentRow({
                 onLike={onLike}
                 onReply={onReply}
                 onDelete={onDelete}
+                flashId={flashId}
               />
             ))}
             {/* Подгрузка остальных ответов ветки */}

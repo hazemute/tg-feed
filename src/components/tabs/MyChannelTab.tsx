@@ -39,7 +39,8 @@ import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
-import type { AiAssistantDraft, MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
+import { AiChat } from '@/components/ai/AiChat'
+import type { MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
 
 /**
  * «Мой канал» — КАБИНЕТ ВЛАДЕЛЬЦА: большая аналитика именно СВОЕГО канала
@@ -733,199 +734,49 @@ function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | '
 
 function AiAssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
   const pro = tier === 'pro'
-  const [prompt, setPrompt] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [lateStage, setLateStage] = useState(false)
-  const [draft, setDraft] = useState<AiAssistantDraft | null>(null)
-  const [publishing, setPublishing] = useState(false)
-  const [published, setPublished] = useState(false)
-  const [publishedLink, setPublishedLink] = useState<string | null>(null)
-  const [needPro, setNeedPro] = useState(false)
-
-  // Скелетон генерации: через 3с меняем текст этапа на «Рисует картинку…»
-  useEffect(() => {
-    if (!busy) {
-      setLateStage(false)
-      return
-    }
-    const id = window.setTimeout(() => setLateStage(true), 3000)
-    return () => window.clearTimeout(id)
-  }, [busy])
-
-  const generate = async (p?: string) => {
-    if (busy) return
-    setBusy(true)
-    setDraft(null)
-    setPublished(false)
-    setPublishedLink(null)
-    setNeedPro(false)
-    try {
-      const r = await api<AiAssistantDraft>('/api/ai/assistant', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'generate', channelId: channel.id, prompt: p?.trim() || undefined }),
-      })
-      setDraft(r)
-      haptic('success')
-    } catch (err) {
-      if (proRequired(err)) {
-        setNeedPro(true)
-        toast.error('ИИ-ассистент доступен на тарифе Snap Pro')
-      } else {
-        toast.error((err as Error).message || 'Не удалось создать пост')
-      }
-      haptic('error')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  const publish = async () => {
-    if (!draft || publishing) return
-    setPublishing(true)
-    try {
-      const r = await api<{ ok: boolean; link?: string; error?: string }>('/api/ai/assistant', {
-        method: 'POST',
-        body: JSON.stringify({
-          action: 'publish',
-          channelId: channel.id,
-          text: draft.text,
-          imageUrl: draft.imageUrl,
-        }),
-      })
-      if (r.ok) {
-        haptic('success')
-        toast.success('Опубликовано в Telegram')
-        setPublished(true)
-        setPublishedLink(r.link ?? null)
-        setDraft(null) // черновик очищен — остаётся только ссылка на пост
-        setPrompt('')
-      } else {
-        toast.error(r.error || 'Не удалось опубликовать')
-        haptic('error')
-      }
-    } catch (err) {
-      toast.error((err as Error).message || 'Не удалось опубликовать')
-      haptic('error')
-    } finally {
-      setPublishing(false)
-    }
-  }
+  const [chatOpen, setChatOpen] = useState(false)
 
   return (
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
       <SectionTitle icon={Bot}>ИИ-ассистент</SectionTitle>
       {pro ? (
         <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
-          <input
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            maxLength={300}
-            placeholder="О чём пост? (необязательно)"
-            aria-label="О чём пост"
-            className={INPUT_CLS}
-          />
+          {/* ОТДЕЛЬНЫЙ ИИ-ЧАТ (v5.21): ассистент живёт в собственной поверхности —
+              пузыри, markdown, статусы «думаю», инлайн-кнопки публикации/картинки */}
+          <div className="flex items-start gap-3">
+            <span
+              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-md"
+              aria-hidden
+            >
+              <Bot className="h-5 w-5" />
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="text-[14.5px] font-semibold leading-snug text-tg-text">Ваш ИИ-контентщик</p>
+              <p className="mt-0.5 text-[13px] leading-snug text-tg-hint">
+                Пишет посты в вашем стиле, рисует картинки, смотрит статистику и публикует в канал — голосом тоже
+              </p>
+            </div>
+          </div>
           <button
             type="button"
-            onClick={() => generate(prompt)}
-            disabled={busy}
-            className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14.5px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
+            data-noswipe
+            onClick={() => {
+              haptic('light')
+              setChatOpen(true)
+            }}
+            className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-500 text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
           >
-            {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Sparkles className="h-4.5 w-4.5" />}
-            Придумать пост
+            <Sparkles className="h-4.5 w-4.5" />
+            Открыть чат с ИИ
           </button>
 
-          {/* Генерация: скелетон с меняющимся текстом этапа */}
-          {busy && (
-            <div className="mt-3 rounded-2xl border border-tg-sep/50 bg-tg-bg p-3.5" role="status" aria-live="polite">
-              <div className="h-4 w-3/4 rounded-full tg-shimmer" />
-              <div className="mt-2 h-4 w-full rounded-full tg-shimmer" />
-              <div className="mt-2 h-4 w-5/6 rounded-full tg-shimmer" />
-              <div className="mt-3 h-32 w-full rounded-2xl tg-shimmer" />
-              <div className="mt-2.5 flex items-center gap-1.5 text-[12.5px] text-tg-hint">
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                {lateStage ? 'Рисует картинку…' : 'ИИ изучает стиль канала и тренды…'}
-              </div>
-            </div>
-          )}
-
-          {/* Черновик поста */}
-          {!busy && draft && (
-            <div className="mt-3 rounded-2xl border border-tg-sep/50 bg-tg-bg p-3.5">
-              <div className="whitespace-pre-wrap text-[15px] leading-relaxed text-tg-text">{draft.text}</div>
-              {draft.imageUrl && (
-                <img
-                  src={draft.imageUrl}
-                  alt=""
-                  loading="lazy"
-                  className="mt-3 w-full rounded-xl border border-tg-sep"
-                />
-              )}
-              {draft.imagePending && (
-                <div className="mt-2 rounded-xl bg-tg-star/[0.08] px-3 py-2 text-[12px] leading-snug text-tg-hint">
-                  Картинка досоздаётся — можно публиковать, или подождите и повторите
-                </div>
-              )}
-              {draft.styleAnalyzed && (
-                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-tg-link/10 px-2.5 py-1 text-[11.5px] font-semibold text-tg-link">
-                  <Sparkles className="h-3 w-3" />
-                  Стиль канала изучен
-                </div>
-              )}
-              <div className="mt-3 flex gap-2">
-                <button
-                  type="button"
-                  onClick={publish}
-                  disabled={publishing}
-                  className="flex h-11 min-w-0 flex-1 items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-60"
-                >
-                  {publishing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-                  Опубликовать в канал
-                </button>
-                <button
-                  type="button"
-                  onClick={() => generate(prompt)}
-                  disabled={publishing}
-                  className="h-11 shrink-0 rounded-2xl bg-tg-surface px-3.5 text-[13px] font-semibold text-tg-text2 transition active:scale-95"
-                >
-                  Ещё вариант
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraft(null)
-                    setPrompt('')
-                  }}
-                  aria-label="Отменить черновик"
-                  className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-tg-surface text-tg-hint transition active:scale-95"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* Успешная публикация: строка + ссылка на пост в Telegram */}
-          {!busy && !draft && published && (
-            <div className="mt-3 flex items-center justify-between gap-3 rounded-2xl border border-tg-sep/50 bg-tg-bg px-3.5 py-3">
-              <span className="flex min-w-0 items-center gap-2 text-[13.5px] font-semibold text-tg-text">
-                <Check className="h-4 w-4 shrink-0 text-tg-link" />
-                Пост опубликован
-              </span>
-              {publishedLink && (
-                <a
-                  href={publishedLink}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="flex h-9 shrink-0 items-center gap-1 rounded-xl bg-tg-link/10 px-3 text-[13px] font-semibold text-tg-link transition active:scale-95"
-                >
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                  Открыть пост
-                </a>
-              )}
-            </div>
-          )}
-
-          {needPro && <UpgradeNote className="mt-3" />}
+          <AiChat
+            kind="assistant"
+            open={chatOpen}
+            onClose={() => setChatOpen(false)}
+            channelId={channel.id}
+            channelTitle={channel.title}
+          />
         </div>
       ) : (
         <LockedCard

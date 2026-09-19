@@ -27,10 +27,18 @@ export type RankPost = {
   premium: boolean
   /** «Температура» поста: -1 просмотр, +3 дочитали 5с+, +10 лайк, +20 репост */
   hotScore?: number
+  /** Промо-пост (Snap Pro «Продвинуть в ленте»): время продвижения —
+   *  в первые 48 часов после него пост получает огромный буст веса */
+  promotedAt?: Date | string | null
 }
 
 /** Плоский бонус проверенному (премиум) каналу — участие, не автопобеда */
 const PREMIUM_BONUS = 350
+/** Промо-пост (Snap Pro «Продвинуть в ленте»): плачу — значит в первых рядах.
+ *  Буст на порядок выше премиального и гаснет линейно за 48 часов,
+ *  пробивая и премиум-топ, и персональные бусты аффинити. */
+const PROMO_BONUS = 2600
+const PROMO_WINDOW_H = 48
 /** Возрастная точка начала затухания и минимум множителя */
 const AGE_DECAY_AFTER_H = 168 // 7 суток
 const AGE_DECAY_MIN = 0.12
@@ -61,6 +69,20 @@ export function computeWeight(post: RankPost): number {
 
   if (post.premium) weight += PREMIUM_BONUS
   if (hours < 48) weight += (48 - hours) * 2
+
+  /*
+   * Промо (Snap Pro): автор заплатил за продвижение — пост в первых рядах
+   * в ЛЮБОЙ категории/разрезе ленты. Буст гаснет линейно: свежий промо —
+   * гарантированный топ, 24ч — половина, 48ч — как обычный пост.
+   */
+  if (post.promotedAt) {
+    const promoted =
+      typeof post.promotedAt === 'string' ? new Date(post.promotedAt) : post.promotedAt
+    const promoHours = Math.max(0, (Date.now() - promoted.getTime()) / 3_600_000)
+    if (promoHours < PROMO_WINDOW_H) {
+      weight += PROMO_BONUS * (1 - promoHours / PROMO_WINDOW_H)
+    }
+  }
 
   /*
    * Возрастное затухание: постам старше 7 суток всё труднее конкурировать со

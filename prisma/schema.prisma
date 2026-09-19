@@ -509,6 +509,7 @@ model Notification {
   title           String
   body            String?
   postId          String? // связанный пост (type=comment — куда ведёт тап)
+  commentId       String? // конкретный комментарий (тап открывает ветку и скроллит к нему)
   channelUsername String? // канал для перехода (type=comment)
   readAt          DateTime?
   createdAt       DateTime  @default(now())

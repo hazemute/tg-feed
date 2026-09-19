@@ -600,3 +600,27 @@ button {
 
 /* Тонкий тёмный скроллбар админ-панели ОТМЕНЁН: владелец просил прятать
  * ВСЕ скроллбары — глобальное правило выше перекрывает и админку. */
+
+/* Промо-пост ленты (Snap Pro «Продвинуть в ленте», v5.21):
+ * мягкая градиентная рамка-подсветка слева + едва заметный тёплый фон —
+ * карточка читается как «особенная», но не выглядит как ошибка вёрстки.
+ * Все цвета — через CSS-переменные темы, поэтому работает в тёмной/сепии/розе. */
+.promoted-card {
+  position: relative;
+  background: linear-gradient(
+    to right,
+    color-mix(in srgb, var(--tg-star, #f5a623) 7%, transparent),
+    transparent 55%
+  );
+}
+.promoted-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 999px;
+  background: linear-gradient(to bottom, #a855f7, #e879f9);
+  opacity: 0.9;
+}

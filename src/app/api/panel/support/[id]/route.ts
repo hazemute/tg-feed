@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { emitAppEvent } from '@/lib/events'
 import { err } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 
@@ -99,6 +100,7 @@ export async function POST(request: Request, ctx: Ctx) {
           body: parsed.data.text.slice(0, 200),
         },
       })
+      .then(() => emitAppEvent('notif:new', { userId: thread.userId }))
       .catch((e: unknown) => console.error('[panel/support notify]', e))
 
     return NextResponse.json({

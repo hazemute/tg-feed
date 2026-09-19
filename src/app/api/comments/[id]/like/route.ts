@@ -77,6 +77,7 @@ export async function POST(request: Request, ctx: Ctx) {
           title: authorOf(me).name,
           body: `❤️ ${comment.text}`,
           postId: comment.postId,
+          commentId: comment.id,
           channelUsername: comment.post.channel.username,
         })
       }

@@ -10,6 +10,8 @@ import { EventEmitter } from 'events'
 export type AppEventMap = {
   /** Парсер добавил новые посты */
   'posts:new': { total: number; usernames: string[] }
+  /** Создано уведомление для пользователя (бейдж колокольчика обновится сразу) */
+  'notif:new': { userId: string }
 }
 
 /** События админ-панели (/admin) — отдельная шина, чтобы не светить их в пользовательском SSE */

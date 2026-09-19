@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 
 import { cn } from '@/lib/utils'
+import { ChatInput } from '@/components/ai/ChatInput'
 import {
   fetchSupportThread,
   fetchSupportThreads,
@@ -566,32 +567,18 @@ export function SupportTab({
               ))}
             </div>
 
-            {/* Ответ сотрудника */}
-            <div className="flex items-end gap-2 border-t border-slate-100 px-3 py-3">
-              <textarea
+            {/* Ответ сотрудника — v5.21: слитое поле как в Telegram (микрофон ⇄ отправка) */}
+            <div className="border-t border-slate-100 px-3 py-3">
+              <ChatInput
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault()
-                    void send()
-                  }
-                }}
-                rows={1}
+                onChange={setDraft}
+                onSend={() => void send()}
+                busy={sending}
+                disabled={thread.status === 'closed'}
                 maxLength={2000}
                 placeholder={thread.status === 'closed' ? 'Обращение закрыто' : 'Ответить пользователю…'}
-                disabled={thread.status === 'closed'}
-                className="max-h-28 min-h-[42px] flex-1 resize-none rounded-xl border border-slate-200 px-3.5 py-2.5 text-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100 disabled:bg-slate-50 disabled:text-slate-400"
+                sendLabel="Отправить ответ"
               />
-              <button
-                type="button"
-                onClick={() => void send()}
-                disabled={!draft.trim() || sending || thread.status === 'closed'}
-                aria-label="Отправить ответ"
-                className="flex size-[42px] shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition hover:bg-emerald-700 disabled:opacity-40"
-              >
-                {sending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Send className="size-4" />}
-              </button>
             </div>
           </>
         )}

@@ -141,6 +141,16 @@ const adminThemes = `
 
 /* Тумблер (Switch) и чекбоксы shadcn под палитрами */
 [data-adm] [data-slot='switch']{outline:none}
+
+/* v5.21: маппинг tg-* переменных миниаппа → палитры админки. ChatInput
+ * (слитое поле «микрофон ⇄ отправка») используется в ответах поддержки,
+ * поэтому темы панели красят и его без правок компонента. */
+[data-adm-theme]{--tg-bg:var(--adm-page);--tg-surface:var(--adm-elev);--tg-surface2:var(--adm-panel);--tg-sep:var(--adm-border);--tg-text:var(--adm-text);--tg-text2:var(--adm-text2);--tg-hint:var(--adm-mut);--tg-link:var(--adm-acc);--tg-like:var(--adm-danger);--tg-star:var(--adm-warn);}
+[data-adm-theme='light']{--tg-bg:#ffffff;--tg-surface:#f1f5f9;--tg-surface2:#e2e8f0;--tg-sep:#e2e8f0;--tg-text:#0f172a;--tg-text2:#334155;--tg-hint:#64748b;--tg-link:#0284c7;--tg-like:#dc2626;--tg-star:#d97706}
+[data-adm-theme='dark']{--tg-bg:#0e1621;--tg-surface:#232e3c;--tg-surface2:#2b3a4d;--tg-sep:#2b3a4d;--tg-text:#eef3f8;--tg-text2:#c2d0df;--tg-hint:#9db0c4;--tg-link:#62bcf9;--tg-like:#ff8d85;--tg-star:#f5b04d}
+[data-adm-theme='sepia']{--tg-bg:#f7f1e4;--tg-surface:#f0e6d2;--tg-surface2:#e5d9c3;--tg-sep:#e5d9c3;--tg-text:#3a2e21;--tg-text2:#5d4c38;--tg-hint:#7d6b52;--tg-link:#a8732f;--tg-like:#c04a3a;--tg-star:#b47d33}
+[data-adm-theme='rose']{--tg-bg:#fdf2f6;--tg-surface:#fbe4ee;--tg-surface2:#f5d3e3;--tg-sep:#f0c9dc;--tg-text:#4a2437;--tg-text2:#6d3a52;--tg-hint:#a06e88;--tg-link:#d6336c;--tg-like:#e03131;--tg-star:#f59f00}
+body:has([data-adm-theme]){--tg-bg:#ffffff;--tg-surface:#f1f5f9;--tg-surface2:#e2e8f0;--tg-sep:#e2e8f0;--tg-text:#0f172a;--tg-text2:#334155;--tg-hint:#64748b;--tg-link:#0284c7;--tg-like:#dc2626;--tg-star:#d97706}
 `
 
 export default function AdminLayout({ children }: { children: ReactNode }) {

@@ -95,6 +95,7 @@ export async function GET(request: Request) {
       title: n.title,
       body: n.body,
       postId: n.postId,
+      commentId: n.commentId ?? null,
       channelUsername: n.channelUsername,
       read: n.readAt !== null,
       createdAt: n.createdAt.toISOString(),

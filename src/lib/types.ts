@@ -98,6 +98,8 @@ export type PostDTO = {
   bookmarked: boolean
   /** Спонсорский пост (активная CPA-кампания) — показывается с бейджем «Реклама» */
   sponsored?: boolean
+  /** Промо-пост (Snap Pro «Продвинуть в ленте») — в первых рядах с подсветкой */
+  promoted?: boolean
   channel: ChannelDTO
 }
 
@@ -475,6 +477,9 @@ export type NotificationDTO = {
   body: string | null
   /** Связанный пост (type=comment/reply/comment_like) — тап открывает комментарии */
   postId: string | null
+  /** Конкретный комментарий — тап открывает комментарии, раскрывает ветку
+   *  и скроллит экран к этому комментарию с подсветкой */
+  commentId: string | null
   channelUsername: string | null
   read: boolean
   createdAt: string

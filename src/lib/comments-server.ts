@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import type { Comment, User } from '@prisma/client'
 import type { CommentDTO } from '@/lib/types'
 import { parseBadges } from '@/lib/badges'
+import { emitAppEvent } from '@/lib/events'
 
 /**
  * Серверные помощники комментариев (общие для /api/comments, /api/comments/[id],
@@ -72,6 +73,8 @@ export async function likedSetFor(uid: string | null, ids: string[]): Promise<Se
 /**
  * Уведомление-активность (fire-and-forget): ответ на комментарий, лайк
  * комментария, новый комментарий под постом привязанного канала.
+ * commentId — глубокая ссылка: тап по уведомлению открывает комментарии
+ * на этом комментарии (ветка раскрывается, экран скроллится к нему).
  * Ошибки логируются и не влияют на ответ API.
  */
 export function notifyUser(data: {
@@ -80,6 +83,7 @@ export function notifyUser(data: {
   title: string
   body: string
   postId?: string | null
+  commentId?: string | null
   channelUsername?: string | null
 }): void {
   void (async () => {
@@ -91,9 +95,13 @@ export function notifyUser(data: {
           title: data.title,
           body: data.body.slice(0, 200),
           postId: data.postId ?? null,
+          commentId: data.commentId ?? null,
           channelUsername: data.channelUsername ?? null,
         },
       })
+      // Мгновенный толчок бейджу колокольчика: SSE-клиенты пользователя
+      // обновят счётчик без 30-секундного поллинга
+      emitAppEvent('notif:new', { userId: data.userId })
     } catch (e) {
       console.error('[comments notify]', e)
     }

@@ -302,6 +302,7 @@ model Notification {
   title           String
   body            String?
   postId          String?
+  commentId       String?
   channelUsername String?
   readAt          DateTime?
   createdAt       DateTime  @default(now())

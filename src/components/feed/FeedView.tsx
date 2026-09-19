@@ -600,6 +600,13 @@ export function FeedView() {
     let retry: ReturnType<typeof setTimeout> | null = null
 
     const handleFrame = (frame: string) => {
+      if (frame.startsWith('event: notif:new')) {
+        // Адресный толчок: у этого пользователя появилось уведомление —
+        // бейдж колокольчика +1 мгновенно (без 30-секундного поллинга)
+        notifFetchedAtRef.current = 0
+        void fetchNotifCount()
+        return
+      }
       if (!frame.startsWith('event: posts:new')) return
       notifFetchedAtRef.current = 0 // guard «не чаще 30с» не должен гасить push-событие
       void fetchNotifCount()

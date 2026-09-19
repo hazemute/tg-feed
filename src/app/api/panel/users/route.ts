@@ -6,6 +6,7 @@ import { guardAdmin } from '@/lib/guard'
 import { setMaintenanceAllowed, setBanned } from '@/lib/maintenance'
 import { KOPECKS_PER_SWIPE } from '@/lib/money'
 import { logAdmin } from '@/lib/admin-log'
+import { emitAppEvent } from '@/lib/events'
 import { type Tier } from '@/lib/tiers'
 import { BADGES, parseBadges, serializeBadges } from '@/lib/badges'
 
@@ -262,6 +263,7 @@ export async function PATCH(request: Request) {
                 : 'Если это ошибка — напишите в поддержку.',
           },
         })
+        emitAppEvent('notif:new', { userId })
       } catch (ne) {
         console.error('[panel/users badge] notify failed', (ne as Error).message)
       }

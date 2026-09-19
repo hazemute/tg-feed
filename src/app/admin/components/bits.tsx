@@ -43,7 +43,9 @@ export interface TabProps {
 
 /* ===================== Стили-константы ===================== */
 
-export const panelCard = 'border-slate-200 bg-white'
+/* v5.21: «убрать карточный стиль» — секции плоские, без боксов и теней;
+ * визуальные опоры — заголовки секций и тонкие разделители таблиц. */
+export const panelCard = 'border-0 bg-transparent shadow-none rounded-none'
 export const inputDark =
   'border-slate-200 bg-slate-100 text-slate-800 placeholder:text-slate-500'
 export const btnOutlineDark =
@@ -158,11 +160,13 @@ export function MetricCard({
   badges?: { text: string; className: string }[]
   hint?: ReactNode
 }) {
+  /* v5.21: плоская метрика — акцентная вертикальная черта вместо бокса */
   return (
-    <motion.div
-      variants={fadeUp}
-      className="rounded-xl border border-slate-200 bg-white p-4 xl:p-5"
-    >
+    <motion.div variants={fadeUp} className="relative py-2 pl-4">
+      <span
+        aria-hidden
+        className="absolute bottom-2 left-0 top-2 w-[3px] rounded-full bg-emerald-500/60"
+      />
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-xl font-semibold tabular-nums text-slate-900 xl:text-2xl">

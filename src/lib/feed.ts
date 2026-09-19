@@ -55,6 +55,7 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       viewsCount: true,
       hotScore: true,
       publishedAt: true,
+      promotedAt: true,
       channel: {
         select: { isPremium: true, categoryId: true },
       },
@@ -75,6 +76,7 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
         hotScore: p.hotScore,
         publishedAt: p.publishedAt,
         premium: p.channel.isPremium,
+        promotedAt: p.promotedAt,
       }) + rankJitter(p.id),
     }))
     .sort((a, b) => b.w - a.w)

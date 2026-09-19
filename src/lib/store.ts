@@ -33,10 +33,14 @@ interface AppState {
   loginOpen: boolean // шит «Вход по Telegram» (глобальный)
   setLoginOpen: (v: boolean) => void
   commentsPost: PostDTO | null // открытый экран комментариев (глобально — из ленты и оверлея)
+  /** Комментарий, к которому надо проскроллиться после загрузки (deep-link из уведомлений) */
+  commentsFocusId: string | null
   openComments: (post: PostDTO) => void
-  /** Открыть комментарии по id поста (из уведомлений: пост не загружен — создаём заглушку) */
-  openCommentsById: (postId: string, commentsCount?: number) => void
+  /** Открыть комментарии по id поста (из уведомлений: пост не загружен — создаём заглушку);
+   *  focusCommentId — раскрыть ветку и подсветить конкретный комментарий */
+  openCommentsById: (postId: string, commentsCount?: number, focusCommentId?: string | null) => void
   closeComments: () => void
+  clearCommentsFocus: () => void
   patchCommentsPost: (postId: string, commentsCount: number) => void
   shareSheetPost: PostDTO | null // пост для шита «Поделиться» (не сбрасывается при закрытии — нужна анимация выхода)
   shareSheetOpen: boolean
@@ -93,14 +97,16 @@ export const useApp = create<AppState>((set, get) => ({
   loginOpen: false,
   setLoginOpen: (loginOpen) => set({ loginOpen }),
   commentsPost: null,
+  commentsFocusId: null,
   openComments: (post) => set({ commentsPost: post }),
   // Экран комментариев использует только id/commentsCount поста — для перехода
   // из уведомлений достаточно заглушки (шит сам подтягивает список комментов)
-  openCommentsById: (postId, commentsCount = 0) =>
+  openCommentsById: (postId, commentsCount = 0, focusCommentId) =>
     set((s) =>
       s.commentsPost?.id === postId
-        ? s
+        ? { commentsFocusId: focusCommentId ?? s.commentsFocusId }
         : {
+            commentsFocusId: focusCommentId ?? null,
             commentsPost: {
               id: postId,
               text: '',
@@ -136,7 +142,10 @@ export const useApp = create<AppState>((set, get) => ({
             } as PostDTO,
           },
     ),
-  closeComments: () => set({ commentsPost: null }),
+  closeComments: () => set({ commentsPost: null, commentsFocusId: null }),
+  // Фокус отработан (проскроллили/подсветили) — снимаем, чтобы повторное открытие
+  // того же поста не скроллило снова
+  clearCommentsFocus: () => set({ commentsFocusId: null }),
   // Счётчик после отправки/удаления: шит живёт снимком, поэтому патчим и снимок
   patchCommentsPost: (postId, commentsCount) =>
     set((s) =>
