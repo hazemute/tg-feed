@@ -16,6 +16,8 @@ const ACTION_META: Record<string, { label: string; cls: string }> = {
   tier_grant: { label: 'Выдана подписка', cls: 'bg-emerald-100 text-emerald-700' },
   tier_extend: { label: 'Продлена подписка', cls: 'bg-emerald-50 text-emerald-700' },
   tier_revoke: { label: 'Отозвана подписка', cls: 'bg-red-100 text-red-700' },
+  badge_grant: { label: 'Выдан бейдж', cls: 'bg-violet-100 text-violet-700' },
+  badge_revoke: { label: 'Снят бейдж', cls: 'bg-violet-50 text-violet-600' },
   premium_on: { label: 'TG Premium вкл', cls: 'bg-sky-100 text-sky-700' },
   premium_off: { label: 'TG Premium выкл', cls: 'bg-slate-100 text-slate-600' },
   swipes: { label: 'Баланс свайпов', cls: 'bg-violet-100 text-violet-700' },
@@ -31,6 +33,7 @@ const ACTION_META: Record<string, { label: string; cls: string }> = {
 const GROUPS: Array<{ key: AuditGroup; label: string }> = [
   { key: 'all', label: 'Всё' },
   { key: 'tier', label: 'Подписки' },
+  { key: 'badges', label: 'Бейджи' },
   { key: 'users', label: 'Пользователи' },
   { key: 'moderation', label: 'Модерация' },
 ]

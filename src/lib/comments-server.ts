@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import type { Comment, User } from '@prisma/client'
 import type { CommentDTO } from '@/lib/types'
+import { parseBadges } from '@/lib/badges'
 
 /**
  * Серверные помощники комментариев (общие для /api/comments, /api/comments/[id],
@@ -17,7 +18,7 @@ export function avatarUrlOf(userId: string, photoUrl: string | null): string | n
   return photoUrl
 }
 
-type AuthorUser = Pick<User, 'id' | 'username' | 'firstName' | 'lastName' | 'photoUrl'>
+type AuthorUser = Pick<User, 'id' | 'username' | 'firstName' | 'lastName' | 'photoUrl' | 'badges'>
 
 /** Публичное представление автора комментария (без приватных полей) */
 export function authorOf(u: AuthorUser) {
@@ -29,6 +30,7 @@ export function authorOf(u: AuthorUser) {
     name,
     username: u.username,
     avatarUrl: avatarUrlOf(u.id, u.photoUrl),
+    badges: parseBadges(u.badges),
   }
 }
 

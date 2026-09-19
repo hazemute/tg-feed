@@ -5,15 +5,22 @@ import { motion } from 'framer-motion'
 import {
   AlertTriangle,
   Ban,
+  BadgeCheck,
   CalendarClock,
+  ClipboardCheck,
+  Code2,
+  Crown,
   Gem,
   Gift,
+  HeartHandshake,
   Infinity as InfinityIcon,
   RefreshCw,
   Search,
   SearchX,
   Settings2,
+  ShieldCheck,
   ShieldOff,
+  Sparkles,
   Trash2,
   Wallet,
 } from 'lucide-react'
@@ -32,6 +39,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { cn } from '@/lib/utils'
+import { BADGES, BADGE_LIST, type BadgeSlug } from '@/lib/badges'
 
 import {
   fmtAgo,
@@ -96,6 +104,34 @@ export function TierBadge({ tier, until }: { tier: PanelUser['tier']; until?: st
         </span>
       )}
       {daysLeft === null && <InfinityIcon className="size-3 opacity-70" aria-hidden />}
+    </span>
+  )
+}
+
+/** Мини-чип бейджа для таблиц/списков админки (цвета — lib/badges.ts) */
+const BADGE_ICONS = {
+  Code2: Code2,
+  ClipboardCheck: ClipboardCheck,
+  ShieldCheck: ShieldCheck,
+  HeartHandshake: HeartHandshake,
+  Crown: Crown,
+  Sparkles: Sparkles,
+} as const
+
+export function AdminBadgeChip({ slug }: { slug: string }) {
+  const def = BADGES[slug as BadgeSlug]
+  if (!def) return null
+  const Icon = BADGE_ICONS[def.icon]
+  return (
+    <span
+      title={def.hint}
+      className={cn(
+        'inline-flex items-center gap-0.5 rounded-full px-2 py-0.5 text-[11px] font-semibold',
+        def.solid,
+      )}
+    >
+      <Icon className="size-3" aria-hidden />
+      {def.label}
     </span>
   )
 }
@@ -332,6 +368,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                         <TableHead className="text-xs text-slate-500">Имя</TableHead>
                         <TableHead className="text-xs text-slate-500">Username</TableHead>
                         <TableHead className="text-xs text-slate-500">Тип</TableHead>
+                        <TableHead className="text-xs text-slate-500">Бейджи</TableHead>
                         <TableHead className="text-xs text-slate-500">Подписка</TableHead>
                         <TableHead className="text-right text-xs text-slate-500">Лайки</TableHead>
                         <TableHead className="text-right text-xs text-slate-500">Закладки</TableHead>
@@ -359,6 +396,20 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                           </TableCell>
                           <TableCell>
                             <UserKindBadge isGuest={u.isGuest} />
+                          </TableCell>
+                          <TableCell>
+                            {u.badges && u.badges.length > 0 ? (
+                              <div className="flex flex-wrap gap-1">
+                                {u.badges.slice(0, 3).map((slug) => (
+                                  <AdminBadgeChip key={slug} slug={slug} />
+                                ))}
+                                {u.badges.length > 3 && (
+                                  <span className="text-[11px] font-semibold text-slate-400">+{u.badges.length - 3}</span>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-400">—</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <TierBadge tier={u.tier} until={u.tierUntil} />
@@ -422,6 +473,13 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                           <UserKindBadge isGuest={u.isGuest} />
                           <TierBadge tier={u.tier} until={u.tierUntil} />
                         </div>
+                        {u.badges && u.badges.length > 0 && (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {u.badges.map((slug) => (
+                              <AdminBadgeChip key={slug} slug={slug} />
+                            ))}
+                          </div>
+                        )}
                         <span className="block truncate font-mono text-[11px] text-slate-500">{u.id}</span>
                       </div>
                       <Switch
@@ -651,6 +709,56 @@ export function UsersTab({ tick, onSettled }: TabProps) {
               </div>
               <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
                 Продление того же тарифа суммируется с текущим сроком. Отзыв сбрасывает тир в free.
+              </p>
+            </div>
+
+            {/* ===== v5.19: Бейджи (разработчик/менеджер/…) — клик выдаёт/снимает ===== */}
+            <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3">
+              <p className="flex items-center gap-1.5 text-xs font-semibold text-violet-800">
+                <BadgeCheck className="size-4" aria-hidden /> Бейджи
+                {actionUser.badges && actionUser.badges.length > 0 && (
+                  <span className="ml-auto font-normal text-violet-700">{actionUser.badges.length} шт.</span>
+                )}
+              </p>
+              <div className="mt-2.5 flex flex-wrap gap-1.5">
+                {BADGE_LIST.map((b) => {
+                  const has = actionUser.badges?.includes(b.slug) ?? false
+                  const Icon = BADGE_ICONS[b.icon]
+                  return (
+                    <button
+                      key={b.slug}
+                      type="button"
+                      disabled={actionBusy}
+                      aria-pressed={has}
+                      title={has ? 'Снять бейдж' : 'Выдать бейдж'}
+                      onClick={() =>
+                        actionUser &&
+                        void runUserAction(
+                          actionUser,
+                          { action: 'badge', userId: actionUser.id, badge: b.slug, mode: has ? 'revoke' : 'grant' },
+                          has ? `Бейдж «${b.label}» снят` : `Бейдж «${b.label}» выдан`,
+                          {
+                            badges: has
+                              ? (actionUser.badges ?? []).filter((x) => x !== b.slug)
+                              : [...(actionUser.badges ?? []), b.slug],
+                          },
+                        )
+                      }
+                      className={cn(
+                        'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition',
+                        has
+                          ? `${b.solid} border-transparent`
+                          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700',
+                      )}
+                    >
+                      <Icon className="size-3.5" aria-hidden />
+                      {b.label}
+                    </button>
+                  )
+                })}
+              </div>
+              <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
+                Клик по цветному — снять, по серому — выдать. Юзер получает уведомление, бейдж виден у имени в комментариях и профиле.
               </p>
             </div>
 

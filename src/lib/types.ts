@@ -107,6 +107,8 @@ export type CommentAuthorDTO = {
   name: string // «Имя Фамилия» или @username, или нейтральный фолбэк
   username: string | null
   avatarUrl: string | null
+  /** v5.19: бейджи автора (developer/manager/…) — рендерятся у имени */
+  badges?: string[]
 }
 
 export type CommentDTO = {
@@ -230,6 +232,8 @@ export type UserDTO = {
   tier?: 'free' | 'plus' | 'pro'
   /** Срок действия оплаченного тира (ISO) */
   tierUntil?: string | null
+  /** v5.19: бейджи (developer/manager/moderator/sponsor/vip/early) */
+  badges?: string[]
 }
 
 /** Ответ GET /api/tiers — состояние тарифа и лимита ИИ-поиска */

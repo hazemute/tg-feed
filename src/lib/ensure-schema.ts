@@ -40,6 +40,13 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "AdminLog_createdAt_idx" ON "AdminLog" ("createdAt" DESC)`,
     `CREATE INDEX IF NOT EXISTS "AdminLog_action_createdAt_idx" ON "AdminLog" ("action", "createdAt" DESC)`,
   ],
+  'v5.19': [
+    // v5.19: бейджи пользователей (developer/manager/moderator/sponsor/vip/early)
+    // + индексы User: фильтры админки по тиру и сортировка по регистрации
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "badges" text NOT NULL DEFAULT '[]'`,
+    `CREATE INDEX IF NOT EXISTS "User_tier_idx" ON "User" ("tier")`,
+    `CREATE INDEX IF NOT EXISTS "User_createdAt_idx" ON "User" ("createdAt" DESC)`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -60,6 +67,7 @@ const CRITICAL: Array<[string, string | null]> = [
   ['PendingPayment', 'purpose'],
   ['AiSearchLog', null],
   ['AdminLog', null],
+  ['User', 'badges'],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -74,7 +82,7 @@ export async function checkSchema(): Promise<SchemaState> {
       FROM information_schema.columns c
       WHERE c.table_schema = 'public' AND (
         c.table_name = 'AiSearchLog' OR c.table_name = 'AdminLog' OR
-        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil')) OR
+        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges')) OR
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose')

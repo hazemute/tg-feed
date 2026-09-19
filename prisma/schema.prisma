@@ -31,7 +31,12 @@ model User {
   // === Тарифы Tg Swipe: free | plus (Snap Plus) | pro (Snap Pro) ===
   tier          String   @default("free")
   tierUntil     DateTime? // срок действия оплаченного тира (null у free); истёкший → ведёт себя как free
+  // === Бейджи (v5.19): JSON-массив слагов — developer/manager/moderator/sponsor/vip/early (lib/badges.ts) ===
+  badges        String   @default("[]")
   createdAt     DateTime @default(now())
+
+  @@index([tier])
+  @@index([createdAt])
 
   likes         Like[]
   views         PostView[]
@@ -385,7 +390,7 @@ model AiSearchLog {
 // /api/panel/* — по нему работает вкладка «Журнал».
 model AdminLog {
   id        String   @id @default(cuid())
-  action    String // tier_grant | tier_revoke | tier_extend | ban | unban | swipes | premium_on | premium_off | bypass_on | bypass_off | ops
+  action    String // tier_grant | tier_revoke | tier_extend | badge_grant | badge_revoke | ban | unban | swipes | premium_on | premium_off | bypass_on | bypass_off | ops
   target    String // userId / @username / пост
   meta      String? // JSON-снимок параметров (tier, days, reason…)
   createdAt DateTime @default(now())

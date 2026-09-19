@@ -8,6 +8,7 @@ import { err, parseJsonArray, readJson } from '@/lib/server'
 import { guardAuth, guardIp } from '@/lib/guard'
 import { migrateGuestUserData } from '@/lib/auth-user'
 import { effectiveTier } from '@/lib/tiers'
+import { parseBadges } from '@/lib/badges'
 import type { UserDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -73,6 +74,7 @@ export async function GET(request: Request) {
       categories: parseJsonArray(user.categories),
       tier: effectiveTier(user),
       tierUntil: user.tierUntil?.toISOString() ?? null,
+      badges: parseBadges(user.badges),
     }
     return NextResponse.json({
       user: dto,
@@ -212,6 +214,7 @@ export async function POST(request: Request) {
       categories: parseJsonArray(user.categories),
       tier: effectiveTier(user),
       tierUntil: user.tierUntil?.toISOString() ?? null,
+      badges: parseBadges(user.badges),
     }
 
     return NextResponse.json({ user: dto, token, bot: botUsername ? { username: botUsername } : null, maintenance })

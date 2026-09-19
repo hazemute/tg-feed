@@ -36,6 +36,7 @@ const AUTHOR_SELECT = {
   firstName: true,
   lastName: true,
   photoUrl: true,
+  badges: true, // v5.19: бейджи автора (developer/manager/…) — рендер у имени
 } as const
 
 /** GET: список ответов ветки (parentId задан) */

@@ -32,6 +32,7 @@ export async function GET(request: Request) {
         languageCode: true,
         tier: true,
         tierUntil: true,
+        badges: true,
         createdAt: true,
       },
     })

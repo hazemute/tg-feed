@@ -15,6 +15,7 @@ import type { CommentDTO, PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { emitPostUpdated } from '@/components/feed/PostOverlay'
+import { UserBadges } from '@/components/badges/UserBadges'
 
 /**
  * Комментарии под постом (глобальный шит) — TikTok-стиль (v5.14):
@@ -611,6 +612,10 @@ function CommentRow({
           <span className={cn('truncate text-tg-text', isReply ? 'text-[12.5px]' : 'text-[13.5px]', 'font-semibold')}>
             {c.author.name}
           </span>
+          {/* v5.19: бейджи автора (разработчик/менеджер/спонсор…) — компактные иконки */}
+          {c.author.badges && c.author.badges.length > 0 && (
+            <UserBadges badges={c.author.badges} max={isReply ? 1 : 2} compact />
+          )}
           <time dateTime={c.createdAt} className="shrink-0 text-[11.5px] text-tg-hint">
             {timeAgo(c.createdAt)}
           </time>

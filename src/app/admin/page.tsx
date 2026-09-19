@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
   Gem,
+  BadgeCheck,
   Headset,
   History,
   LayoutDashboard,
@@ -40,6 +41,7 @@ import {
 import { btnOutlineDark } from './components/bits'
 import { AdsTab } from './components/ads-tab'
 import { AuditTab } from './components/audit-tab'
+import { BadgesTab } from './components/badges-tab'
 import { ChannelsTab } from './components/channels-tab'
 import { FinanceTab } from './components/finance-tab'
 import { LoginScreen } from './components/login-screen'
@@ -56,6 +58,7 @@ type TabKey =
   | 'overview'
   | 'finance'
   | 'subscriptions'
+  | 'badges'
   | 'channels'
   | 'moderation'
   | 'users'
@@ -285,6 +288,7 @@ export default function AdminPage() {
     { key: 'overview', label: 'Обзор', icon: LayoutDashboard },
     { key: 'finance', label: 'Финансы', icon: Wallet },
     { key: 'subscriptions', label: 'Подписки', icon: Gem },
+    { key: 'badges', label: 'Бейджи', icon: BadgeCheck },
     { key: 'channels', label: 'Каналы', icon: Tv },
     {
       key: 'moderation',
@@ -328,6 +332,8 @@ export default function AdminPage() {
         return <FinanceTab tick={tick} onSettled={handleSettled} />
       case 'subscriptions':
         return <SubscriptionsTab tick={tick} onSettled={handleSettled} />
+      case 'badges':
+        return <BadgesTab tick={tick} onSettled={handleSettled} />
       case 'channels':
         return <ChannelsTab tick={tick} onSettled={handleSettled} />
       case 'moderation':

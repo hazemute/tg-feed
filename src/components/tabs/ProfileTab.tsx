@@ -43,6 +43,7 @@ import { Onboarding } from '@/components/tg/Onboarding'
 import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { THEMES, themeName } from '@/lib/themes'
 import { SupportChat } from '@/components/support/SupportChat'
+import { UserBadges } from '@/components/badges/UserBadges'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
 
 
@@ -207,6 +208,12 @@ export function ProfileTab() {
               </span>
             )}
           </div>
+          {/* v5.19: бейджи статуса (разработчик/менеджер/спонсор…) — отдаёт /api/auth */}
+          {user.badges && user.badges.length > 0 && (
+            <div className="mt-1.5">
+              <UserBadges badges={user.badges} max={5} />
+            </div>
+          )}
           <div className="mt-0.5 truncate text-[15.5px] text-tg-hint">
             {user.username ? `@${user.username}` : user.isGuest ? t('profile.subGuestHint') : t('profile.noUsername')}
           </div>

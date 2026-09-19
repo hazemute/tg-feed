@@ -7,6 +7,7 @@ import { setMaintenanceAllowed, setBanned } from '@/lib/maintenance'
 import { KOPECKS_PER_SWIPE } from '@/lib/money'
 import { logAdmin } from '@/lib/admin-log'
 import { type Tier } from '@/lib/tiers'
+import { BADGES, parseBadges, serializeBadges } from '@/lib/badges'
 
 export const dynamic = 'force-dynamic'
 
@@ -88,6 +89,7 @@ export async function GET(request: Request) {
           banReason: true,
           tier: true,
           tierUntil: true,
+          badges: true,
           createdAt: true,
           advertiser: { select: { balanceKop: true } },
           _count: { select: { likes: true, subscriptions: true, bookmarks: true, views: true } },
@@ -117,6 +119,7 @@ export async function GET(request: Request) {
           banReason: u.banReason,
           tier: active ? tier : 'free',
           tierUntil: active && u.tierUntil ? u.tierUntil.toISOString() : null,
+          badges: parseBadges(u.badges),
           swipes: u.advertiser ? Math.floor(u.advertiser.balanceKop / KOPECKS_PER_SWIPE) : 0,
           createdAt: u.createdAt.toISOString(),
           likes: u._count.likes,
@@ -158,6 +161,7 @@ export async function PATCH(request: Request) {
       tier?: unknown
       days?: unknown
       mode?: unknown
+      badge?: unknown
     }>(request)
     const userId = typeof body.userId === 'string' ? body.userId.trim().slice(0, 80) : ''
     if (!userId) return err('userId required')
@@ -199,6 +203,60 @@ export async function PATCH(request: Request) {
       await db.user.update({ where: { id: userId }, data: { isPremium: next } })
       await logAdmin(next ? 'premium_on' : 'premium_off', userId)
       return NextResponse.json({ ok: true, userId, isPremium: next })
+    }
+
+    // === v5.19: бейджи — выдача/снятие одного слага (модалка юзера) ===
+    if (action === 'badge') {
+      const mode = body.mode === 'revoke' ? 'revoke' : 'grant'
+      const badge = typeof body.badge === 'string' ? body.badge : ''
+      if (!(badge in BADGES)) return err('unknown badge')
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : undefined
+
+      const u = await db.user.findUnique({
+        where: { id: userId },
+        select: { badges: true },
+      })
+      if (!u) return err('user not found', 404)
+
+      const current = parseBadges(u.badges)
+      const has = current.includes(badge as keyof typeof BADGES)
+      let next: string
+      if (mode === 'grant') {
+        if (has) return NextResponse.json({ ok: true, userId, badges: current, unchanged: true })
+        next = serializeBadges([...current, badge as keyof typeof BADGES])
+      } else {
+        if (!has) return NextResponse.json({ ok: true, userId, badges: current, unchanged: true })
+        next = serializeBadges(current.filter((b) => b !== badge))
+      }
+
+      await db.user.update({ where: { id: userId }, data: { badges: next } })
+      await logAdmin(mode === 'grant' ? 'badge_grant' : 'badge_revoke', userId, {
+        badge,
+        ...(reason ? { reason } : {}),
+      })
+
+      // Уведомление в инбокс (не критично для операции)
+      try {
+        const def = BADGES[badge as keyof typeof BADGES]
+        await db.notification.create({
+          data: {
+            userId,
+            type: 'system',
+            title:
+              mode === 'grant'
+                ? `Вам выдан бейдж «${def.label}»`
+                : `Бейдж «${def.label}» снят`,
+            body:
+              mode === 'grant'
+                ? (reason?.slice(0, 180) ?? 'Отмечен администрацией Tg Swipe — бейдж виден рядом с вашим именем.')
+                : 'Если это ошибка — напишите в поддержку.',
+          },
+        })
+      } catch (ne) {
+        console.error('[panel/users badge] notify failed', (ne as Error).message)
+      }
+
+      return NextResponse.json({ ok: true, userId, badges: parseBadges(next) })
     }
 
     // === v5.18: управление подпиской (Snap Plus / Snap Pro) ===

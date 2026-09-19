@@ -25,6 +25,7 @@ export async function GET(request: Request) {
 
     const where: Prisma.AdminLogWhereInput = {}
     if (group === 'tier') where.action = { in: ['tier_grant', 'tier_extend', 'tier_revoke'] }
+    else if (group === 'badges') where.action = { in: ['badge_grant', 'badge_revoke'] }
     else if (group === 'moderation') where.action = { in: ['moderation', 'campaign', 'comment'] }
     else if (group === 'users') {
       where.action = {

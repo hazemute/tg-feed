@@ -30,6 +30,8 @@ export const ADMIN_ACTION_LABELS: Record<string, string> = {
   tier_grant: 'Выдана подписка',
   tier_extend: 'Продлена подписка',
   tier_revoke: 'Отозвана подписка',
+  badge_grant: 'Выдан бейдж',
+  badge_revoke: 'Снят бейдж',
   premium_on: 'Включён Premium',
   premium_off: 'Выключен Premium',
   swipes: 'Изменён баланс свайпов',

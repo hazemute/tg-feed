@@ -30,7 +30,11 @@ model User {
   banReason     String?   // причина бана (видна админу)
   tier          String   @default("free") // free | plus | pro (Snap Plus / Snap Pro)
   tierUntil     DateTime? // срок действия оплаченного тира
+  badges        String   @default("[]") // v5.19: JSON-массив слагов бейджей (lib/badges.ts)
   createdAt     DateTime @default(now())
+
+  @@index([tier])
+  @@index([createdAt])
 
   likes         Like[]
   uploads       Upload[]

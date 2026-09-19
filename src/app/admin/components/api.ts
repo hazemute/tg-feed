@@ -158,6 +158,8 @@ export interface PanelUser {
   /** v5.18: подписка Snap (tier — действующий, истёкший приходит как 'free') */
   tier?: 'free' | 'plus' | 'pro'
   tierUntil?: string | null
+  /** v5.19: бейджи (developer/manager/moderator/sponsor/vip/early) */
+  badges?: string[]
   createdAt: string
   likes: number
   subscriptions: number
@@ -543,7 +545,7 @@ export async function setSupportThreadStatus(id: string, status: 'ai' | 'human' 
   })
 }
 
-/** v5.11: действия модерации пользователя (бан/баланс/премиум) + v5.18 подписки */
+/** v5.11: действия модерации пользователя (бан/баланс/премиум) + v5.18 подписки + v5.19 бейджи */
 export async function userAction(
   payload:
     | { action: 'ban'; userId: string; reason?: string }
@@ -551,7 +553,8 @@ export async function userAction(
     | { action: 'swipes'; userId: string; swipes: number }
     | { action: 'premium'; userId: string }
     | { action: 'tier'; userId: string; tier: 'plus' | 'pro'; days: number; mode: 'grant' }
-    | { action: 'tier'; userId: string; mode: 'revoke' },
+    | { action: 'tier'; userId: string; mode: 'revoke' }
+    | { action: 'badge'; userId: string; badge: string; mode: 'grant' | 'revoke'; reason?: string },
 ): Promise<void> {
   await panelFetch<{ ok: boolean }>('/api/panel/users', {
     method: 'PATCH',
@@ -621,6 +624,59 @@ export function grantSubscription(payload: {
   return panelFetch('/api/panel/subscriptions', { method: 'POST', json: payload })
 }
 
+/* ===================== Бейджи (v5.19) ===================== */
+
+export interface BadgeHolder {
+  id: string
+  username: string | null
+  firstName: string | null
+  lastName: string | null
+  isGuest: boolean
+  isPremium: boolean
+  badges: string[]
+  tier: string
+  tierUntil: string | null
+  createdAt: string
+}
+
+export interface BadgeRecentOp {
+  action: string
+  target: string
+  badge: string | null
+  reason: string | null
+  createdAt: string
+}
+
+export interface BadgesResponse {
+  counts: Record<string, number>
+  items: BadgeHolder[]
+  recent: BadgeRecentOp[]
+  total: number
+  page: number
+  pageSize: number
+}
+
+export function fetchBadges(params: { badge?: string; q?: string; page?: number }): Promise<BadgesResponse> {
+  const sp = new URLSearchParams()
+  if (params.badge) sp.set('badge', params.badge)
+  if (params.q?.trim()) sp.set('q', params.q.trim())
+  if (params.page && params.page > 1) sp.set('page', String(params.page))
+  const qs = sp.toString()
+  return panelFetch<BadgesResponse>(`/api/panel/badges${qs ? `?${qs}` : ''}`)
+}
+
+/** Выдать/снять бейдж по ID или @username (вкладка «Бейджи») */
+export function badgeAction(payload: {
+  userId?: string
+  handle?: string
+  badge: string
+  mode: 'grant' | 'revoke'
+  reason?: string
+  notify?: boolean
+}): Promise<{ ok: boolean; userId: string; badges: string[] }> {
+  return panelFetch('/api/panel/badges', { method: 'POST', json: payload })
+}
+
 /* ===================== Журнал действий (v5.18) ===================== */
 
 export interface AuditItem {
@@ -639,7 +695,7 @@ export interface AuditResponse {
   byAction: Record<string, number>
 }
 
-export type AuditGroup = 'all' | 'tier' | 'moderation' | 'users'
+export type AuditGroup = 'all' | 'tier' | 'badges' | 'moderation' | 'users'
 
 export function fetchAudit(group: AuditGroup, page = 1): Promise<AuditResponse> {
   return panelFetch<AuditResponse>(`/api/panel/audit?group=${group}&page=${page}`)
