@@ -74,7 +74,7 @@ const DICT = {
     'The author shows the full text to channel subscribers only',
   ],
   'post.summary': ['Краткое содержание', 'Summary'],
-  'post.more': ['еще', 'more'],
+  'post.more': ['ещё', 'more'],
   'post.story': ['В историю', 'Story'],
   'post.storyAria': [
     'Поделиться постом в Telegram Stories',
@@ -105,7 +105,7 @@ const DICT = {
   'tts.pause': ['Пауза', 'Pause'],
   'tts.aria': ['Слушать пост', 'Listen to post'],
   'tts.error': ['Озвучка недоступна, попробуйте позже', 'Voice-over unavailable, try again later'],
-  'tts.tooShort': ['В посте слишком мало текста для озвучки', 'Too little text in the post to voice'],
+  'tts.tooShort': ['В посте слишком мало текста для озвучки', 'Not enough text in the post for a voice-over'],
   'tts.unavailable': ['Озвучка недоступна', 'Voice-over unavailable'],
   'post.featuredAria': ['Продвинутый канал', 'Featured channel'],
 
@@ -178,7 +178,7 @@ const DICT = {
   'feed.notInterested': ['Не интересно — скрыть канал', 'Not interested — hide channel'],
   'feed.minRead': ['мин', 'min read'],
   'feed.reasonHint': [
-    'Пост показан, потому что он вам может понравиться',
+    'Пост показан, потому что он может вам понравиться',
     'Recommended because it may interest you',
   ],
 
@@ -197,7 +197,7 @@ const DICT = {
     'Задайте вопрос о работе ленты, подписках или каналах. Сложные обращения мы передаём живому сотруднику.',
     'Ask anything about the feed, subscriptions or channels. Complex requests are escalated to a human teammate.',
   ],
-  'support.typing': ['Поддержка печатает', 'Support is typing'],
+  'support.typing': ['Поддержка печатает…', 'Support is typing…'],
   'support.loading': ['Загрузка', 'Loading'],
   'support.staff': ['Сотрудник поддержки', 'Support team'],
   'support.clear': ['Очистить историю', 'Clear history'],
@@ -289,7 +289,7 @@ const DICT = {
   'summary.close': ['Закрыть', 'Close'],
   'summary.generating': ['Генерируем…', 'Generating…'],
   'summary.tooShort': [
-    'Пост короткий — саммари не требуется, просто прочитайте его целиком',
+    'Пост короткий — саммари не нужно, просто прочитайте его целиком',
     'This post is short — no summary needed, just read it in full',
   ],
   'summary.error': ['Не удалось сгенерировать саммари', 'Failed to generate the summary'],
@@ -322,7 +322,7 @@ const DICT = {
   'topup.tabStars': ['Stars', 'Stars'],
   'topup.tabTon': ['TON', 'TON'],
   'topup.cardSub': ['Оплата в один экран · ЮKassa', 'One-screen checkout · YooKassa'],
-  'topup.starsSub': ['Оплата в самом Telegram', 'Paid right in Telegram'],
+  'topup.starsSub': ['Оплата в самом Telegram', 'Pay right in Telegram'],
   'topup.tonSub': ['Tonkeeper и любые TON-кошельки', 'Tonkeeper and any TON wallet'],
   'topup.soon': ['Скоро', 'Soon'],
   'topup.unavailable': ['Появится в ближайшее время', 'Coming soon'],
@@ -359,7 +359,7 @@ const DICT = {
   'topup.newInvoice': ['Новый счёт', 'New invoice'],
   'topup.otherMethod': ['Выбрать другой способ', 'Choose another method'],
   'topup.addrLabel': ['Адрес кошелька', 'Wallet address'],
-  'topup.memoLabel': ['Код платежа (обязательно в комментарии)', 'Payment code (required in the comment)'],
+  'topup.memoLabel': ['Код платежа (укажите в комментарии)', 'Payment code (required in the comment)'],
   'topup.tonExpired': [
     'Счёт устарел — курс TON изменился. Нажмите «Новый счёт», чтобы получить актуальный.',
     'Invoice expired — the TON rate changed. Tap "New invoice" to get a fresh one.',

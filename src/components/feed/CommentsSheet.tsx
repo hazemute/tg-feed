@@ -384,7 +384,14 @@ export function CommentsSheet() {
         }),
       })
       setItems((prev) => {
-        if (!replying) return [...prev.slice(0, -1), r.comment]
+        if (!replying) {
+          // Срез «последний элемент = tmp» валиден, только пока оптимистичный
+          // комментарий на месте: смена сортировки/поста перезагружает список
+          // (tmp исчезает) — тогда не трогаем чужой последний элемент, а тихо
+          // дописываем сохранённый (без дубля, если он уже приехал с сервера)
+          if (prev.some((c) => c.id === tmp.id)) return [...prev.slice(0, -1), r.comment]
+          return prev.some((c) => c.id === r.comment.id) ? prev : [...prev, r.comment]
+        }
         return mapTree(prev, replying.rootId, (p) => ({
           ...p,
           repliesCount: p.repliesCount + 1,

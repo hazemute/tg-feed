@@ -31,7 +31,7 @@ import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { formatCount, timeAgoRu } from '@/lib/format'
+import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
 import { stripMarkdown } from '@/lib/markdown'
 import { formatSwipes, pluralSwipes } from '@/lib/money'
 import { haptic, openTelegram } from '@/lib/tg'
@@ -52,7 +52,7 @@ import type { MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
 
 const DISPLAY_MODES = [
   { id: 'none', label: 'Полностью', icon: FileText, hint: 'посты видны целиком' },
-  { id: 'cut', label: 'Обрезка', icon: Scissors, hint: 'начало текста + «Читать в канале»' },
+  { id: 'cut', label: 'Обрезка', icon: Scissors, hint: 'начало текста + кнопка «Читать полностью в Telegram»' },
   { id: 'blur', label: 'Блюр', icon: EyeOff, hint: 'весь текст размыт до подписки' },
 ] as const
 
@@ -496,7 +496,7 @@ function DisplaySection({ channel, onSaved }: { channel: MyChannelDTO; onSaved: 
       <SectionTitle icon={Eye}>Показ в ленте</SectionTitle>
       <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
         <p className="text-[12.5px] leading-relaxed text-tg-hint">
-          Управляйте тем, сколько поста видят не-подписчики: полный текст, обрезка с призывом
+          Управляйте тем, сколько поста видят неподписчики: полный текст, обрезка с призывом
           читать в канале или размытие.
         </p>
         <div className="mt-3 grid grid-cols-3 gap-2">
@@ -895,7 +895,7 @@ function PromotionSection({
                       {stripMarkdown(p.text).replace(/\s+/g, ' ').trim() || 'Медиа-пост'}
                     </p>
                     <div className="mt-0.5 text-[11.5px] text-tg-hint">
-                      {timeAgoRu(p.publishedAt)} · {formatCount(p.viewsCount)} просмотров
+                      {timeAgoRu(p.publishedAt)} · {formatCount(p.viewsCount)} {pluralRu(p.viewsCount, 'просмотр', 'просмотра', 'просмотров')}
                     </div>
                   </div>
                   <button
@@ -1119,7 +1119,7 @@ function CampaignForm({ channel, onDone }: { channel: MyChannelDTO; onDone: () =
         </div>
         <p className="text-[12px] leading-snug text-tg-hint">
           Хватит примерно на <span className="font-semibold text-tg-text2">{Math.floor(budget / cpc)}</span>{' '}
-          уникальных переходов · 1 свайп = 1 ₽ · списание только за реальных читателей
+          {pluralRu(Math.floor(budget / cpc), 'уникальный переход', 'уникальных перехода', 'уникальных переходов')} · 1 свайп = 1 ₽ · списание только за реальных читателей
         </p>
       </div>
       <button

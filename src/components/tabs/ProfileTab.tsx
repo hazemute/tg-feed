@@ -135,7 +135,7 @@ export function ProfileTab() {
     ? new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(new Date(user.createdAt))
     : null
 
-  const removeBookmark = async (p: PostDTO) => {
+  const removeBookmark = async (p: BookmarkItem) => {
     setBookmarks((prev) => (prev ?? []).filter((x) => x.id !== p.id))
     try {
       await api('/api/bookmark', {
@@ -143,6 +143,9 @@ export function ProfileTab() {
         body: JSON.stringify({ userId: user.id, postId: p.id }),
       })
     } catch {
+      // Откат: без него закладка исчезает из списка, хотя на сервере осталась —
+      // расхождение с бейджем «Сохранено» до перезагрузки
+      setBookmarks((prev) => (prev && !prev.some((x) => x.id === p.id) ? [...prev, p] : prev))
       toast.error('Не удалось убрать закладку')
     }
   }
@@ -589,7 +592,7 @@ export function ProfileTab() {
           <Row label="Версия" value={APP_VERSION} />
           <Row label="Источник контента" value="открытые TG-каналы" />
           <Row label="Ранжирование" value="взвешенный скоринг" />
-          <Row label="Подписка" value="в один тап [+]" />
+          <Row label="Подписка" value="в один тап" />
           <p className="pt-1 leading-relaxed text-tg-hint">
             Посты собираются из публичных каналов и раскладываются по темам. Лента ранжируется по
             свежести и вовлечённости, премиум-каналы получают приоритет.
@@ -640,7 +643,7 @@ export function ProfileTab() {
               <li>• Snap Plus — 390 ₽/мес или 2 990 ₽/год: безлимитный ИИ-поиск,
               инкогнито, приоритетная скорость, премиум-эмодзи;</li>
               <li>• Snap Pro — 1 490 ₽/мес или 9 990 ₽/год: всё из Plus,
-              ИИ-контентщик, продвижение до 7 постов в неделю, CTA-кнопка,</li>
+              ИИ-контентщик, продвижение до 7 постов в неделю, CTA-кнопка;</li>
               <li>• Реклама: внутренняя валюта «свайпы» (1 свайп = 1 ₽) — CPA-кампании
               за уникальных читателей.</li>
             </ul>

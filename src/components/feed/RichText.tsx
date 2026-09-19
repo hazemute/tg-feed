@@ -5,6 +5,7 @@ import { Check, ChevronDown, Copy } from 'lucide-react'
 import { haptic } from '@/lib/tg'
 import { useApp } from '@/lib/store'
 import { api } from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
 import { blocksOf, type Block, type Span } from '@/lib/markdown'
 import { tokenizeCodeLine } from '@/lib/code-highlight'
 import { TgEmoji } from '@/components/feed/TelegramEmoji'
@@ -316,23 +317,10 @@ function CodeBlockView({ block }: { block: Extract<Block, { type: 'code' }> }) {
   const collapsible = lines.length > CODE_COLLAPSE_LINES
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(block.v)
-    } catch {
-      // fallback для контекстов без clipboard API
-      const ta = document.createElement('textarea')
-      ta.value = block.v
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.appendChild(ta)
-      ta.select()
-      try {
-        document.execCommand('copy')
-      } catch {
-        // тишина: не критично
-      }
-      ta.remove()
-    }
+    // copyText: Clipboard API + фолбэк execCommand (iOS-safe readonly+select) —
+    // прежний локальный фолбэк без них в iframe Telegram/iOS молча не копировал,
+    // но галочку «Скопировано» рисовал (ложный успех)
+    if (!(await copyText(block.v))) return
     haptic('light')
     setCopied(true)
     window.setTimeout(() => setCopied(false), 1600)

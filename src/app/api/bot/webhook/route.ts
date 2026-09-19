@@ -217,7 +217,7 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
         '',
         'Она действует 15 минут — так безопаснее.',
         '',
-        '✨ Просто начните вход заново: откройте Tg Swipe и нажмите «Вход по Telegram» — новая ссылка придёт в тот же момент.',
+        '✨ Просто начни вход заново: открой Tg Swipe и нажми «Вход по Telegram» — новая ссылка придёт в тот же момент.',
       ].join('\n'),
     )
     return
@@ -228,14 +228,14 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
     [
       `🔐 <b>Подтверждение входа</b>`,
       '',
-      `Привет, ${escapeHtml(nameOf(from))}! Вы запрашивали вход в <b>Tg Swipe</b>.`,
+      `Привет, ${escapeHtml(nameOf(from))}! Ты запрашиваешь вход в <b>Tg Swipe</b>.`,
       '',
       '✅ Одно нажатие кнопки ниже — и в приложении откроются:',
-      '  • ваш профиль и подписки',
+      '  • твой профиль и подписки',
       '  • сохранённые посты',
       '  • баланс и продвижение канала',
       '',
-      '🛡 Пароли не нужны — всё подтверждается вашим Telegram.',
+      '🛡 Пароли не нужны — всё подтверждается твоим Telegram.',
     ].join('\n'),
     {
       keyboard: [
@@ -262,12 +262,12 @@ async function handleStart(from: TgFrom | undefined, chatId?: number) {
       '📖 <b>Читай</b> любые каналы без подписок',
       '🚀 <b>Продвигай</b> свой канал в топ ленты',
       '',
-      '✨ Подпишись на наш канал — новости, обновления и фишки первыми:',
+      '✨ Подпишись на наш канал — новости, обновления и фишки — первыми:',
     ].join('\n'),
     {
       keyboard: [
-        [{ label: 'Подписаться на Telegram', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
-        [{ label: 'Открыть Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+        [{ label: 'Подписаться на канал', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
+        [{ label: 'Открыть Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
       ] satisfies BotButton[][],
     },
   )
@@ -391,7 +391,7 @@ async function handleLoginCallback(
   if (!snap) {
     await botCall('answerCallbackQuery', {
       callback_query_id: cbId,
-      text: '⚠️ Telegram не передал данные аккаунта — нажмите кнопку ещё раз.',
+      text: '⚠️ Telegram не передал данные аккаунта — нажми кнопку ещё раз.',
       show_alert: true,
     })
     return
@@ -402,7 +402,7 @@ async function handleLoginCallback(
   if (!attempt || (attempt.status === 'pending' && attempt.expiresAt.getTime() < Date.now())) {
     await botCall('answerCallbackQuery', {
       callback_query_id: cbId,
-      text: '⌛️ Ссылка уже недействительна — создайте новую на сайте.',
+      text: '⌛️ Ссылка уже недействительна — создай новую на сайте.',
       show_alert: true,
     })
     return
@@ -418,7 +418,7 @@ async function handleLoginCallback(
 
   await botCall('answerCallbackQuery', {
     callback_query_id: cbId,
-    text: '🎉 Вы вошли в Tg Swipe!',
+    text: '🎉 Ты в Tg Swipe!',
     show_alert: false,
   })
 
@@ -427,11 +427,11 @@ async function handleLoginCallback(
   if (msgChatId && msgId) {
     const doneText = await premiumText(
       [
-        `✅ <b>Готово, ${escapeHtml(nameOf(from))} — вы вошли!</b>`,
+        `✅ <b>Готово, ${escapeHtml(nameOf(from))} — ты внутри!</b>`,
         '',
-        '🎉 Лента, подписки и сохранённые посты уже синхронизированы с вашим аккаунтом.',
+        '🎉 Лента, подписки и сохранённые посты уже синхронизированы с твоим аккаунтом.',
         '',
-        'Аккаунт закреплён за этим Telegram — повторный вход не потребуется. Приятного чтения!',
+        'Аккаунт закреплён за твоим Telegram — повторный вход не потребуется. Приятного чтения!',
       ].join('\n'),
     )
     const feedRows: BotButton[][] = [
@@ -488,7 +488,7 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
       await botSendRich(
         chatId,
         [
-          '⭐️ <b>Оплата получена</b>',
+          '⭐️ <b>Платёж получен</b>',
           '',
           `Тариф <b>${label}</b> активирован — все премиум-функции уже открыты.`,
           '',

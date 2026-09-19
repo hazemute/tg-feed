@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { copyText } from '@/lib/clipboard'
 import { useApp } from '@/lib/store'
 import { fullDateLocalized, useT } from '@/lib/i18n'
 import { haptic, openTelegram, useBackButton } from '@/lib/tg'
@@ -27,28 +28,6 @@ import { SummarySheet } from '@/components/feed/SummarySheet'
  * tgfeed:post-updated, чтобы лента синхронизировалась без рефетча.
  */
 
-/** Копирование текста поста в буфер (Clipboard API + фолбэк для старых WebView) */
-async function copyPostText(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text)
-    return true
-  } catch {
-    try {
-      const ta = document.createElement('textarea')
-      ta.value = text
-      ta.style.position = 'fixed'
-      ta.style.opacity = '0'
-      document.body.appendChild(ta)
-      ta.select()
-      const ok = document.execCommand('copy')
-      ta.remove()
-      return ok
-    } catch {
-      return false
-    }
-  }
-}
-
 /** Кнопка «Копировать текст»: чистый текст поста в буфер обмена */
 function CopyTextButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false)
@@ -59,7 +38,10 @@ function CopyTextButton({ text }: { text: string }) {
       data-noswipe
       onClick={async () => {
         haptic('light')
-        const ok = await copyPostText(stripMarkdown(text))
+        // copyText: Clipboard API + фолбэк execCommand (iOS-safe readonly+select) —
+        // локальная копия фолбэка убрана: без них execCommand в iframe Telegram/iOS
+        // молча не копировал, а тост показывал «Скопировано» даже при неудаче
+        const ok = await copyText(stripMarkdown(text))
         if (ok) {
           setCopied(true)
           toast.success(t('post.copiedToast'))

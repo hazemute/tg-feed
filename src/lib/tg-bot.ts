@@ -556,7 +556,7 @@ export async function botPublishToChannel(
   imageUrl?: string | null,
 ): Promise<{ ok: boolean; link?: string; error?: string }> {
   if (!botEnabled()) return { ok: false, error: 'Бот не настроен — публикация недоступна' }
-  if (botBanned()) return { ok: false, error: 'Bot API на паузе, попробуйте позже' }
+  if (botBanned()) return { ok: false, error: 'Telegram временно ограничил отправку — попробуйте чуть позже' }
   await hydrateBotBan()
 
   const chatId = `@${username.replace(/^@/, '')}`

@@ -77,11 +77,18 @@ export function SupportChat({
   const [confirmClear, setConfirmClear] = useState(false) // подтверждение «Очистить историю»
   const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
+  /* Зеркало sending + счётчик мутаций: эффект поллинга живёт всё открытие шита и
+   * читает sending из УСТАРЕВШЕГО замыкания (всегда false) — опрос не паузился
+   * во время отправки, и ответ GET, стартовавшего до отправки, мог перезаписать
+   * тред ПОСЛЕ ответа POST — только что отправленное сообщение исчезало на ~1.5с. */
+  const sendingRef = useRef(false)
+  const mutateSeqRef = useRef(0)
 
   const endpoint = isFeedback ? '/api/feedback' : '/api/support'
 
   /** «Очистить историю»: удаляет свои нити этого чата и возвращает приветствие */
   const clearChat = useCallback(async () => {
+    mutateSeqRef.current++ // летящие GET с прежним тредом — discard
     try {
       await api<{ ok: boolean }>(endpoint, { method: 'DELETE' })
       setState({ status: null, topic: null, messages: [] })
@@ -98,8 +105,12 @@ export function SupportChat({
   }, [])
 
   const load = useCallback(async () => {
+    // Отправка/очистка, начавшиеся ПОСЛЕ старта запроса — ответ устарел: не
+    // перезаписываем тред (иначе сообщение пропадает/воскресает до следующего тика)
+    const seq = mutateSeqRef.current
     try {
       const data = await api<ThreadState>(endpoint)
+      if (mutateSeqRef.current !== seq) return
       setState(data)
       if (isFeedback && data.topic) setTopic(data.topic as 'idea' | 'bug')
     } catch {
@@ -117,7 +128,8 @@ export function SupportChat({
     setConfirmClear(false)
     void load()
     const timer = setInterval(() => {
-      if (!sending) void load()
+      // sendingRef вместо устаревшего sending из замыкания: во время отправки не долбим GET
+      if (!sendingRef.current) void load()
     }, 1_500)
     return () => clearInterval(timer)
   }, [open])
@@ -164,6 +176,8 @@ export function SupportChat({
     }
     setState((s) => ({ ...s, messages: [...s.messages, optimistic] }))
     setPending([])
+    sendingRef.current = true
+    mutateSeqRef.current++ // летящие GET не должны стирать оптимистичный пузырь
     try {
       const res = await api<{ ok: boolean; status?: ThreadState['status']; messages: Msg[] }>(endpoint, {
         method: 'POST',
@@ -186,6 +200,7 @@ export function SupportChat({
       setPending(optimistic.images)
       haptic('error')
     } finally {
+      sendingRef.current = false
       setSending(false)
     }
   }, [draft, sending, pending, endpoint, isFeedback, topic])

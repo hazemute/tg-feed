@@ -87,6 +87,10 @@ function ChannelScreen({
    * Чужой канал — это профиль + посты, без кабинета. */
 
   const busyRef = useRef(false)
+  /* Порядковый номер запроса: смена вкладки перезапускает загрузку, НЕ дожидаясь
+   * предыдущей (эффект сбрасывает busyRef) — ответ старой вкладки не должен
+   * перезаписать список свежей (иначе посты «Посты» показывались на вкладке «Медиа»). */
+  const loadSeqRef = useRef(0)
   const sentinelRef = useRef<HTMLDivElement>(null)
   const userRef = useRef(userId)
   userRef.current = userId
@@ -98,6 +102,7 @@ function ChannelScreen({
     async (p: number, replace: boolean) => {
       if (busyRef.current) return
       busyRef.current = true
+      const seq = ++loadSeqRef.current
       setLoading(true)
       try {
         const qs = new URLSearchParams({ username, page: String(p), limit: String(PAGE_SIZE), tab })
@@ -105,6 +110,8 @@ function ChannelScreen({
         const data = await api<{ channel: ChannelDTO; items: PostDTO[]; hasMore: boolean }>(
           `/api/channel?${qs.toString()}`,
         )
+        // Ответ устарел (вкладка/канал сменились, пока летел запрос) — молча discard
+        if (seq !== loadSeqRef.current) return
         setChannel(data.channel)
         setItems((prev) => (replace ? data.items : [...prev, ...data.items]))
         setHasMore(data.hasMore)
@@ -119,13 +126,19 @@ function ChannelScreen({
             .catch(() => {})
         }
       } catch {
+        // Ошибка устаревшего запроса — не трогаем состояние свежей загрузки
+        if (seq !== loadSeqRef.current) return
         if (replace) setError(true)
         else toast.error('Не удалось загрузить посты')
       } finally {
-        busyRef.current = false
-        setLoading(false)
-        setInitial(false)
-        setTimeout(() => checkRef.current(), 80)
+        // busy/спиннеры сбрасывает только СВЕЖИЙ запрос — иначе поздний ответ
+        // старой вкладки снимал бы скелетон новой
+        if (seq === loadSeqRef.current) {
+          busyRef.current = false
+          setLoading(false)
+          setInitial(false)
+          setTimeout(() => checkRef.current(), 80)
+        }
       }
     },
     [username, tab],
