@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, Loader2, MessageCircle, Trash2 } from 'lucide-react'
+import { ArrowUp, ChevronDown, CornerDownRight, Heart, Loader2, MessageCircle, Trash2, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -17,17 +17,24 @@ import { BottomSheet } from '@/components/tg/BottomSheet'
 import { emitPostUpdated } from '@/components/feed/PostOverlay'
 
 /**
- * Комментарии под постом (глобальный шит: открывается из ленты и полного
- * экрана поста). Читать может кто угодно — комментарии цепляют гостя;
- * отправка — только после привязки Telegram (ленивая регистрация: тап по
- * полю ввода у гостя открывает шторку входа).
+ * Комментарии под постом (глобальный шит) — TikTok-стиль (v5.14):
+ *  • сортировка «Новые» (хронология) / «Популярные» (по лайкам);
+ *  • лайки комментариев (сердечки справа, оптимистичный тоггл);
+ *  • дерево ответов на один уровень (как в TikTok): «Ответить» под комментом,
+ *    плашка «Ответ NAME» у ответа на ответ, раскрытие ветки по тапу;
+ *  • уведомления автору на ответ/лайк (см. API + NotificationsSheet).
  *
- * Оптимистичная отправка: свой комментарий появляется мгновенно с плашкой
- * «отправляется», серверный ответ замещает его; ошибка — убираем + тост.
- * Счётчик на карточке/оверлее синхронизируется событием tgfeed:post-updated.
+ * Читать может кто угодно — комментарии цепляют гостя; отправка/лайки — только
+ * после привязки Telegram (ленивая регистрация: тап открывает шторку входа).
+ * Оптимистичные отправка/удаление/лайк; счётчик поста синхронизируется
+ * событием tgfeed:post-updated.
  */
 
 const MAX_LEN = 700
+const PREVIEW_REPLIES = 2 // сколько ответов показывает сервер сразу
+
+/** Последний выбранный фильтр живёт в рамках сессии (как в TikTok) */
+let sessionSort: 'new' | 'top' = 'new'
 
 /** Скелетон из трёх строк на время первой загрузки */
 function Skeletons() {
@@ -46,6 +53,18 @@ function Skeletons() {
   )
 }
 
+/** Иммутабельный патч комментария (и его ответов) по id */
+function mapTree(items: CommentDTO[], id: string, patch: (c: CommentDTO) => CommentDTO): CommentDTO[] {
+  return items.map((c) => {
+    if (c.id === id) return patch(c)
+    if (c.replies?.length) {
+      const replies = c.replies.map((r) => (r.id === id ? patch(r) : r))
+      if (replies !== c.replies) return { ...c, replies }
+    }
+    return c
+  })
+}
+
 export function CommentsSheet() {
   const t = useT()
   const lang = useApp((s) => s.lang)
@@ -57,36 +76,44 @@ export function CommentsSheet() {
 
   const [items, setItems] = useState<CommentDTO[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
+  const [sort, setSort] = useState<'new' | 'top'>(sessionSort)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
+  /** Кому отвечаем: null — новый корневой комментарий */
+  const [replyTo, setReplyTo] = useState<{ parentCommentId: string; rootId: string; name: string } | null>(null)
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const open = !!post
 
   /* ---------- Загрузка ---------- */
 
-  const load = useCallback(async (postId: string, c?: string) => {
-    const first = !c
-    if (first) setLoading(true)
-    else setLoadingMore(true)
-    try {
-      const r = await api<{ items: CommentDTO[]; nextCursor: string | null }>(
-        `/api/comments?postId=${encodeURIComponent(postId)}${c ? `&cursor=${encodeURIComponent(c)}` : ''}`,
-      )
-      setItems((prev) => (first ? r.items : [...prev, ...r.items]))
-      setCursor(r.nextCursor)
-      setError(null)
-    } catch {
-      if (first) setError(t('comments.error'))
-    } finally {
-      setLoading(false)
-      setLoadingMore(false)
-    }
-  }, [t])
+  const load = useCallback(
+    async (postId: string, c?: string, s?: 'new' | 'top') => {
+      const cur = s ?? sessionSort
+      const first = !c
+      if (first) setLoading(true)
+      else setLoadingMore(true)
+      try {
+        const r = await api<{ items: CommentDTO[]; nextCursor: string | null }>(
+          `/api/comments?postId=${encodeURIComponent(postId)}&sort=${cur}${c ? `&cursor=${encodeURIComponent(c)}` : ''}`,
+        )
+        setItems((prev) => (first ? r.items : [...prev, ...r.items]))
+        setCursor(r.nextCursor)
+        setError(null)
+      } catch {
+        if (first) setError(t('comments.error'))
+      } finally {
+        setLoading(false)
+        setLoadingMore(false)
+      }
+    },
+    [t],
+  )
 
   // Открытие/смена поста — перезагрузка списка
   useEffect(() => {
@@ -95,10 +122,126 @@ export function CommentsSheet() {
     setCursor(null)
     setError(null)
     setDraft('')
-    void load(post.id)
+    setReplyTo(null)
+    setExpanded(new Set())
+    void load(post.id, undefined, sessionSort)
   }, [post?.id, load])
 
+  const switchSort = (s: 'new' | 'top') => {
+    if (!post || s === sessionSort) return
+    haptic('light')
+    sessionSort = s
+    setSort(s)
+    setItems([])
+    setCursor(null)
+    setExpanded(new Set())
+    setReplyTo(null)
+    void load(post.id, undefined, s)
+  }
+
+  /* ---------- Лайк комментария ---------- */
+
+  const doLike = async (c: CommentDTO, rootId?: string) => {
+    if (!user) return
+    if (user.isGuest) {
+      haptic('light')
+      openAuthGate('comment')
+      return
+    }
+    if (c.id.startsWith('tmp_')) return
+    const willLike = !c.likedByMe
+    haptic('light')
+    // Оптимистично
+    const patch = (prev: CommentDTO): CommentDTO => ({
+      ...prev,
+      likedByMe: willLike,
+      likesCount: Math.max(0, prev.likesCount + (willLike ? 1 : -1)),
+    })
+    setItems((prev) => mapTree(prev, c.id, patch))
+    try {
+      const r = await api<{ liked: boolean; likesCount: number }>(`/api/comments/${c.id}/like`, {
+        method: 'POST',
+        body: '{}',
+      })
+      setItems((prev) => mapTree(prev, c.id, (p) => ({ ...p, likedByMe: r.liked, likesCount: r.likesCount })))
+    } catch {
+      // Откат
+      setItems((prev) =>
+        mapTree(prev, c.id, (p) => ({
+          ...p,
+          likedByMe: c.likedByMe,
+          likesCount: c.likesCount,
+        })),
+      )
+      toast.error(t('comments.error'))
+    }
+  }
+
+  /* ---------- Раскрытие ветки ---------- */
+
+  const loadReplies = useCallback(
+    async (root: CommentDTO, expand: boolean) => {
+      if (!post) return
+      if (expand) setExpanded((prev) => new Set(prev).add(root.id))
+      const already = root.replies ?? []
+      if (expand && already.length > 0 && already.length >= root.repliesCount) return // всё загружено
+      try {
+        const cur = already[already.length - 1]?.id
+        const r = await api<{ items: CommentDTO[]; nextCursor: string | null }>(
+          `/api/comments?postId=${encodeURIComponent(post.id)}&parentId=${encodeURIComponent(root.id)}${cur ? `&cursor=${encodeURIComponent(cur)}` : ''}`,
+        )
+        setItems((prev) =>
+          mapTree(prev, root.id, (p) => {
+            const merged = expand ? [...(p.replies ?? []), ...r.items] : r.items
+            const uniq = merged.filter((x, i) => merged.findIndex((y) => y.id === x.id) === i)
+            return { ...p, replies: uniq }
+          }),
+        )
+        if (!expand) setExpanded((prev) => new Set(prev).add(root.id))
+      } catch {
+        toast.error(t('comments.error'))
+      }
+    },
+    [post, t],
+  )
+
+  const toggleReplies = (root: CommentDTO) => {
+    haptic('light')
+    const isOpen = expanded.has(root.id)
+    if (isOpen) {
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        next.delete(root.id)
+        return next
+      })
+    } else {
+      void loadReplies(root, true)
+    }
+  }
+
   /* ---------- Отправка ---------- */
+
+  const focusInput = () => {
+    window.setTimeout(() => inputRef.current?.focus(), 60)
+  }
+
+  const startReply = (c: CommentDTO) => {
+    if (!user) return
+    if (user.isGuest) {
+      haptic('light')
+      openAuthGate('comment')
+      return
+    }
+    haptic('light')
+    const rootId = c.parentId ?? c.id
+    setReplyTo({ parentCommentId: c.id, rootId, name: c.author.name })
+    focusInput()
+  }
+
+  const cancelReply = () => {
+    setReplyTo(null)
+    haptic('light')
+  }
 
   const doSend = async () => {
     if (!post || !user) return
@@ -115,6 +258,7 @@ export function CommentsSheet() {
       return
     }
 
+    const replying = replyTo
     const tmp: CommentDTO = {
       id: `tmp_${Date.now()}`,
       postId: post.id,
@@ -127,24 +271,56 @@ export function CommentsSheet() {
         avatarUrl: userAvatarUrl(user.id, user.photoUrl),
       },
       own: true,
+      parentId: replying ? replying.rootId : null,
+      replyToName: replying ? replying.name : null,
+      likesCount: 0,
+      likedByMe: false,
+      repliesCount: 0,
+      replies: [],
     }
-    setItems((prev) => [...prev, tmp])
+
+    setItems((prev) => {
+      if (!replying) return [...prev, tmp]
+      // Ответ уходит в ветку корня (и ветка раскрывается)
+      setExpanded((ex) => new Set(ex).add(replying.rootId))
+      return mapTree(prev, replying.rootId, (p) => ({
+        ...p,
+        replies: [...(p.replies ?? []), tmp],
+      }))
+    })
     setDraft('')
     setSending(true)
     haptic('light')
-    // Автогроу textarea вернётся к одной строке за счёт пустого значения
     if (inputRef.current) inputRef.current.style.height = 'auto'
 
     try {
       const r = await api<{ comment: CommentDTO; commentsCount: number }>('/api/comments', {
         method: 'POST',
-        body: JSON.stringify({ postId: post.id, text }),
+        body: JSON.stringify({
+          postId: post.id,
+          text,
+          ...(replying ? { parentId: replying.parentCommentId } : {}),
+        }),
       })
-      setItems((prev) => prev.map((c) => (c.id === tmp.id ? r.comment : c)))
+      setItems((prev) => {
+        if (!replying) return [...prev.slice(0, -1), r.comment]
+        return mapTree(prev, replying.rootId, (p) => ({
+          ...p,
+          repliesCount: p.repliesCount + 1,
+          replies: (p.replies ?? []).map((x) => (x.id === tmp.id ? r.comment : x)),
+        }))
+      })
       patchCommentsPost(post.id, r.commentsCount)
       emitPostUpdated({ postId: post.id, commentsCount: r.commentsCount })
+      if (replying) setReplyTo(null)
     } catch (e) {
-      setItems((prev) => prev.filter((c) => c.id !== tmp.id))
+      setItems((prev) => {
+        if (!replying) return prev.filter((c) => c.id !== tmp.id)
+        return mapTree(prev, replying.rootId, (p) => ({
+          ...p,
+          replies: (p.replies ?? []).filter((x) => x.id !== tmp.id),
+        }))
+      })
       setDraft(text)
       const msg = e instanceof Error && /символов/i.test(e.message) ? e.message : t('comments.error')
       toast.error(msg)
@@ -157,7 +333,24 @@ export function CommentsSheet() {
 
   const doDelete = async (c: CommentDTO) => {
     haptic('light')
-    setItems((prev) => prev.filter((x) => x.id !== c.id))
+    const wasRoot = !c.parentId
+    // Оптимистично убираем (у корня — вместе с веткой)
+    setItems((prev) =>
+      wasRoot
+        ? prev.filter((x) => x.id !== c.id)
+        : mapTree(prev, c.parentId!, (p) => ({
+            ...p,
+            repliesCount: Math.max(0, p.repliesCount - 1),
+            replies: (p.replies ?? []).filter((x) => x.id !== c.id),
+          })),
+    )
+    if (wasRoot) {
+      setExpanded((prev) => {
+        const next = new Set(prev)
+        next.delete(c.id)
+        return next
+      })
+    }
     try {
       const r = await api<{ ok: boolean; commentsCount: number }>(`/api/comments/${c.id}`, { method: 'DELETE' })
       if (post) {
@@ -166,12 +359,21 @@ export function CommentsSheet() {
       }
       toast.success(t('comments.deleted'))
     } catch {
-      setItems((prev) => (prev.some((x) => x.id === c.id) ? prev : [...prev, c].sort((a, b) => a.createdAt.localeCompare(b.createdAt))))
+      // Откат
+      setItems((prev) =>
+        wasRoot
+          ? [...prev, c].sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+          : mapTree(prev, c.parentId!, (p) => ({
+              ...p,
+              repliesCount: p.repliesCount + 1,
+              replies: [...(p.replies ?? []), c],
+            })),
+      )
       toast.error(t('comments.error'))
     }
   }
 
-  /* ---------- Ctrl/Cmd+Enter и Enter (ПК) отправляют ---------- */
+  /* ---------- Ctrl/Cmd+Enter отправляет ---------- */
 
   const onInputKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -189,6 +391,9 @@ export function CommentsSheet() {
         : `${count} ${pluralRu(count, 'комментарий', 'комментария', 'комментариев')}`
       : null
 
+  const repliesWord = (n: number) =>
+    lang === 'ru' ? pluralRu(n, t('comments.repliesOne'), t('comments.repliesFew'), t('comments.repliesMany')) : n === 1 ? 'reply' : 'replies'
+
   return (
     <BottomSheet
       open={open}
@@ -200,8 +405,14 @@ export function CommentsSheet() {
     >
       {post && (
         <div className="flex flex-col">
+          {/* Сортировка: Новые / Популярные */}
+          <div className="mb-2 flex items-center gap-1.5 px-1" role="tablist" aria-label={t('comments.title')}>
+            <SortChip active={sort === 'new'} onClick={() => switchSort('new')} label={t('comments.sortNew')} />
+            <SortChip active={sort === 'top'} onClick={() => switchSort('top')} label={t('comments.sortTop')} />
+          </div>
+
           {/* Старые комментарии — кнопка «показать ещё» сверху списка */}
-          {cursor && !loading && (
+          {cursor && sort === 'new' && !loading && (
             <button
               type="button"
               data-noswipe
@@ -222,7 +433,7 @@ export function CommentsSheet() {
                 <p className="text-[13.5px] text-tg-hint">{error}</p>
                 <button
                   type="button"
-                  onClick={() => void load(post.id)}
+                  onClick={() => void load(post.id, undefined, sort)}
                   className="mt-2 text-[13.5px] font-semibold text-tg-link active:opacity-70"
                 >
                   {t('comments.retry')}
@@ -240,37 +451,21 @@ export function CommentsSheet() {
                   {items.map((c) => (
                     <motion.li
                       key={c.id}
-                      /* БЕЗ layout-анимации: она мерила геометрию каждого элемента
-                        на каждый чих и лагала при входе в комментарии и подгрузке —
-                        остаётся только лёгкий вход без измерений */
                       initial={{ opacity: 0, y: 6 }}
                       animate={{ opacity: c.id.startsWith('tmp_') ? 0.55 : 1, y: 0 }}
                       exit={{ opacity: 0 }}
                       transition={{ duration: 0.16 }}
-                      className="flex gap-2.5"
                     >
-                      <Avatar name={c.author.name} src={c.author.avatarUrl} size={36} />
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2">
-                          <span className="truncate text-[13.5px] font-semibold text-tg-text">{c.author.name}</span>
-                          <time dateTime={c.createdAt} className="shrink-0 text-[11.5px] text-tg-hint">
-                            {timeAgo(c.createdAt)}
-                          </time>
-                          {c.own && !c.id.startsWith('tmp_') && (
-                            <button
-                              type="button"
-                              onClick={() => void doDelete(c)}
-                              aria-label={t('comments.delete')}
-                              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-red-50 hover:text-red-600 active:scale-90 dark:hover:bg-red-500/10"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
-                            </button>
-                          )}
-                        </div>
-                        <p className="mt-0.5 whitespace-pre-wrap break-words text-[14.5px] leading-snug text-tg-text2">
-                          {c.text}
-                        </p>
-                      </div>
+                      <CommentRow
+                        c={c}
+                        expanded={expanded.has(c.id)}
+                        repliesWord={repliesWord}
+                        onLike={doLike}
+                        onReply={startReply}
+                        onDelete={doDelete}
+                        onToggle={toggleReplies}
+                        onLoadMoreReplies={(root) => void loadReplies(root, true)}
+                      />
                     </motion.li>
                   ))}
                 </AnimatePresence>
@@ -294,51 +489,228 @@ export function CommentsSheet() {
                 {t('comments.login')}
               </button>
             ) : (
-              <div className="flex items-end gap-2">
-                <div className="relative flex-1">
-                  <textarea
-                    ref={inputRef}
-                    value={draft}
-                    onChange={(e) => {
-                      setDraft(e.target.value)
-                      const el = e.target
-                      el.style.height = 'auto'
-                      el.style.height = `${Math.min(el.scrollHeight, 120)}px`
-                    }}
-                    onKeyDown={onInputKeyDown}
-                    rows={1}
-                    maxLength={MAX_LEN + 50}
-                    placeholder={t('comments.placeholder')}
-                    aria-label={t('comments.placeholder')}
-                    className="max-h-[120px] w-full resize-none rounded-2xl bg-tg-surface py-2.5 pl-3.5 pr-12 text-[14.5px] leading-snug text-tg-text placeholder:text-tg-hint focus:outline-none"
-                  />
-                  {draft.length > MAX_LEN - 100 && (
-                    <span
-                      className={cn(
-                        'absolute bottom-2.5 right-3 text-[11px] tabular-nums',
-                        draft.length > MAX_LEN ? 'text-red-500' : 'text-tg-hint',
-                      )}
-                    >
-                      {MAX_LEN - draft.length}
+              <>
+                {/* Плашка «Ответ NAME» над полем (режим ответа) */}
+                {replyTo && (
+                  <div className="mb-2 flex items-center gap-1.5 pl-1">
+                    <CornerDownRight className="h-3.5 w-3.5 text-tg-link" aria-hidden />
+                    <span className="text-[12.5px] font-medium text-tg-link">
+                      {t('comments.replyTag')} <span className="font-semibold">{replyTo.name}</span>
                     </span>
-                  )}
+                    <button
+                      type="button"
+                      onClick={cancelReply}
+                      aria-label={t('comments.cancelReply')}
+                      className="ml-1 flex h-5 w-5 items-center justify-center rounded-full text-tg-hint active:bg-tg-surface"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                )}
+                <div className="flex items-end gap-2">
+                  <div className="relative flex-1">
+                    <textarea
+                      ref={inputRef}
+                      value={draft}
+                      onChange={(e) => {
+                        setDraft(e.target.value)
+                        const el = e.target
+                        el.style.height = 'auto'
+                        el.style.height = `${Math.min(el.scrollHeight, 120)}px`
+                      }}
+                      onKeyDown={onInputKeyDown}
+                      rows={1}
+                      maxLength={MAX_LEN + 50}
+                      placeholder={replyTo ? t('comments.replyPlaceholder') : t('comments.placeholder')}
+                      aria-label={replyTo ? t('comments.replyPlaceholder') : t('comments.placeholder')}
+                      className="max-h-[120px] w-full resize-none rounded-2xl bg-tg-surface py-2.5 pl-3.5 pr-12 text-[14.5px] leading-snug text-tg-text placeholder:text-tg-hint focus:outline-none"
+                    />
+                    {draft.length > MAX_LEN - 100 && (
+                      <span
+                        className={cn(
+                          'absolute bottom-2.5 right-3 text-[11px] tabular-nums',
+                          draft.length > MAX_LEN ? 'text-red-500' : 'text-tg-hint',
+                        )}
+                      >
+                        {MAX_LEN - draft.length}
+                      </span>
+                    )}
+                  </div>
+                  <motion.button
+                    type="button"
+                    data-noswipe
+                    whileTap={{ scale: 0.88 }}
+                    onClick={() => void doSend()}
+                    disabled={!draft.trim() || sending || draft.length > MAX_LEN}
+                    aria-label={t('comments.send')}
+                    className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tg-link text-white transition disabled:opacity-40"
+                  >
+                    {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" aria-hidden /> : <ArrowUp className="h-5 w-5" strokeWidth={2.4} />}
+                  </motion.button>
                 </div>
-                <motion.button
-                  type="button"
-                  data-noswipe
-                  whileTap={{ scale: 0.88 }}
-                  onClick={() => void doSend()}
-                  disabled={!draft.trim() || sending || draft.length > MAX_LEN}
-                  aria-label={t('comments.send')}
-                  className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tg-link text-white transition disabled:opacity-40"
-                >
-                  {sending ? <Loader2 className="h-4.5 w-4.5 animate-spin" aria-hidden /> : <ArrowUp className="h-5 w-5" strokeWidth={2.4} />}
-                </motion.button>
-              </div>
+              </>
             )}
           </div>
         </div>
       )}
     </BottomSheet>
+  )
+}
+
+/* ---------- Чип сортировки ---------- */
+
+function SortChip({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={cn(
+        'h-8 rounded-full px-3.5 text-[13px] font-semibold transition active:scale-95',
+        active ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-hint active:text-tg-text',
+      )}
+    >
+      {label}
+    </button>
+  )
+}
+
+/* ---------- Строка комментария (корень и ответ — один рендер) ---------- */
+
+function CommentRow({
+  c,
+  expanded,
+  repliesWord,
+  onLike,
+  onReply,
+  onDelete,
+  onToggle,
+  onLoadMoreReplies,
+  isReply = false,
+}: {
+  c: CommentDTO
+  expanded?: boolean
+  repliesWord?: (n: number) => string
+  onLike: (c: CommentDTO, rootId?: string) => void
+  onReply: (c: CommentDTO) => void
+  onDelete: (c: CommentDTO) => void
+  onToggle?: (root: CommentDTO) => void
+  onLoadMoreReplies?: (root: CommentDTO) => void
+  isReply?: boolean
+}) {
+  const t = useT()
+  const tmp = c.id.startsWith('tmp_')
+  const avatarSize = isReply ? 28 : 36
+
+  return (
+    <div className="flex gap-2.5">
+      <Avatar name={c.author.name} src={c.author.avatarUrl} size={avatarSize} />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className={cn('truncate text-tg-text', isReply ? 'text-[12.5px]' : 'text-[13.5px]', 'font-semibold')}>
+            {c.author.name}
+          </span>
+          <time dateTime={c.createdAt} className="shrink-0 text-[11.5px] text-tg-hint">
+            {timeAgo(c.createdAt)}
+          </time>
+          {c.own && !tmp && (
+            <button
+              type="button"
+              onClick={() => onDelete(c)}
+              aria-label={t('comments.delete')}
+              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-red-50 hover:text-red-600 active:scale-90 dark:hover:bg-red-500/10"
+            >
+              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+            </button>
+          )}
+        </div>
+        {/* Плашка «Ответ NAME» у ответа на ответ */}
+        {isReply && c.replyToName && (
+          <span className="mt-0.5 inline-flex items-center gap-1 text-[12px] font-medium text-tg-link">
+            <CornerDownRight className="h-3 w-3" aria-hidden />
+            {t('comments.replyTag')} {c.replyToName}
+          </span>
+        )}
+        <p className={cn('mt-0.5 whitespace-pre-wrap break-words leading-snug text-tg-text2', isReply ? 'text-[13.5px]' : 'text-[14.5px]')}>
+          {c.text}
+        </p>
+
+        {/* Действия: Ответить + раскрытие ветки */}
+        <div className="mt-1 flex items-center gap-3.5">
+          <button
+            type="button"
+            onClick={() => onReply(c)}
+            className="text-[12.5px] font-semibold text-tg-hint transition active:text-tg-link"
+          >
+            {t('comments.reply')}
+          </button>
+          {!isReply && (c.repliesCount > 0 || (c.replies?.length ?? 0) > 0) && (
+            <button
+              type="button"
+              onClick={() => onToggle?.(c)}
+              aria-expanded={expanded}
+              className="flex items-center gap-1 text-[12.5px] font-semibold text-tg-link active:opacity-70"
+            >
+              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} aria-hidden />
+              {expanded ? t('comments.hideReplies') : `${c.repliesCount} ${repliesWord?.(c.repliesCount) ?? ''}`}
+            </button>
+          )}
+        </div>
+
+        {/* Ветка ответов (только у корня, один уровень — как в TikTok) */}
+        {!isReply && expanded && (
+          <div className="mt-2.5 space-y-3 border-l-2 border-tg-sep/70 pl-3">
+            {(c.replies ?? []).map((r) => (
+              <CommentRow
+                key={r.id}
+                c={r}
+                isReply
+                onLike={onLike}
+                onReply={onReply}
+                onDelete={onDelete}
+              />
+            ))}
+            {/* Подгрузка остальных ответов ветки */}
+            {(c.replies?.length ?? 0) < c.repliesCount && onLoadMoreReplies && !tmp && (
+              <button
+                type="button"
+                onClick={() => onLoadMoreReplies(c)}
+                className="text-[12.5px] font-semibold text-tg-link active:opacity-70"
+              >
+                {t('comments.moreReplies')} ({c.repliesCount - (c.replies?.length ?? 0)})
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Лайк: сердечко + счётчик справа (TikTok-рельса) */}
+      <motion.button
+        type="button"
+        whileTap={{ scale: 0.8 }}
+        onClick={() => onLike(c, isReply ? c.parentId ?? undefined : undefined)}
+        aria-label={t('comments.like')}
+        aria-pressed={c.likedByMe}
+        className={cn(
+          'flex shrink-0 flex-col items-center gap-0.5 pt-1.5',
+          isReply ? 'w-8' : 'w-9',
+          tmp && 'pointer-events-none opacity-50',
+        )}
+      >
+        <Heart
+          className={cn(
+            'h-[18px] w-[18px] transition-colors',
+            c.likedByMe ? 'fill-rose-500 text-rose-500' : 'text-tg-hint/70',
+          )}
+          strokeWidth={1.9}
+        />
+        {c.likesCount > 0 && (
+          <span className={cn('text-[11px] font-semibold tabular-nums', c.likedByMe ? 'text-rose-500' : 'text-tg-hint')}>
+            {c.likesCount > 999 ? '1k+' : c.likesCount}
+          </span>
+        )}
+      </motion.button>
+    </div>
   )
 }

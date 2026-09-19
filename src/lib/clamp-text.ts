@@ -129,11 +129,14 @@ function balanceMarkers(_text: string, cut: string): string {
       if (fences % 2 === 1) backTo(head.lastIndexOf('```'))
     }
 
-    // Премиум-эмодзи ![ev:ID] / ![el:ID] — не оставляем «висящий» ![e
+    // Премиум-эмодзи ![e:ID](url) / ![ev:ID](url) / ![el:ID](url) — не оставляем
+    // «висящий» обрывок. Сравниваем ПОЛНЫЕ маркеры (с ](url)) с любыми ![e —
+    // раньше учитывались только двухбуквенные ev:/el: (однобуквенная ![e: пропускала
+    // обрыв внутри ID), а «![el:ID]» без (url) считался закрытым и утекал текстом.
     {
-      const opens = (head.match(/!\[[a-z]{2}:/g) ?? []).length
-      const closed = (head.match(/!\[[a-z]{2}:[^\]]*\]/g) ?? []).length
-      if (opens > closed) backTo(head.lastIndexOf('!['))
+      const complete = (head.match(/!\[e(?:v|l)?(?::\d+)?\]\([^)\s]*\)/g) ?? []).length
+      const any = (head.match(/!\[e/g) ?? []).length
+      if (any > complete) backTo(head.lastIndexOf('!['))
     }
 
     // Ссылки [текст](url) — незакрытая скобка откатывается к «[».

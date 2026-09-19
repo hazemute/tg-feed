@@ -256,6 +256,7 @@ const DICT = {
   'comments.hideReplies': ['Скрыть ответы', 'Hide replies'],
   'comments.moreReplies': ['Показать ещё ответы', 'Show more replies'],
   'comments.like': ['Нравится', 'Like'],
+  'comments.cancelReply': ['Отменить ответ', 'Cancel reply'],
   'comments.repliesOne': ['ответ', 'reply'],
   'comments.repliesFew': ['ответа', 'replies'],
   'comments.repliesMany': ['ответов', 'replies'],

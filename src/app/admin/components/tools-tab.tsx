@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2, HeartPulse, Loader2, Play } from 'lucide-react'
+import { CheckCircle2, HeartPulse, Loader2, Play, SmilePlus } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -290,6 +290,9 @@ export function ToolsTab({
         </CardContent>
       </Card>
 
+      {/* Премиум-эмодзи: ретроактивная перепроверка реестра (Bot API) */}
+      <EmojiRecheckCard />
+
       {/* Состояние системы */}
       <Card className={panelCard}>
         <CardHeader>
@@ -395,4 +398,87 @@ function healthRows(h: PanelHealth): { label: string; value: ReactNode }[] {
     { label: 'BOT_TOKEN', value: <BoolBadge value={h.env.botTokenSet} /> },
     { label: 'DB провайдер', value: mono(h.env.dbProvider || '—') },
   ]
+}
+
+/* ===================== Премиум-эмодзи: перепроверка реестра ===================== */
+
+type EmojiRecheckResponse = {
+  checked: number
+  upgraded: number
+  remaining: number
+}
+
+/**
+ * Ретроактивная перепроверка «статичных» премиум-эмодзи (Bot API
+ * getCustomEmojiStickers): исторические сбои записывали анимированные ID как
+ * static навсегда — вместо видео/Lottie пользователь видел картинку.
+ * Кнопка гоняет пачки до сходимости (upgraded=0), каждая пачка ~2000 ID.
+ */
+function EmojiRecheckCard() {
+  const [running, setRunning] = useState(false)
+  const [summary, setSummary] = useState<{ passes: number; checked: number; upgraded: number; remaining: number } | null>(null)
+
+  const runRecheck = async () => {
+    if (running) return
+    setRunning(true)
+    let passes = 0
+    let checked = 0
+    let upgraded = 0
+    let remaining = -1
+    try {
+      // Пачки по ~2000 ID; после каждой сбрасывается кэш реестра — анимация
+      // включается ретроактивно на выдаче. Сходимость: пачка без апгрейдов.
+      for (let i = 0; i < 12; i++) {
+        const res = await panelFetch<EmojiRecheckResponse>('/api/panel/emoji/recheck', { json: {} })
+        passes++
+        checked += res.checked
+        upgraded += res.upgraded
+        remaining = res.remaining
+        if (res.upgraded === 0 || res.remaining === 0) break
+      }
+      setSummary({ passes, checked, upgraded, remaining })
+      toast.success(`Эмодзи: проверено ${fmtNum(checked)}, анимированных найдено ${fmtNum(upgraded)}`)
+    } catch (e) {
+      if (e instanceof PanelError) {
+        if (e.status === 429) toast.error(`Слишком часто, подождите ${e.retryAfter ?? 60}с`)
+        else if (!isAuthOrNetworkError(e)) toast.error(e.message)
+      }
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <Card className={panelCard}>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+          <SmilePlus className="size-4 text-violet-700" aria-hidden />
+          Премиум-эмодзи
+        </CardTitle>
+        <CardDescription className="text-xs text-slate-500">
+          Перепроверяет «статичные» эмодзи через Bot API: пропущенные анимации (видео/Lottie) включаются
+          задним числом во всех постах. Прогон занимает 1–10 минут — не закрывайте вкладку
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <Button
+            onClick={() => void runRecheck()}
+            disabled={running}
+            className="bg-violet-600 font-medium text-white hover:bg-violet-500"
+          >
+            {running ? <Loader2 className="animate-spin" aria-hidden /> : <SmilePlus aria-hidden />}
+            Перепроверить статику
+          </Button>
+          {running && <span className="text-xs text-slate-500">Идёт перепроверка…</span>}
+        </div>
+        {summary && (
+          <div className="rounded-md border border-violet-500/20 bg-violet-500/[0.06] px-3 py-2 text-xs text-violet-800">
+            Прогонов: <b>{summary.passes}</b> · Проверено: <b>{fmtNum(summary.checked)}</b> · Включено анимаций:{' '}
+            <b>{fmtNum(summary.upgraded)}</b> · Осталось статичных: <b>{fmtNum(Math.max(0, summary.remaining))}</b>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
 }

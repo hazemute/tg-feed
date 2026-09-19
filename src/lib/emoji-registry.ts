@@ -50,5 +50,10 @@ export async function loadAnimatedEmojiKinds(): Promise<Map<string, AnimatedKind
   }
 }
 
+/** Сброс кэша выдачи (после ретроактивной перепроверки реестра в админке) */
+export function clearAnimatedEmojiKindsCache(): void {
+  cache = null
+}
+
 // Прогрев реестра при первом импорте модуля (серверная часть)
 void loadAnimatedEmojiKinds()

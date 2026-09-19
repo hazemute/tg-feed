@@ -68,7 +68,7 @@ export async function POST(request: Request, ctx: Ctx) {
     if (comment.userId !== g.uid) {
       const me = await db.user.findUnique({
         where: { id: g.uid },
-        select: { username: true, firstName: true, lastName: true, photoUrl: true },
+        select: { id: true, username: true, firstName: true, lastName: true, photoUrl: true },
       })
       if (me) {
         notifyUser({

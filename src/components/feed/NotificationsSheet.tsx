@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { AlertCircle, ArrowLeft, Bell, LifeBuoy, Megaphone, MessageCircle } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Bell, CornerDownRight, Heart, LifeBuoy, Megaphone, MessageCircle } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
@@ -32,6 +32,10 @@ function activityIcon(type: NotificationDTO['type']): { Icon: LucideIcon; cls: s
   switch (type) {
     case 'comment':
       return { Icon: MessageCircle, cls: 'bg-tg-link/12 text-tg-link' }
+    case 'reply':
+      return { Icon: CornerDownRight, cls: 'bg-violet-500/12 text-violet-600' }
+    case 'comment_like':
+      return { Icon: Heart, cls: 'bg-rose-500/12 text-rose-500' }
     case 'support':
       return { Icon: LifeBuoy, cls: 'bg-emerald-500/12 text-emerald-600' }
     case 'campaign':
@@ -340,14 +344,20 @@ function ActivityRow({ item, onAfterNavigate }: { item: NotificationDTO; onAfter
   const t = useT()
   const lang = useApp((s) => s.lang)
   const openChannel = useApp((s) => s.openChannel)
+  const openCommentsById = useApp((s) => s.openCommentsById)
   const goToTab = useApp((s) => s.goToTab)
 
   const onClick = () => {
     haptic('light')
     switch (item.type) {
       case 'comment':
-        // Комментарий под постом привязанного канала → экран канала
-        if (item.channelUsername) {
+      case 'reply':
+      case 'comment_like':
+        // Комментарий/ответ/лайк под постом → сразу открываем комментарии
+        if (item.postId) {
+          onAfterNavigate()
+          openCommentsById(item.postId)
+        } else if (item.channelUsername) {
           onAfterNavigate()
           openChannel(item.channelUsername)
         }

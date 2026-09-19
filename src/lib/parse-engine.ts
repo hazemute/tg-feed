@@ -352,7 +352,14 @@ async function upgradeCustomEmoji(posts: ParsedPost[]): Promise<ParsedPost[]> {
   try {
     const known = await db.customEmoji.findMany({ where: { id: { in: [...ids] } } })
     const knownMap = new Map(known.map((r) => [r.id, r]))
-    const missing = [...ids].filter((id) => !knownMap.has(id))
+    // Перепроверке подлежат не только неизвестные ID: «статика» со старым
+    // fetchedAt могла быть записана ошибочно (сбой Bot API в прошлом прогоне)
+    // и без TTL навсегда оставалась картинкой вместо видео/Lottie.
+    const STALE_STATIC_MS = 14 * 24 * 60 * 60 * 1000
+    const missing = [...ids].filter((id) => {
+      const r = knownMap.get(id)
+      return !r || (r.kind === 'static' && Date.now() - r.fetchedAt.getTime() > STALE_STATIC_MS)
+    })
     if (missing.length > 0) {
       const stickers = await getCustomEmojiStickers(missing)
       for (const id of missing) {
