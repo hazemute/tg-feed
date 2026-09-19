@@ -53,6 +53,9 @@ const bodySchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('setwebhook'),
   }),
+  z.object({
+    action: z.literal('getbc'),
+  }),
 ])
 
 export async function GET(request: Request) {
@@ -202,6 +205,24 @@ export async function POST(request: Request) {
       }
       await logAdmin('bot_setwebhook', origin, { ok: set.ok === true })
       return NextResponse.json({ ok: set.ok === true, origin, setWebhook: set, webhookInfo: info?.result ?? null })
+    }
+
+    /* ---------- Business-connection: официальная проверка у Telegram ---------- */
+    if (d.action === 'getbc') {
+      const bc = await getBusinessConnection().catch(() => null)
+      const token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
+      if (!bc?.id || !token) {
+        return NextResponse.json({ ok: true, stored: bc, telegram: null, note: 'нет сохранённого подключения или токена' })
+      }
+      const telegram = await fetch(`https://api.telegram.org/bot${token}/getBusinessConnection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ business_connection_id: bc.id }),
+        signal: AbortSignal.timeout(10_000),
+      })
+        .then((x) => x.json() as Promise<unknown>)
+        .catch((e) => ({ ok: false, description: String((e as Error)?.message ?? e) }))
+      return NextResponse.json({ ok: true, stored: bc, telegram })
     }
 
     /* ---------- Business-connection вручную ---------- */

@@ -23,6 +23,12 @@ const VIA_LABEL: Record<string, string> = {
   bot_plain: 'обычным текстом (премиум недоступен — эмодзи стандартные)',
 }
 
+/** Причина, почему тест владельцу не может уйти через business (ограничение Telegram) */
+const SELF_SEND_HINT =
+  'Telegram запрещает отправку «самому себе»: через посредника бот пишет от вашего имени, а адресат — вы. ' +
+  'Анимированные эмодзи через посредника работают только в ваших личных чатах с другими людьми. ' +
+  'Для анимации в сообщениях бота нужен Fragment-username у бота.'
+
 export function BotTab({ tick, onSettled }: TabProps) {
   const [data, setData] = useState<BotConfig | null>(null)
   const [failed, setFailed] = useState(false)
@@ -30,6 +36,9 @@ export function BotTab({ tick, onSettled }: TabProps) {
   const [testing, setTesting] = useState(false)
   const [businessId, setBusinessId] = useState('')
   const [via, setVia] = useState<string | null>(null)
+  const [viaWarn, setViaWarn] = useState<string | null>(null)
+  const [bcChecking, setBcChecking] = useState(false)
+  const [bcVerdict, setBcVerdict] = useState<string | null>(null)
 
   const load = useCallback(() => {
     setFailed(false)
@@ -60,14 +69,50 @@ export function BotTab({ tick, onSettled }: TabProps) {
   const runTest = async () => {
     setTesting(true)
     setVia(null)
+    setViaWarn(null)
     try {
-      const r = await panelFetch<{ ok: boolean; via: string }>('/api/panel/bot', { json: { action: 'test' } })
+      const r = await panelFetch<{
+        ok: boolean
+        via: string
+        businessError?: string | null
+        premiumError?: string | null
+      }>('/api/panel/bot', { json: { action: 'test' } })
       setVia(VIA_LABEL[r.via] ?? r.via)
+      if (r.via !== 'business' && r.businessError?.includes('must not be sent to self')) {
+        setViaWarn(SELF_SEND_HINT)
+      } else if (r.via !== 'business' && r.businessError) {
+        setViaWarn(`business-канал: ${r.businessError}`)
+      }
       toast.success('Тест отправлен в чат владельца')
     } catch (e) {
       toast.error((e as Error).message || 'Тест не удался')
     } finally {
       setTesting(false)
+    }
+  }
+
+  const checkBusiness = async () => {
+    setBcChecking(true)
+    setBcVerdict(null)
+    try {
+      const r = await panelFetch<{
+        ok: boolean
+        telegram: { ok?: boolean; result?: { is_enabled?: boolean; rights?: { can_reply?: boolean } }; description?: string } | null
+        note?: string
+      }>('/api/panel/bot', { json: { action: 'getbc' } })
+      const t = r.telegram
+      if (!t) setBcVerdict(r.note ?? 'Telegram не вернул ответ')
+      else if (t.ok && t.result)
+        setBcVerdict(
+          `Telegram: подключение ${t.result.is_enabled ? 'активно' : 'выключено'}${
+            t.result.rights?.can_reply === false ? ', без права писать' : ', право писать есть'
+          }`,
+        )
+      else setBcVerdict(`Telegram: ошибка — ${t.description ?? 'неизвестно'}`)
+    } catch (e) {
+      setBcVerdict((e as Error).message || 'Проверка не удалась')
+    } finally {
+      setBcChecking(false)
     }
   }
 
@@ -139,7 +184,21 @@ export function BotTab({ tick, onSettled }: TabProps) {
                   id: {data.business.id || '—'} · user: {data.business.userId} · {data.business.updatedAt.slice(0, 10)}
                 </span>
               )}
+              <span className="mt-1 block">
+                ⚠️ Посредник пишет от вашего имени в ваши личные диалоги — сообщения «самому себе» Telegram
+                запрещает, поэтому тест в этот чат всегда уходит обычным текстом. Анимация в сообщениях
+                бота всем пользователям возможна только с Fragment-username у бота.
+              </span>
             </p>
+            {bcVerdict && <p className="text-xs font-medium text-slate-700">{bcVerdict}</p>}
+            <button
+              type="button"
+              onClick={() => void checkBusiness()}
+              disabled={bcChecking}
+              className="h-8 rounded-md border border-slate-200 px-3 text-xs font-medium text-slate-600 transition hover:bg-slate-100 disabled:opacity-50"
+            >
+              {bcChecking ? 'Проверяем…' : 'Проверить у Telegram'}
+            </button>
             <div className="flex max-w-xl items-center gap-2">
               <input
                 value={businessId}
@@ -248,7 +307,12 @@ export function BotTab({ tick, onSettled }: TabProps) {
               Тест-сообщение владельцу
             </button>
             <span className="text-xs text-slate-500">→ чат {data.ownerChatId}</span>
-            {via && <span className="text-xs font-medium text-emerald-700">ушло {via}</span>}
+            {via && (
+              <span className={cn('text-xs font-medium', viaWarn ? 'text-amber-700' : 'text-emerald-700')}>
+                ушло {via}
+              </span>
+            )}
+            {viaWarn && <p className="w-full max-w-2xl text-xs leading-relaxed text-amber-700">{viaWarn}</p>}
           </div>
         </>
       )}
