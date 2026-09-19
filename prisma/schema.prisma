@@ -117,6 +117,8 @@ model Post {
   commentsCount Int    @default(0) // денормализованный счётчик комментариев
   hotScore    Float    @default(0) // «температура» поста: -1 просмотр, +3 дочитали 5с+, +10 лайк, +20 репост
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
+  aiFlag      String? // вердикт бесплатной ИИ-модерации: ok | junk | nsfw | spam (null — ещё не модерирован)
+  aiFlagAt    DateTime? // когда вынесен вердикт
   translations String? // кэш переводов: {"en":{"text":"…","at":"ISO"}}
   ttsAudio     String? // озвучка поста (base64 mp3, кэш; генерируется по запросу)
   ttsAt        DateTime? // когда сгенерирована озвучка (для инвалидации при смене текста)

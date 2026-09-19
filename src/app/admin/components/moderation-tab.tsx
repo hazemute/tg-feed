@@ -10,6 +10,8 @@ import {
   MessageSquare,
   RefreshCw,
   Search,
+  ShieldCheck,
+  Sparkles,
   Trash2,
   X,
 } from 'lucide-react'
@@ -200,8 +202,132 @@ export function ModerationTab({
         </CardContent>
       </Card>
 
+      <AiModerationCard />
+
       <CommentsCard />
     </motion.div>
+  )
+}
+
+/* ===================== Бесплатная ИИ-модерация ленты ===================== */
+
+type AiModResponse = {
+  ok: boolean
+  moderation: {
+    batches: number
+    judged: number
+    byVerdict: { ok: number; junk: number; nsfw: number; spam: number }
+    skippedCached: number
+    garbageDetected: number
+    llmCalled: boolean
+  }
+  weekly: Array<{ flag: string; n: number }>
+}
+
+const VERDICT_META: Record<string, { label: string; cls: string }> = {
+  ok: { label: 'Нормальные', cls: 'border-emerald-500/30 bg-emerald-50 text-emerald-700' },
+  junk: { label: 'Мусорные', cls: 'border-amber-500/30 bg-amber-50 text-amber-700' },
+  nsfw: { label: '18+', cls: 'border-red-500/30 bg-red-50 text-red-700' },
+  spam: { label: 'Спам', cls: 'border-rose-500/30 bg-rose-50 text-rose-700' },
+}
+
+function AiModerationCard() {
+  const [weekly, setWeekly] = useState<Array<{ flag: string; n: number }> | null>(null)
+  const [running, setRunning] = useState(false)
+  const [lastRun, setLastRun] = useState<string | null>(null)
+
+  const load = async () => {
+    try {
+      const d = await panelFetch<AiModResponse>('/api/panel/tools', {
+        json: { action: 'ai-moderate', batches: 0 },
+      })
+      setWeekly(d.weekly ?? [])
+    } catch {
+      // статистика не критична
+    }
+  }
+
+  useEffect(() => {
+    void load()
+  }, [])
+
+  const run = async () => {
+    setRunning(true)
+    try {
+      const d = await panelFetch<AiModResponse>('/api/panel/tools', {
+        json: { action: 'ai-moderate', batches: 4 },
+        timeoutMs: 60_000,
+      })
+      setWeekly(d.weekly ?? [])
+      const m = d.moderation
+      setLastRun(
+        m.llmCalled
+          ? `Проверено ${m.judged} постов за ${m.batches} пачки`
+          : 'LLM недоступна (лимиты) — попробуйте позже',
+      )
+      toast.success(m.judged > 0 ? `Модерация: ${m.judged} постов оценено` : 'Новых постов для модерации нет')
+    } catch (e) {
+      if (e instanceof PanelError) toast.error(e.message)
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  const total = (weekly ?? []).reduce((s, r) => s + r.n, 0)
+  return (
+    <Card className={panelCard}>
+      <CardHeader>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+              <ShieldCheck className="h-4 w-4 text-slate-500" aria-hidden />
+              ИИ-модерация ленты
+              <span className="rounded-full border border-emerald-500/30 bg-emerald-50 px-1.5 py-px text-[10px] font-semibold text-emerald-600">
+                бесплатно
+              </span>
+            </CardTitle>
+            <CardDescription className="mt-1 text-xs text-slate-500">
+              Бесплатные модели OpenRouter выносят вердикт по свежим постам: мусор,
+              18+ и спам не попадают в ленту. Запускается автоматически после каждого тика парсинга.
+            </CardDescription>
+          </div>
+          <Button size="sm" disabled={running} onClick={() => void run()} className={btnOutlineDark}>
+            {running ? <Loader2 className="animate-spin" aria-hidden /> : <Sparkles aria-hidden />}
+            Прогнать сейчас
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {lastRun ? <p className="mb-3 text-xs text-slate-500">{lastRun}</p> : null}
+        {weekly === null ? (
+          <SkeletonRows rows={1} />
+        ) : total === 0 ? (
+          <EmptyState
+            icon={ShieldCheck}
+            title="Статистики пока нет"
+            hint="Вердикты появятся после первого прогона (авто или ручного)"
+          />
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-slate-500">За 7 дней:</span>
+            {weekly.map((r) => {
+              const meta = VERDICT_META[r.flag] ?? {
+                label: r.flag,
+                cls: 'border-slate-300 bg-slate-50 text-slate-600',
+              }
+              return (
+                <span
+                  key={r.flag}
+                  className={cn('rounded-full border px-2.5 py-1 text-xs font-semibold', meta.cls)}
+                >
+                  {meta.label}: {r.n}
+                </span>
+              )
+            })}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   )
 }
 

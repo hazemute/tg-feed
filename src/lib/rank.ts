@@ -2,21 +2,25 @@
  * Ранжирование ленты Tg Swipe — двухуровневая модель.
  *
  * УРОВЕНЬ 1 (глобальный, кэшируется для всех): качество поста.
- *   weight = (премиум ×1000 ×3)
- *          + (лайки ×10 + закладки ×15 + просмотры ×0.3) / (часы + 2)^1.5
- *          + бонус свежести (48 − часы) × 2 в первые двое суток.
+ *   engagement = лайки ×10 + реакции TG ×6 + закладки ×15 + просмотры ×0.3
+ *   weight = engagement / (часы + 2)^1.5
+ *          + плоский бонус проверенному каналу (+350, без мультипликатора —
+ *            раньше ×1000×3 задавил органический топ нулевыми постами)
+ *          + вклад «температуры» (дочитали/лайк/репост ПРЯМО СЕЙЧАС)
+ *          + бонус свежести (48 − часы) × 2 в первые двое суток
+ *          − возрастное затухание после 7 суток (лента жива настоящим).
  *
  * УРОВЕНЬ 2 (персональный, применяется на каждом запросе): аффинити.
  *   + канал, с которым пользователь взаимодействовал (лайки/закладки/просмотры)
  *   + категория, которую он читает чаще других
- *   + подписки
- *   − уже просмотренные посты уходят в самый хвост (лента не показывает
- *     одно и то же, пока есть новое).
- * Плюс гарантия разнообразия: не более трёх постов одного канала подряд.
+ *   + подписки, микро-открытия новых категорий
+ *   − уже просмотренные посты уходят в самый хвост.
+ * Плюс гарантия разнообразия: cooldown между постами одного канала.
  */
 
 export type RankPost = {
   likesCount: number
+  reactionsTg?: number // реакции исходного поста (t.me/s) — сильный сигнал качества
   bookmarksCount?: number
   viewsCount?: number
   publishedAt: Date | string
@@ -25,14 +29,23 @@ export type RankPost = {
   hotScore?: number
 }
 
+/** Плоский бонус проверенному (премиум) каналу — участие, не автопобеда */
+const PREMIUM_BONUS = 350
+/** Возрастная точка начала затухания и минимум множителя */
+const AGE_DECAY_AFTER_H = 168 // 7 суток
+const AGE_DECAY_MIN = 0.12
+
 export function computeWeight(post: RankPost): number {
   const published =
     typeof post.publishedAt === 'string' ? new Date(post.publishedAt) : post.publishedAt
   const hours = Math.max(0, (Date.now() - published.getTime()) / 3_600_000)
 
   const engagement =
-    post.likesCount * 10 + (post.bookmarksCount ?? 0) * 15 + (post.viewsCount ?? 0) * 0.3
-  let weight = (post.premium ? 1000 : 0) + engagement / Math.pow(hours + 2, 1.5)
+    post.likesCount * 10 +
+    (post.reactionsTg ?? 0) * 6 +
+    (post.bookmarksCount ?? 0) * 15 +
+    (post.viewsCount ?? 0) * 0.3
+  let weight = engagement / Math.pow(hours + 2, 1.5)
 
   /*
    * «Температура» поста (Redis-ранг из ТЗ, в нашей реализации — счётчик в Postgres):
@@ -46,8 +59,18 @@ export function computeWeight(post: RankPost): number {
     weight += Math.min(260, hot * 2.4 / Math.pow(hours + 2, 1.1))
   }
 
-  if (post.premium) weight *= 3
+  if (post.premium) weight += PREMIUM_BONUS
   if (hours < 48) weight += (48 - hours) * 2
+
+  /*
+   * Возрастное затухание: постам старше 7 суток всё труднее конкурировать со
+   * свежими (лента — про «что происходит сейчас», а не архив). Затухание
+   * плавное: 7сут → ×1.0, 17сут → ×0.5, 27сут+ → ×0.12, чтобы ниша с малым
+   * числом постов не пустела — старые просто тонут, но не исчезают.
+   */
+  if (hours > AGE_DECAY_AFTER_H) {
+    weight *= Math.max(AGE_DECAY_MIN, 1 - (hours - AGE_DECAY_AFTER_H) / 240)
+  }
 
   return weight
 }

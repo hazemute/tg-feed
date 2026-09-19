@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { IS_SQLITE } from '@/lib/server'
 
 /**
  * Модерация контента: NSFW-фильтр (эскорт-реклама, порно, слив 18+ и прочий
@@ -76,6 +77,16 @@ const NSFW_TEXT_RE: RegExp[] = [
 
 const EMPTY_TEXT = ''
 
+/** SQLite (локальная песочница) не поддерживает mode:'insensitive' в contains */
+const IS_SQLITE_LOCAL = IS_SQLITE
+
+/** insensitive-фрагмент contains, совместимый и с Postgres, и с SQLite */
+function ci(value: string): Record<string, unknown> {
+  return IS_SQLITE_LOCAL
+    ? { contains: value }
+    : { contains: value, mode: 'insensitive' as const }
+}
+
 export function isNsfwText(text: string | null | undefined): boolean {
   const t = text ?? EMPTY_TEXT
   if (t.length === 0) return false
@@ -152,7 +163,7 @@ const CHANNEL_DB_KEYWORDS = [...NSFW_DB_KEYWORDS, 'кизлар', 'qizlar'] as c
  *  Через логический NOT — вложенный `not: { contains, mode }` mode не принимает. */
 export function nsfwPostNotIn(): Array<Record<string, unknown>> {
   return NSFW_DB_KEYWORDS.map((kw) => ({
-    NOT: { text: { contains: kw, mode: 'insensitive' as const } },
+    NOT: { text: ci(kw) },
   }))
 }
 
@@ -172,9 +183,9 @@ export async function getNsfwChannelIds(): Promise<string[]> {
     const candidates = await db.channel.findMany({
       where: {
         OR: CHANNEL_DB_KEYWORDS.flatMap((kw) => [
-          { title: { contains: kw, mode: 'insensitive' } },
-          { username: { contains: kw, mode: 'insensitive' } },
-          { description: { contains: kw, mode: 'insensitive' } },
+          { title: ci(kw) },
+          { username: ci(kw) },
+          { description: ci(kw) },
         ]),
       },
       select: { id: true, title: true, username: true, description: true },

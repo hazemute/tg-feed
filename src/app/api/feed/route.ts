@@ -11,6 +11,7 @@ import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { getCachedPage, putCachedPage } from '@/lib/page-cache'
 import { nsfwPostNotIn } from '@/lib/moderation'
+import { IS_SQLITE } from '@/lib/server'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -118,6 +119,98 @@ function postFromRow(r: PageRow): PostWithChannel {
   } as unknown as PostWithChannel
 }
 
+/*
+ * Страница ленты одним запросом. На Postgres (прод) — сырой SQL с JOIN'ами
+ * и подзапросом счётчика закладок (самый быстрый путь: 1 RTT до Supabase).
+ * На SQLite (локальная песочница) синтаксис ::text[]/ANY недоступен —
+ * тот же результат собирается Prisma-выборкой + двумя batch-запросами флагов.
+ */
+async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> {
+  if (ids.length === 0) return []
+
+  if (!IS_SQLITE) {
+    return db.$queryRaw<PageRow[]>`
+            SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
+                   p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
+                   p."likesCount", p."commentsCount", p."publishedAt",
+                   c."id"           AS "c_id",   c."title"       AS "c_title",
+                   c."username"     AS "c_username", c."description" AS "c_description",
+                   c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
+                   c."avatarUrl"    AS "c_avatarUrl",
+                   c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
+                   c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
+                   c."status"     AS "c_status",
+                   c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
+                   cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
+                   (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
+                   (l."userId" IS NOT NULL)  AS "liked",
+                   (bm."userId" IS NOT NULL) AS "bookmarked"
+            FROM "Post" p
+            JOIN "Channel" c  ON c."id" = p."channelId"
+            LEFT JOIN "Category" cat ON cat."id" = c."categoryId"
+            LEFT JOIN "Like" l     ON l."postId" = p."id" AND l."userId" = ${userId}
+            LEFT JOIN "Bookmark" bm ON bm."postId" = p."id" AND bm."userId" = ${userId}
+            WHERE p."id" = ANY(${ids}::text[])`
+  }
+
+  /* SQLite-путь (локальная разработка): Prisma include + флаги пользователя */
+  const [posts, likes, bookmarks, bookmarkCounts] = await Promise.all([
+    db.post.findMany({
+      where: { id: { in: ids } },
+      include: { channel: { include: { category: true } } },
+    }),
+    db.like.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
+    db.bookmark.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
+    db.bookmark.groupBy({ by: ['postId'], where: { postId: { in: ids } }, _count: { _all: true } }),
+  ])
+  const likeSet = new Set(likes.map((l) => l.postId))
+  const bmSet = new Set(bookmarks.map((b) => b.postId))
+  const bmCount = new Map(bookmarkCounts.map((c) => [c.postId, c._count._all]))
+
+  const byId = new Map(posts.map((p) => [p.id, p]))
+  return ids
+    .map((id) => byId.get(id))
+    .filter((p): p is NonNullable<typeof p> => Boolean(p))
+    .map((p) => {
+      const c = p.channel
+      return {
+        id: p.id,
+        channelId: p.channelId,
+        text: p.text,
+        mediaUrl: p.mediaUrl,
+        mediaType: p.mediaType,
+        mediaMeta: p.mediaMeta,
+        gallery: p.gallery,
+        link: p.link,
+        viewsCount: p.viewsCount,
+        viewsTg: p.viewsTg,
+        reactionsTg: p.reactionsTg,
+        likesCount: p.likesCount,
+        commentsCount: p.commentsCount,
+        publishedAt: p.publishedAt,
+        c_id: c.id,
+        c_title: c.title,
+        c_username: c.username,
+        c_description: c.description,
+        c_avatarColor: c.avatarColor,
+        c_photoFileId: c.photoFileId,
+        c_avatarUrl: c.avatarUrl,
+        c_membersCount: c.membersCount,
+        c_subscribersCount: c.subscribersCount,
+        c_isPremium: c.isPremium,
+        c_verified: c.verified,
+        c_status: c.status,
+        c_teaserMode: c.teaserMode,
+        c_teaserLimit: c.teaserLimit,
+        cat_slug: c.category?.slug ?? null,
+        cat_title: c.category?.title ?? null,
+        bookmarksCount: bmCount.get(p.id) ?? 0,
+        liked: likeSet.has(p.id),
+        bookmarked: bmSet.has(p.id),
+      } as unknown as PageRow
+    })
+}
+
 // Валидация query-параметров. userId из query игнорируется —
 // пользователь берётся ТОЛЬКО из Bearer-сессии (защита от подмены личности).
 const querySchema = z.object({
@@ -179,7 +272,7 @@ export async function GET(request: Request) {
         не даёт бёрсту запросов умножить холодную пересборку. v4 — кап канала. */
     const indexKey =
       scope.sig !== null
-        ? await famKey('feed', `${category}:v4:${shortHash(scope.sig)}`) // v4 — кап канала
+        ? await famKey('feed', `${category}:v5:${shortHash(scope.sig)}`) // v5 — ИИ-модерация + новые веса
         : null // discover — персональный скоуп по интересам, без кэша
 
     const loadIndex = () => computeRankedIndex(scope.where)
@@ -247,30 +340,7 @@ export async function GET(request: Request) {
     let sponSet: Set<string> | null = null
     mark('sponsors-ids')
 
-    const pageRows: PageRow[] = sliceIds.length
-      ? await db.$queryRaw<PageRow[]>`
-            SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
-                   p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
-                   p."likesCount", p."commentsCount", p."publishedAt",
-                   c."id"           AS "c_id",   c."title"       AS "c_title",
-                   c."username"     AS "c_username", c."description" AS "c_description",
-                   c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
-                   c."avatarUrl"    AS "c_avatarUrl",
-                   c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
-                   c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
-                   c."status"     AS "c_status",
-                   c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
-                   cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
-                   (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
-                   (l."userId" IS NOT NULL)  AS "liked",
-                   (bm."userId" IS NOT NULL) AS "bookmarked"
-            FROM "Post" p
-            JOIN "Channel" c  ON c."id" = p."channelId"
-            LEFT JOIN "Category" cat ON cat."id" = c."categoryId"
-            LEFT JOIN "Like" l     ON l."postId" = p."id" AND l."userId" = ${userId}
-            LEFT JOIN "Bookmark" bm ON bm."postId" = p."id" AND bm."userId" = ${userId}
-            WHERE p."id" = ANY(${sliceIds}::text[])`
-      : []
+    const pageRows: PageRow[] = await fetchPageRows(sliceIds, userId)
     mark('page-batch')
 
     // Посты спонсоров — отдельным ходом ПОСЛЕ основного SQL: последовательность
@@ -282,7 +352,11 @@ export async function GET(request: Request) {
             where: {
               channelId: { in: [...sponsors.keys()] },
               id: { notIn: [...signals.viewedIds] },
-              AND: nsfwPostNotIn(), // CPA-спам тоже проходит гигиену текста
+              AND: [
+                ...nsfwPostNotIn(), // CPA-спам тоже проходит гигиену текста
+                // ИИ-модерация: реклама не должна вести на junk/nsfw-посты
+                { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+              ],
             },
             orderBy: { publishedAt: 'desc' },
             take: 12,
@@ -317,28 +391,7 @@ export async function GET(request: Request) {
         const newSliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
         const changed = newSliceIds.some((id, i) => sliceIds[i] !== id)
         if (changed) {
-          const extraRows = await db.$queryRaw<PageRow[]>`
-            SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
-                   p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
-                   p."likesCount", p."commentsCount", p."publishedAt",
-                   c."id"           AS "c_id",   c."title"       AS "c_title",
-                   c."username"     AS "c_username", c."description" AS "c_description",
-                   c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
-                   c."avatarUrl"    AS "c_avatarUrl",
-                   c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
-                   c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
-                   c."status"     AS "c_status",
-                   c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
-                   cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
-                   (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
-                   (l."userId" IS NOT NULL)  AS "liked",
-                   (bm."userId" IS NOT NULL) AS "bookmarked"
-            FROM "Post" p
-            JOIN "Channel" c  ON c."id" = p."channelId"
-            LEFT JOIN "Category" cat ON cat."id" = c."categoryId"
-            LEFT JOIN "Like" l     ON l."postId" = p."id" AND l."userId" = ${userId}
-            LEFT JOIN "Bookmark" bm ON bm."postId" = p."id" AND bm."userId" = ${userId}
-            WHERE p."id" = ANY(${newSliceIds}::text[])`
+          const extraRows = await fetchPageRows(newSliceIds, userId)
           pageRows.length = 0
           pageRows.push(...extraRows)
           sliceIds.length = 0

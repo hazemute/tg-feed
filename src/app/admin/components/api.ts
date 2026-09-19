@@ -358,6 +358,8 @@ export class PanelError extends Error {
 export interface PanelFetchInit {
   method?: string
   json?: unknown
+  /** Таймаут запроса в мс (модерация/парсер могут идти до минуты) */
+  timeoutMs?: number
 }
 
 export function isAuthOrNetworkError(e: unknown): boolean {
@@ -377,6 +379,7 @@ export async function panelFetch<T>(path: string, init?: PanelFetchInit): Promis
         init?.json !== undefined ? { ...headers, 'Content-Type': 'application/json' } : headers,
       body: init?.json !== undefined ? JSON.stringify(init.json) : undefined,
       cache: 'no-store',
+      ...(init?.timeoutMs ? { signal: AbortSignal.timeout(init.timeoutMs) } : {}),
     })
   } catch {
     toast.error('Сеть недоступна')

@@ -400,3 +400,8 @@ CREATE TABLE IF NOT EXISTS "Upload" (
         REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE
 );
 CREATE INDEX IF NOT EXISTS "Upload_ownerId_createdAt_idx" ON "Upload"("ownerId", "createdAt");
+
+-- v5.15: бесплатная ИИ-модерация ленты (verdict: ok | junk | nsfw | spam)
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlag" text;
+ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlagAt" timestamptz;
+CREATE INDEX IF NOT EXISTS "Post_aiFlag_idx" ON "Post" ("aiFlag");

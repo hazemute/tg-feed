@@ -445,19 +445,14 @@ export function ProfileTab() {
         </div>
       </section>
 
-      {/* Мой канал — из навбара переехал в низ профиля (приказ владельца) */}
+      {/* Мой канал — из навбара переехал в низ профиля (приказ владельца);
+          v5.15: без описания, только название в одну строку */}
       <section className="pt-7">
         <h2 className="px-4 text-[19px] font-bold text-tg-text">Каналы</h2>
         <div className="mt-1">
           <SettingRow
             icon={<Radio className="h-[22px] w-[22px]" strokeWidth={1.7} />}
             label={t('profile.myChannelRow')}
-            right={
-              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
-                {t('profile.myChannelHint')}
-                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
-              </span>
-            }
             onClick={() => {
               haptic('light')
               setTab('mychannel')
@@ -864,9 +859,10 @@ function SettingRow({
 }) {
   const inner = (
     <>
-      <span className="text-tg-text">{icon}</span>
-      <span className="flex-1 text-[16.5px] text-tg-text">{label}</span>
-      {right ?? <ChevronRight className="h-5 w-5 text-tg-hint" />}
+      <span className="shrink-0 text-tg-text">{icon}</span>
+      {/* v5.15: название всегда в одну строку — длинные подписи обрезаются, не переносятся */}
+      <span className="min-w-0 flex-1 truncate text-[16.5px] text-tg-text">{label}</span>
+      {right ?? <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" />}
     </>
   )
   const cls = cn(

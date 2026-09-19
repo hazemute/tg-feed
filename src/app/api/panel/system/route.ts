@@ -25,9 +25,11 @@ export const dynamic = 'force-dynamic'
  *    | { action: 'allow', userId } | { action: 'disallow', userId }
  *    | { action: 'allowByTgId', tgId: string } — допустить заранее (создаёт запись)
  *    | { action: 'resetCache' }
+ *    | { action: 'applyMigration', version: 'v5.15' } — идемпотентные ALTER'ы
+ *      (безопасно: только фиксированные строки из supabase/schema.sql)
  */
 
-type Body = { action?: unknown; enabled?: unknown; userId?: unknown; tgId?: unknown }
+type Body = { action?: unknown; enabled?: unknown; userId?: unknown; tgId?: unknown; version?: unknown }
 
 function str(v: unknown, max: number): string | null {
   return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null
@@ -146,6 +148,27 @@ export async function POST(request: Request) {
       case 'resetCache': {
         await bumpCache([...CACHE_FAMILIES])
         return NextResponse.json({ ok: true, families: CACHE_FAMILIES })
+      }
+
+      /*
+       * Идемпотентные миграции для прода (когда prisma db push недоступен из
+       * песочницы). ТОЛЬКО фиксированные строки — никакой внешней SQL-строки;
+       * каждый шаг защищён IF NOT EXISTS / IF NOT NULL-safe.
+       */
+      case 'applyMigration': {
+        const version = str(body.version, 16)
+        if (version !== 'v5.15') return err('unknown migration')
+        const stmts: string[] = [
+          `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlag" text`,
+          `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlagAt" timestamptz`,
+          `CREATE INDEX IF NOT EXISTS "Post_aiFlag_idx" ON "Post" ("aiFlag")`,
+        ]
+        const applied: string[] = []
+        for (const sql of stmts) {
+          await db.$executeRawUnsafe(sql)
+          applied.push(sql)
+        }
+        return NextResponse.json({ ok: true, version, applied: applied.length })
       }
 
       default:

@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { cronAuthorized } from '@/lib/guard'
 import { generateTts, ttsPlainOf } from '@/lib/tts'
 import { summarizePostCached, translatePostCached } from '@/lib/ai'
+import { runAiModeration } from '@/lib/ai-moderate'
 import { warmFeedIndexes } from '@/lib/feed-warm'
 
 export const dynamic = 'force-dynamic'
@@ -32,6 +33,20 @@ export async function POST(request: Request) {
     let tts = 0
     let translated = 0
     let summarized = 0
+    let moderated = 0
+
+    /* ---------- ИИ-модерация: 2 пачки свежих постов (БЕСПЛАТНЫЕ модели) ----------
+        Первый этап: чистая лента важнее переводов. Батчи по 8 постов,
+        вердикты в Post.aiFlag (ok/junk/nsfw/spam); junk/nsfw/spam скрываются
+        из ленты (см. computeRankedIndex). Ошибки/лимиты бесплатных моделей
+        не роняют warm — посты попробуют на следующем тике. */
+    let mod: Awaited<ReturnType<typeof runAiModeration>> | null = null
+    try {
+      mod = await runAiModeration(2, 8)
+      moderated = mod.judged
+    } catch {
+      /* модерация не влияет на остальной warm */
+    }
 
     /* ---------- Прогрев глобальных индексов ленты (защита от лавины) ----------
         Vercel CRON (ежедневный /api/parse/tick) и локальный feed-cron дергают
@@ -113,10 +128,22 @@ export async function POST(request: Request) {
       }
     }
 
-    if (tts + translated + summarized + warmed > 0) {
-      console.log(`[warm] tts:+${tts} translate:+${translated} summary:+${summarized} feed-indexes:+${warmed}`)
+    if (tts + translated + summarized + warmed + moderated > 0) {
+      console.log(
+        `[warm] moder:+${moderated}${mod ? `/${mod.batches}б` : ''} tts:+${tts} translate:+${translated} summary:+${summarized} feed-indexes:+${warmed}`,
+      )
     }
-    return NextResponse.json({ ok: true, tts, translated, summarized, warmed })
+    return NextResponse.json({
+      ok: true,
+      moderated,
+      moderation: mod
+        ? { batches: mod.batches, byVerdict: mod.byVerdict, llm: mod.llmCalled, cached: mod.skippedCached }
+        : null,
+      tts,
+      translated,
+      summarized,
+      warmed,
+    })
   } catch (e) {
     console.error('[warm]', e)
     return NextResponse.json({ error: 'warm failed' }, { status: 500 })

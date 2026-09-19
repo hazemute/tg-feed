@@ -313,7 +313,10 @@ export function stripMarkdown(text: string): string {
   const cleaned = reorderMarkersAroundLinks(decodeHrefAmpersands(text))
     .replace(/<br\s*\/?>/gi, ' ') // легаси-HTML старых постов
     .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/!\[e(?:v)?(?::\d+)?\]\([^)]*\)/g, '') // инлайн-картинки эмодзи — не текст
+    // инлайн-картинки эмодзи — не текст (e/ev/el: статика, видео, Lottie)
+    .replace(/!\[e(?:v|l)?(?::\d+)?\]\([^)]*\)/g, '')
+    .replace(/!\[e(?:v|l)?(?::\d+)?\]?\([^)]*$/g, '') // оборванные хвосты маркеров
+    .replace(/!\[e(?:v|l)?(?::\d+)?/g, '')
     .replace(/\*\*([^*]*)\*\*/g, '$1')
     .replace(/__([^_]*)__/g, '$1')
     .replace(/~~([^~]*)~~/g, '$1')

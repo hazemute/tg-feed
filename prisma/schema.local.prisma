@@ -15,12 +15,15 @@ datasource db {
 
 // Telegram user (id from initData) or demo user (id from deviceId)
 model User {
-  id            String   @id // "tg_<uid>" | "demo_<deviceId>"
+  id            String   @id // "tg_<uid>" | "guest_<deviceId>"
   username      String?
   firstName     String?
   lastName      String?
   photoUrl      String?
-  isDemo        Boolean  @default(true)
+  isGuest       Boolean  @default(true) // в БД колонка исторически isDemo
+  isPremium     Boolean  @default(false)
+  languageCode  String?
+  bypassMaintenance Boolean @default(false)
   categories    String   @default("[]") // JSON array of category slugs (interests)
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
   bannedAt      DateTime? // бан: null — активен; API отвечает 403 banned
@@ -33,7 +36,14 @@ model User {
   subscriptions Subscription[]
   channelMutes  ChannelMute[]
   channels      Channel[]
+  claimedChannels Channel[] @relation("claimedChannels")
   bookmarks     Bookmark[]
+  comments      Comment[]
+  notifications Notification[]
+  supportThreads SupportThread[]
+  advertiser    AdvertiserAccount?
+  campaigns     AdCampaign[]
+  translations  TranslationLog[]
 }
 
 model Category {
@@ -53,13 +63,26 @@ model Channel {
   username         String    @unique // without @
   description      String?
   avatarColor      String    @default("#3390ec")
+  photoFileId      String?
+  avatarUrl        String?
+  avatarHash       String?
+  avatarVideoUrl   String?
+  avatarFetchedAt  DateTime?
+  membersCount     Int?
+  membersFetchedAt DateTime?
   categoryId       String
   category         Category  @relation(fields: [categoryId], references: [id])
   isPremium        Boolean   @default(false)
   premiumUntil     DateTime?
+  verified         Boolean   @default(false)
   status           String    @default("active") // active | moderation
   subscribersCount Int       @default(0)
   clicksCount      Int       @default(0) // клики по кнопке [+] подписки
+  claimedById      String?
+  claimedBy        User?     @relation("claimedChannels", fields: [claimedById], references: [id])
+  claimedAt        DateTime?
+  teaserMode       String    @default("none")
+  teaserLimit      Int       @default(160)
   addedById        String?
   addedBy          User?     @relation(fields: [addedById], references: [id])
   createdAt        DateTime  @default(now())
@@ -67,6 +90,7 @@ model Channel {
   posts            Post[]
   subscriptions    Subscription[]
   mutedBy     ChannelMute[]
+  campaigns   AdCampaign[]
 }
 
 model Post {
@@ -77,17 +101,28 @@ model Post {
   text        String   @default("")
   mediaUrl    String?
   mediaType   String   @default("image") // image | video
+  mediaMeta   String? // JSON: имя/размер файла, длительность, варианты опроса, превью ссылки и т.п.
   gallery     String? // JSON array — дополнительные медиа (карусель)
   link        String? // original t.me link
   viewsCount  Int      @default(0)
+  viewsTg     Int? // просмотры из оригинального канала (t.me/s)
+  reactionsTg Int      @default(0) // сумма реакций исходного поста (t.me/s)
   likesCount  Int      @default(0)
+  commentsCount Int    @default(0) // денормализованный счётчик комментариев
+  hotScore    Float    @default(0) // «температура» поста
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
+  aiFlag      String? // вердикт ИИ-модерации: ok | junk | nsfw | spam (null — не модерирован)
+  aiFlagAt    DateTime? // когда вынесен вердикт
+  translations String? // кэш переводов: {"ru":{"text":"…","at":"ISO"}}
+  ttsAudio    String?  // озвучка поста (base64 mp3)
+  ttsAt       DateTime?
   publishedAt DateTime
-  notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
+  notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API)
 
   likedBy     Like[]
   viewedBy    PostView[]
   bookmarkedBy Bookmark[]
+  comments    Comment[]
 }
 
 model Like {
@@ -107,6 +142,7 @@ model PostView {
   userId    String
   postId    String
   createdAt DateTime @default(now())
+  dwellMs   Int      @default(0) // суммарное время поста на экране — сигнал интереса
 
   user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
@@ -120,6 +156,7 @@ model Subscription {
   channelId String
   hidden    Boolean  @default(false) // скрыть канал из общей ленты
   notify    Boolean  @default(true)  // колокольчик: true — все уведомления, false — без звука
+  notInterestedAt DateTime? // «Не интересно»: канал вниз/вне ленты
   createdAt DateTime @default(now())
 
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -205,4 +242,185 @@ model Upload {
   createdAt DateTime @default(now())
 
   @@index([ownerId, createdAt])
+}
+
+// === v5.15: синхронизация с прода (комментарии, лайки, уведы, эмодзи, поддержка) ===
+
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime @default(now())
+
+  parentId      String?
+  parent        Comment?  @relation("commentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies       Comment[] @relation("commentThread")
+  replyToUserId String?
+  replyToName   String?
+
+  likesCount   Int @default(0)
+  repliesCount Int @default(0)
+  likedBy      CommentLike[]
+
+  @@index([postId, createdAt])
+  @@index([parentId, createdAt])
+  @@index([postId, likesCount])
+  @@index([userId])
+}
+
+model CommentLike {
+  id        String   @id @default(cuid())
+  userId    String
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, commentId])
+  @@index([commentId])
+}
+
+model Notification {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String    @default("system")
+  title           String
+  body            String?
+  postId          String?
+  channelUsername String?
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model CustomEmoji {
+  id        String   @id
+  kind      String   @default("static")
+  animated  Boolean  @default(false)
+  fileId    String?
+  fetchedAt DateTime @updatedAt
+}
+
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model SupportThread {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  status        String   @default("ai")
+  kind          String   @default("support")
+  topic         String?
+  unreadAdmin   Int      @default(0)
+  unreadUser    Int      @default(0)
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  messages SupportMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([userId])
+}
+
+model SupportMessage {
+  id        String   @id @default(cuid())
+  threadId  String
+  thread    SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender    String
+  text      String
+  images    String?
+  createdAt DateTime @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+// === Реклама/кампании (v5.15 sync) ===
+
+model AdCampaign {
+  id             String    @id @default(cuid())
+  ownerId        String
+  owner          User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  channelId      String?
+  channel        Channel?  @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  title          String
+  body           String
+  ctaLabel       String    @default("Подписаться")
+  link           String
+  imageUrl       String?
+  costPerClickKop Int      @default(300)
+  budgetKop      Int       @default(0)
+  spentKop       Int       @default(0)
+  impressions    Int       @default(0)
+  clicks         Int       @default(0)
+  rawClicks      Int       @default(0)
+  status         String    @default("moderation")
+  note           String?
+  createdAt      DateTime  @default(now())
+  startedAt      DateTime?
+  completedAt    DateTime?
+
+  clicksLog      CampaignClick[]
+  stats          CampaignStat[]
+
+  @@index([status])
+}
+
+model AdvertiserAccount {
+  userId         String   @id
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balanceKop     Int      @default(0)
+  topupsTotalKop Int      @default(0)
+  spentTotalKop  Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
+model CampaignClick {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId       String
+  lastBilledAt DateTime @default(now())
+  billedCount  Int      @default(1)
+
+  @@unique([campaignId, userId])
+}
+
+model CampaignStat {
+  id          String @id @default(cuid())
+  campaignId  String
+  campaign    AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  day         String
+  impressions Int    @default(0)
+  clicks      Int    @default(0)
+  spentKop    Int    @default(0)
+
+  @@unique([campaignId, day])
+  @@index([day])
+}
+
+model TranslationLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  postId    String
+  srcLang   String
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+}
+
+model LoginAttempt {
+  id        String   @id @default(cuid())
+  ipHash    String
+  success   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([ipHash, createdAt])
 }

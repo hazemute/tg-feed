@@ -43,7 +43,15 @@ export async function GET(request: Request) {
     if (!scope) return err('user not found', 404)
 
     const posts = await db.post.findMany({
-      where: { ...scope.where, publishedAt: { gt: afterDate }, AND: nsfwPostNotIn() },
+      where: {
+        ...scope.where,
+        publishedAt: { gt: afterDate },
+        AND: [
+          ...nsfwPostNotIn(),
+          // ИИ-модерация: свежая пачка тоже без junk/nsfw/spam
+          { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+        ],
+      },
       orderBy: { publishedAt: 'desc' },
       take: 30,
       include: { channel: { include: { category: true } }, _count: { select: { bookmarkedBy: true } } },

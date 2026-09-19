@@ -2,6 +2,7 @@ import type { Channel, Post } from '@prisma/client'
 import type { ChannelDTO, MediaItemDTO, MediaKind, PostDTO } from '@/lib/types'
 import { proxiedMediaUrl } from '@/lib/media'
 import { animatedEmojiKinds } from '@/lib/emoji-registry'
+import { cleanPostText } from '@/lib/text-clean'
 
 type ChannelWithCategory = Channel & {
   category?: { slug: string; title: string } | null
@@ -125,7 +126,11 @@ export function toPostDTO(
 
   return {
     id: p.id,
-    text: upgradeAnimatedEmoji(p.text),
+    // cleanPostText — ПОЛНАЯ зачистка НА ВЫДАЧЕ: покрывает легаси-посты БД
+    // (дубли строк, хэштег-простыни, utm-хвосты, канальные призывы, невидимые
+    // символы), не трогая данные. Дешёво: линейные + построчные проходы,
+    // страницы кэшируются выше по стеку.
+    text: upgradeAnimatedEmoji(cleanPostText(p.text)),
     mediaUrl: proxiedMediaUrl(p.mediaUrl) ?? p.mediaUrl,
     mediaType: kind,
     media: media as MediaItemDTO | null,

@@ -4,24 +4,28 @@ import { readJson, err } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { runParser } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
+import { runAiModeration, moderationStats } from '@/lib/ai-moderate'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60 // парсер может идти дольше обычного запроса (важно для Vercel)
+export const maxDuration = 60 // парсер/модерация могут идти дольше обычного запроса (важно для Vercel)
 
 const schema = z.object({
-  action: z.literal('parse'),
+  action: z.enum(['parse', 'ai-moderate']),
   perChannel: z.number().int().min(1).max(50).optional(),
   username: z.string().trim().max(64).optional(),
   all: z.boolean().optional(), // прогнать ВСЕ активные каналы (крупный сбор), не только первые 20
   deep: z.boolean().optional(), // углубляться в историю каналов (до 4 страниц ?before=)
+  batches: z.number().int().min(0).max(8).optional(), // ai-moderate: пачек за прогон (0 — только статистика)
 })
 
 /**
- * POST /api/panel/tools { action: 'parse', perChannel?, username?, all? }
- * Ручной запуск парсера из локальной админ-панели.
- * all=true — крупный прогон по всем каналам (до 500) с тайм-бюджетом 50с:
- * если не успели — ответ truncated=true, дообработайте следующим запуском
- * (UI делает это автоматически).
+ * POST /api/panel/tools { action: 'parse' | 'ai-moderate', ... }
+ * Ручные инструменты админ-панели.
+ *
+ * parse — ручной запуск парсера (all=true — крупный прогон по всем каналам
+ * с тайм-бюджетом 50с; если не успели — truncated=true, UI дообрабатывает).
+ * ai-moderate — прогон бесплатной ИИ-модерации по свежим постам без вердикта
+ * + статистика вердиктов за 7 дней.
  * Лимит: 15 запусков в 5 минут на IP.
  */
 export async function POST(request: Request) {
@@ -30,9 +34,20 @@ export async function POST(request: Request) {
 
   try {
     const parsed = schema.safeParse(await readJson(request))
-    if (!parsed.success) return err('action: parse; perChannel 1..50; username/all опциональны')
-    const { perChannel, username, all, deep } = parsed.data
+    if (!parsed.success) {
+      return err('action: parse (perChannel 1..50, username/all) | ai-moderate (batches 1..8)')
+    }
+    const { perChannel, username, all, deep, action } = parsed.data
 
+    /* ---------- Бесплатная ИИ-модерация (ручной прогон / статистика) ---------- */
+    if (action === 'ai-moderate') {
+      const batches = parsed.data.batches ?? 0
+      const stats = batches > 0 ? await runAiModeration(batches, 8) : null
+      const weekly = await moderationStats(7).catch(() => [])
+      return NextResponse.json({ ok: true, moderation: stats, weekly })
+    }
+
+    /* ---------- Парсер ---------- */
     const deadline = all ? Date.now() + 50_000 : 0
     const result = await runParser(
       perChannel ?? 5,
@@ -62,6 +77,6 @@ export async function POST(request: Request) {
     })
   } catch (e) {
     console.error('[panel/tools]', e)
-    return err('parse failed', 500)
+    return err('tools failed', 500)
   }
 }

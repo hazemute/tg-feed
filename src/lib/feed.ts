@@ -2,6 +2,7 @@ import { db } from '@/lib/db'
 import { parseJsonArray } from '@/lib/server'
 import { getNsfwChannelIds, nsfwPostNotIn } from '@/lib/moderation'
 import { computeWeight, rankJitter } from '@/lib/rank'
+import { looksLikeGarbage } from '@/lib/text-clean'
 import type { AffinityMap } from '@/lib/rank'
 
 // ------------------------- Глобальный индекс ленты -------------------------
@@ -37,12 +38,20 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
     where: {
       ...where,
       // NSFW-спам (эскорт/18+) не попадает даже в индекс ленты
-      AND: nsfwPostNotIn(),
+      AND: [
+        ...nsfwPostNotIn(),
+        // ИИ-модерация (v5.15): junk/nsfw/spam скрыты из ленты.
+        // Посты без флага (не успели модерироваться) показываются —
+        // фильтр консервативен, лента не пустеет.
+        { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+      ],
     },
     select: {
       id: true,
       channelId: true,
+      text: true,
       likesCount: true,
+      reactionsTg: true,
       viewsCount: true,
       hotScore: true,
       publishedAt: true,
@@ -54,12 +63,14 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
     take: 400,
   })
   const entries: IndexEntry[] = posts
+    .filter((p) => !looksLikeGarbage(p.text)) // мгновенный детект каши — не ждём ИИ
     .map((p) => ({
       i: p.id,
       c: p.channelId,
       g: p.channel.categoryId,
       w: computeWeight({
         likesCount: p.likesCount,
+        reactionsTg: p.reactionsTg,
         viewsCount: p.viewsCount,
         hotScore: p.hotScore,
         publishedAt: p.publishedAt,

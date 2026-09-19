@@ -6,6 +6,7 @@ import { warmFeedIndexes } from '@/lib/feed-warm'
 import { botEnabled, getChatPhotoFileId, getChatMemberCount, getCustomEmojiStickers } from '@/lib/tg-bot'
 import { syncChannelAvatar } from '@/lib/avatar-store'
 import { isAdCliche } from '@/lib/moderation'
+import { cleanPostText } from '@/lib/text-clean'
 import type { NotifiablePost } from '@/lib/tg-bot'
 import { htmlToMarkdownLite } from '@/lib/markdown'
 
@@ -632,7 +633,9 @@ export async function runParser(
         const data = {
           tgKey: p.tgKey,
           channelId: channel.id,
-          text: p.text,
+          // v5.15: полная зачистка мусора (невидимые символы, хэштег-простыни,
+          // повторные строки, utm-хвосты, канальные призывы-хвосты)
+          text: cleanPostText(p.text),
           mediaUrl: primary?.url ?? null,
           mediaType: primary?.kind ?? 'none',
           mediaMeta: extras ? JSON.stringify(extras) : null,
@@ -649,7 +652,8 @@ export async function runParser(
           const old = existingMap.get(p.tgKey)
           const viewsChanged = p.viewsTg != null && old?.viewsTg !== p.viewsTg
           const reactionsChanged = p.reactionsTg > 0 && old?.reactionsTg !== p.reactionsTg
-          const textChanged = p.text.length > 0 && p.text !== old?.text // markdown-апгрейд/зачистка
+          const textChanged =
+            p.text.length > 0 && cleanPostText(p.text) !== old?.text // markdown-апгрейд/зачистка
           // Бэкфилл медиа: старый парсер часто не доставал фото/галереи
           const mediaChanged =
             !!old &&
@@ -662,7 +666,7 @@ export async function runParser(
                 data: {
                   ...(viewsChanged ? { viewsTg: p.viewsTg } : {}),
                   ...(reactionsChanged ? { reactionsTg: p.reactionsTg } : {}),
-                  ...(textChanged ? { text: p.text } : {}),
+                  ...(textChanged ? { text: cleanPostText(p.text) } : {}),
                   ...(mediaChanged
                     ? {
                         mediaUrl: p.media?.url ?? null,

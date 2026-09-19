@@ -50,20 +50,23 @@ function models(): string[] {
 
 /**
  * Полноценный вызов с историей (мульти-turn: чат поддержки и др.).
+ * opts.models — переопределение цепочки моделей (например, только :free
+ * для бесплатной ИИ-модерации, см. ai-moderate.ts).
  * Бросает ошибку, если ни одна модель не ответила.
  */
 export async function chatMessages(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number },
+  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number; models?: string[] },
 ): Promise<string> {
   const key = process.env.OPENROUTER_API_KEY
   if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const maxTokens = opts?.maxTokens ?? 800
   const timeoutMs = opts?.timeoutMs ?? 25_000
   const temperature = opts?.temperature ?? 0.2
+  const chain = opts?.models ?? models()
 
   let lastError: unknown = null
-  for (const model of models()) {
+  for (const model of chain) {
     try {
       const res = await fetch(API_URL, {
         method: 'POST',

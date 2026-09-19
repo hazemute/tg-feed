@@ -3,6 +3,13 @@ import { APP_VERSION } from '@/lib/version'
 
 export { APP_VERSION }
 
+/**
+ * Провайдер БД: локальная песочница работает на SQLite (DATABASE_URL=file:…),
+ * прод — Postgres/Supabase. Синтаксис сырых запросов и некоторые фильтры
+ * (mode:'insensitive') различаются — ветки по этому флагу.
+ */
+export const IS_SQLITE = (process.env.DATABASE_URL ?? '').startsWith('file:')
+
 export function err(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status })
 }
