@@ -3,11 +3,10 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
-import { guardAuth, guardIp } from '@/lib/guard'
+import { guardIp } from '@/lib/guard'
 import { signSession } from '@/lib/session'
 import { getBotUsername, getUserPhotoFileId } from '@/lib/tg-bot'
 import { adminUids, isMaintenanceOn } from '@/lib/maintenance'
-import { migrateGuestUserData } from '@/lib/auth-user'
 import type { UserDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -21,8 +20,9 @@ export const dynamic = 'force-dynamic'
  *
  *  Финализация: вебхук бота положил в попытку снимок tg-пользователя
  *  (callback_query.from — данные именно того, кто нажал «Войти» в боте).
- *  Здесь мы апсертим tg_<id>, переносим гостевую историю (страница гостя
- *  НЕ удаляется — старые in-flight запросы не ловят 401), выдаём JWT.
+ *  Здесь мы апсертим tg_<id> и выдаём JWT. Сессия для старта НЕ нужна
+ *  (v5.20: гостей больше нет — сайт начинается с этого роута), секрет —
+ *  сам случайный 48-hex токен попытки + подтверждение в чате бота.
  */
 
 const LINK_TTL_MS = 15 * 60 * 1000
@@ -85,11 +85,9 @@ function userDto(u: {
 }
 
 export async function POST(request: Request) {
-  // Анти-абьюз: 6 ссылок в минуту с одного IP
+  // Анти-абьюз: 6 ссылок в минуту с одного IP (сессия не нужна — гостей нет)
   const ip = guardIp(request, { limit: 6, windowMs: 60_000, bucket: 'auth-link' })
   if (!ip.ok) return ip.res
-  const g = guardAuth(request, { limit: 10, windowMs: 60_000, bucket: 'auth-link' })
-  if (!g.ok) return g.res
 
   try {
     await readJson(request).catch(() => ({}))
@@ -123,7 +121,9 @@ const getSchema = z.object({
 })
 
 export async function GET(request: Request) {
-  const g = guardAuth(request, { limit: 120, windowMs: 60_000, bucket: 'auth-link-poll' })
+  // Опрос без сессии: секрет — сам токен попытки (48 hex, неугадываемый);
+  // от перебора — лимит по IP.
+  const g = guardIp(request, { limit: 120, windowMs: 60_000, bucket: 'auth-link-poll' })
   if (!g.ok) return g.res
 
   try {
@@ -188,8 +188,7 @@ export async function GET(request: Request) {
       },
     })
 
-    // Гостевая история → tg-аккаунт (гостевую строку сохраняем: см. auth-user.ts)
-    await migrateGuestUserData(g.uid, user.id, { deleteSource: false })
+    // v5.20: гостей больше нет (стерилизованы) — миграция гостевой истории не нужна
 
     // Метка использования — best-effort (финализация выше уже идемпотентна)
     void db.loginAttempt

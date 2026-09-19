@@ -3,11 +3,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { AnimatePresence, motion } from 'framer-motion'
+import { Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, getSessionToken, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import type { Lang } from '@/lib/i18n'
-import { getDeviceId } from '@/lib/user-id'
 import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
 import { isInTelegram } from '@/lib/platform'
 import { THEME_BY_ID } from '@/lib/themes'
@@ -44,12 +44,14 @@ const tabVariants = {
 }
 
 export default function Home() {
-  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, goToTab } =
+  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, goToTab, setLoginOpen } =
     useApp()
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
   // Сплэш живёт минимум 1.05с — влёт самолётика (0.9с) и подпись (0.35+0.5с)
   // успевают доиграть, а старт ощущается заметно бодрее.
   const [splashMinDone, setSplashMinDone] = useState(false)
+  // Сайт без Telegram-сессии: вход только через бота (гостей с v5.20 больше нет)
+  const [needLogin, setNeedLogin] = useState(false)
 
   useEffect(() => {
     const t = setTimeout(() => setSplashMinDone(true), 1050)
@@ -115,12 +117,13 @@ export default function Home() {
   // Шаг 1 PRD: авторизация через initData без паролей и регистраций.
   // Сервер проверяет подпись Telegram и выдаёт JWT-сессию — дальше все запросы
   // идут с заголовком Authorization: Bearer (см. src/lib/api.ts).
+  // v5.20: гостевого входа больше нет — без валидного initData сервер отвечает
+  // telegram_required, и сайт показывает экран входа через бота.
   const authenticate = useCallback(async (): Promise<boolean> => {
     const w = initTelegram()
     /*
      * САЙТ (не Mini App): если сессия уже есть — проверяем её лёгким GET /api/auth
-     * и выходим. Иначе POST ниже сделал бы из вошедшего через бота tg-юзера
-     * гостя заново при каждой перезагрузке страницы. Внутри Telegram — всегда
+     * и выходим. Иначе POST ниже вернёт telegram_required. Внутри Telegram — всегда
      * полный вход: initData заодно обновляет профиль/премиум/аватар.
      */
     const existing = getSessionToken()
@@ -157,11 +160,7 @@ export default function Home() {
         maintenance?: { active: boolean; canBypass: boolean }
       }>('/api/auth', {
         method: 'POST',
-        body: JSON.stringify({
-          initData: w?.initData ?? '',
-          tgUser: w?.initDataUnsafe?.user,
-          deviceId: getDeviceId(),
-        }),
+        body: JSON.stringify({ initData: w?.initData ?? '' }),
       })
       setSessionToken(res.token)
       setUser(res.user)
@@ -173,7 +172,12 @@ export default function Home() {
       const cats = await api<{ items: CategoryDTO[] }>('/api/categories')
       setCategories(cats.items)
       return true
-    } catch {
+    } catch (e) {
+      // Не в Telegram (или бот-токен не настроен): предлагаем вход через бота
+      if ((e as Error).message === 'telegram_required' || (e as Error).message === 'telegram_invalid') {
+        setNeedLogin(true)
+        return false
+      }
       toast.error('Ошибка входа. Обновите страницу.')
       return false
     }
@@ -269,6 +273,14 @@ export default function Home() {
   }
 
   if (!authReady || !user || !splashMinDone) {
+    if (needLogin) {
+      return (
+        <>
+          <LoginRequired onLogin={() => setLoginOpen(true)} />
+          <GlobalLoginSheet />
+        </>
+      )
+    }
     return <Splash />
   }
 
@@ -336,4 +348,39 @@ function GlobalLoginSheet() {
   const loginOpen = useApp((s) => s.loginOpen)
   const setLoginOpen = useApp((s) => s.setLoginOpen)
   return <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />
+}
+
+/**
+ * Экран входа для сайта (вне Telegram): гостей с v5.20 нет — только вход
+ * через нашего бота (одноразовая ссылка, подтверждение в чате).
+ */
+function LoginRequired({ onLogin }: { onLogin: () => void }) {
+  return (
+    <main className="flex min-h-dvh items-center justify-center bg-tg-bg px-6">
+      <div className="w-full max-w-sm rounded-3xl border border-tg-sep bg-tg-surface p-7 text-center shadow-xl">
+        <div
+          className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-tg-link text-white"
+          aria-hidden
+        >
+          <Send className="size-8 -translate-x-0.5 translate-y-0.5" />
+        </div>
+        <h1 className="mt-4 text-xl font-bold text-tg-text">Tg Swipe</h1>
+        <p className="mt-2 text-[14px] leading-relaxed text-tg-hint">
+          Вход — только через Telegram. Откройте мини-апп из Telegram или подтвердите вход
+          в чате с нашим ботом: это безопасно и занимает пару секунд.
+        </p>
+        <button
+          type="button"
+          onClick={onLogin}
+          className="mt-5 flex h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15.5px] font-bold text-white transition active:scale-[0.98]"
+        >
+          <Send className="size-5" aria-hidden />
+          Войти через Telegram
+        </button>
+        <p className="mt-3 text-[11.5px] leading-snug text-tg-hint">
+          Мы получаем только публичный профиль: имя, @username и аватар.
+        </p>
+      </div>
+    </main>
+  )
 }

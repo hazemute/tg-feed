@@ -21,4 +21,15 @@ export async function register() {
   } catch (e) {
     console.error('[boot] ensure-schema failed:', e)
   }
+  // Стерилизация: гости/демо-балансы удалены из кода входа — подчистить
+  // исторические демо-данные (идемпотентно, после чистки удаляет 0 строк).
+  try {
+    const { purgeDemoData } = await import('@/lib/sterilize')
+    const p = await purgeDemoData()
+    if (p.guests > 0 || p.fakeEscrow > 0) {
+      console.log('[boot] sterilize:', JSON.stringify(p.details))
+    }
+  } catch (e) {
+    console.error('[boot] sterilize failed:', e)
+  }
 }

@@ -40,6 +40,7 @@ export const ADMIN_ACTION_LABELS: Record<string, string> = {
   bypass_on: 'Допуск мимо техработ',
   bypass_off: 'Отозван допуск мимо техработ',
   ops: 'Быстрая операция',
+  purge_demo: 'Стерилизация демо-данных',
   moderation: 'Модерация канала',
   campaign: 'Модерация кампании',
   comment: 'Действие с комментарием',

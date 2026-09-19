@@ -24,7 +24,10 @@ type PollResponse =
  */
 export function LoginByTelegram({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { setUser, user: tgUser } = useApp()
-  const [phase, setPhase] = useState<'creating' | 'waiting' | 'expired' | 'done'>('creating')
+  const [phase, setPhase] = useState<'creating' | 'waiting' | 'expired' | 'done' | 'error'>(
+    'creating',
+  )
+  const [linkError, setLinkError] = useState('')
   const [link, setLink] = useState<LinkResponse | null>(null)
   const [copied, setCopied] = useState(false)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -38,6 +41,7 @@ export function LoginByTelegram({ open, onClose }: { open: boolean; onClose: () 
 
   const createLink = useCallback(async () => {
     setPhase('creating')
+    setLinkError('')
     setLink(null)
     stopPolling()
     try {
@@ -45,10 +49,11 @@ export function LoginByTelegram({ open, onClose }: { open: boolean; onClose: () 
       setLink(r)
       setPhase('waiting')
     } catch (e) {
-      toast.error((e as Error).message || 'Не удалось создать ссылку входа')
-      onClose()
+      // Шит НЕ закрываем — показываем состояние ошибки с кнопкой повтора
+      setLinkError((e as Error).message || 'Не удалось создать ссылку входа')
+      setPhase('error')
     }
-  }, [onClose, stopPolling])
+  }, [stopPolling])
 
   useEffect(() => {
     if (!open) return
@@ -132,7 +137,23 @@ export function LoginByTelegram({ open, onClose }: { open: boolean; onClose: () 
       </ol>
 
       {/* Кнопки действия */}
-      {phase === 'waiting' || phase === 'creating' ? (
+      {phase === 'error' ? (
+        <div className="mt-4 text-center">
+          <p className="text-[13.5px] leading-relaxed text-red-500">
+            {linkError === 'bot unavailable'
+              ? 'Вход через бота сейчас недоступен. Откройте мини-апп прямо из Telegram — вход произойдёт автоматически.'
+              : linkError || 'Не удалось создать ссылку входа'}
+          </p>
+          <button
+            type="button"
+            onClick={() => void createLink()}
+            className="mx-auto mt-3 flex h-11 items-center justify-center gap-2 rounded-2xl bg-tg-link px-5 text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Попробовать снова
+          </button>
+        </div>
+      ) : phase === 'waiting' || phase === 'creating' ? (
         <>
           <a
             href={link?.url ?? '#'}

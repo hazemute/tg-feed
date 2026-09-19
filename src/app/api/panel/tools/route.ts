@@ -5,12 +5,14 @@ import { guardAdmin } from '@/lib/guard'
 import { runParser } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
 import { runAiModeration, moderationStats } from '@/lib/ai-moderate'
+import { purgeDemoData } from '@/lib/sterilize'
+import { logAdmin } from '@/lib/admin-log'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60 // парсер/модерация могут идти дольше обычного запроса (важно для Vercel)
 
 const schema = z.object({
-  action: z.enum(['parse', 'ai-moderate']),
+  action: z.enum(['parse', 'ai-moderate', 'purge_demo']),
   perChannel: z.number().int().min(1).max(50).optional(),
   username: z.string().trim().max(64).optional(),
   all: z.boolean().optional(), // прогнать ВСЕ активные каналы (крупный сбор), не только первые 20
@@ -19,13 +21,15 @@ const schema = z.object({
 })
 
 /**
- * POST /api/panel/tools { action: 'parse' | 'ai-moderate', ... }
+ * POST /api/panel/tools { action: 'parse' | 'ai-moderate' | 'purge_demo', ... }
  * Ручные инструменты админ-панели.
  *
  * parse — ручной запуск парсера (all=true — крупный прогон по всем каналам
  * с тайм-бюджетом 50с; если не успели — truncated=true, UI дообрабатывает).
  * ai-moderate — прогон бесплатной ИИ-модерации по свежим постам без вердикта
  * + статистика вердиктов за 7 дней.
+ * purge_demo — стерилизация демо-данных: удаление всех гостей (guest_*) и
+ * эскроу-балансов без единого пополнения (следы демо-сидов вида «500 ₽»).
  * Лимит: 15 запусков в 5 минут на IP.
  */
 export async function POST(request: Request) {
@@ -38,6 +42,13 @@ export async function POST(request: Request) {
       return err('action: parse (perChannel 1..50, username/all) | ai-moderate (batches 1..8)')
     }
     const { perChannel, username, all, deep, action } = parsed.data
+
+    /* ---------- Стерилизация: гости + фейковые эскроу-балансы ---------- */
+    if (action === 'purge_demo') {
+      const purge = await purgeDemoData()
+      await logAdmin('purge_demo', 'demo-data', purge.details)
+      return NextResponse.json({ ok: true, purge })
+    }
 
     /* ---------- Бесплатная ИИ-модерация (ручной прогон / статистика) ---------- */
     if (action === 'ai-moderate') {

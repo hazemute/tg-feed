@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { CheckCircle2, HeartPulse, Loader2, Play, SmilePlus } from 'lucide-react'
+import { CheckCircle2, HeartPulse, Loader2, Play, ShieldCheck, SmilePlus, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -293,6 +293,9 @@ export function ToolsTab({
       {/* Премиум-эмодзи: ретроактивная перепроверка реестра (Bot API) */}
       <EmojiRecheckCard />
 
+      {/* Стерильность: гости/демо-балансы подчистить одним тапом */}
+      <SterilizeCard />
+
       {/* Состояние системы */}
       <Card className={panelCard}>
         <CardHeader>
@@ -398,6 +401,113 @@ function healthRows(h: PanelHealth): { label: string; value: ReactNode }[] {
     { label: 'BOT_TOKEN', value: <BoolBadge value={h.env.botTokenSet} /> },
     { label: 'DB провайдер', value: mono(h.env.dbProvider || '—') },
   ]
+}
+
+/* ===================== Стерильность демо-данных ===================== */
+
+type PurgeResponse = {
+  purge: {
+    guests: number
+    fakeEscrow: number
+    details: Record<string, number>
+  }
+}
+
+/**
+ * Стерилизация (v5.20): приложение боевое — гостей и «пустых» эскроу-балансов
+ * (следы демо-сидов вида «у всех по 500 ₽») быть не должно. Автоматически
+ * чистится при каждом деплое; кнопка — ручной прогон по требованию.
+ */
+function SterilizeCard() {
+  const [running, setRunning] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [result, setResult] = useState<PurgeResponse['purge'] | null>(null)
+
+  const runPurge = async () => {
+    if (running) return
+    setRunning(true)
+    try {
+      const res = await panelFetch<PurgeResponse>('/api/panel/tools', { json: { action: 'purge_demo' } })
+      setResult(res.purge)
+      setConfirming(false)
+      toast.success(
+        res.purge.guests === 0 && res.purge.fakeEscrow === 0
+          ? 'Демо-данных нет — всё чисто'
+          : `Удалено гостей: ${fmtNum(res.purge.guests)}, пустых балансов: ${fmtNum(res.purge.fakeEscrow)}`,
+      )
+    } catch (e) {
+      if (e instanceof PanelError) {
+        if (e.status === 429) toast.error(`Слишком часто, подождите ${e.retryAfter ?? 60}с`)
+        else if (!isAuthOrNetworkError(e)) toast.error(e.message)
+      }
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  return (
+    <Card className={panelCard}>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+          <ShieldCheck className="size-4 text-emerald-700" aria-hidden />
+          Стерильность данных
+        </CardTitle>
+        <CardDescription className="text-xs text-slate-500">
+          Удаляет всех гостей (guest_…) со всеми их данными и эскроу-балансы без единого
+          пополнения (фейковые «500 ₽» из демо-сидов). Реальные балансы и Telegram-юзеры не трогаются.
+          Прогон выполняется автоматически при каждом деплое — кнопка для ручной очистки
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div className="flex flex-wrap items-center gap-3">
+          {confirming ? (
+            <>
+              <Button
+                onClick={() => void runPurge()}
+                disabled={running}
+                className="bg-red-600 font-medium text-white hover:bg-red-500"
+              >
+                {running ? <Loader2 className="animate-spin" aria-hidden /> : <Trash2 aria-hidden />}
+                Да, удалить
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setConfirming(false)}
+                disabled={running}
+                className={btnOutlineDark}
+              >
+                Отмена
+              </Button>
+            </>
+          ) : (
+            <Button
+              onClick={() => setConfirming(true)}
+              disabled={running}
+              variant="outline"
+              className={btnOutlineDark}
+            >
+              <Trash2 aria-hidden />
+              Очистить демо-данные
+            </Button>
+          )}
+          {running && <span className="text-xs text-slate-500">Идёт стерилизация…</span>}
+        </div>
+        {result && (
+          <div className="rounded-md border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2 text-xs text-emerald-800">
+            Удалено гостей: <b>{fmtNum(result.guests)}</b> · Пустых эскроу-балансов:{' '}
+            <b>{fmtNum(result.fakeEscrow)}</b>
+            {Object.keys(result.details).length > 0 && (
+              <span className="ml-1 text-emerald-700/80">
+                ({Object.entries(result.details)
+                  .map(([k, v]) => `${k}: ${fmtNum(v)}`)
+                  .join(', ')})
+              </span>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
 }
 
 /* ===================== Премиум-эмодзи: перепроверка реестра ===================== */

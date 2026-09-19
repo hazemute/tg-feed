@@ -49,16 +49,14 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
   }
 
-  if (res.status === 503) {
-    // Режим техработ: middleware режет API с {maintenance:true} — переводим весь app на экран техработ
-    const m = (await res.json().catch(() => ({}))) as { maintenance?: unknown }
-    if (m.maintenance === true && typeof window !== 'undefined') {
+  if (!res.ok) {
+    // Тело читаем ОДИН раз (повторный res.json() бросает «body used already»
+    // и терял поле error — тост показывал безликое «HTTP 503»)
+    const data = (await res.json().catch(() => ({}))) as { error?: string; maintenance?: unknown }
+    // Режим техработ: middleware режет API с {maintenance:true} — весь app на экран техработ
+    if (data.maintenance === true && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('tgfeed:maintenance'))
     }
-  }
-
-  if (!res.ok) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || `HTTP ${res.status}`)
   }
   return res.json() as Promise<T>
@@ -92,14 +90,11 @@ export async function apiStream(
     setSessionToken(null)
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
   }
-  if (res.status === 503) {
-    const m = (await res.json().catch(() => ({}))) as { maintenance?: unknown }
-    if (m.maintenance === true && typeof window !== 'undefined') {
+  if (!res.ok || !res.body) {
+    const data = (await res.json().catch(() => ({}))) as { error?: string; maintenance?: unknown }
+    if (data.maintenance === true && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('tgfeed:maintenance'))
     }
-  }
-  if (!res.ok || !res.body) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string }
     throw new Error(data.error || `HTTP ${res.status}`)
   }
 

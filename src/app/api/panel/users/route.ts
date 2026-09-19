@@ -188,10 +188,20 @@ export async function PATCH(request: Request) {
         return err('swipes must be 0..10000000')
       }
       const balanceKop = swipes * KOPECKS_PER_SWIPE
+      // topupsTotalKop ≥ баланс: админ-грант считается «пополнением» — иначе
+      // стерилизация (purge_demo, удаляет балансы без единого пополнения)
+      // вычистила бы выданный панелью баланс при следующем деплое.
+      const existing = await db.advertiserAccount.findUnique({
+        where: { userId },
+        select: { topupsTotalKop: true },
+      })
       await db.advertiserAccount.upsert({
         where: { userId },
-        create: { userId, balanceKop },
-        update: { balanceKop },
+        create: { userId, balanceKop, topupsTotalKop: balanceKop },
+        update: {
+          balanceKop,
+          topupsTotalKop: Math.max(existing?.topupsTotalKop ?? 0, balanceKop),
+        },
       })
       await logAdmin('swipes', userId, { swipes })
       return NextResponse.json({ ok: true, userId, swipes })
