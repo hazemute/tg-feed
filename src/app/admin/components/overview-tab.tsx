@@ -187,7 +187,7 @@ export function OverviewTab({
       {/* Live-статус панели (SSE) */}
       <motion.div
         variants={fadeUp}
-        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5"
+        className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-200 px-1 py-2.5"
         role="status"
         aria-live="off"
       >
@@ -257,7 +257,7 @@ export function OverviewTab({
 
       {/* Спарклайн публикаций + просмотры за сутки */}
       <motion.div variants={fadeUp} className="grid gap-4 lg:grid-cols-2 xl:gap-5">
-        <div className="rounded-xl border border-slate-200 bg-white p-4">
+        <div className="p-1">
           <p className="mb-3 text-sm font-medium text-slate-800">Публикации · 14 дней</p>
           <PostsSparkline
             values={
@@ -267,7 +267,7 @@ export function OverviewTab({
             }
           />
         </div>
-        <div className="flex flex-col justify-center gap-2 rounded-xl border border-slate-200 bg-white p-4">
+        <div className="flex flex-col justify-center gap-2 p-1">
           <p className="text-sm font-medium text-slate-800">Просмотры · 24 часа</p>
           <div className="text-xl font-semibold tabular-nums text-slate-900">
             {fmtNum(data.deltas24h.views)}
@@ -282,7 +282,7 @@ export function OverviewTab({
       {/* Push-уведомления — отдельная строка-карточка */}
       <motion.div
         variants={fadeUp}
-        className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
+        className="flex flex-wrap items-center gap-3 border-b border-slate-200 px-1 py-3"
       >
         <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
           <Bell className="size-4" aria-hidden />

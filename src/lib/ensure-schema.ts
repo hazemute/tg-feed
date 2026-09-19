@@ -53,6 +53,12 @@ export const MIGRATIONS: Record<string, string[]> = {
     `ALTER TABLE "Notification" ADD COLUMN IF NOT EXISTS "commentId" text`,
     `CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification" ("userId", "readAt")`,
   ],
+  'v5.22': [
+    // v5.22: премиум-эмодзи бота (слоты → custom_emoji_id) + настройки бота
+    // (business_connection_id — премиум-аккаунт-посредник)
+    `CREATE TABLE IF NOT EXISTS "BotEmoji" ("slot" text PRIMARY KEY, "emoji" text NOT NULL, "customEmojiId" text NOT NULL DEFAULT '', "updatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS "BotSetting" ("key" text PRIMARY KEY, "value" text NOT NULL, "updatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -75,6 +81,8 @@ const CRITICAL: Array<[string, string | null]> = [
   ['AdminLog', null],
   ['User', 'badges'],
   ['Notification', 'commentId'],
+  ['BotEmoji', null],
+  ['BotSetting', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -93,7 +101,8 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR
-        (c.table_name = 'Notification' AND c.column_name = 'commentId')
+        (c.table_name = 'Notification' AND c.column_name = 'commentId') OR
+        (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()

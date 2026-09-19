@@ -163,6 +163,12 @@ export function CommentsSheet() {
     const jump = async () => {
       const direct = findIn(itemsRef.current)
       if (direct) {
+        // Если целевой комментарий — ответ внутри ветки, раскрываем ветку корня
+        // (ответы рендерятся только у раскрытого корня) и даём дорисоваться
+        if (direct.parentId) {
+          setExpanded((prev) => new Set(prev).add(direct.parentId!))
+          await new Promise((r) => window.setTimeout(r, 320))
+        }
         window.setTimeout(() => scrollNow(direct.id), 120)
         return
       }

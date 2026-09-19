@@ -533,3 +533,21 @@ model Upload {
 
   @@index([ownerId, createdAt])
 }
+
+// Премиум-эмодзи бота (v5.22): слот → custom_emoji_id. Слот подставляется в
+// тексты бота по юникод-эмодзи; если ID не задан — остаётся обычное эмодзи.
+// ID берутся из премиум-паков (админ вставляет их в панели /api/panel/bot).
+model BotEmoji {
+  slot          String   @id // wave | fire | star | rocket | heart | bell | book | check | crown | zap | party | sparkles
+  emoji         String // юникод-эмодзи (фолбэк и то, что ищется в тексте)
+  customEmojiId String // custom_emoji_id премиум-пака; пусто → фолбэк
+  updatedAt     DateTime @updatedAt
+}
+
+// Настройки бота (k/v): business_connection_id — премиум-аккаунт-посредник,
+// через который бот умеет отправлять кастом-эмодзи (Telegram Business).
+model BotSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

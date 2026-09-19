@@ -220,7 +220,7 @@ export function SubscriptionsTab({ tick, onSettled }: TabProps) {
             { label: 'Отозвано', value: data?.metrics.revoked ?? 0, cls: 'text-slate-500', icon: Trash2 },
           ] as const
         ).map(({ label, value, cls, icon: Icon }) => (
-          <div key={label} className="rounded-xl border border-slate-200 bg-white p-3">
+          <div key={label} className="relative py-2 pl-3">
             <div className={cn('text-lg font-semibold tabular-nums', cls)}>{fmtNum(value)}</div>
             <div className="mt-0.5 flex items-center gap-1 text-[11px] text-slate-500">
               <Icon className="size-3" aria-hidden /> {label}
@@ -407,7 +407,7 @@ export function SubscriptionsTab({ tick, onSettled }: TabProps) {
                 {data.items.map((u) => (
                   <div
                     key={u.id}
-                    className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border border-slate-200 bg-white px-4 py-3"
+                    className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-slate-200 px-1 py-3"
                   >
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-1.5">

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { creditPendingPayment } from '@/lib/payments'
+import { botSendRich, setBusinessConnection } from '@/lib/tg-emoji'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +13,9 @@ export const dynamic = 'force-dynamic'
  *    login:<token> → снимок tg-пользователя в LoginAttempt, сайт подхватывает.
  *  • ОПЛАТУ TELEGRAM STARS: message.successful_payment (currency XTR) —
  *    инвойсы из POST /api/payments/stars. Свайпы зачисляются идемпотентно.
+ *  • TELEGRAM BUSINESS (v5.22): update.business_connection — премиум-аккаунт
+ *    владельца подключается к боту как посредник, чтобы бот отправлял
+ *    кастом-эмодзи (см. src/lib/tg-emoji.ts).
  *
  * Регистрация: scripts/set-webhook.ts (URL + secret_token).
  * Если задан TELEGRAM_WEBHOOK_SECRET — проверяем заголовок
@@ -19,6 +23,8 @@ export const dynamic = 'force-dynamic'
  */
 
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
+/** Владелец бота (премиум-аккаунт-посредник): только его business-подключения принимаются */
+const BOT_OWNER_TG_ID = 7851246214
 
 /* ------------------------- Типы апдейтов (минимум) ------------------------- */
 
@@ -50,6 +56,11 @@ type TgUpdate = {
     data?: string
     from?: TgFrom
     message?: { chat?: { id?: number }; message_id?: number }
+  }
+  business_connection?: {
+    id?: string
+    user?: { id?: number; is_premium?: boolean }
+    is_enabled?: boolean
   }
 }
 
@@ -127,19 +138,32 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
   })
 }
 
-/** Приветственный /start без параметра */
+/** Приветственный /start без параметра — премиум-эмодзи + кнопка подписки */
 async function handleStart(from: TgFrom | undefined, chatId?: number) {
   if (!chatId) return
-  await botCall('sendMessage', {
-    chat_id: chatId,
-    text: `<b>Tg Swipe</b> — лента Telegram-каналов, собранная под вас.\n\nСвайпайте посты по интересам, сохраняйте лучшее в закладки и подпишитесь на каналы в один тап — без лишних чатов и рекламы.\n\n<b>Что умеет этот бот</b>\n• Подтверждает вход на сайте и в приложении — по кнопке, без паролей\n• Принимает оплату в Telegram Stars для продвижения каналов\n\nОткрыть ленту — кнопка ниже или в меню.`,
-    parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: '🌐 Открыть Tg Swipe', url: SITE_URL }],
+  const name = escapeHtml(nameOf(from))
+  await botSendRich(
+    chatId,
+    [
+      '👋 <b>Привет, ' + name + '!</b>',
+      '',
+      'Это <b>Snap</b> — умная лента Telegram-каналов, собранная под тебя.',
+      '',
+      '🔥 <b>Что внутри</b>',
+      '⚡ Свайпай посты по интересам — алгоритм подстраивается за секунды',
+      '📖 Читай каналы без подписок на лишние чаты',
+      '⭐ Сохраняй лучшее в закладки и открывай в один тап',
+      '🚀 Продвигай свой канал — на баланс и в топ ленты',
+      '',
+      '✨ Подпишись на наш канал — там новости, обновления и фишки Snap:',
+    ].join('\n'),
+    {
+      keyboard: [
+        [{ text: '✨ Подписаться на Telegram', url: 'https://t.me/SnapTeamDev' }],
+        [{ text: '📖 Открыть Snap', url: SITE_URL }],
       ],
     },
-  })
+  )
 }
 
 /** callback_query login:<token> — подтверждение входа */
@@ -283,6 +307,19 @@ export async function POST(request: Request) {
   }
 
   try {
+    // Telegram Business: премиум-аккаунт владельца подключился как посредник
+    const bc = update.business_connection
+    if (bc?.id && bc.user?.id) {
+      if (bc.user.id === BOT_OWNER_TG_ID) {
+        await setBusinessConnection({
+          id: bc.id,
+          userId: bc.user.id,
+          isEnabled: bc.is_enabled !== false,
+        }).catch(() => {})
+      }
+      return NextResponse.json({ ok: true })
+    }
+
     const cq = update.callback_query
     if (cq?.data?.startsWith('login:')) {
       const token = cq.data.slice('login:'.length)

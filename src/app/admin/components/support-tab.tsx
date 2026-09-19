@@ -233,7 +233,7 @@ export function SupportTab({
       {/* ------- Список чатов ------- */}
       <div
         className={cn(
-          'flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white lg:h-[calc(100vh-176px)]',
+          'flex min-w-0 flex-col lg:h-[calc(100vh-176px)]',
           selected && 'hidden lg:flex',
         )}
       >
@@ -320,7 +320,7 @@ export function SupportTab({
       {/* ------- Открытый диалог ------- */}
       <div
         className={cn(
-          'min-h-[420px] min-w-0 flex-col rounded-xl border border-slate-200 bg-white lg:h-[calc(100vh-176px)] lg:min-h-0',
+          'min-h-[420px] min-w-0 flex-col lg:h-[calc(100vh-176px)] lg:min-h-0',
           !selected ? 'hidden lg:flex' : 'flex',
         )}
       >

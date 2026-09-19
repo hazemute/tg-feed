@@ -465,7 +465,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
               {/* Мобильные: карточки */}
               <div className="space-y-2 md:hidden">
                 {data.items.map((u) => (
-                  <div key={u.id} className="rounded-xl border border-slate-200 bg-white p-4">
+                  <div key={u.id} className="border-b border-slate-200 p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">

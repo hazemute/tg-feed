@@ -480,3 +480,16 @@ model PendingPayment {
 
   @@index([userId, createdAt])
 }
+
+model BotEmoji {
+  slot          String   @id
+  emoji         String
+  customEmojiId String
+  updatedAt     DateTime @updatedAt
+}
+
+model BotSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

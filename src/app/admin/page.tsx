@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
+  Bot,
   Gem,
   BadgeCheck,
   Headset,
@@ -50,12 +51,14 @@ import { OverviewTab } from './components/overview-tab'
 import { SubscriptionsTab } from './components/subscriptions-tab'
 import { SupportTab } from './components/support-tab'
 import { SystemTab } from './components/system-tab'
+import { BotTab } from './components/bot-tab'
 import { ToolsTab } from './components/tools-tab'
 import { UsersTab } from './components/users-tab'
 
 type AuthState = 'checking' | 'authed' | 'anon'
 type TabKey =
   | 'overview'
+  | 'bot'
   | 'finance'
   | 'subscriptions'
   | 'badges'
@@ -322,6 +325,7 @@ export default function AdminPage() {
       badgeTone: 'amber',
     },
     { key: 'tools', label: 'Инструменты', icon: Wrench },
+    { key: 'bot', label: 'Бот', icon: Bot },
   ]
 
   const renderTab = () => {
@@ -352,6 +356,8 @@ export default function AdminPage() {
         return <SystemTab tick={tick} onSettled={handleSettled} onMaintenance={handleMaintenance} />
       case 'tools':
         return <ToolsTab health={health} onRecheck={() => void loadHealth()} healthLoading={healthLoading} />
+      case 'bot':
+        return <BotTab tick={tick} onSettled={handleSettled} />
     }
   }
 
