@@ -10,7 +10,7 @@ import { useApp } from '@/lib/store'
 import type { Lang } from '@/lib/i18n'
 import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
 import { isInTelegram } from '@/lib/platform'
-import { THEME_BY_ID } from '@/lib/themes'
+import { THEME_BY_ID, isDarkPalette } from '@/lib/themes'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
 import { Sidebar } from '@/components/tg/Sidebar'
@@ -36,6 +36,17 @@ const AuthGateSheet = dynamic(() => import('@/components/tg/AuthGateSheet').then
 const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').then((m) => m.LoginByTelegram), { ssr: false })
 
 const TABS: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
+
+/*
+ * v5.27.1: фактическая «темнота» активной темы — нужна для синхрона класса
+ * .dark на <html> (dark:-утилиты shadcn: свитчи, табы, outline-кнопки).
+ * auto = как клиент Telegram (в миниаппе) или как система (в браузере).
+ */
+function resolveIsDark(theme: ThemeMode): boolean {
+  if (theme !== 'auto') return isDarkPalette(theme)
+  if (isInTelegram()) return tg()?.colorScheme === 'dark'
+  return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+}
 
 // Анимация перехода между вкладками (направление зависит от порядка вкладок)
 const tabVariants = {
@@ -71,9 +82,10 @@ export default function Home() {
 
   }, [])
 
-  // Применение темы к DOM
+  // Применение темы к DOM (+ класс .dark для dark:-утилит shadcn, v5.27.1)
   useEffect(() => {
     document.documentElement.dataset.theme = theme
+    document.documentElement.classList.toggle('dark', resolveIsDark(theme))
   }, [theme])
 
   /*
@@ -98,6 +110,7 @@ export default function Home() {
     // смена темы клиента Telegram/системы — актуально для auto-темы
     const onSys = () => {
       syncTelegramThemeVars()
+      document.documentElement.classList.toggle('dark', resolveIsDark(theme))
       apply()
     }
     const mq = window.matchMedia('(prefers-color-scheme: dark)')

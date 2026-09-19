@@ -31,7 +31,7 @@ export const metadata: Metadata = {
   icons: { icon: '/logo.svg' },
 }
 
-const themeInit = `try{var t=localStorage.getItem('tgfeed_theme');var f=localStorage.getItem('tgfeed_font');document.documentElement.dataset.theme=t||'light';document.documentElement.dataset.fontscale=f||'md';}catch(e){document.documentElement.dataset.theme='light';}`
+const themeInit = `try{var t=localStorage.getItem('tgfeed_theme')||'light';var f=localStorage.getItem('tgfeed_font');document.documentElement.dataset.theme=t;document.documentElement.dataset.fontscale=f||'md';var dk=['dark','mono','forest','ocean','midnight','plum','coffee','sunset','emerald','crimson','aurora','cherry'].indexOf(t)>=0;if(t==='auto')dk=!!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',dk);}catch(e){document.documentElement.dataset.theme='light';}`
 
 /*
  * Платформа до гидрации: 'web' (открыли по домену в браузере) или 'telegram'

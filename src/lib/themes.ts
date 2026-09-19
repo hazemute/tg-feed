@@ -161,6 +161,11 @@ export const THEMES: ThemeMeta[] = [
 
 export const THEME_BY_ID = new Map(THEMES.map((t) => [t.id, t]))
 
+/** Тёмная ли это палитра (для синхрона класса .dark на <html>, v5.27.1) */
+export function isDarkPalette(id: ThemeMode): boolean {
+  return THEME_BY_ID.get(id)?.group === 'dark'
+}
+
 export function themeName(id: ThemeMode): string {
   return THEME_BY_ID.get(id)?.name ?? 'Светлая'
 }
