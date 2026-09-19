@@ -81,11 +81,11 @@ interface AdForm {
 
 function ActiveBadge({ isActive }: { isActive: boolean }) {
   return isActive ? (
-    <Badge variant="outline" className="border border-emerald-500/30 bg-emerald-50 text-emerald-700">
+    <Badge variant="outline" className="rounded-full border border-emerald-500/30 bg-emerald-50 text-[11px] text-emerald-700">
       активна
     </Badge>
   ) : (
-    <Badge variant="outline" className="border border-slate-200 bg-slate-100 text-slate-500">
+    <Badge variant="outline" className="rounded-full border border-slate-200 bg-slate-100 text-[11px] text-slate-500">
       выключена
     </Badge>
   )
@@ -129,9 +129,9 @@ function AdMetrics({ ad }: { ad: Ad }) {
 function Metric({ label, value, sub }: { label: string; value: string; sub: string }) {
   return (
     <div className="rounded-md border border-slate-200 bg-white px-2.5 py-2">
-      <div className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-[11px] font-medium uppercase tracking-wide text-slate-400">{label}</div>
       <div className="mt-0.5 text-sm font-bold tabular-nums text-slate-800">{value}</div>
-      <div className="text-[10px] tabular-nums text-slate-400">{sub}</div>
+      <div className="text-[11px] tabular-nums text-slate-400">{sub}</div>
     </div>
   )
 }
@@ -337,7 +337,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                   key={ad.id}
                   variants={fadeUp}
                   whileHover={{ y: -2 }}
-                  className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
+                  className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4"
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -364,7 +364,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                       href={ad.link}
                       target="_blank"
                       rel="noreferrer"
-                      className="flex min-w-0 items-center gap-1 text-xs text-emerald-700 hover:text-emerald-200"
+                      className="flex min-w-0 items-center gap-1 text-xs text-emerald-700 hover:text-emerald-600"
                     >
                       <ExternalLink className="size-3 shrink-0" aria-hidden />
                       <span className="truncate">
@@ -454,7 +454,7 @@ export function AdsTab({ tick, onSettled }: TabProps) {
                     key={c.id}
                     variants={fadeUp}
                     whileHover={{ y: -2 }}
-                    className="flex flex-col gap-3 rounded-lg border border-slate-200 bg-slate-50 p-4"
+                    className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4"
                   >
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">

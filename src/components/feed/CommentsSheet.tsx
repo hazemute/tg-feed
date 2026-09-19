@@ -35,10 +35,10 @@ function Skeletons() {
     <div className="space-y-4 px-1 py-2" aria-hidden>
       {[64, 40, 52].map((w, i) => (
         <div key={i} className="flex gap-2.5">
-          <div className="h-9 w-9 shrink-0 animate-pulse rounded-full bg-tg-sep" />
+          <div className="tg-shimmer h-9 w-9 shrink-0 rounded-full" />
           <div className="flex-1 space-y-1.5 pt-0.5">
-            <div className="h-3 w-24 animate-pulse rounded bg-tg-sep" />
-            <div className="h-3.5 animate-pulse rounded bg-tg-sep" style={{ width: `${w}%` }} />
+            <div className="tg-shimmer h-3 w-24 rounded" />
+            <div className="tg-shimmer h-3.5 rounded" style={{ width: `${w}%` }} />
           </div>
         </div>
       ))}

@@ -144,8 +144,8 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
               {loading ? (
                 [0, 1, 2].map((i) => (
                   <div key={i} className="flex items-start gap-3">
-                    <div className="h-6 w-6 shrink-0 animate-pulse rounded-full bg-tg-surface" />
-                    <div className="h-4 flex-1 animate-pulse rounded bg-tg-surface" />
+                    <div className="tg-shimmer h-6 w-6 shrink-0 rounded-full" />
+                    <div className="tg-shimmer h-4 flex-1 rounded" />
                   </div>
                 ))
               ) : note ? (

@@ -9,7 +9,7 @@ import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { fullDateLocalized, useT } from '@/lib/i18n'
 import { haptic, openTelegram, useBackButton } from '@/lib/tg'
-import { formatCount, timeAgoRu } from '@/lib/format'
+import { formatCount, timeAgo } from '@/lib/format'
 import { stripMarkdown } from '@/lib/markdown'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
@@ -372,7 +372,7 @@ export function PostOverlay() {
               </nav>
             )}
             <time dateTime={current.publishedAt} className="pr-2 text-[12.5px] text-tg-hint">
-              {timeAgoRu(current.publishedAt)}
+              {timeAgo(current.publishedAt, lang)}
             </time>
           </header>
 
@@ -492,7 +492,7 @@ export function PostOverlay() {
                   haptic('light')
                   setSummaryPost(current)
                 }}
-                className="mt-3 mx-4 inline-flex items-center gap-1.5 rounded-xl bg-tg-surface px-3.5 py-2.5 text-[14px] font-semibold text-tg-link active:opacity-70"
+                className="mt-3 mx-4 inline-flex h-11 items-center gap-1.5 rounded-xl bg-tg-surface px-4 text-[14px] font-semibold text-tg-link active:opacity-70"
               >
                 <Sparkle className="h-4 w-4" aria-hidden />
                 {t('post.summary')}
@@ -515,7 +515,7 @@ export function PostOverlay() {
                 onClick={onLike}
                 aria-label={t('post.like')}
                 aria-pressed={current.liked}
-                className="flex items-center gap-1.5 py-1.5"
+                className="flex min-h-[44px] items-center gap-1.5 py-1.5"
               >
                 <Heart
                   className={cn(
@@ -533,11 +533,11 @@ export function PostOverlay() {
                 onClick={onBookmark}
                 aria-label={t('post.save')}
                 aria-pressed={current.bookmarked}
-                className="flex items-center gap-1.5 py-1.5"
+                className="flex min-h-[44px] items-center gap-1.5 py-1.5"
               >
                 <Bookmark
                   className={cn(
-                    'h-[23px] w-[23px]',
+                    'h-[24px] w-[24px]',
                     current.bookmarked ? 'fill-tg-link text-tg-link' : 'text-tg-text',
                   )}
                   strokeWidth={current.bookmarked ? 2 : 1.7}
@@ -553,9 +553,9 @@ export function PostOverlay() {
                   openComments(current)
                 }}
                 aria-label={t('comments.title')}
-                className="flex items-center gap-1.5 py-1.5"
+                className="flex min-h-[44px] items-center gap-1.5 py-1.5"
               >
-                <MessageCircle className="h-[23px] w-[23px] text-tg-text" strokeWidth={1.7} />
+                <MessageCircle className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
                 <span className="text-[13px] font-medium tabular-nums text-tg-text2">
                   {formatCount(current.commentsCount)}
                 </span>
@@ -567,9 +567,9 @@ export function PostOverlay() {
                   openShareSheet(current)
                 }}
                 aria-label={t('post.shareAria')}
-                className="flex items-center gap-1.5 py-1.5"
+                className="flex min-h-[44px] items-center gap-1.5 py-1.5"
               >
-                <Forward className="h-[23px] w-[23px] text-tg-text" strokeWidth={1.7} />
+                <Forward className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
                 <span className="text-[13px] font-medium text-tg-text2">{t('post.share')}</span>
               </button>
             </div>

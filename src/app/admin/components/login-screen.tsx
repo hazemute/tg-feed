@@ -48,7 +48,7 @@ export function LoginScreen({ onSuccess }: { onSuccess: (version: string) => voi
           <img src="/logo.svg" alt="" className="mx-auto h-10 w-10" />
           <CardTitle className="text-lg font-semibold text-slate-900">Tg Swipe · Админ</CardTitle>
           <CardDescription className="text-sm text-slate-500">
-            Локальная панель управления · доступ по ключу
+            Панель управления · доступ по ключу
           </CardDescription>
         </CardHeader>
         <CardContent>

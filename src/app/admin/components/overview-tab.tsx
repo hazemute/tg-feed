@@ -66,7 +66,7 @@ function PostsSparkline({ values }: { values: number[] }) {
   return (
     <div className="flex items-end justify-between gap-4">
       <div>
-        <div className="text-2xl font-semibold tabular-nums text-slate-900">{fmtNum(last)}</div>
+        <div className="text-xl font-semibold tabular-nums text-slate-900">{fmtNum(last)}</div>
         <div className="mt-0.5 text-xs text-slate-500">публикаций сегодня</div>
       </div>
       <svg
@@ -144,7 +144,7 @@ export function OverviewTab({
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
           {Array.from({ length: 8 }, (_, i) => (
-            <div key={i} className="h-[86px] rounded-lg border border-slate-200 bg-slate-50" />
+            <div key={i} className="h-[86px] rounded-xl border border-slate-200 bg-slate-50" />
           ))}
         </div>
         <Card className={panelCard}>
@@ -187,7 +187,7 @@ export function OverviewTab({
       {/* Live-статус панели (SSE) */}
       <motion.div
         variants={fadeUp}
-        className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-200 bg-white px-4 py-2.5"
+        className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-4 py-2.5"
         role="status"
         aria-live="off"
       >
@@ -257,7 +257,7 @@ export function OverviewTab({
 
       {/* Спарклайн публикаций + просмотры за сутки */}
       <motion.div variants={fadeUp} className="grid gap-3 lg:grid-cols-2">
-        <div className="rounded-lg border border-slate-200 bg-white p-4">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
           <p className="mb-3 text-sm font-medium text-slate-800">Публикации · 14 дней</p>
           <PostsSparkline
             values={
@@ -267,9 +267,9 @@ export function OverviewTab({
             }
           />
         </div>
-        <div className="flex flex-col justify-center gap-2 rounded-lg border border-slate-200 bg-white p-4">
+        <div className="flex flex-col justify-center gap-2 rounded-xl border border-slate-200 bg-white p-4">
           <p className="text-sm font-medium text-slate-800">Просмотры · 24 часа</p>
-          <div className="text-2xl font-semibold tabular-nums text-slate-900">
+          <div className="text-xl font-semibold tabular-nums text-slate-900">
             {fmtNum(data.deltas24h.views)}
           </div>
           <p className="text-xs leading-relaxed text-slate-500">
@@ -282,9 +282,9 @@ export function OverviewTab({
       {/* Push-уведомления — отдельная строка-карточка */}
       <motion.div
         variants={fadeUp}
-        className="flex flex-wrap items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3"
+        className="flex flex-wrap items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 py-3"
       >
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
           <Bell className="size-4" aria-hidden />
         </span>
         <p className="text-sm text-slate-700">

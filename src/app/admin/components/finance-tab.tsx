@@ -52,7 +52,7 @@ function MiniBars({
           )
         })}
       </div>
-      <div className="mt-1 flex justify-between text-[10px] text-slate-400">
+      <div className="mt-1 flex justify-between text-[11px] text-slate-400">
         <span>{data[0]?.day.slice(5)}</span>
         <span>{data[data.length - 1]?.day.slice(5)}</span>
       </div>
@@ -74,7 +74,7 @@ function StatCard({
   tone?: 'green' | 'amber' | 'sky'
 }) {
   return (
-    <Card className={cn(panelCard, 'shadow-sm')}>
+    <Card className={cn(panelCard)}>
       <CardContent className="p-4">
         <div className="flex items-center gap-2">
           <span
@@ -192,9 +192,9 @@ export function FinanceTab({ tick, onSettled }: { tick: number; onSettled?: () =
 
           <div className="grid gap-4 lg:grid-cols-2">
             {/* Платежи по дням */}
-            <Card className={cn(panelCard, 'shadow-sm')}>
+            <Card className={cn(panelCard)}>
               <CardHeader className="pb-2">
-                <CardTitle className="text-sm text-slate-900">Платежи по дням (30 дней)</CardTitle>
+                <CardTitle className="text-base text-slate-900">Платежи по дням (30 дней)</CardTitle>
                 <CardDescription className="text-xs text-slate-500">успешные оплаты, ₽</CardDescription>
               </CardHeader>
               <CardContent>
@@ -217,9 +217,9 @@ export function FinanceTab({ tick, onSettled }: { tick: number; onSettled?: () =
             </Card>
 
             {/* Вовлечённость */}
-            <Card className={cn(panelCard, 'shadow-sm')}>
+            <Card className={cn(panelCard)}>
               <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-1.5 text-sm text-slate-900">
+                <CardTitle className="flex items-center gap-1.5 text-base text-slate-900">
                   <Activity className="size-4 text-sky-600" aria-hidden /> Вовлечённость
                 </CardTitle>
                 <CardDescription className="text-xs text-slate-500">
@@ -237,7 +237,7 @@ export function FinanceTab({ tick, onSettled }: { tick: number; onSettled?: () =
                   ).map(([label, v, pct]) => (
                     <div key={label} className="rounded-lg bg-slate-50 p-3 text-center">
                       <p className="text-lg font-bold tabular-nums text-slate-900">{fmtNum(v)}</p>
-                      <p className="text-[10.5px] font-semibold text-slate-500">{label}</p>
+                      <p className="text-[11px] font-semibold text-slate-500">{label}</p>
                       <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-slate-200">
                         <div className="h-full rounded-full bg-sky-500" style={{ width: `${pct}%` }} />
                       </div>

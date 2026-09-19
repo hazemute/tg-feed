@@ -194,7 +194,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-slate-200 bg-[#16202b] text-slate-800">
+                <SelectContent className="border-slate-200 bg-white text-slate-800">
                   {STATUS_OPTIONS.map((o) => (
                     <SelectItem key={o.value} value={o.value} className="text-slate-700">
                       {o.label}
@@ -353,7 +353,7 @@ export function ChannelsTab({ tick, onSettled }: TabProps) {
                             >
                               <SelectValue />
                             </SelectTrigger>
-                            <SelectContent className="border-slate-200 bg-[#16202b] text-slate-800">
+                            <SelectContent className="border-slate-200 bg-white text-slate-800">
                               {ROW_STATUS_OPTIONS.map((o) => (
                                 <SelectItem key={o.value} value={o.value} className="text-slate-700">
                                   {o.label}

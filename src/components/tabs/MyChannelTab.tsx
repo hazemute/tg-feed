@@ -97,8 +97,8 @@ export function MyChannelTab() {
       <div className="mx-auto w-full max-w-[960px]">
       {/* Заголовок */}
       <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-[26px] font-bold leading-tight text-tg-text">Мой канал</h1>
-        <p className="mt-0.5 text-[13.5px] text-tg-hint">
+        <h1 className="text-screen-title leading-tight text-tg-text">Мой канал</h1>
+        <p className="mt-1 text-[15px] text-tg-hint">
           Статистика вашего канала, показ в ленте и продвижение — всё в одном месте
         </p>
       </motion.div>
@@ -106,7 +106,7 @@ export function MyChannelTab() {
       {loading ? (
         <div className="mt-6 space-y-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-28 animate-pulse rounded-3xl bg-tg-surface" />
+            <div key={i} className="h-28 rounded-3xl tg-shimmer" />
           ))}
         </div>
       ) : !data || data.channels.length === 0 ? (

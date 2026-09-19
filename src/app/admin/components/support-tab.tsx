@@ -10,13 +10,13 @@ import {
   Eye,
   Headset,
   Layers,
+  Loader2,
   MessageSquareOff,
   RefreshCw,
   Send,
   Sparkles,
   Trash2,
   UserRound,
-  Wrench,
   Zap,
 } from 'lucide-react'
 
@@ -36,6 +36,7 @@ import {
   type SupportThreadFull,
   type SupportThreadItem,
 } from './api'
+import { EmptyState } from './bits'
 
 /**
  * Вкладка «Поддержка» — инбокс обращений пользователей, как в Telegram:
@@ -67,10 +68,10 @@ function timeOf(iso: string): string {
 
 function statusBadge(status: string) {
   if (status === 'human')
-    return <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">у сотрудника</span>
+    return <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">у сотрудника</span>
   if (status === 'closed')
-    return <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold text-slate-500">закрыт</span>
-  return <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">нейросеть</span>
+    return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-500">закрыт</span>
+  return <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">нейросеть</span>
 }
 
 export function SupportTab({
@@ -227,9 +228,14 @@ export function SupportTab({
   )
 
   return (
-    <div className="grid gap-4 lg:grid-cols-[340px_1fr]">
+    <div className="grid gap-4 lg:grid-cols-[340px_minmax(0,1fr)]">
       {/* ------- Список чатов ------- */}
-      <div className={cn('rounded-xl border border-slate-200 bg-white', selected && 'hidden lg:block')}>
+      <div
+        className={cn(
+          'flex min-w-0 flex-col rounded-xl border border-slate-200 bg-white lg:h-[calc(100vh-176px)]',
+          selected && 'hidden lg:flex',
+        )}
+      >
         <div className="flex items-center gap-2 border-b border-slate-100 px-4 py-3">
           {isFeedback ? (
             <Lightbulb className="size-4 text-amber-500" aria-hidden />
@@ -240,20 +246,22 @@ export function SupportTab({
             {isFeedback ? 'Предложки и баги' : 'Обращения'}
           </h3>
           {unseenTotal > 0 && (
-            <span className="ml-auto rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold text-white">
+            <span className="ml-auto rounded-full bg-emerald-600 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-white">
               {unseenTotal}
             </span>
           )}
         </div>
-        <div className="max-h-[560px] overflow-y-auto lg:max-h-[calc(100vh-260px)]">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           {threads === null ? (
             <div className="flex items-center justify-center py-10">
-              <div className="size-6 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-600" />
+              <Loader2 className="size-6 animate-spin text-slate-300" aria-hidden />
             </div>
           ) : threads.length === 0 ? (
-            <p className="px-4 py-10 text-center text-sm text-slate-400">
-              Обращений пока нет. Здесь появятся чаты пользователей из мини-аппа.
-            </p>
+            <EmptyState
+              icon={isFeedback ? Lightbulb : Headset}
+              title="Обращений пока нет"
+              hint="Здесь появятся чаты пользователей из мини-аппа"
+            />
           ) : (
             threads.map((t) => (
               <button
@@ -270,19 +278,19 @@ export function SupportTab({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center justify-between gap-2">
-                    <span className="truncate text-[13.5px] font-semibold text-slate-900">
+                    <span className="truncate text-sm font-semibold text-slate-900">
                       {supportUserName(t.user)}
                     </span>
                     <span className="shrink-0 text-[11px] text-slate-400">{fmtAgo(t.lastMessageAt)}</span>
                   </span>
                   <span className="mt-0.5 flex items-center justify-between gap-2">
-                    <span className="line-clamp-1 text-[12.5px] text-slate-500">
+                    <span className="line-clamp-1 text-[13px] text-slate-500">
                       {t.lastMessage
                         ? `${t.lastMessage.sender === 'user' ? '' : `${SENDER_LABEL[t.lastMessage.sender] ?? t.lastMessage.sender}: `}${t.lastMessage.text}`
                         : '—'}
                     </span>
                     {t.unreadAdmin > 0 && (
-                      <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                      <span className="shrink-0 rounded-full bg-emerald-600 px-1.5 py-0.5 text-[11px] font-semibold tabular-nums text-white">
                         {t.unreadAdmin}
                       </span>
                     )}
@@ -292,7 +300,7 @@ export function SupportTab({
                     {isFeedback && t.topic && (
                       <span
                         className={cn(
-                          'rounded px-1.5 py-0.5 text-[10px] font-semibold',
+                          'rounded-full px-2 py-0.5 text-[11px] font-semibold',
                           t.topic === 'bug' ? 'bg-red-50 text-red-600' : 'bg-amber-50 text-amber-700',
                         )}
                       >
@@ -309,7 +317,12 @@ export function SupportTab({
       </div>
 
       {/* ------- Открытый диалог ------- */}
-      <div className={cn('flex min-h-[420px] flex-col rounded-xl border border-slate-200 bg-white', !selected && 'hidden lg:flex')}>
+      <div
+        className={cn(
+          'min-h-[420px] min-w-0 flex-col rounded-xl border border-slate-200 bg-white lg:h-[calc(100vh-176px)] lg:min-h-0',
+          !selected ? 'hidden lg:flex' : 'flex',
+        )}
+      >
         {!selected || !thread ? (
           <div className="flex flex-1 flex-col items-center justify-center gap-2 py-16 text-slate-400">
             {selected ? (
@@ -405,7 +418,7 @@ export function SupportTab({
                               title={`@${s.username}${s.status !== 'active' ? ' · канал скрыт' : ''}`}
                               onClick={() => setOpsTarget(`@${s.username}`)}
                               className={cn(
-                                'rounded-full border px-2 py-0.5 text-[10.5px] transition hover:bg-white',
+                                'rounded-full border px-2 py-0.5 text-[11px] transition hover:bg-white',
                                 s.status !== 'active'
                                   ? 'border-red-200 bg-red-50 text-red-600 line-through'
                                   : 'border-slate-200 bg-white text-slate-600',
@@ -416,19 +429,19 @@ export function SupportTab({
                           ))
                         )}
                       </div>
-                      <p className="mt-1 text-[10.5px] text-slate-400">Клик по каналу — подставит в быстрые операции</p>
+                      <p className="mt-1 text-[11px] text-slate-400">Клик по каналу — подставит в быстрые операции</p>
                     </div>
                   </div>
                 )}
               </div>
             )}
             {/* Сообщения */}
-            <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto bg-[#eef1f5] px-4 py-4 lg:max-h-[calc(100vh-340px)]">
+            <div ref={scrollRef} className="min-h-0 flex-1 space-y-2 overflow-y-auto bg-[#eef1f5] px-3 py-4 sm:px-4">
               {thread.messages.map((m: SupportMsg) => {
                 if (m.sender === 'system') {
                   return (
                     <div key={m.id} className="flex justify-center">
-                      <span className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-medium text-slate-500 shadow-sm">
+                      <span className="rounded-full bg-white/80 px-3 py-1 text-[11px] font-medium text-slate-500">
                         {m.text}
                       </span>
                     </div>
@@ -439,7 +452,7 @@ export function SupportTab({
                   <div key={m.id} className={cn('flex', mine ? 'justify-end' : 'justify-start')}>
                     <div
                       className={cn(
-                        'max-w-[75%] rounded-2xl px-3.5 py-2 text-[13.5px] leading-relaxed shadow-sm',
+                        'max-w-[78%] rounded-2xl px-3.5 py-2 text-[13px] leading-relaxed',
                         mine
                           ? 'rounded-br-sm bg-emerald-600 text-white'
                           : m.sender === 'user'
@@ -472,8 +485,14 @@ export function SupportTab({
                         </div>
                       )}
                       <span className="whitespace-pre-wrap break-words">{m.text}</span>
-                      <span className={cn('mt-0.5 block text-right text-[10px]', mine ? 'text-white/60' : 'text-slate-400')}>
+                      <span
+                        className={cn(
+                          'mt-0.5 flex items-center justify-end gap-1 text-[11px]',
+                          mine ? 'text-white/70' : 'text-slate-400',
+                        )}
+                      >
                         {timeOf(m.createdAt)}
+                        {mine && <CheckCheck className="size-3" aria-hidden />}
                       </span>
                     </div>
                   </div>
@@ -487,7 +506,7 @@ export function SupportTab({
                 <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs font-semibold text-slate-500 transition hover:text-slate-700">
                   <Zap className="size-3.5 text-amber-500" aria-hidden />
                   Быстрые операции
-                  <span className="ml-auto text-slate-300 group-open:hidden">развернуть</span>
+                  <span className="ml-auto text-[11px] text-slate-400 group-open:hidden">развернуть</span>
                 </summary>
                 <div className="mt-2 space-y-2">
                   <div className="flex gap-1.5">
@@ -524,7 +543,7 @@ export function SupportTab({
                     ))}
                   </div>
                   {opsResult && (
-                    <p className={cn('text-[11.5px] font-medium', opsResult.ok ? 'text-emerald-700' : 'text-red-600')}>
+                    <p className={cn('text-xs font-medium', opsResult.ok ? 'text-emerald-700' : 'text-red-600')}>
                       {opsResult.text}
                     </p>
                   )}
@@ -533,7 +552,7 @@ export function SupportTab({
             </div>
 
             {/* Шаблоны ответов: типовые ситуации одним кликом */}
-            <div className="flex gap-1.5 overflow-x-auto border-t border-slate-100 px-3 py-2 no-scrollbar">
+            <div className="flex min-w-0 gap-1.5 overflow-x-auto border-t border-slate-100 px-3 py-2 no-scrollbar">
               {CANNED_REPLIES.map((c) => (
                 <button
                   key={c}
@@ -571,7 +590,7 @@ export function SupportTab({
                 aria-label="Отправить ответ"
                 className="flex size-[42px] shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition hover:bg-emerald-700 disabled:opacity-40"
               >
-                {sending ? <Wrench className="size-4 animate-spin" /> : <Send className="size-4" />}
+                {sending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Send className="size-4" />}
               </button>
             </div>
           </>

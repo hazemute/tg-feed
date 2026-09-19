@@ -240,18 +240,18 @@ function TextActionsRow({
   const openShareSheet = useApp((s) => s.openShareSheet)
   return (
     <div className="mt-1 flex items-center justify-between pr-2" aria-label={t('card.actions')}>
-    <motion.button
-      type="button"
-      data-noswipe
-      whileTap={{ scale: 1.15 }}
-      onClick={() => {
-        onLike()
-        haptic('light')
-      }}
-      aria-label="Нравится"
-      aria-pressed={post.liked}
-      className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2"
-    >
+      <motion.button
+        type="button"
+        data-noswipe
+        whileTap={{ scale: 1.15 }}
+        onClick={() => {
+          onLike()
+          haptic('light')
+        }}
+        aria-label="Нравится"
+        aria-pressed={post.liked}
+        className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2"
+      >
         <Heart
           className={cn(
             'h-[24px] w-[24px] transition-colors',
@@ -264,7 +264,7 @@ function TextActionsRow({
             {formatCount(post.likesCount)}
           </span>
         )}
-    </motion.button>
+      </motion.button>
       <button
         type="button"
         data-noswipe
@@ -516,7 +516,7 @@ export function PostCard({
             name={ch.title}
             color={ch.avatarColor}
             src={ch.avatarUrl}
-            size={50}
+            size={46}
             className={cn(
               'ring-1',
               ch.isPremium ? 'ring-tg-star/50' : 'ring-tg-sep/70',

@@ -117,7 +117,6 @@ const DICT = {
 
   /* Профиль: базовое */
   'profile.name': ['Пользователь', 'User'],
-  'profile.guestDemo': ['Гость · демо-режим', 'Guest · demo mode'],
   'profile.noUsername': ['Без username', 'No username'],
   'profile.untieBookmark': ['Не удалось убрать закладку', "Couldn't remove the bookmark"],
   'profile.markedRead': ['Всё сохранённое прочитано', 'All saved posts marked as read'],
@@ -271,8 +270,8 @@ const DICT = {
     'AI-generated · may be inaccurate in details',
   ],
   'summary.fallbackNote': [
-    'Временный режим: выжимка из первых предложений · нейросеть вернётся позже',
-    'Temporary mode: digest of the first sentences · the AI will be back soon',
+    'Предварительная выжимка по началу текста · может быть неполной',
+    'Preliminary digest based on the beginning of the text · may be incomplete',
   ],
 
   /* Конец ленты / ошибки загрузки */

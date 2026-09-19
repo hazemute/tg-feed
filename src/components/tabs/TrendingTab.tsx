@@ -361,20 +361,20 @@ function TrendingSkeleton() {
   return (
     <div aria-hidden>
       <div className="px-4 pb-2">
-        <div className="grid h-[68px] animate-pulse grid-cols-4 rounded-2xl bg-tg-surface" />
+        <div className="tg-shimmer grid h-[68px] grid-cols-4 rounded-2xl" />
       </div>
       <div className="flex gap-2 overflow-hidden px-4 pt-3">
         {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-8 w-24 shrink-0 animate-pulse rounded-full bg-tg-surface" />
+          <div key={i} className="tg-shimmer h-8 w-24 shrink-0 rounded-full" />
         ))}
       </div>
       <div className="mt-3">
         {[...Array(5)].map((_, i) => (
           <div key={i} className="flex items-center gap-3 border-t border-tg-sep/60 px-4 py-3.5 first:border-t-0">
-            <div className="h-11 w-11 shrink-0 animate-pulse rounded-full bg-tg-surface" />
+            <div className="tg-shimmer h-11 w-11 shrink-0 rounded-full" />
             <div className="min-w-0 flex-1">
-              <div className="h-3.5 w-32 animate-pulse rounded bg-tg-surface" />
-              <div className="mt-2 h-3 w-full animate-pulse rounded bg-tg-surface" />
+              <div className="tg-shimmer h-3.5 w-32 rounded" />
+              <div className="tg-shimmer mt-2 h-3 w-full rounded" />
             </div>
           </div>
         ))}

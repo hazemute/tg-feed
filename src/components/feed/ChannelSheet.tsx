@@ -533,7 +533,7 @@ function ChannelPost({
             >
               <Sparkle
                 className={cn(
-                  'h-[25px] w-[25px]',
+                  'h-[26px] w-[26px]',
                   post.bookmarked ? 'fill-tg-link text-tg-link' : 'text-tg-text',
                 )}
                 strokeWidth={post.bookmarked ? 2 : 1.7}

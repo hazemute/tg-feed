@@ -105,7 +105,7 @@ export function statusLabel(status: ChannelStatus): string {
 export function StatusBadge({ status }: { status: ChannelStatus }) {
   const meta = STATUS_META[status]
   return (
-    <Badge variant="outline" className={cn('border', meta.className)}>
+    <Badge variant="outline" className={cn('rounded-full text-[11px] font-medium', meta.className)}>
       {meta.label}
     </Badge>
   )
@@ -113,11 +113,11 @@ export function StatusBadge({ status }: { status: ChannelStatus }) {
 
 export function UserKindBadge({ isGuest }: { isGuest: boolean }) {
   return isGuest ? (
-    <Badge variant="outline" className="border-slate-200 bg-slate-100 text-slate-500">
+    <Badge variant="outline" className="rounded-full border-slate-200 bg-slate-100 text-[11px] text-slate-500">
       Гость
     </Badge>
   ) : (
-    <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-sky-700">
+    <Badge variant="outline" className="rounded-full border-sky-500/30 bg-sky-500/10 text-[11px] text-sky-700">
       TG
     </Badge>
   )
@@ -133,11 +133,11 @@ export function BoolBadge({
   falseText?: string
 }) {
   return value ? (
-    <Badge variant="outline" className="border border-emerald-500/30 bg-emerald-50 text-emerald-700">
+    <Badge variant="outline" className="rounded-full border border-emerald-500/30 bg-emerald-50 text-[11px] text-emerald-700">
       {trueText}
     </Badge>
   ) : (
-    <Badge variant="outline" className="border border-slate-200 bg-slate-100 text-slate-500">
+    <Badge variant="outline" className="rounded-full border border-slate-200 bg-slate-100 text-[11px] text-slate-500">
       {falseText}
     </Badge>
   )
@@ -161,16 +161,16 @@ export function MetricCard({
   return (
     <motion.div
       variants={fadeUp}
-      className="rounded-lg border border-slate-200 bg-white p-4"
+      className="rounded-xl border border-slate-200 bg-white p-4"
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="text-xl font-semibold tabular-nums text-slate-900 md:text-2xl">
+          <div className="text-xl font-semibold tabular-nums text-slate-900">
             {fmtNum(value)}
           </div>
           <div className="mt-0.5 truncate text-xs text-slate-500">{label}</div>
         </div>
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-md bg-emerald-50 text-emerald-700">
+        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
           <Icon className="size-4" aria-hidden />
         </span>
       </div>
@@ -179,7 +179,7 @@ export function MetricCard({
           {badges?.map((b) => (
             <span
               key={b.text}
-              className={cn('rounded-full px-1.5 py-0.5 text-[10px] font-medium', b.className)}
+              className={cn('rounded-full px-1.5 py-0.5 text-[11px] font-medium', b.className)}
             >
               {b.text}
             </span>

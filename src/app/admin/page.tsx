@@ -14,7 +14,6 @@ import {
   RefreshCw,
   Server,
   ShieldAlert,
-  ShieldCheck,
   Sun,
   Tv,
   Users,
@@ -23,7 +22,6 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
@@ -37,7 +35,7 @@ import {
   type PanelHealth,
   type SupportThreadItem,
 } from './components/api'
-import { btnOutlineDark, panelCard } from './components/bits'
+import { btnOutlineDark } from './components/bits'
 import { AdsTab } from './components/ads-tab'
 import { ChannelsTab } from './components/channels-tab'
 import { FinanceTab } from './components/finance-tab'
@@ -366,7 +364,7 @@ export default function AdminPage() {
           {t === 'dark' && <Moon className="size-3 text-white" aria-hidden />}
         </button>
       ))}
-      <span className="ml-1 hidden text-[10.5px] text-slate-400 xl:inline">{THEME_LABEL[theme]}</span>
+      <span className="ml-1 hidden text-[11px] text-slate-400 xl:inline">{THEME_LABEL[theme]}</span>
     </div>
   )
 
@@ -379,12 +377,6 @@ export default function AdminPage() {
           <h1 className="truncate text-sm font-semibold text-slate-900 md:text-base">
             Tg Swipe · Админ-панель
           </h1>
-          <Badge
-            variant="outline"
-            className="hidden border-slate-200 bg-slate-100 text-slate-500 sm:inline-flex"
-          >
-            <ShieldCheck className="size-3" aria-hidden /> Локальный доступ
-          </Badge>
           <div className="ml-auto flex items-center gap-2">
             {/* Тема: компактный цикл на узких экранах, свотчи в сайдбаре */}
             <Button
@@ -435,7 +427,7 @@ export default function AdminPage() {
           слева, а не вверху вкладки, потому что много вкладок горизонтальных
           в админ панели не красиво» */}
       <div className="mx-auto flex w-full max-w-7xl items-start px-4 md:px-6">
-        <aside className="sticky top-[72px] mt-4 hidden w-52 shrink-0 flex-col gap-1 lg:sticky lg:flex">
+        <aside className="sticky top-[72px] mt-4 hidden w-52 shrink-0 flex-col gap-1 lg:flex">
           <nav className="flex flex-col gap-1 rounded-xl border border-slate-200 bg-white p-2" aria-label="Разделы панели">
             {NAV.map(({ key, label, icon: Icon, badge, badgeTone }) => {
               const isActive = active === key
@@ -446,7 +438,7 @@ export default function AdminPage() {
                   onClick={() => setActive(key)}
                   aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    'flex items-center gap-2.5 rounded-lg px-3 py-2 text-[13.5px] font-medium transition-colors',
+                    'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
                     isActive
                       ? 'bg-emerald-100 text-emerald-700'
                       : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
@@ -457,7 +449,7 @@ export default function AdminPage() {
                   {badge != null && badge !== 0 && badge !== '' && (
                     <span
                       className={cn(
-                        'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                        'shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
                         badgeTone === 'amber'
                           ? 'bg-amber-100 text-amber-700'
                           : 'bg-emerald-600 text-white',
@@ -502,7 +494,7 @@ export default function AdminPage() {
                   {badge != null && badge !== 0 && badge !== '' && (
                     <span
                       className={cn(
-                        'rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                        'rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
                         badgeTone === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-600 text-white',
                       )}
                     >
@@ -533,11 +525,8 @@ export default function AdminPage() {
         </main>
       </div>
 
-      <footer className="mx-auto flex max-w-7xl items-center justify-between px-4 pb-6 text-xs text-slate-500 md:px-6">
-        <span>
-          Tg Swipe{apiVersion ? ` · API v${apiVersion}` : ''} · локальная админ-панель
-        </span>
-        <span className={cn(panelCard, 'rounded border px-2 py-0.5')}>sessionStorage: tgfeed_admin_key</span>
+      <footer className="mx-auto flex max-w-7xl items-center px-4 pb-6 text-xs text-slate-500 md:px-6">
+        <span>Tg Swipe{apiVersion ? ` · API v${apiVersion}` : ''}</span>
       </footer>
     </div>
   )

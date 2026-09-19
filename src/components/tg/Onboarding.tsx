@@ -125,7 +125,7 @@ export function Onboarding({
       <div className="no-scrollbar flex flex-1 flex-wrap content-start justify-center gap-2.5 overflow-y-auto px-6 py-5">
         {categories.length === 0
           ? [...Array(8)].map((_, i) => (
-              <div key={i} className="h-11 w-28 animate-pulse rounded-full bg-tg-surface" />
+              <div key={i} className="tg-shimmer h-11 w-28 rounded-full" />
             ))
           : categories.map((c, i) => {
               const active = selected.includes(c.slug)

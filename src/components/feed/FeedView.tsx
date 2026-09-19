@@ -1216,7 +1216,7 @@ function FeedSkeleton() {
   return (
     <div className="px-4 pt-4" aria-hidden>
       <div className="flex items-center gap-3">
-        <div className="tg-shimmer h-[52px] w-[52px] rounded-full" />
+        <div className="tg-shimmer h-[46px] w-[46px] rounded-full" />
         <div className="flex-1 space-y-2">
           <div className="tg-shimmer h-4 w-1/3 rounded-md" />
           <div className="tg-shimmer h-3 w-1/4 rounded-md" />
@@ -1237,7 +1237,7 @@ function FeedSkeleton() {
       </div>
       {/* Второй пост — каркас без медиа */}
       <div className="mt-6 flex items-center gap-3">
-        <div className="tg-shimmer h-[52px] w-[52px] rounded-full" />
+        <div className="tg-shimmer h-[46px] w-[46px] rounded-full" />
         <div className="flex-1 space-y-2">
           <div className="tg-shimmer h-4 w-2/5 rounded-md" />
           <div className="tg-shimmer h-3 w-1/3 rounded-md" />

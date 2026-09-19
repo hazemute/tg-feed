@@ -84,16 +84,6 @@ export function PromoteSheet({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  // Esc на сайте закрывает панель (на ПК это центрированный диалог)
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [open, onClose])
-
   const activeChannelId = channelId || channels[0]?.channelId || ''
   const activeFormat = useMemo(() => FORMATS.find((f) => f.id === format) ?? FORMATS[0], [format])
 
@@ -237,8 +227,8 @@ export function PromoteSheet({
               <div className="flex items-start gap-2.5 rounded-xl bg-tg-surface/60 p-3.5">
                 <ShieldCheck className="mt-0.5 h-4.5 w-4.5 shrink-0 text-tg-link" aria-hidden />
                 <p className="text-[12.5px] leading-snug text-tg-text2">
-                  Новым каналам — бесплатный тестовый день premium, чтобы вы увидели динамику до
-                  оплаты. Отчёт по показам и кликам — после каждой кампании.
+                  Посты канала поднимаются в топ ленты — платите только за уникальных читателей.
+                  Отчёт по показам и кликам — после каждой кампании.
                 </p>
               </div>
 

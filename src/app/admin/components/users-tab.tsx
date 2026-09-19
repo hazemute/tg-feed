@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, Ban, Gem, RefreshCw, Search, SearchX, ShieldOff, Wallet } from 'lucide-react'
+import { AlertTriangle, Ban, Gem, RefreshCw, Search, SearchX, Settings2, ShieldOff, Wallet } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -58,6 +58,16 @@ export function UsersTab({ tick, onSettled }: TabProps) {
   const [banReason, setBanReason] = useState('')
   const [swipesInput, setSwipesInput] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
+
+  // Модалка закрывается по Esc (как AlertDialog) — кроме момента выполнения действия
+  useEffect(() => {
+    if (!actionUser) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !actionBusy) setActionUser(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [actionUser, actionBusy])
 
   useEffect(() => {
     let alive = true
@@ -270,9 +280,9 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                           </TableCell>
                           <TableCell className="text-center">
                             {u.bannedAt ? (
-                              <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-semibold text-red-700">бан</span>
+                              <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">бан</span>
                             ) : (
-                              <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">ок</span>
+                              <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">ок</span>
                             )}
                           </TableCell>
                           <TableCell className="text-center">
@@ -290,9 +300,9 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                               size="sm"
                               onClick={() => openAction(u)}
                               aria-label={`Действия: ${displayName(u)}`}
-                              className={cn('h-7 px-2 text-xs', btnOutlineDark)}
+                              className={cn('h-7 gap-1 px-2 text-xs', btnOutlineDark)}
                             >
-                              ⚙ Действия
+                              <Settings2 className="size-3.5" aria-hidden /> Действия
                             </Button>
                           </TableCell>
                           <TableCell className="text-sm text-slate-500">{fmtAgo(u.createdAt)}</TableCell>
@@ -306,7 +316,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
               {/* Мобильные: карточки */}
               <div className="space-y-2 md:hidden">
                 {data.items.map((u) => (
-                  <div key={u.id} className="rounded-lg border border-slate-200 bg-white p-3">
+                  <div key={u.id} className="rounded-xl border border-slate-200 bg-white p-4">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
@@ -331,9 +341,9 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                           ['Взгл.', u.views],
                         ] as const
                       ).map(([label, v]) => (
-                        <div key={label} className="rounded bg-slate-50 py-1">
+                        <div key={label} className="rounded-lg bg-slate-50 py-1">
                           <div className="text-sm font-semibold tabular-nums text-slate-800">{fmtNum(v)}</div>
-                          <div className="text-[10px] text-slate-500">{label}</div>
+                          <div className="text-[11px] text-slate-500">{label}</div>
                         </div>
                       ))}
                     </div>
@@ -375,7 +385,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
           onClick={() => !actionBusy && setActionUser(null)}
         >
           <div
-            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 shadow-xl"
+            className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-start justify-between gap-3">
@@ -384,7 +394,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                 <p className="truncate font-mono text-[11px] text-slate-400">{actionUser.id}</p>
               </div>
               {actionUser.isPremium && (
-                <span className="flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 text-[10.5px] font-semibold text-amber-700">
+                <span className="flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
                   <Gem className="size-3" aria-hidden /> Premium
                 </span>
               )}

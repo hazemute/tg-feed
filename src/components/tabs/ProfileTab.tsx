@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Bell,
   ChevronRight,
   FileText,
   Headset,
@@ -73,7 +72,6 @@ export function ProfileTab() {
   const [supportOpen, setSupportOpen] = useState(false)
   // Предложка/баг (v5.11): отдельный чат напрямую админу, без нейронки
   const [feedbackOpen, setFeedbackOpen] = useState(false)
-  const [notify, setNotify] = useState(true)
 
   const reload = () => {
     if (!user) return
@@ -93,7 +91,6 @@ export function ProfileTab() {
   useEffect(() => {
     if (editOpen) return
     reload()
-     
   }, [user?.id, editOpen])
 
   // Событие из инбокса «Активность» (уведомление поддержки): открыть чат поддержки.
@@ -283,13 +280,13 @@ export function ProfileTab() {
           </button>
         </div>
         {subs === null ? (
-          <div className="animate-pulse space-y-3 px-4 pt-3" aria-hidden>
+          <div className="space-y-3 px-4 pt-3" aria-hidden>
             {[0, 1, 2].map((i) => (
               <div key={i} className="flex items-center gap-3">
-                <div className="h-12 w-12 rounded-full bg-tg-surface" />
+                <div className="tg-shimmer h-12 w-12 rounded-full" />
                 <div className="flex-1 space-y-2">
-                  <div className="h-3.5 w-1/3 rounded bg-tg-surface" />
-                  <div className="h-3 w-1/4 rounded bg-tg-surface" />
+                  <div className="tg-shimmer h-3.5 w-1/3 rounded" />
+                  <div className="tg-shimmer h-3 w-1/4 rounded" />
                 </div>
               </div>
             ))}
@@ -420,20 +417,6 @@ export function ProfileTab() {
       <section className="pt-7">
         <h2 className="px-4 text-[19px] font-bold text-tg-text">Настройки</h2>
         <div className="mt-1">
-          <SettingRow
-            icon={<Bell className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label="Уведомления"
-            right={
-              <Switch
-                checked={notify}
-                onChange={(v) => {
-                  setNotify(v)
-                  toast(v ? 'Уведомления включены' : 'Уведомления выключены')
-                }}
-                label="Уведомления"
-              />
-            }
-          />
           <SettingRow
             icon={<Settings className="h-[22px] w-[22px]" strokeWidth={1.7} />}
             label="Тема оформления"
@@ -770,14 +753,14 @@ function ActivityCard({ userId }: { userId: string }) {
       <h2 className="px-4 text-[19px] font-bold text-tg-text">Активность за 7 дней</h2>
       {!totals ? (
         /* Скелетон-строка на время загрузки */
-        <div className="mx-4 mt-3 flex animate-pulse items-end gap-2" aria-hidden>
+        <div className="mx-4 mt-3 flex items-end gap-2" aria-hidden>
           {Array.from({ length: 7 }, (_, i) => (
             <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
               <div
-                className="w-full max-w-[26px] rounded-full bg-tg-surface"
+                className="tg-shimmer w-full max-w-[26px] rounded-full"
                 style={{ height: `${16 + ((i * 13) % 30)}px` }}
               />
-              <div className="h-2.5 w-5 rounded bg-tg-surface" />
+              <div className="tg-shimmer h-2.5 w-5 rounded" />
             </div>
           ))}
         </div>
@@ -899,37 +882,6 @@ function SettingRow({
     )
   }
   return <div className={cls}>{inner}</div>
-}
-
-function Switch({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean
-  onChange: (v: boolean) => void
-  label: string
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={cn(
-        'relative h-[30px] w-[51px] shrink-0 rounded-full transition-colors',
-        checked ? 'bg-tg-green' : 'bg-tg-surface2',
-      )}
-    >
-      <span
-        className={cn(
-          'absolute top-[2px] h-[26px] w-[26px] rounded-full bg-white shadow transition-all',
-          checked ? 'left-[23px]' : 'left-[2px]',
-        )}
-      />
-    </button>
-  )
 }
 
 function Row({ label, value }: { label: string; value: string }) {

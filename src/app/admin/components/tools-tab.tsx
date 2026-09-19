@@ -165,7 +165,7 @@ export function ToolsTab({
                 >
                   <SelectValue />
                 </SelectTrigger>
-                <SelectContent className="border-slate-200 bg-[#16202b] text-slate-800">
+                <SelectContent className="border-slate-200 bg-white text-slate-800">
                   {PER_CHANNEL_OPTIONS.map((o) => (
                     <SelectItem key={o} value={o} className="text-slate-700">
                       {o}
@@ -252,7 +252,7 @@ export function ToolsTab({
 
           {result ? (
             <div className="space-y-3">
-              <div className="rounded-md border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2 text-xs text-emerald-200">
+              <div className="rounded-md border border-emerald-500/20 bg-emerald-500/[0.06] px-3 py-2 text-xs text-emerald-800">
                 Новых постов: <b>{fmtNum(result.newPostsCount)}</b> · Уведомлений отправлено:{' '}
                 <b>{fmtNum(result.notified.sent)}</b> ({fmtNum(result.notified.failed)} не доставлено) ·
                 Получателей: <b>{fmtNum(result.notified.recipients)}</b>
@@ -307,7 +307,7 @@ export function ToolsTab({
                     connected ? 'animate-pulse bg-emerald-400' : 'bg-slate-600',
                   )}
                 />
-                <span className={connected ? 'text-emerald-700/80' : 'text-slate-500'}>
+                <span className={connected ? 'text-emerald-600' : 'text-slate-500'}>
                   Ответ GET /api/panel/health · live {connected ? 'онлайн' : 'оффлайн'}
                 </span>
               </CardDescription>
@@ -333,7 +333,7 @@ export function ToolsTab({
                   key={row.label}
                   className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2"
                 >
-                  <div className="text-[10px] uppercase tracking-wide text-slate-500">{row.label}</div>
+                  <div className="text-[11px] uppercase tracking-wide text-slate-500">{row.label}</div>
                   <div className="mt-1 truncate">{row.value}</div>
                 </div>
               ))}

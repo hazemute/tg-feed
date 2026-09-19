@@ -171,7 +171,7 @@ export function ModerationTab({
                       disabled={busyId === item.id}
                       onClick={() => void act(item, 'reject')}
                       className={cn(
-                        'border-red-500/30 bg-transparent text-red-700 hover:bg-red-50 hover:text-red-200',
+                        'border-red-500/30 bg-transparent text-red-700 hover:bg-red-50 hover:text-red-700',
                       )}
                     >
                       <X aria-hidden /> Отклонить

@@ -258,7 +258,7 @@ export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMai
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center gap-1.5">
             {Object.entries(data.cache.versions).map(([family, v]) => (
-              <Badge key={family} variant="outline" className="border-slate-200 bg-slate-50 font-mono text-[10px] text-slate-600">
+              <Badge key={family} variant="outline" className="border-slate-200 bg-slate-50 font-mono text-[11px] text-slate-600">
                 {family}: v{v}
               </Badge>
             ))}
@@ -476,7 +476,7 @@ function AllowListCard({
                           </span>
                           <UserKindBadge isGuest={u.isGuest} />
                           {added && (
-                            <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[10px] text-emerald-700">
+                            <Badge variant="outline" className="border-emerald-200 bg-emerald-50 text-[11px] text-emerald-700">
                               <Check className="size-3" aria-hidden /> в списке
                             </Badge>
                           )}
