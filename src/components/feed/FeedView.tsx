@@ -454,6 +454,12 @@ export function FeedView() {
     void loadNotifData()
   }, [loadNotifData])
 
+  /* Порядковый номер запроса: эффект [user, category, feedVersion] при быстрой
+   * смене категории принудительно снимает busyRef и стартует новую загрузку, пока
+   * предыдущая ещё в полёте. Ответ старой (медленной) категории не должен
+   * перезаписать свежую ленту — все сет-стейты применяются только если номер
+   * запроса всё ещё актуален. */
+  const loadSeqRef = useRef(0)
   const load = useCallback(
     async (
       p: number,
@@ -463,6 +469,7 @@ export function FeedView() {
     ) => {
       if (!userRef.current || busyRef.current) return
       busyRef.current = true
+      const seq = ++loadSeqRef.current
       // silent (смена языка): лента остаётся на экране — спиннеры не мигаем
       if (!opts?.silent) setLoading(true)
       const slowTimer = setTimeout(() => setSlowLoad(true), 7000)
@@ -481,6 +488,8 @@ export function FeedView() {
           `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}&lang=${langRef.current}`,
           { signal: AbortSignal.timeout(45_000) },
         )
+        // Ответ устарел (категория/язык сменились, пока летел запрос) — молча discard
+        if (seq !== loadSeqRef.current) return
         /* Дедуп: внутри ответа (ранк может вернуть пост дважды) и против уже
            виденных (окно пагинации съезжает — шедулер вставляет новые посты).
            Считается СИНХРОННО по itemsRef — заодно даёт точное число новых. */
@@ -530,6 +539,8 @@ export function FeedView() {
           void prefetchOtherLangs(langRef.current, userRef.current.id, category, seedRef.current)
         } else void saveFeedCache(category, [...itemsRef.current, ...data.items], langRef.current)
       } catch (e) {
+        // Ошибка устаревшего запроса — не трогаем состояние свежей загрузки
+        if (seq !== loadSeqRef.current) return
         // Таймаут первой страницы (холодный кэш) — ОДИН тихий ретрай, прежде чем
         // показывать ошибку: сервер почти всегда успевает со второй попытки
         const isTimeout = (e as { name?: string } | null)?.name === 'TimeoutError'
@@ -560,14 +571,18 @@ export function FeedView() {
           if (itemsRef.current.length === 0) toast.error('Не удалось загрузить ленту')
         }
       } finally {
-        clearTimeout(slowTimer)
-        setSlowLoad(false)
-        busyRef.current = false
-        setLoading(false)
-        setInitial(false)
-        // Если сентинел уже в кадре (короткий контент/быстрый скролл) — догружаем сразу.
-        // Через таймаут, чтобы React успел закоммитить обновлённые page/hasMore.
-        setTimeout(() => checkRef.current(), 80)
+        // Общие флаги (busy/спиннеры/скелетон) сбрасывает только СВЕЖИЙ запрос —
+        // иначе поздний ответ старой категории снимал бы скелетон новой
+        if (seq === loadSeqRef.current) {
+          clearTimeout(slowTimer)
+          setSlowLoad(false)
+          busyRef.current = false
+          setLoading(false)
+          setInitial(false)
+          // Если сентинел уже в кадре (короткий контент/быстрый скролл) — догружаем сразу.
+          // Через таймаут, чтобы React успел закоммитить обновлённые page/hasMore.
+          setTimeout(() => checkRef.current(), 80)
+        }
       }
     },
     [category],
@@ -1120,13 +1135,17 @@ export function FeedView() {
               className="h-8 w-full rounded-full border border-tg-sep bg-tg-surface pl-8 pr-7 text-[13.5px] text-tg-text outline-none transition-colors placeholder:text-tg-hint focus:border-tg-link/40"
             />
             {query.length > 0 && (
+              /* Тач-таргет 28px вокруг видимого кружка 20px — по нему реально
+                 проще попасть пальцем, при этом визуально кнопка не изменилась */
               <button
                 type="button"
                 onClick={() => setQuery('')}
                 aria-label={t('toolbar.clear')}
-                className="absolute right-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-tg-sep text-tg-hint active:scale-90"
+                className="absolute right-1 flex h-7 w-7 items-center justify-center rounded-full text-tg-hint active:scale-90"
               >
-                <X className="h-3 w-3" aria-hidden />
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-tg-sep">
+                  <X className="h-3 w-3" aria-hidden />
+                </span>
               </button>
             )}
           </div>

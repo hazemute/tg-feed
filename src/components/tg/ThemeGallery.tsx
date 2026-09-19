@@ -9,7 +9,9 @@ import { haptic, useBackButton } from '@/lib/tg'
 import { THEMES, type ThemeGroup } from '@/lib/themes'
 import type { ThemeMode } from '@/lib/types'
 import {
+  blendHex,
   DEFAULT_CUSTOM_THEME,
+  hexLum,
   loadCustomTheme,
   saveCustomTheme,
   type CustomTheme,
@@ -119,16 +121,21 @@ function ColorDot({
 
 /** Секция «Своя палитра»: фон + акцент → живое превью + мгновенное применение */
 function CustomThemeSection({
-  current,
   active,
   onApply,
 }: {
-  current: CustomTheme
   active: boolean
   onApply: (t: CustomTheme) => void
 }) {
-  const [draft, setDraft] = useState<CustomTheme>(current)
-  const dark = previewIsDark(draft.bg)
+  /*
+   * Черновик читается из localStorage ПРИ КАЖДОМ монтировании секции, а секция
+   * монтируется заново при каждом открытии галереи. Раньше черновик брался из
+   * снимка на монтировании вкладки «Профиль»: после переоткрытия галереи в
+   * форме показывались УСТАРЕВШИЕ цвета, и следующая правка молча сохраняла
+   * их обратно (выбранный фон/акцент терялись). v5.30 fix.
+   */
+  const [draft, setDraft] = useState<CustomTheme>(() => loadCustomTheme() ?? DEFAULT_CUSTOM_THEME)
+  const dark = hexLum(draft.bg) < 0.45
   const fg = dark ? '#eef2f6' : '#17181c'
 
   const patch = (p: Partial<CustomTheme>) => {
@@ -156,7 +163,7 @@ function CustomThemeSection({
             <span className="h-2 w-14 rounded-full" style={{ background: fg, opacity: 0.85 }} />
             <Palette className="ml-auto h-3.5 w-3.5" style={{ color: fg, opacity: 0.7 }} />
           </div>
-          <div className="mt-2 rounded-lg p-1.5" style={{ background: mixHex(draft.bg, fg, 0.07) }}>
+          <div className="mt-2 rounded-lg p-1.5" style={{ background: blendHex(draft.bg, fg, 0.07) }}>
             <span className="block h-1.5 w-full rounded-full" style={{ background: fg, opacity: 0.5 }} />
             <span className="mt-1 block h-1.5 w-3/4 rounded-full" style={{ background: fg, opacity: 0.35 }} />
           </div>
@@ -183,27 +190,9 @@ function CustomThemeSection({
   )
 }
 
-function previewIsDark(bg: string): boolean {
-  const n = parseInt(bg.slice(1), 16)
-  const lum =
-    (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255
-  return lum < 0.45
-}
-
-function mixHex(a: string, b: string, w: number): string {
-  const pa = parseInt(a.slice(1), 16)
-  const pb = parseInt(b.slice(1), 16)
-  const r = Math.round(((pa >> 16) & 255) + (((pb >> 16) & 255) - ((pa >> 16) & 255)) * w)
-  const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * w)
-  const bl = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * w)
-  return `#${((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)}`
-}
-
 export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => void }) {
   const theme = useApp((s) => s.theme)
   const setTheme = useApp((s) => s.setTheme)
-  // Черновик кастомной палитры: монтируется при каждом открытии галереи
-  const [custom] = useState<CustomTheme>(() => loadCustomTheme() ?? DEFAULT_CUSTOM_THEME)
 
   useBackButton(open, onClose)
 
@@ -213,6 +202,9 @@ export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => 
   }
 
   const applyCustom = (t: CustomTheme) => {
+    // saveCustomTheme диспатчит tgfeed:custom-theme → page.tsx перекрашивает
+    // приложение сразу (в т.ч. когда тема уже 'custom' и setTheme — no-op,
+    // раньше палитра применялась только после перезагрузки страницы)
     saveCustomTheme(t)
     setTheme('custom')
   }
@@ -251,11 +243,7 @@ export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => 
 
           {/* Сетка тем */}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-28">
-            <CustomThemeSection
-              current={custom}
-              active={theme === 'custom'}
-              onApply={applyCustom}
-            />
+            <CustomThemeSection active={theme === 'custom'} onApply={applyCustom} />
             <p className="pt-4 text-[13.5px] leading-snug text-tg-hint">
               Светлые и тёмные палитры на любой вкус. «Как в Telegram»
               подстраивается под оформление клиента автоматически.

@@ -16,6 +16,7 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { formatCount } from '@/lib/format'
@@ -565,13 +566,11 @@ function TonWaiting({
   const [copied, setCopied] = useState<'addr' | 'memo' | null>(null)
 
   const copy = async (text: string, kind: 'addr' | 'memo') => {
-    try {
-      await navigator.clipboard.writeText(text)
+    // фолбэк execCommand: в iframe Telegram Web clipboard-write бывает запрещён
+    if (await copyText(text)) {
       setCopied(kind)
       haptic('light')
       setTimeout(() => setCopied(null), 1600)
-    } catch {
-      /* буфер недоступен */
     }
   }
 

@@ -5,6 +5,7 @@ import {
   type BotButton,
   type InlineKeyboardMarkupTg,
 } from '@/lib/tg-buttons'
+import { botBanned, markBotBan } from '@/lib/tg-bot'
 
 /**
  * ПРЕМИУМ-ЭМОДЗИ БОТА (v5.22).
@@ -319,6 +320,9 @@ async function tgCall(
   payload: Record<string, unknown>,
 ): Promise<{ ok: boolean; description?: string }> {
   if (!BOT_TOKEN()) return { ok: false, description: 'TELEGRAM_BOT_TOKEN не задан' }
+  // Глобальная пауза после 429: не тратим вызовы — каждый вызов под баном
+  // продлевает наказание (см. tg-bot.ts markBotBan)
+  if (botBanned()) return { ok: false, description: 'Bot API на паузе после 429' }
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
       method: 'POST',
@@ -326,7 +330,16 @@ async function tgCall(
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(10_000),
     })
-    const data = (await res.json().catch(() => null)) as { ok?: boolean; description?: string } | null
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean
+      description?: string
+      parameters?: { retry_after?: number }
+    } | null
+    // 429: фиксируем retry_after — фолбэк-цепочка ниже не будет долбить API
+    if (res.status === 429) {
+      const retry = Number(data?.parameters?.retry_after ?? 30)
+      void markBotBan(Number.isFinite(retry) && retry > 0 ? retry : 30)
+    }
     if (data?.ok) return { ok: true }
     return { ok: false, description: data?.description ?? `HTTP ${res.status}` }
   } catch (e) {
@@ -346,6 +359,11 @@ export async function botSendRich(
   htmlText: string,
   opts: SendOpts = {},
 ): Promise<BotSendResult> {
+  // Флуд-бан Bot API: не делаем НИ ОДНОГО вызова — под баном каждый вызов
+  // продлевает наказание (см. tg-bot.ts). Сообщение догонит после снятия.
+  if (botBanned()) {
+    return { ok: false, via: 'bot_plain', error: 'Bot API на паузе после 429 — попробуйте позже' }
+  }
   const text = opts.skipPremiumWrap ? htmlText : await premiumText(htmlText)
   const rows = opts.keyboard
 
@@ -379,6 +397,10 @@ export async function botSendRich(
     ...(iconMarkup ? { reply_markup: iconMarkup } : {}),
   })
   if (r2.ok) return { ok: true, via: 'bot_premium', businessError }
+  // 429 только что поймали — остальные попытки только продлят бан
+  if (botBanned()) {
+    return { ok: false, via: 'bot_plain', error: r2.description, businessError }
+  }
 
   // 3) Фолбэк текста (юникод), иконки в кнопках ещё пробуем
   const plainText = stripTgEmoji(htmlText)
@@ -389,6 +411,9 @@ export async function botSendRich(
     ...(iconMarkup ? { reply_markup: iconMarkup } : {}),
   })
   if (r3.ok) return { ok: true, via: 'bot_plain', businessError, premiumError: r2.description }
+  if (botBanned()) {
+    return { ok: false, via: 'bot_plain', error: r3.description, businessError, premiumError: r2.description }
+  }
 
   // 4) Клавиатура тоже не прошла (Premium истёк / битый ID слота) — совсем plain
   const r4 = rows
@@ -434,6 +459,7 @@ async function tgCallFull(
   payload: Record<string, unknown>,
 ): Promise<{ ok: boolean; description?: string; result?: unknown }> {
   if (!BOT_TOKEN()) return { ok: false, description: 'TELEGRAM_BOT_TOKEN не задан' }
+  if (botBanned()) return { ok: false, description: 'Bot API на паузе после 429' }
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
       method: 'POST',
@@ -442,8 +468,12 @@ async function tgCallFull(
       signal: AbortSignal.timeout(15_000),
     })
     const data = (await res.json().catch(() => null)) as
-      | { ok?: boolean; description?: string; result?: unknown }
+      | { ok?: boolean; description?: string; result?: unknown; parameters?: { retry_after?: number } }
       | null
+    if (res.status === 429) {
+      const retry = Number(data?.parameters?.retry_after ?? 30)
+      void markBotBan(Number.isFinite(retry) && retry > 0 ? retry : 30)
+    }
     if (data?.ok) return { ok: true, result: data.result }
     return { ok: false, description: data?.description ?? `HTTP ${res.status}` }
   } catch (e) {
@@ -469,6 +499,10 @@ export async function botSendPhotoRich(
   captionHtml: string,
   opts: SendOpts = {},
 ): Promise<PhotoSendResult> {
+  // Флуд-бан Bot API: ни одного вызова, пока активна пауза (см. botSendRich)
+  if (botBanned()) {
+    return { ok: false, via: 'text', error: 'Bot API на паузе после 429 — попробуйте позже' }
+  }
   const caption = opts.skipPremiumWrap ? captionHtml : await premiumText(captionHtml)
   const plainCaption = opts.skipPremiumWrap ? captionHtml : stripTgEmoji(captionHtml)
   const rows = opts.keyboard

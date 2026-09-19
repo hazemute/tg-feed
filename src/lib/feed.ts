@@ -298,8 +298,8 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     createdAt: Date
     post: { channelId: string; channel: { categoryId: string | null } }
   }>
-  let likes: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
-  let bookmarks: Array<{ post: { channelId: string; channel: { categoryId: string | null } } }>
+  let likes: Array<{ createdAt: Date; post: { channelId: string; channel: { categoryId: string | null } } }>
+  let bookmarks: Array<{ createdAt: Date; post: { channelId: string; channel: { categoryId: string | null } } }>
   let subs: Array<{ channelId: string; notInterestedAt: Date | null }>
   let mutes: Array<{ channelId: string }>
   try {
@@ -317,13 +317,19 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
       }),
       db.like.findMany({
         where: { userId },
-        select: { post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
+        select: {
+          createdAt: true,
+          post: { select: { channelId: true, channel: { select: { categoryId: true } } } },
+        },
         orderBy: { createdAt: 'desc' },
         take: 300,
       }),
       db.bookmark.findMany({
         where: { userId },
-        select: { post: { select: { channelId: true, channel: { select: { categoryId: true } } } } },
+        select: {
+          createdAt: true,
+          post: { select: { channelId: true, channel: { select: { categoryId: true } } } },
+        },
         orderBy: { createdAt: 'desc' },
         take: 200,
       }),

@@ -60,9 +60,15 @@ export async function POST(request: Request) {
       }),
       signal: AbortSignal.timeout(8000),
     })
-    const data = (await res.json()) as { ok?: boolean; result?: string; description?: string }
-    if (!data.ok || typeof data.result !== 'string') {
-      console.error('[payments/stars] createInvoiceLink failed', data.description)
+    // Терпимый парсинг: Telegram при сбое может отдать не-JSON (HTML 502) —
+    // тогда трактуем как отказ и отменяем платёж (иначе висит вечный pending)
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean
+      result?: string
+      description?: string
+    } | null
+    if (!data?.ok || typeof data.result !== 'string') {
+      console.error('[payments/stars] createInvoiceLink failed', data?.description)
       await db.pendingPayment.updateMany({
         where: { id: payment.id, status: 'pending' },
         data: { status: 'canceled' },

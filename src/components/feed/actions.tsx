@@ -12,7 +12,10 @@ import { TEASER_LINES, useLineTruncate } from '@/lib/clamp-text'
 import { RichText } from '@/components/feed/RichText'
 import { useIsDesktop } from '@/lib/use-desktop'
 
-/** Кнопка действия в правой панели поста: иконка + счётчик под ней (макет) */
+/** Кнопка действия в правой панели поста: иконка + счётчик под ней (макет).
+ *  min-h-[44px] — тач-таргет стандарта приложения (как в ряду текстовых
+ *  постов и панели полного экрана): иконка 26px по вертикальной рельсе
+ *  была слишком узкой целью для пальца */
 export function RailButton({
   icon: Icon,
   label,
@@ -37,7 +40,7 @@ export function RailButton({
       }}
       aria-label={label}
       aria-pressed={active}
-      className="flex flex-col items-center gap-1"
+      className="flex min-h-[44px] w-full flex-col items-center justify-center gap-1"
     >
       <Icon
         className={cn(

@@ -14,6 +14,7 @@ import { THEME_BY_ID, isDarkPalette } from '@/lib/themes'
 import {
   applyCustomVars,
   customThemeIsDark,
+  CUSTOM_THEME_EVENT,
   loadCustomTheme,
   removeCustomVars,
   type CustomTheme,
@@ -93,45 +94,99 @@ export default function Home() {
 
   }, [])
 
-  // Применение темы к DOM: data-theme + класс .dark + инлайн-vars кастомной
-  // палитры (v5.28: theme='custom' перекрашивает --tg-* из localStorage)
-  useEffect(() => {
+  /*
+   * Применение темы к DOM: инлайн-vars кастомной палитры + data-theme + класс
+   * .dark (v5.30 fix «кривой палитры»). Читает АКТУАЛЬНУЮ тему из стора
+   * (getState), а не замыкание: на монтировании эффект восстановления (выше)
+   * уже положил сохранённую тему в стор — zustand set синхронен, а эффекты
+   * идут по порядку объявления. Раньше первый прогон применял промежуточный
+   * 'light' из первичного рендера и ЗАТИРАЛ правильную палитру, выставленную
+   * themeInit до гидрации (вспышка светлой темы на каждой перезагрузке).
+   */
+  const applyThemeDom = useCallback(() => {
+    const t = useApp.getState().theme
     const html = document.documentElement
-    const custom = theme === 'custom' ? loadCustomTheme() : null
-    if (theme === 'custom' && custom) applyCustomVars(custom, html)
+    const custom = t === 'custom' ? loadCustomTheme() : null
+    if (t === 'custom' && custom) applyCustomVars(custom, html)
     else removeCustomVars(html)
-    html.dataset.theme = theme
-    html.classList.toggle('dark', resolveIsDark(theme, custom))
-  }, [theme])
+    /*
+     * auto вне Telegram: CSS-блок 'auto' построен на --tg-theme-*, которые
+     * существуют только в миниаппе — в браузере он всегда падает в светлые
+     * фолбэки, а .dark следует за prefers-color-scheme → «наполовину тёмный»
+     * интерфейс (тёмные свитчи/табы на светлой палитре). Резолвим auto в
+     * конкретную светлую/тёмную палитру — синхронно с resolveIsDark ниже.
+     * Внутри Telegram data-theme остаётся 'auto' (--tg-theme-* актуальны).
+     */
+    if (t === 'auto' && !isInTelegram()) {
+      const sysDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+      html.dataset.theme = sysDark ? 'dark' : 'light'
+    } else {
+      html.dataset.theme = t
+    }
+    html.classList.toggle('dark', resolveIsDark(t, custom))
+  }, [])
 
   /*
    * Рамки миниаппы ВСЕГДА в цвет активной темы приложения: шапка Telegram,
    * фон под кнопками и нижняя панель красятся в hex активной палитры
    * (на старых клиентах — фолбэк на color_key). Плюс подкрашиваем
-   * meta theme-color (браузерный chrome/Safari).
+   * meta theme-color (браузерный chrome/Safari). Тема — из стора (см.
+   * комментарий applyThemeDom: на монтировании там уже сохранённая).
+   */
+  const applyFrame = useCallback(() => {
+    const t = useApp.getState().theme
+    let hex: string
+    if (t === 'custom') {
+      hex = loadCustomTheme()?.bg ?? '#ffffff'
+    } else if (t === 'auto') {
+      const tgBg = tg()?.themeParams?.bg_color
+      if (!tgBg && !isInTelegram()) {
+        // браузер: авто-тема следует за системой — синхронно с applyThemeDom
+        const sysDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
+        hex = sysDark
+          ? THEME_BY_ID.get('dark')?.preview.bg ?? '#0e141c'
+          : THEME_BY_ID.get('light')?.preview.bg ?? '#ffffff'
+      } else {
+        hex = tgBg ?? '#ffffff'
+      }
+    } else {
+      hex = THEME_BY_ID.get(t)?.preview.bg ?? '#ffffff'
+    }
+    applyTgFrame(hex)
+    document
+      .querySelector('meta[name="theme-color"]')
+      ?.setAttribute('content', hex)
+  }, [])
+
+  useEffect(() => {
+    applyThemeDom()
+  }, [theme, applyThemeDom])
+
+  /*
+   * Живая перекраска при правке кастомной палитры БЕЗ смены темы (v5.30):
+   * ThemeGallery сохраняет {bg,accent} в localStorage, пока тема уже 'custom',
+   * — эффект выше по [theme] не перезапускается (значение не менялось), и
+   * приложение оставалось в старой/смешанной палитре до перезагрузки.
    */
   useEffect(() => {
-    const apply = () => {
-      let hex: string
-      if (theme === 'custom') {
-        hex = loadCustomTheme()?.bg ?? '#ffffff'
-      } else if (theme === 'auto') {
-        hex = tg()?.themeParams?.bg_color ?? '#ffffff'
-      } else {
-        hex = THEME_BY_ID.get(theme)?.preview.bg ?? '#ffffff'
-      }
-      applyTgFrame(hex)
-      document
-        .querySelector('meta[name="theme-color"]')
-        ?.setAttribute('content', hex)
+    const onCustomTheme = () => {
+      if (useApp.getState().theme !== 'custom') return
+      applyThemeDom()
+      applyFrame()
     }
+    window.addEventListener(CUSTOM_THEME_EVENT, onCustomTheme)
+    return () => window.removeEventListener(CUSTOM_THEME_EVENT, onCustomTheme)
+  }, [applyThemeDom, applyFrame])
+
+  useEffect(() => {
+    applyFrame()
     // после установки data-theme нужен кадр на пересчёт CSS-переменных
-    const raf = requestAnimationFrame(apply)
+    const raf = requestAnimationFrame(applyFrame)
     // смена темы клиента Telegram/системы — актуально для auto-темы
     const onSys = () => {
       syncTelegramThemeVars()
-      document.documentElement.classList.toggle('dark', resolveIsDark(theme, theme === 'custom' ? loadCustomTheme() : null))
-      apply()
+      applyThemeDom()
+      applyFrame()
     }
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     mq.addEventListener?.('change', onSys)
@@ -142,7 +197,7 @@ export default function Home() {
       mq.removeEventListener?.('change', onSys)
       w?.offEvent?.('themeChanged', onSys)
     }
-  }, [theme])
+  }, [theme, applyFrame, applyThemeDom])
 
   useEffect(() => {
     document.documentElement.dataset.fontscale = fontScale

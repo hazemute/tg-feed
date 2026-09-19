@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { Camera, Link2, Loader2, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { copyText } from '@/lib/clipboard'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
 import { haptic, sharePost, sharePostToStory } from '@/lib/tg'
@@ -54,12 +55,10 @@ export function ShareSheet() {
     if (!post) return
     haptic('light')
     const link = post.link || 'https://t.me/tgswipe_bot'
-    try {
-      await navigator.clipboard.writeText(link)
-      toast.success(t('post.linkCopied'))
-    } catch {
-      toast.error(t('post.copyFail'))
-    }
+    // copyText: Clipboard API + фолбэк execCommand (в Telegram Web iframe
+    // clipboard-write часто запрещён политикой — раньше был ложный «не удалось»)
+    if (await copyText(link)) toast.success(t('post.linkCopied'))
+    else toast.error(t('post.copyFail'))
     close()
   }
 

@@ -70,7 +70,11 @@ interface AppState {
   clearSearchSeed: () => void
 }
 
-const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'profile']
+// Порядок вкладок для направления анимации перехода — ДОЛЖЕН совпадать
+// с TABS в page.tsx (swipe между вкладками). 'mychannel' скрыт из навигации,
+// но вкладка жива (открывается из профиля/уведомлений/промо) — без неё indexOf
+// возвращал -1 и слайд перехода шёл в обратную сторону.
+const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
 
 export const useApp = create<AppState>((set, get) => ({
   user: null,

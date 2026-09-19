@@ -16,6 +16,7 @@ import {
   type BotButton,
 } from '@/lib/tg-buttons'
 import { externalOrigin } from '@/lib/server'
+import { botBanned, markBotBan } from '@/lib/tg-bot'
 
 export const dynamic = 'force-dynamic'
 
@@ -153,6 +154,8 @@ async function botCall<T = unknown>(
   payload: Record<string, unknown>,
 ): Promise<T | null> {
   if (!BOT_TOKEN()) return null
+  // Флуд-бан: не тратим вызовы (каждый вызов под баном продлевает наказание)
+  if (botBanned()) return null
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
       method: 'POST',
@@ -160,7 +163,16 @@ async function botCall<T = unknown>(
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(8000),
     })
-    const data = (await res.json()) as { ok?: boolean; result?: T }
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean
+      result?: T
+      parameters?: { retry_after?: number }
+    } | null
+    // 429: ставим глобальную паузу (tg-bot.ts) — ретраи и фолбэки замолкают
+    if (res.status === 429) {
+      const retry = Number(data?.parameters?.retry_after ?? 30)
+      void markBotBan(Number.isFinite(retry) && retry > 0 ? retry : 30)
+    }
     return data?.ok ? (data.result ?? null) : null
   } catch {
     return null
@@ -276,7 +288,15 @@ function extractCustomEmoji(
   const seen = new Set<string>()
   for (const e of entities) {
     if (e.type !== 'custom_emoji' || !e.custom_emoji_id) continue
-    if (typeof e.offset !== 'number' || typeof e.length !== 'number' || e.length <= 0) continue
+    // offset/length — UTF-16 code units; отрицательный offset уводит slice
+    // в конец строки и захватывает НЕ ТОТ символ — отсекаем
+    if (
+      typeof e.offset !== 'number' ||
+      typeof e.length !== 'number' ||
+      e.length <= 0 ||
+      e.offset < 0
+    )
+      continue
     const emoji = text.slice(e.offset, e.offset + e.length)
     if (!emoji || seen.has(e.custom_emoji_id)) continue
     seen.add(e.custom_emoji_id)
@@ -427,7 +447,9 @@ async function handleLoginCallback(
       ...base,
       reply_markup: buildIconKeyboard(feedRows, await premiumMap()).markup,
     })
-    if (!sent) {
+    // Повтор без иконок — только если редактирование отвергнуто НЕ из-за 429
+    // (под баном второй вызов лишь продлевает наказание)
+    if (!sent && !botBanned()) {
       void botCall('editMessageText', {
         ...base,
         reply_markup: buildPlainKeyboard(feedRows),

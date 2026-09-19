@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
+import { readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { getBg, getFrame, getPalette } from '@/lib/profile-style'
 
@@ -30,13 +31,9 @@ export async function PUT(request: Request) {
   const g = guardAuth(request, { limit: 30, windowMs: 60_000, bucket: 'style' })
   if (!g.ok) return g.res
 
-  let raw: unknown = null
-  try {
-    raw = await request.json()
-  } catch {
-    raw = null
-  }
-  const parsed = BodySchema.safeParse(raw)
+  // readJson: кап 64KB до чтения тела; при ошибке/превышении вернёт {} —
+  // zod ниже отвергнет с 400 (раньше тело читалось целиком без капа)
+  const parsed = BodySchema.safeParse(await readJson(request))
   if (!parsed.success) return NextResponse.json({ error: 'bad request' }, { status: 400 })
 
   const { palette, bg, frame } = parsed.data

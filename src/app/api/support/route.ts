@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { err } from '@/lib/server'
+import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { rateLimit } from '@/lib/rate-limit'
 import { supportAiReply, AI_FALLBACK_REPLY } from '@/lib/support-ai'
@@ -128,7 +128,8 @@ export async function POST(request: Request) {
   const userId = g.uid
 
   try {
-    const parsed = sendSchema.safeParse(await request.json().catch(() => null))
+    // readJson: кап 64KB до чтения тела (текст ≤2000 симв + ≤3 ссылки на картинки)
+    const parsed = sendSchema.safeParse(await readJson(request))
     if (!parsed.success) return err('text required (1..2000)')
     const text = parsed.data.text
     const images = parsed.data.images ?? []

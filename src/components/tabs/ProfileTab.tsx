@@ -565,9 +565,9 @@ export function ProfileTab() {
             value={fontScale}
             onChange={(v) => setFontScale(v as typeof fontScale)}
             options={[
-              { value: 'sm', label: 'A' },
-              { value: 'md', label: 'A', big: true },
-              { value: 'lg', label: 'A', big: true },
+              { value: 'sm', label: 'A', aria: t('settings.fontSm') },
+              { value: 'md', label: 'A', big: true, aria: t('settings.fontMd') },
+              { value: 'lg', label: 'A', big: true, aria: t('settings.fontLg') },
             ]}
           />
           <Segmented
@@ -1371,7 +1371,7 @@ function Segmented({
   label: string
   value: string
   onChange: (v: string) => void
-  options: { value: string; label: string; big?: boolean }[]
+  options: { value: string; label: string; big?: boolean; aria?: string }[]
 }) {
   return (
     <div>
@@ -1382,6 +1382,7 @@ function Segmented({
             key={o.value}
             type="button"
             aria-pressed={value === o.value}
+            aria-label={o.aria ?? o.label}
             onClick={() => {
               onChange(o.value)
               haptic('light')

@@ -467,13 +467,24 @@ export async function GET(request: Request) {
           sliceIds.length = 0
           sliceIds.push(...newSliceIds)
         }
-        // показ кампании: один инкремент на загрузку первой страницы (не ждем)
-        void db.adCampaign
-          .updateMany({
-            where: { id: { in: [...sponsors.values()] }, status: 'active' },
-            data: { impressions: { increment: 1 } },
-          })
-          .catch(() => {})
+        // показ кампании: инкремент ТОЛЬКО кампаниям, чей пост реально попал
+        // на текущую страницу (раньше инкрементировались ВСЕ активные кампании
+        // — статистика показов/бюджета раздувалась впустую). Не ждем ответа.
+        const shownCampaignIds = new Set<string>()
+        for (const [cid, pid] of picked) {
+          if (sliceIds.includes(pid)) {
+            const campId = sponsors.get(cid)
+            if (campId) shownCampaignIds.add(campId)
+          }
+        }
+        if (shownCampaignIds.size > 0) {
+          void db.adCampaign
+            .updateMany({
+              where: { id: { in: [...shownCampaignIds] }, status: 'active' },
+              data: { impressions: { increment: 1 } },
+            })
+            .catch(() => {})
+        }
       }
     }
 

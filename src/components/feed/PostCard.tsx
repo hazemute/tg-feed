@@ -62,7 +62,7 @@ function LikeRailButton({ count, active, onClick }: { count: number; active: boo
       }}
       aria-label="Нравится"
       aria-pressed={active}
-      className="flex flex-col items-center gap-1"
+      className="flex min-h-[44px] w-full flex-col items-center justify-center gap-1"
     >
       <Heart
         className={cn(
@@ -447,8 +447,11 @@ export function PostCard({
       if (visible) buffer += now - lastTick
       clearInterval(timer)
       vis.disconnect()
+      // buffer обнуляем после отправки: pagehide + последующий unmount вызывают
+      // cleanup дважды — без обнуления одно и то же время ушло бы дважды
       if (buffer >= 2000) {
         const ms = buffer
+        buffer = 0
         // sendBeacon не тянем (нужны заголовки сессии) — обычный fire-and-forget
         api('/api/view/dwell', { method: 'POST', body: JSON.stringify({ postId: post.id, ms }) }).catch(() => {})
       }

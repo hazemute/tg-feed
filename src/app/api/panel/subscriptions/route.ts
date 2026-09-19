@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { err } from '@/lib/server'
+import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
@@ -164,7 +164,8 @@ export async function POST(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    const body = (await request.json()) as {
+    // readJson: кап + безопасный парсинг — битый JSON даёт 400, а не 500
+    const body = (await readJson(request)) as {
       userId?: unknown
       handle?: unknown
       tier?: unknown

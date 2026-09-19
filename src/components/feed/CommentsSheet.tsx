@@ -77,6 +77,10 @@ export function CommentsSheet() {
   const clearCommentsFocus = useApp((s) => s.clearCommentsFocus)
   const user = useApp((s) => s.user)
   const openAuthGate = useApp((s) => s.openAuthGate)
+  // Порядковый номер запроса списка: смена поста/сортировки запускает новую
+  // загрузку, не дожидаясь предыдущей — ответ старой не должен перезаписать
+  // список свежей (иначе комментарии чужого поста показывались под текущим)
+  const loadSeqRef = useRef(0)
 
   const [items, setItems] = useState<CommentDTO[]>([])
   const [cursor, setCursor] = useState<string | null>(null)
@@ -103,20 +107,27 @@ export function CommentsSheet() {
     async (postId: string, c?: string, s?: 'new' | 'top') => {
       const cur = s ?? sessionSort
       const first = !c
+      const seq = ++loadSeqRef.current
       if (first) setLoading(true)
       else setLoadingMore(true)
       try {
         const r = await api<{ items: CommentDTO[]; nextCursor: string | null }>(
           `/api/comments?postId=${encodeURIComponent(postId)}&sort=${cur}${c ? `&cursor=${encodeURIComponent(c)}` : ''}`,
         )
+        // Ответ устарел (пост/сортировка сменились, пока летел запрос) — молча discard
+        if (seq !== loadSeqRef.current) return
         setItems((prev) => (first ? r.items : [...prev, ...r.items]))
         setCursor(r.nextCursor)
         setError(null)
       } catch {
-        if (first) setError(t('comments.error'))
+        if (seq === loadSeqRef.current && first) setError(t('comments.error'))
       } finally {
-        setLoading(false)
-        setLoadingMore(false)
+        // Общие спиннеры сбрасывает только СВЕЖИЙ запрос — иначе поздний ответ
+        // старого поста снимал бы скелетон новой загрузки
+        if (seq === loadSeqRef.current) {
+          setLoading(false)
+          setLoadingMore(false)
+        }
       }
     },
     [t],
@@ -348,10 +359,11 @@ export function CommentsSheet() {
       replies: [],
     }
 
+    if (replying) setExpanded((ex) => new Set(ex).add(replying.rootId))
     setItems((prev) => {
       if (!replying) return [...prev, tmp]
-      // Ответ уходит в ветку корня (и ветка раскрывается)
-      setExpanded((ex) => new Set(ex).add(replying.rootId))
+      // Ответ уходит в ветку корня (ветка раскрыта выше — setExpanded ВНЕ
+      // setItems: апдейтер состояния должен быть чистым)
       return mapTree(prev, replying.rootId, (p) => ({
         ...p,
         replies: [...(p.replies ?? []), tmp],

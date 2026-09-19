@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Copy, Globe, Loader2, RefreshCw, Send, ShieldCheck } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
+import { copyText } from '@/lib/clipboard'
 import { api, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic, userAvatarUrl } from '@/lib/tg'
@@ -105,12 +106,12 @@ export function LoginByTelegram({ open, onClose }: { open: boolean; onClose: () 
 
   const copy = async () => {
     if (!link) return
-    try {
-      await navigator.clipboard.writeText(link.url)
+    // фолбэк execCommand — в Telegram Web iframe clipboard-write может быть запрещён
+    if (await copyText(link.url)) {
       setCopied(true)
       haptic('light')
       setTimeout(() => setCopied(false), 1600)
-    } catch {
+    } else {
       toast.error('Не удалось скопировать')
     }
   }

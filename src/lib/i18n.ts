@@ -134,6 +134,9 @@ const DICT = {
   'profile.settings': ['Настройки', 'Settings'],
   /* Настройки */
   'settings.font': ['Размер шрифта постов', 'Post font size'],
+  'settings.fontSm': ['Мелкий шрифт', 'Small font'],
+  'settings.fontMd': ['Средний шрифт', 'Medium font'],
+  'settings.fontLg': ['Крупный шрифт', 'Large font'],
   'profile.language': ['Язык интерфейса', 'Interface language'],
 
   /* Переключатель языка */

@@ -74,13 +74,16 @@ const BOT_BAN_REDIS_KEY = 'tgbot:globalBan'
 let botBanUntilMs = 0
 let botBanRedisChecked = false
 
-/** Есть ли сейчас глобальная пауза Bot API (синхронно, по памяти процесса) */
-function botBanned(): boolean {
+/** Есть ли сейчас глобальная пауза Bot API (синхронно, по памяти процесса).
+ *  Экспорт: fallback-цепочки tg-emoji.ts пропускают остальные попытки,
+ *  пока активен бан — каждый вызов во время бана продлевает наказание. */
+export function botBanned(): boolean {
   return Date.now() < botBanUntilMs
 }
 
-/** Отметить глобальную паузу после 429 (retryAfterSec — рекомендация Telegram) */
-async function markBotBan(retryAfterSec: number): Promise<void> {
+/** Отметить глобальную паузу после 429 (retryAfterSec — рекомендация Telegram).
+ *  Экспорт: его вызывают tg-emoji.ts и bot/webhook при получении 429. */
+export async function markBotBan(retryAfterSec: number): Promise<void> {
   const until = Date.now() + Math.min(Math.max(retryAfterSec, 30), 4 * 3600) * 1000
   if (until <= botBanUntilMs) return // уже бан длиннее — не укорачиваем
   botBanUntilMs = until
@@ -521,6 +524,16 @@ async function callMethod(method: string, body: Record<string, unknown>): Promis
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(10_000),
     })
+    // 429 в середине рассылки: ставим глобальную паузу — иначе каждый следующий
+    // вызов продлевает флуд-бан (см. markBotBan), и бот замолкает на часы
+    if (res.status === 429) {
+      const d = (await res.json().catch(() => null)) as {
+        parameters?: { retry_after?: number }
+      } | null
+      const retry = Number(d?.parameters?.retry_after ?? 30)
+      void markBotBan(Number.isFinite(retry) && retry > 0 ? retry : 30)
+      return false
+    }
     const data = (await res.json().catch(() => null)) as { ok?: boolean } | null
     return res.ok && data?.ok === true
   } catch {
@@ -729,6 +742,10 @@ export async function notifyNewPosts(posts: NotifiablePost[]): Promise<NotifyRes
   let failed = 0
 
   for (const [userId, chatId] of userChat) {
+    // 429 в процессе рассылки: прекращаем дергать API (каждый вызов под баном
+    // продлевает наказание). Посты ниже помечаются notifiedAt как при обычных
+    // сбоях отправки — недоставленное не дублирует тем, кто уже получил.
+    if (botBanned()) break
     // Посты этого прогона, релевантные пользователю (по каналам с notify=true)
     const relevant = subs
       .filter((s) => s.userId === userId)

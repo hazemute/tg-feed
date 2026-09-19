@@ -27,6 +27,7 @@ import {
   X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -284,13 +285,11 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
   }
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(code)
+    // фолбэк execCommand — iframe Telegram Web может запрещать clipboard-write
+    if (await copyText(code)) {
       setCopied(true)
       haptic('light')
       setTimeout(() => setCopied(false), 1600)
-    } catch {
-      // clipboard недоступен
     }
   }
 

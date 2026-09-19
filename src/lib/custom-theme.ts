@@ -10,8 +10,14 @@
  * остаётся 'custom'. Все shadcn-токены следуют --tg-* (v5.27.1), поэтому
  * красится сразу весь интерфейс. Инлайн-стиль снимается при уходе с custom.
  *
- * Формулы derivation продублированы компактно в themeInit (layout.tsx) —
- * держи их синхронными.
+ * Живая перекраска (v5.30): saveCustomTheme диспатчит window-событие
+ * CUSTOM_THEME_EVENT — эффект темы в page.tsx слушает его и применяет vars
+ * сразу, даже если тема уже 'custom' (эффект завязан на [theme], который
+ * при правке палитры не менялся — из-за этого палитра «кривила» до перезагрузки).
+ *
+ * Все константы derivation (порог яркости, fg, веса смешивания, sep/green/star)
+ * экспортируются ниже и ИНТЕРПОЛИРУЮТСЯ в themeInit-скрипт layout.tsx —
+ * единый источник формул, дрейф между модулями исключён структурно.
  *
  * Модуль клиентский (localStorage), но чистые функции — тестопригодны.
  */
@@ -35,6 +41,24 @@ export type CustomThemeVars = {
 export type CustomTheme = { bg: string; accent: string }
 
 export const CUSTOM_THEME_KEY = 'tgfeed_custom_theme'
+
+/** window-событие: сохранена новая кастомная палитра (слушает page.tsx) */
+export const CUSTOM_THEME_EVENT = 'tgfeed:custom-theme'
+
+/* ── Единый источник формул derivation ───────────────────────────────────
+ * Эти же константы интерполируются в themeInit (layout.tsx) до гидрации.
+ * Меняются ТОЛЬКО здесь — иначе до/после гидрации получатся разные палитры. */
+export const CUSTOM_LUM_THRESHOLD = 0.45 // Rec.709-яркость фона: ниже — тёмная база
+export const CUSTOM_FG_DARK = '#eef2f6' // текст на тёмном фоне
+export const CUSTOM_FG_LIGHT = '#17181c' // текст на светлом фоне
+export const CUSTOM_BLEND_SURFACE = 0.07 // surface = bg → fg 7%
+export const CUSTOM_BLEND_SURFACE2 = 0.14 // surface2 = bg → fg 14%
+export const CUSTOM_BLEND_TEXT2 = 0.22 // text2 = fg → bg 22%
+export const CUSTOM_BLEND_HINT = 0.45 // hint = fg → bg 45%
+export const CUSTOM_SEP_DARK = 'rgba(255,255,255,0.10)'
+export const CUSTOM_SEP_LIGHT = 'rgba(0,0,0,0.12)'
+export const CUSTOM_GREEN = '#34c759'
+export const CUSTOM_STAR = '#f5a623'
 export const DEFAULT_CUSTOM_THEME: CustomTheme = { bg: '#f2f2f7', accent: '#0a84ff' }
 
 const HEX_RE = /^#[0-9a-fA-F]{6}$/
@@ -60,6 +84,10 @@ export function loadCustomTheme(): CustomTheme | null {
 export function saveCustomTheme(t: CustomTheme): void {
   try {
     localStorage.setItem(CUSTOM_THEME_KEY, JSON.stringify(t))
+    // Живая перекраска: эффект темы в page.tsx перезапускается только по смене
+    // theme, а правка цветов палитры тему не меняет — без события приложение
+    // оставалось в старой палитре до перезагрузки («кривая палитра», v5.30).
+    window.dispatchEvent(new Event(CUSTOM_THEME_EVENT))
   } catch {}
 }
 
@@ -85,27 +113,27 @@ export function hexLum(hex: string): number {
  * surface — фг towards text 7%, surface2 — 14%; text2/hint — text к bg 22%/45%.
  */
 export function deriveCustomVars(t: CustomTheme): CustomThemeVars {
-  const dark = hexLum(t.bg) < 0.45
-  const fg = dark ? '#eef2f6' : '#17181c'
+  const dark = hexLum(t.bg) < CUSTOM_LUM_THRESHOLD
+  const fg = dark ? CUSTOM_FG_DARK : CUSTOM_FG_LIGHT
   return {
     '--tg-bg': t.bg,
-    '--tg-surface': blendHex(t.bg, fg, 0.07),
-    '--tg-surface2': blendHex(t.bg, fg, 0.14),
+    '--tg-surface': blendHex(t.bg, fg, CUSTOM_BLEND_SURFACE),
+    '--tg-surface2': blendHex(t.bg, fg, CUSTOM_BLEND_SURFACE2),
     '--tg-text': fg,
-    '--tg-text2': blendHex(fg, t.bg, 0.22),
-    '--tg-hint': blendHex(fg, t.bg, 0.45),
+    '--tg-text2': blendHex(fg, t.bg, CUSTOM_BLEND_TEXT2),
+    '--tg-hint': blendHex(fg, t.bg, CUSTOM_BLEND_HINT),
     '--tg-link': t.accent,
     '--tg-button': t.accent,
     '--tg-like': t.accent,
-    '--tg-sep': dark ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.12)',
-    '--tg-green': '#34c759',
-    '--tg-star': '#f5a623',
+    '--tg-sep': dark ? CUSTOM_SEP_DARK : CUSTOM_SEP_LIGHT,
+    '--tg-green': CUSTOM_GREEN,
+    '--tg-star': CUSTOM_STAR,
   }
 }
 
 /** Тёмная ли кастомная тема (для .dark на <html>) */
 export function customThemeIsDark(t: CustomTheme): boolean {
-  return hexLum(t.bg) < 0.45
+  return hexLum(t.bg) < CUSTOM_LUM_THRESHOLD
 }
 
 /** Применить vars на элемент (обычно documentElement); возвращает снятый стиль-функцию */
