@@ -2,51 +2,113 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth, guardPublic } from '@/lib/guard'
+import { authorOf, likedSetFor, notifyUser, toCommentDTO } from '@/lib/comments-server'
 import type { CommentDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Комментарии под постом.
+ * Комментарии под постом — дерево «как в TikTok» (один уровень вложенности).
  *
- * GET  /api/comments?postId=…&cursor=… — список (новые снизу, страницы по 40,
- *       cursor — id самой старой загруженной; публично, лимит по IP/юзеру).
- * POST /api/comments { postId, text } — только привязанные к Telegram
- *       (гость получает 401 {auth:true} → клиент открывает шторку входа).
- *       Счётчик Post.commentsCount денормализован, «температура» поста +5.
+ * GET  /api/comments?postId=…&sort=new|top&cursor=…
+ *      — корневые комментарии (+2 превью-ответа у каждого); sort=new — хронология
+ *        (старые сверху, страницы «назад во времени» по cursor=id), sort=top —
+ *        по лайкам (cursor=offset). Публично, лимит по IP/юзеру.
+ * GET  /api/comments?postId=…&parentId=…&cursor=…
+ *      — ответы ветки (хронология, cursor=id последнего загруженного).
+ * POST /api/comments { postId, text, parentId? } — только привязанные к Telegram
+ *      (гость получает 401 {auth:true}); с parentId — ответ в ветку (replyToName
+ *      денормализуется для плашки «Ответ NAME»). Счётчик Post.commentsCount
+ *      денормализован, «температура» поста +5.
  *
  * Текст: трим 1..700 символов, лимит 8 комментариев/мин на пользователя.
  */
 
 const PAGE = 40
+const PREVIEW_REPLIES = 2
 const MAX_LEN = 700
 
-type Body = { postId?: unknown; text?: unknown }
+type Body = { postId?: unknown; text?: unknown; parentId?: unknown }
 
-/** Прочный прокси-URL аватарки (дубль логики lib/tg.ts — она клиентская) */
-function avatarUrlOf(userId: string, photoUrl: string | null): string | null {
-  if (!photoUrl) return null
-  if (photoUrl.startsWith('tgfile:')) return `/api/avatar/${userId}`
-  return photoUrl
+const AUTHOR_SELECT = {
+  id: true,
+  username: true,
+  firstName: true,
+  lastName: true,
+  photoUrl: true,
+} as const
+
+/** GET: список ответов ветки (parentId задан) */
+async function listReplies(
+  postId: string,
+  parentId: string,
+  cursor: string,
+  uid: string | null,
+) {
+  const rows = await db.comment.findMany({
+    where: { postId, parentId },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    take: PAGE + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+    include: { user: { select: AUTHOR_SELECT } },
+  })
+  const hasMore = rows.length > PAGE
+  const page = hasMore ? rows.slice(0, PAGE) : rows
+  const liked = await likedSetFor(uid, page.map((c) => c.id))
+  const items = page.map((c) => toCommentDTO(c, uid, liked))
+  return { items, nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null }
 }
 
-/** Публичное представление автора комментария (без приватных полей) */
-function authorOf(u: {
-  id: string
-  username: string | null
-  firstName: string | null
-  lastName: string | null
-  photoUrl: string | null
-}) {
-  const name =
-    [u.firstName, u.lastName].filter(Boolean).join(' ').trim() ||
-    (u.username ? `@${u.username}` : 'Читатель')
-  return {
-    id: u.id,
-    name,
-    username: u.username,
-    avatarUrl: avatarUrlOf(u.id, u.photoUrl),
-  }
+/** GET: корневые комментарии с превью ответов (sort=new — хронология, sort=top — по лайкам) */
+async function listRoots(
+  postId: string,
+  sort: 'new' | 'top',
+  cursor: string,
+  uid: string | null,
+) {
+  const where = { postId, parentId: null }
+  const rows = await db.comment.findMany({
+    where,
+    orderBy:
+      sort === 'top'
+        ? [{ likesCount: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }]
+        : [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: PAGE + 1,
+    // new: страницы «назад во времени» по курсору-id; top: offset-пагинация
+    ...(sort === 'new' && cursor
+      ? { cursor: { id: cursor }, skip: 1 }
+      : sort === 'top'
+        ? { skip: Number(cursor) || 0 }
+        : {}),
+    include: {
+      user: { select: AUTHOR_SELECT },
+      replies: {
+        take: PREVIEW_REPLIES,
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        include: { user: { select: AUTHOR_SELECT } },
+      },
+    },
+  })
+
+  const hasMore = rows.length > PAGE
+  const page = hasMore ? rows.slice(0, PAGE) : rows
+  const allIds = page.flatMap((c) => [c.id, ...c.replies.map((r) => r.id)])
+  const liked = await likedSetFor(uid, allIds)
+
+  // Хронология как в Telegram (sort=new): старые сверху, новые снизу
+  const ordered = sort === 'new' ? page.slice().reverse() : page
+  const items: CommentDTO[] = ordered.map((c) => ({
+    ...toCommentDTO(c, uid, liked),
+    replies: c.replies.map((r) => toCommentDTO(r, uid, liked)),
+  }))
+
+  const nextCursor =
+    hasMore
+      ? sort === 'new'
+        ? page[page.length - 1]?.id ?? null
+        : String((Number(cursor) || 0) + PAGE)
+      : null
+  return { items, nextCursor }
 }
 
 export async function GET(request: Request) {
@@ -55,39 +117,18 @@ export async function GET(request: Request) {
 
   const url = new URL(request.url)
   const postId = (url.searchParams.get('postId') ?? '').trim()
+  const parentId = (url.searchParams.get('parentId') ?? '').trim()
   const cursor = (url.searchParams.get('cursor') ?? '').trim()
+  const sort = url.searchParams.get('sort') === 'top' ? 'top' : 'new'
   if (!/^[a-zA-Z0-9_-]{6,40}$/.test(postId)) return err('postId required')
+  if (parentId && !/^[a-zA-Z0-9_-]{6,40}$/.test(parentId)) return err('bad parentId')
 
   try {
-    const rows = await db.comment.findMany({
-      where: { postId },
-      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
-      take: PAGE + 1,
-      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
-      include: {
-        user: { select: { id: true, username: true, firstName: true, lastName: true, photoUrl: true } },
-      },
-    })
-
-    const hasMore = rows.length > PAGE
-    const page = hasMore ? rows.slice(0, PAGE) : rows
-    // Хронология как в Telegram: старые сверху, новые снизу
-    const items: CommentDTO[] = page
-      .slice()
-      .reverse()
-      .map((c) => ({
-        id: c.id,
-        postId: c.postId,
-        text: c.text,
-        createdAt: c.createdAt.toISOString(),
-        author: authorOf(c.user),
-        own: g.uid !== null && c.userId === g.uid,
-      }))
-
-    return NextResponse.json({
-      items,
-      nextCursor: hasMore ? page[page.length - 1]?.id ?? null : null,
-    })
+    if (parentId) {
+      // Ответы конкретного корня — публично, хронология
+      return NextResponse.json(await listReplies(postId, parentId, cursor, g.uid))
+    }
+    return NextResponse.json(await listRoots(postId, sort, cursor, g.uid))
   } catch (e) {
     console.error('[comments GET]', e)
     return err('comments failed', 500)
@@ -106,19 +147,46 @@ export async function POST(request: Request) {
     const body = await readJson<Body>(request)
     const postId = typeof body.postId === 'string' ? body.postId.trim() : ''
     const text = typeof body.text === 'string' ? body.text.replace(/\s+$/g, '').trim() : ''
+    const parentId = typeof body.parentId === 'string' ? body.parentId.trim() : ''
     if (!/^[a-zA-Z0-9_-]{6,40}$/.test(postId)) return err('postId required')
+    if (parentId && !/^[a-zA-Z0-9_-]{6,40}$/.test(parentId)) return err('bad parentId')
     if (!text) return err('text required')
     if (text.length > MAX_LEN) return err(`максимум ${MAX_LEN} символов`, 413)
 
-    const post = await db.post.findUnique({ where: { id: postId }, select: { id: true } })
+    const post = await db.post.findUnique({
+      where: { id: postId },
+      select: { id: true, channel: { select: { id: true, title: true, username: true, claimedById: true } } },
+    })
     if (!post) return err('post not found', 404)
+
+    // Ответ в ветку: родитель обязан быть из этого же поста; дерево плоское —
+    // parentId всегда корень (ответ на ответ → replyToName автора ответа)
+    let rootId: string | null = null
+    let replyToUserId: string | null = null
+    let replyToName: string | null = null
+    if (parentId) {
+      const parent = await db.comment.findUnique({
+        where: { id: parentId },
+        select: { id: true, postId: true, parentId: true, userId: true, user: { select: AUTHOR_SELECT } },
+      })
+      if (!parent || parent.postId !== postId) return err('parent not found', 404)
+      rootId = parent.parentId ?? parent.id
+      // Кому именно отвечаем: сам родитель (это может быть ответ в чужой ветке)
+      replyToUserId = parent.userId
+      replyToName = authorOf(parent.user).name
+    }
 
     const created = await db.$transaction(async (tx) => {
       const c = await tx.comment.create({
-        data: { postId, userId: g.uid, text },
-        include: {
-          user: { select: { id: true, username: true, lastName: true, firstName: true, photoUrl: true } },
+        data: {
+          postId,
+          userId: g.uid,
+          text,
+          parentId: rootId,
+          replyToUserId,
+          replyToName,
         },
+        include: { user: { select: AUTHOR_SELECT } },
       })
       // Денормализованный счётчик + пост «греется» от обсуждения (+5)
       const p = await tx.post.update({
@@ -126,45 +194,49 @@ export async function POST(request: Request) {
         data: { commentsCount: { increment: 1 }, hotScore: { increment: 5 } },
         select: { commentsCount: true },
       })
+      if (rootId) {
+        await tx.comment.update({
+          where: { id: rootId },
+          data: { repliesCount: { increment: 1 } },
+        })
+      }
       return { c, commentsCount: p.commentsCount }
     })
 
     const dto: CommentDTO = {
-      id: created.c.id,
-      postId: created.c.postId,
-      text: created.c.text,
-      createdAt: created.c.createdAt.toISOString(),
-      author: authorOf(created.c.user),
+      ...toCommentDTO(created.c, g.uid, new Set([created.c.id]), []),
       own: true,
+      likedByMe: false,
     }
 
-    // Уведомление владельцу привязанного канала: под его постом новый
-    // комментарий. Fire-and-forget — ответ не ждёт (и не ломается от ошибки).
-    void (async () => {
-      try {
-        const post = await db.post.findUnique({
-          where: { id: postId },
-          select: {
-            channel: { select: { id: true, title: true, username: true, claimedById: true } },
-          },
+    /* ---- Уведомления (fire-and-forget) ---- */
+    if (rootId && replyToUserId && replyToUserId !== g.uid) {
+      // Ответ на чей-то комментарий — инбокс автора родителя
+      const me = authorOf(created.c.user)
+      notifyUser({
+        userId: replyToUserId,
+        type: 'reply',
+        title: me.name,
+        body: text,
+        postId,
+        channelUsername: post.channel.username,
+      })
+    }
+    if (!rootId) {
+      // Новый корневой комментарий — владельцу привязанного канала
+      const ownerId = post.channel.claimedById
+      if (ownerId && ownerId !== g.uid) {
+        const me = authorOf(created.c.user)
+        notifyUser({
+          userId: ownerId,
+          type: 'comment',
+          title: post.channel.title,
+          body: `${me.name}: ${text}`,
+          postId,
+          channelUsername: post.channel.username,
         })
-        const ownerId = post?.channel.claimedById
-        if (!post || !ownerId || ownerId === g.uid) return
-        const author = authorOf(created.c.user)
-        await db.notification.create({
-          data: {
-            userId: ownerId,
-            type: 'comment',
-            title: post.channel.title,
-            body: `${author.name}: ${created.c.text}`.slice(0, 200),
-            postId,
-            channelUsername: post.channel.username,
-          },
-        })
-      } catch (e) {
-        console.error('[comments notify]', e)
       }
-    })()
+    }
 
     return NextResponse.json({ comment: dto, commentsCount: created.commentsCount })
   } catch (e) {

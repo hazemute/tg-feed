@@ -246,6 +246,19 @@ const DICT = {
   'comments.tooLong': ['Слишком длинный комментарий', 'Comment is too long'],
   'comments.deleted': ['Комментарий удалён', 'Comment deleted'],
   'comments.delete': ['Удалить комментарий', 'Delete comment'],
+  /* Дерево/лайки комментариев (v5.13, TikTok-стиль) */
+  'comments.sortNew': ['Новые', 'New'],
+  'comments.sortTop': ['Популярные', 'Top'],
+  'comments.reply': ['Ответить', 'Reply'],
+  'comments.replyTag': ['Ответ', 'Replying to'],
+  'comments.replyPlaceholder': ['Ваш ответ…', 'Your reply…'],
+  'comments.showReplies': ['Показать ответы', 'Show replies'],
+  'comments.hideReplies': ['Скрыть ответы', 'Hide replies'],
+  'comments.moreReplies': ['Показать ещё ответы', 'Show more replies'],
+  'comments.like': ['Нравится', 'Like'],
+  'comments.repliesOne': ['ответ', 'reply'],
+  'comments.repliesFew': ['ответа', 'replies'],
+  'comments.repliesMany': ['ответов', 'replies'],
 
   /* Перевод поста (Twitter-style) */
   'translate.do': ['Перевести', 'Translate'],

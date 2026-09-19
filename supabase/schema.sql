@@ -322,6 +322,28 @@ CREATE TABLE IF NOT EXISTS "Comment" (
 CREATE INDEX IF NOT EXISTS "Comment_postId_createdAt_idx" ON "Comment"("postId", "createdAt");
 CREATE INDEX IF NOT EXISTS "Comment_userId_idx" ON "Comment"("userId");
 
+-- v5.13: дерево комментариев «как в TikTok» (один уровень вложенности) + лайки комментов
+ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "parentId" TEXT;
+ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "replyToUserId" TEXT;
+ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "replyToName" TEXT;
+ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "likesCount" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "repliesCount" INTEGER NOT NULL DEFAULT 0;
+DO $$ BEGIN
+  ALTER TABLE "Comment" ADD CONSTRAINT "Comment_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "Comment"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+CREATE INDEX IF NOT EXISTS "Comment_parentId_createdAt_idx" ON "Comment"("parentId", "createdAt");
+CREATE INDEX IF NOT EXISTS "Comment_postId_likesCount_idx" ON "Comment"("postId", "likesCount");
+
+CREATE TABLE IF NOT EXISTS "CommentLike" (
+  "id"        TEXT PRIMARY KEY,
+  "userId"    TEXT NOT NULL,
+  "commentId" TEXT NOT NULL,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT "CommentLike_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "Comment"("id") ON DELETE CASCADE ON UPDATE CASCADE
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "CommentLike_userId_commentId_key" ON "CommentLike"("userId", "commentId");
+CREATE INDEX IF NOT EXISTS "CommentLike_commentId_idx" ON "CommentLike"("commentId");
+
 -- v5.5: Lottie-премиум-эмодзи (.tgs) + галочка верификации каналов
 ALTER TABLE "CustomEmoji" ADD COLUMN IF NOT EXISTS "animated" BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "verified" BOOLEAN NOT NULL DEFAULT false;

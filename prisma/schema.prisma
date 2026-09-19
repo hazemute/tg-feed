@@ -409,6 +409,11 @@ model SupportMessage {
 // Комментарий пользователя под постом. Только привязанные к Telegram
 // (гостям комментарий недоступен — Lazy Auth). Плейн-текст до 700 символов;
 // счётчик денормализован в Post.commentsCount (как likesCount).
+//
+// Дерево «как в TikTok»: ровно один уровень вложенности — parentId указывает
+// ТОЛЬКО на корневой комментарий (ответ на ответ хранит parentId корня,
+// а кому именно отвечали — в replyToUserId/replyToName). Лайки — таблица
+// CommentLike (уникальная пара юзер×коммент), счётчики денормализованы.
 model Comment {
   id        String   @id @default(cuid())
   postId    String
@@ -418,8 +423,34 @@ model Comment {
   text      String
   createdAt DateTime @default(now())
 
+  // === Ответы (дерево, один уровень) ===
+  parentId     String? // id корневого комментария (null — корень)
+  parent       Comment?  @relation("commentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      Comment[] @relation("commentThread")
+  replyToUserId String? // кому отвечали (автор replies-комментария)
+  replyToName   String? // денормализованное имя для плашки «Ответ NAME»
+
+  // === Лайки (денормализованные счётчики) ===
+  likesCount   Int @default(0)
+  repliesCount Int @default(0)
+  likedBy      CommentLike[]
+
   @@index([postId, createdAt])
+  @@index([parentId, createdAt])
+  @@index([postId, likesCount])
   @@index([userId])
+}
+
+// Лайк комментария: уникальная пара (юзер, коммент) — тоггл атомарным upsert/delete.
+model CommentLike {
+  id        String   @id @default(cuid())
+  userId    String
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, commentId])
+  @@index([commentId])
 }
 
 // Уведомления-активность пользователя (централизованный инбокс): ответы

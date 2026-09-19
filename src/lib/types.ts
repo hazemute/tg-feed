@@ -112,6 +112,18 @@ export type CommentDTO = {
   author: CommentAuthorDTO
   /** true — комментарий текущей сессии (можно удалить) */
   own: boolean
+  /** Дерево «как в TikTok»: null — корень; иначе id корневого комментария */
+  parentId: string | null
+  /** Плашка «Ответ NAME» внутри ветки (ответ на ответ) */
+  replyToName: string | null
+  /** Лайки комментария (денормализованный счётчик) */
+  likesCount: number
+  /** Лайкнут текущим пользователем */
+  likedByMe: boolean
+  /** Сколько ответов в ветке (для корня) */
+  repliesCount: number
+  /** Превью/подгруженные ответы ветки (только у корней) */
+  replies?: CommentDTO[]
 }
 
 export type AdDTO = {
@@ -401,12 +413,13 @@ export type NotificationGroupDTO = {
 /** Уведомление-активность (инбокс): событие, привязанное к пользователю */
 export type NotificationDTO = {
   id: string
-  /** comment — новый комментарий под постом канала; support — ответ поддержки;
-   *  campaign — статус рекламной кампании; system — прочее */
-  type: 'comment' | 'support' | 'campaign' | 'system'
+  /** comment — новый комментарий под постом канала; reply — ответ на мой
+   *  комментарий; comment_like — лайк моего комментария; support — ответ
+   *  поддержки; campaign — статус рекламной кампании; system — прочее */
+  type: 'comment' | 'reply' | 'comment_like' | 'support' | 'campaign' | 'system'
   title: string
   body: string | null
-  /** Связанный пост (type=comment) — тап открывает канал */
+  /** Связанный пост (type=comment/reply/comment_like) — тап открывает комментарии */
   postId: string | null
   channelUsername: string | null
   read: boolean

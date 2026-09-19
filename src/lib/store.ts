@@ -34,6 +34,8 @@ interface AppState {
   setLoginOpen: (v: boolean) => void
   commentsPost: PostDTO | null // открытый экран комментариев (глобально — из ленты и оверлея)
   openComments: (post: PostDTO) => void
+  /** Открыть комментарии по id поста (из уведомлений: пост не загружен — создаём заглушку) */
+  openCommentsById: (postId: string, commentsCount?: number) => void
   closeComments: () => void
   patchCommentsPost: (postId: string, commentsCount: number) => void
   shareSheetPost: PostDTO | null // пост для шита «Поделиться» (не сбрасывается при закрытии — нужна анимация выхода)
@@ -92,6 +94,32 @@ export const useApp = create<AppState>((set, get) => ({
   setLoginOpen: (loginOpen) => set({ loginOpen }),
   commentsPost: null,
   openComments: (post) => set({ commentsPost: post }),
+  // Экран комментариев использует только id/commentsCount поста — для перехода
+  // из уведомлений достаточно заглушки (шит сам подтягивает список комментов)
+  openCommentsById: (postId, commentsCount = 0) =>
+    set((s) =>
+      s.commentsPost?.id === postId
+        ? s
+        : {
+            commentsPost: {
+              id: postId,
+              text: '',
+              mediaUrl: null,
+              mediaType: 'none',
+              media: null,
+              gallery: [],
+              link: null,
+              viewsCount: 0,
+              viewsTg: null,
+              likesCount: 0,
+              bookmarksCount: 0,
+              commentsCount,
+              publishedAt: new Date().toISOString(),
+              liked: false,
+              bookmarked: false,
+            } as PostDTO,
+          },
+    ),
   closeComments: () => set({ commentsPost: null }),
   // Счётчик после отправки/удаления: шит живёт снимком, поэтому патчим и снимок
   patchCommentsPost: (postId, commentsCount) =>
