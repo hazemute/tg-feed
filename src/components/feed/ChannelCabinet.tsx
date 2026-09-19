@@ -12,9 +12,11 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { BarChart3, Eye, Flame, Heart, Image as ImageIcon, TrendingUp, Users } from 'lucide-react'
+import { BarChart3, Camera, Eye, Flame, Heart, Image as ImageIcon, TrendingUp, Users } from 'lucide-react'
 import { api } from '@/lib/api'
+import { haptic, sharePostToStory } from '@/lib/tg'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
+import { toast } from 'sonner'
 import type { ChannelStatsDTO, TopPostDTO } from '@/lib/types'
 
 /**
@@ -113,7 +115,13 @@ const AXIS_TICK = { fontSize: 10.5, fill: 'var(--tg-hint)' }
 
 /* ---------- Топ постов: нумерованный плоский список ---------- */
 
-function TopList({ items }: { items: TopPostDTO[] }) {
+function TopList({
+  items,
+  channelTitle,
+}: {
+  items: TopPostDTO[]
+  channelTitle: string
+}) {
   if (items.length === 0) return <p className="text-[13.5px] text-tg-hint">Постов пока нет</p>
   return (
     <ol className="divide-y divide-tg-sep/50">
@@ -152,6 +160,19 @@ function TopList({ items }: { items: TopPostDTO[] }) {
               <span>{timeAgoRu(p.publishedAt)}</span>
             </p>
           </div>
+          {/* Приказ владельца: истории из ВСЕХ своих постов — кнопка прямо в топе кабинета */}
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light')
+              toast.success('Открываю редактор историй…')
+              void sharePostToStory(p.id, channelTitle)
+            }}
+            aria-label="Опубликовать пост в историю"
+            className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint transition active:scale-90 hover:text-tg-link"
+          >
+            <Camera className="h-4 w-4" aria-hidden />
+          </button>
         </li>
       ))}
     </ol>
@@ -160,7 +181,7 @@ function TopList({ items }: { items: TopPostDTO[] }) {
 
 /* ---------- Основной кабинет ---------- */
 
-export function ChannelCabinet({ username }: { username: string }) {
+export function ChannelCabinet({ username, title }: { username: string; title: string }) {
   const [stats, setStats] = useState<ChannelStatsDTO | null>(null)
   const [failed, setFailed] = useState(false)
 
@@ -400,12 +421,12 @@ export function ChannelCabinet({ username }: { username: string }) {
       {/* ===== Топ постов ===== */}
       {stats.topByViews.length > 0 && (
         <Section title="Топ постов" hint="по просмотрам" icon={Eye}>
-          <TopList items={stats.topByViews} />
+          <TopList items={stats.topByViews} channelTitle={title} />
         </Section>
       )}
       {stats.topByReactions.length > 0 && stats.topByReactions[0].reactions > 0 && (
         <Section title="Топ по реакциям" hint="по отклику" icon={Flame}>
-          <TopList items={stats.topByReactions} />
+          <TopList items={stats.topByReactions} channelTitle={title} />
         </Section>
       )}
 

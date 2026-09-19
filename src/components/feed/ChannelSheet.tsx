@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Heart, ImageOff, Loader2, Plus, Sparkle } from 'lucide-react'
+import { ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Forward, Heart, ImageOff, Loader2, Plus, Sparkle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -474,6 +474,10 @@ function ChannelPost({
   onLike: () => void
   onBookmark: () => void
 }) {
+  // Приказ владельца: «чтоб я прям вообще все посты мог в истории делать — даже
+  // со своего канала и в профиле любого канала». Кнопка «Поделиться» открывает
+  // глобальный шит, внутри него «В историю» (картинка /api/story + виджет).
+  const openShareSheet = useApp((s) => s.openShareSheet)
   return (
     <article className="px-4 py-4">
       <div className="flex items-center gap-1.5 text-[12.5px] text-tg-hint">
@@ -543,6 +547,20 @@ function ChannelPost({
                   {formatCount(post.bookmarksCount)}
                 </span>
               )}
+            </motion.button>
+
+            <motion.button
+              type="button"
+              whileTap={{ scale: 1.2 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 15 }}
+              onClick={() => {
+                haptic('light')
+                openShareSheet(post)
+              }}
+              aria-label="Поделиться — отправить в Telegram, историю или скопировать ссылку"
+              className="flex flex-col items-center gap-1"
+            >
+              <Forward className="h-[26px] w-[26px] text-tg-text" strokeWidth={1.7} />
             </motion.button>
         </div>
       </div>

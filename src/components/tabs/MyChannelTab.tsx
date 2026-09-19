@@ -188,7 +188,7 @@ export function MyChannelTab() {
             {tab === 'stats' && (
               /* Большой дашборд именно этого канала (просмотры, ER, динамика,
                   лучшее время, ритм, топ постов) — плоский, без карточек */
-              <ChannelCabinet key={channel!.username} username={channel!.username} />
+              <ChannelCabinet key={channel!.username} username={channel!.username} title={channel!.title} />
             )}
             {tab === 'display' && <DisplaySection channel={channel!} onSaved={load} />}
             {tab === 'ads' && <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />}
