@@ -267,7 +267,7 @@ const createPostDraft: ToolDef = {
   },
 }
 
-/** Генерация картинки (OpenRouter image-модели, фолбэк pollinations) */
+/** Генерация картинки (бесплатный pollinations.ai, ноль рублей — v5.33) */
 const generateImage: ToolDef = {
   name: 'generate_image',
   label: 'Рисую картинку…',
@@ -286,7 +286,9 @@ const generateImage: ToolDef = {
     const prompt = str(args.prompt, 500)
     if (prompt.length < 10) return { ok: false, data: 'Ошибка: промпт слишком короткий.' }
     const { generatePublicImage } = await import('@/lib/ai-image')
-    const img = await generatePublicImage(prompt, ctx.uid)
+    // v5.33: картинка — только бесплатный pollinations (суть промпта уходит
+    // на английский той же бесплатной моделью); второй аргумент больше не нужен
+    const img = await generatePublicImage(prompt)
     if (!img.url) return { ok: false, data: 'Картинка не сгенерировалась — сервис недоступен. Продолжай без неё.' }
     return {
       ok: true,

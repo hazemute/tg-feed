@@ -116,36 +116,45 @@ export async function POST(request: Request) {
     // последнего фото профиля (рендер через /api/avatar/[uid]).
     // ВАЖНО: при сбое Bot API не затираем прежний аватар (update ниже перезаписывает
     // photoUrl только если есть новое значение).
+    //
+    // СКОРОСТЬ (v5.33, «данные телеграма долго грузятся»): раньше после валидации
+    // initData шла СТРОКА из трёх ожиданий — getUserProfilePhotos (Bot API,
+    // 0.3-1.5с) → upsert → getBotUsername → isMaintenanceOn. Теперь всё
+    // независимое выполняется ОДНИМ батчем параллельно: Bot API + upsert +
+    // maintenance идут одновременно, вход быстрее на 1-2 RTT.
     const tgId = Number(id.slice('tg_'.length))
-    if (Number.isInteger(tgId) && tgId > 0) {
-      const fileId = await getUserPhotoFileId(tgId)
-      if (fileId) photoUrl = `tgfile:${fileId}`
+    const [fileId, botUsername, maintenanceActive, user] = await Promise.all([
+      Number.isInteger(tgId) && tgId > 0 ? getUserPhotoFileId(tgId) : Promise.resolve(null),
+      getBotUsername(),
+      isMaintenanceOn(),
+      db.user.upsert({
+        where: { id },
+        update: {
+          username,
+          firstName,
+          lastName,
+          isGuest: false,
+          isPremium,
+          languageCode,
+        },
+        create: { id, username, firstName, lastName, isGuest: false, isPremium, languageCode, categories: '[]' },
+      }),
+    ])
+    if (fileId) {
+      // Аватар догнали параллельно с апсертом: обновляем точечно, без второго
+      // полного апсерта (photoUrl перезаписываем только если Bot API ответил)
+      await db.user
+        .update({ where: { id }, data: { photoUrl: `tgfile:${fileId}` } })
+        .catch(() => {})
+      photoUrl = `tgfile:${fileId}`
+      user.photoUrl = photoUrl
     }
-
-    const user = await db.user.upsert({
-      where: { id },
-      update: {
-        username,
-        firstName,
-        lastName,
-        ...(photoUrl ? { photoUrl } : {}),
-        isGuest: false,
-        isPremium,
-        languageCode,
-      },
-      create: { id, username, firstName, lastName, photoUrl, isGuest: false, isPremium, languageCode, categories: '[]' },
-    })
-
-    const token = signSession(user.id, false)
-    const botUsername = await getBotUsername()
-
-    // Статус техработ для клиента: экран техработ показывается только тем,
-    // у кого нет допуска (админы из ADMIN_TG_IDS + галка bypassMaintenance)
-    const maintenanceActive = await isMaintenanceOn()
     const maintenance = {
       active: maintenanceActive,
       canBypass: adminUids().includes(user.id) || user.bypassMaintenance,
     }
+
+    const token = signSession(user.id, false)
 
     const dto: UserDTO = {
       id: user.id,

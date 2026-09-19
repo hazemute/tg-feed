@@ -18,7 +18,10 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
     headers: {
       'Content-Type': row.mime,
       'Content-Length': String(buf.length),
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      // s-maxage: Vercel CDN кэширует картинку НАВСЕГДА (id некугадарный) —
+      // из Postgres (Supabase) байты уходят ОДИН раз на edge-регион, остальное
+      // раздаёт CDN. Экономия исходящего трафика Supabase (v5.33).
+      'Cache-Control': 'public, max-age=31536000, s-maxage=31536000, immutable',
     },
   })
 }

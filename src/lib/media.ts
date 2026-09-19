@@ -13,10 +13,33 @@
 /** Доверенные хосты медиа Telegram (только https) */
 export const MEDIA_HOST_RE = /(?:^|\.)telesco\.pe$|(?:^|\.)telegram\.org$/i
 
+/**
+ * Хост НАШЕГО Supabase Storage (публичный бакет аватарок).
+ * ЭКОНОМИКА ИСХОДЯЩЕГО ТРАФИКА SUPABASE (v5.33): Storage-ссылки попадают в DTO
+ * напрямую, и каждый браузер качал аватарки ПРЯМО из Supabase (public-объекты
+ * живут в их кэше всего час) — это гигабайты исходящего трафика. Теперь такие
+ * URL заворачиваются в /api/media: Vercel CDN кэширует объект на 30 дней
+ * (s-maxage), Supabase отдаёт файл один раз на edge-регион.
+ */
+const SUPABASE_STORAGE_HOST = (() => {
+  try {
+    return new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? '').hostname || null
+  } catch {
+    return null
+  }
+})()
+
 export function isTrustedMediaUrl(raw: string): boolean {
   try {
     const u = new URL(raw)
-    return u.protocol === 'https:' && MEDIA_HOST_RE.test(u.hostname)
+    if (u.protocol !== 'https:') return false
+    if (MEDIA_HOST_RE.test(u.hostname)) return true
+    // Публичные объекты нашего Storage (только чтение, только /object/public/)
+    return (
+      Boolean(SUPABASE_STORAGE_HOST) &&
+      u.hostname === SUPABASE_STORAGE_HOST &&
+      u.pathname.startsWith('/storage/v1/object/public/')
+    )
   } catch {
     return false
   }

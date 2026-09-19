@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { proxiedMediaUrl } from '@/lib/media'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
@@ -145,7 +146,8 @@ export async function GET(request: Request) {
         title: ch.title,
         isPremium: ch.isPremium,
         avatarColor: ch.avatarColor,
-        avatarUrl: ch.avatarUrl ?? (ch.photoFileId ? `/api/avatar/c_${ch.id}` : null),
+        // v5.33: Storage-аватарка через /api/media (CDN-кэш, экономия egress Supabase)
+        avatarUrl: proxiedMediaUrl(ch.avatarUrl) ?? (ch.photoFileId ? `/api/avatar/c_${ch.id}` : null),
         categorySlug: ch.category?.slug ?? null,
         count: groupPosts.length,
         posts: groupPosts,

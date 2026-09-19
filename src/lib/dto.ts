@@ -45,10 +45,11 @@ export function toChannelDTO(
     description: c.description?.replace(/\s+/g, ' ').trim() ?? null,
     avatarColor: c.avatarColor,
     // Аватарка: постоянная ссылка из Storage (парсер, og:image) → прокси Bot API
-    // (file_id → getFile) → null (инициалы). Storage-ссылка отдаётся напрямую —
-    // браузер кэширует её без нашего сервера, самый быстрый путь.
+    // (file_id → getFile) → null (инициалы).
+    // ЭКОНОМИКА (v5.33): Storage-ссылка заворачивается в /api/media — Vercel CDN
+    // кэширует её на 30 дней, Supabase больше не отдаёт байты каждому браузеру.
     avatarUrl:
-      c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+      proxiedMediaUrl(c.avatarUrl) ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
     // Реальное число подписчиков из Telegram (getChatMemberCount);
     // для каналов, где Bot API недоступен, — оценка из каталога
     subscribersCount: c.membersCount ?? c.subscribersCount,

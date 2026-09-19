@@ -250,7 +250,95 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
 /** Приветственный /start — КАРТИНКА + премиум-подпись + кнопки */
 async function handleStart(from: TgFrom | undefined, chatId?: number) {
   if (!chatId) return
+  // v5.33: первый /start — ВЫБОР ЯЗЫКА (по-английски, кнопки Ru/En);
+  // выбранный язык сохраняется (BotSetting) и все следующие приветствия — на нём
+  const saved = await getBotLang(chatId)
+  if (!saved) {
+    await botSendRich(
+      chatId,
+      [
+        '👋 <b>Welcome to Tg Swipe!</b>',
+        '',
+        'A smart feed of Telegram channels — swipe, read and promote.',
+        '',
+        '<b>Choose a language to continue:</b>',
+      ].join('\n'),
+      {
+        keyboard: [
+          [{ label: 'Русский 🇷🇺', callback_data: 'lang:ru', style: 'primary' }],
+          [{ label: 'English 🇬🇧', callback_data: 'lang:en', style: 'primary' }],
+        ] satisfies BotButton[][],
+      },
+    )
+    return
+  }
+  await sendGreeting(chatId, saved, from)
+}
+
+/** Язык бота для чата (выбор после /start) — хранится в BotSetting */
+const BOTLANG_PREFIX = 'botlang:'
+async function getBotLang(chatId: number): Promise<'ru' | 'en' | null> {
+  const row = await db.botSetting
+    .findUnique({ where: { key: `${BOTLANG_PREFIX}${chatId}` } })
+    .catch(() => null)
+  return row?.value === 'ru' || row?.value === 'en' ? row.value : null
+}
+
+async function setBotLang(chatId: number, lang: 'ru' | 'en'): Promise<void> {
+  await db.botSetting
+    .upsert({
+      where: { key: `${BOTLANG_PREFIX}${chatId}` },
+      create: { key: `${BOTLANG_PREFIX}${chatId}`, value: lang },
+      update: { value: lang },
+    })
+    .catch(() => {})
+}
+
+/** callback lang:<ru|en> — сохранить выбор и отправить приветствие на нём */
+async function handleLangCallback(
+  cbId: string,
+  lang: 'ru' | 'en',
+  from: TgFrom | undefined,
+  chatId?: number,
+) {
+  if (!chatId) {
+    await botCall('answerCallbackQuery', { callback_query_id: cbId })
+    return
+  }
+  await setBotLang(chatId, lang)
+  await botCall('answerCallbackQuery', {
+    callback_query_id: cbId,
+    text: lang === 'ru' ? '✅ Язык: русский' : '✅ Language: English',
+  })
+  await sendGreeting(chatId, lang, from)
+}
+
+/** Приветствие на выбранном языке — картинка + премиум-подпись + кнопки */
+async function sendGreeting(chatId: number, lang: 'ru' | 'en', from: TgFrom | undefined) {
   const name = escapeHtml(nameOf(from))
+  if (lang === 'en') {
+    await botSendPhotoRich(
+      chatId,
+      [
+        `👋 <b>Hi, ${name}!</b>`,
+        '',
+        'This is <b>Tg Swipe</b> — a smart Telegram feed.',
+        '',
+        '⚡ <b>Swipe</b> — the feed adapts to your interests',
+        '📖 <b>Read</b> any channels without subscribing',
+        '🚀 <b>Promote</b> your channel to the top of the feed',
+        '',
+        '✨ Subscribe to our channel — news, updates and features first:',
+      ].join('\n'),
+      {
+        keyboard: [
+          [{ label: 'Subscribe to the channel', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
+          [{ label: 'Open Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+        ] satisfies BotButton[][],
+      },
+    )
+    return
+  }
   await botSendPhotoRich(
     chatId,
     [
@@ -611,6 +699,15 @@ export async function POST(request: Request) {
     }
 
     const cq = update.callback_query
+    if (cq?.data?.startsWith('lang:')) {
+      const code = cq.data.slice('lang:'.length)
+      if (code === 'ru' || code === 'en') {
+        await handleLangCallback(cq.id, code, cq.from, cq.message?.chat?.id)
+      } else {
+        await botCall('answerCallbackQuery', { callback_query_id: cq.id })
+      }
+      return NextResponse.json({ ok: true })
+    }
     if (cq?.data?.startsWith('login:')) {
       const token = cq.data.slice('login:'.length)
       if (/^[a-f0-9]{48}$/.test(token)) {

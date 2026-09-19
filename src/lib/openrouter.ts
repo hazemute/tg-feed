@@ -1,40 +1,32 @@
 /**
- * Клиент OpenRouter — самая дешёвая модель для служебных задач
- * (перевод постов). Ключ — в env OPENROUTER_API_KEY.
+ * Клиент OpenRouter — ЕДИНАЯ модель сервиса: z-ai/glm-5.3-flash:free.
+ * Ключ — в env OPENROUTER_API_KEY.
  *
- * Принцип экономии:
- *  - по умолчанию бесплатные микро-модели (суффикс :free) в порядке надёжности;
- *  - каждая следующая модель — фолбэк, если предыдущая недоступна/лимит;
+ * Принцип НУЛЕВОЙ стоимости (решение владельца, v5.33):
+ *  - ВСЕ цепочки (обычные, стриминговые, tool-calling, модерация) начинаются
+ *    с z-ai/glm-5.3-flash:free — платных моделей в цепочках больше НЕТ;
+ *  - фолбэки — только другие бесплатные (:free) модели, на случай лимитов;
  *  - ответы кэшируются выше по стеку (Post.translations), LLM вызывается
  *    один раз на пост и язык.
  *
  * СКОРОСТЬ: перевод/саммари стримятся в UI (chatStream) — пользователь видит
- * первый токен через ~0.5–1с, а не весь ответ через 5–15с. Для стриминга
- * используется цепочка SPEED_MODELS — модели с самым быстрым первым токеном.
+ * первый токен через ~0.5–1с, а не весь ответ через 5–15с.
  */
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
-/** Цепочка моделей: первая доступная отвечает. Приоритет — СКОРОСТЬ при копеечной цене.
+/** Цепочка моделей: первая доступная отвечает. Только :free — ноль рублей.
  *  Переопределяется env OPENROUTER_MODELS */
-const DEFAULT_MODELS = [
-  'z-ai/glm-5.2:free', // GLM (бесплатная): классификация/поддержка/реклама-фильтр без затрат
-  'z-ai/glm-5.3-flash', // исчерпали лимиты бесплатной → сверхдешёвая GLM Flash ($0.09/M)
-  'google/gemini-2.5-flash-lite', // проверенный дешёвый фолбэк (~$0.1/M)
-  'mistralai/mistral-nemo', // 12B, предельно дешёвая ($0.019/M) — фолбэк
-  'google/gemma-4-26b-a4b-it:free', // бесплатный фолбэк на случай исчерпания кредита
+const FREE_CHAIN = [
+  'z-ai/glm-5.3-flash:free', // ЕДИНАЯ модель сервиса (решение владельца) — везде первая
+  'z-ai/glm-5.2:free', // фолбэк на случай исчерпания лимитов GLM Flash
+  'google/gemma-4-26b-a4b-it:free', // последний бесплатный фолбэк
 ]
 
-/** Цепочка для СТРИМИНГА (перевод/саммари): модели с самым быстрым первым токеном.
- *  Замеры (TTFB): glm-5.3-flash ~1.6с и доступна везде; gemini-2.5-flash-lite
- *  гео-блокируется из ряда регионов (403 «not available in your region») —
- *  только вторым слотом; бесплатные GLM regularly 429 по лимитам. */
-const SPEED_MODELS = [
-  'z-ai/glm-5.3-flash',
-  'google/gemini-2.5-flash-lite',
-  'z-ai/glm-5.2:free',
-  'mistralai/mistral-nemo',
-]
+const DEFAULT_MODELS = FREE_CHAIN
+
+/** Цепочка для СТРИМИНГА (перевод/саммари) — та же бесплатная тройка */
+const SPEED_MODELS = FREE_CHAIN
 
 export function openRouterEnabled(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY)
@@ -265,13 +257,9 @@ export type ToolSchema = {
   }
 }
 
-/** Цепочка моделей с надёжной поддержкой function calling */
-const TOOL_MODELS = [
-  'google/gemini-2.5-flash-lite', // дешёвая, быстрая, стабильно зовёт tools
-  'z-ai/glm-5.3-flash', // GLM умеет function calling, копеечная
-  'mistralai/mistral-nemo', // native tool support, предельно дешёвая
-  'google/gemini-2.5-flash', // фолбэк подороже
-]
+/** Цепочка для tool-calling: та же бесплатная тройка (без tools — текстовый
+ *  JSON-протокол, см. parseToolJsonBlock, работает на любой модели) */
+const TOOL_MODELS = FREE_CHAIN
 
 type RawToolCall = { id?: { name?: string } | string; function?: { name?: string; arguments?: string } }
 type ToolResponseChoice = {
@@ -458,60 +446,6 @@ export async function chatWithTools(
 }
 
 /* ============================ ГЕНЕРАЦИЯ КАРТИНОК ============================ *
- *  OpenRouter image-модели (multimodal output), фолбэк — pollinations (flux).
- *  Возвращает data-URL или https-URL: caller сам решает (чат — показ,
- *  публикация — аплоад в Upload и реальный https-URL).
+ *  v5.33: только бесплатный pollinations.ai (flux) — платные image-модели
+ *  OpenRouter удалены (ноль рублей, см. src/lib/ai-image.ts).
  */
-
-const IMAGE_MODELS = [
-  'google/gemini-2.5-flash-image-preview', // «nano banana»: быстрая, качественная, дешёвая
-  'google/gemini-3-pro-image-preview', // выше качество сложных сцен
-  'openai/gpt-image-1', // надёжный фолбэк
-]
-
-export type GeneratedImage = { url: string; via: 'openrouter' | 'pollinations'; mime: string | null }
-
-export async function generateImageOpenRouter(prompt: string): Promise<GeneratedImage | null> {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) return null
-  for (const model of IMAGE_MODELS) {
-    try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
-          'X-Title': 'Tg Swipe',
-        },
-        body: JSON.stringify({
-          model,
-          modalities: ['image', 'text'],
-          messages: [{ role: 'user', content: prompt.slice(0, 1200) }],
-        }),
-        signal: AbortSignal.timeout(90_000),
-      })
-      if (!res.ok) continue
-      type ImgMsg = {
-        choices?: Array<{
-          message?: {
-            images?: Array<{ image_url?: { url?: string } }>
-            content?: string | null
-          }
-        }>
-      }
-      const data = (await res.json()) as ImgMsg
-      const url = data.choices?.[0]?.message?.images?.[0]?.image_url?.url
-      if (url && /^data:image\//.test(url)) {
-        const mime = url.slice(5, url.indexOf(';'))
-        return { url, via: 'openrouter', mime }
-      }
-      if (url && /^https:\/\//.test(url)) {
-        return { url, via: 'openrouter', mime: null }
-      }
-    } catch {
-      // следующая модель
-    }
-  }
-  return null
-}

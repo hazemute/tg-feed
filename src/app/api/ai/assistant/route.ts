@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { chatSimple, chatWithTools, openRouterEnabled, type ChatMsg } from '@/lib/openrouter'
-import { pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-image'
+import { enVisualPrompt, pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-image'
 import { botPublishToChannel } from '@/lib/tg-bot'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { stripMarkdown } from '@/lib/markdown'
@@ -320,8 +320,10 @@ export async function POST(request: Request) {
       const clean = text.replace(/^["«»]+|["»]+$/g, '').trim()
       if (clean.length < 30) return err('Нейросеть вернула пустой пост — попробуйте ещё раз', 502)
 
-      const imgPrompt = `clean minimal editorial illustration, telegram post cover, about: ${clean.slice(0, 160)}`
-      const imageUrl = pollinationsImageUrl(imgPrompt)
+      // v5.33: суть поста → английский визуальный промпт (бесплатная модель)
+      // → бесплатный pollinations. И текст, и визуал — ноль рублей.
+      const enPrompt = await enVisualPrompt(clean).catch(() => clean.slice(0, 220))
+      const imageUrl = pollinationsImageUrl(enPrompt)
       const imageOk = await verifyImageUrl(imageUrl).catch(() => false)
 
       return NextResponse.json({

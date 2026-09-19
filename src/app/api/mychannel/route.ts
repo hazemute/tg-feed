@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { proxiedMediaUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createHash } from 'crypto'
 import { db } from '@/lib/db'
@@ -119,7 +120,8 @@ export async function GET(request: Request) {
           username: c.username,
           description: c.description,
           avatarColor: c.avatarColor,
-          avatarUrl: c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+          // v5.33: Storage-аватарка через /api/media (CDN-кэш, экономия egress Supabase)
+          avatarUrl: proxiedMediaUrl(c.avatarUrl) ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
           subscribersCount: c.membersCount ?? c.subscribersCount,
           status: c.status,
           categorySlug: c.category.slug,

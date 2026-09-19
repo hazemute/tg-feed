@@ -29,8 +29,10 @@ import { looksLikeGarbage } from '@/lib/text-clean'
 
 export type AiVerdict = 'ok' | 'junk' | 'nsfw' | 'spam'
 
-/** Бесплатные модели (env AI_MODERATION_MODELS переопределяет) */
+/** Бесплатные модели (env AI_MODERATION_MODELS переопределяет).
+ *  v5.33: единая модель сервиса z-ai/glm-5.3-flash:free — первая везде. */
 const FREE_MODELS = [
+  'z-ai/glm-5.3-flash:free',
   'google/gemma-3-27b-it:free',
   'meta-llama/llama-3.3-70b-instruct:free',
   'deepseek/deepseek-chat-v3-0324:free',

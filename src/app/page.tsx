@@ -90,8 +90,20 @@ export default function Home() {
     const valid = savedTheme !== 'custom' || loadCustomTheme() !== null
     setTheme(savedTheme && valid ? savedTheme : inTg ? 'auto' : 'light')
     setFontScale(savedFont ?? 'md')
-    if (savedLang === 'ru' || savedLang === 'en') setLang(savedLang)
-
+    if (savedLang === 'ru' || savedLang === 'en') {
+      setLang(savedLang)
+    } else if (inTg) {
+      /*
+       * v5.33: язык интерфейса миниаппа = язык КЛИЕНТА Telegram.
+       * Пока пользователь не выбрал язык вручную (нет сохранённого), интерфейс
+       * сам запускается на языке клиента Telegram (language_code из initData):
+       * ru-клиент — русская шапка, en-клиент — английская. Выбор в профиле
+       * сохраняется и дальше главнее авто-детекта. В обычном браузере (не
+       * миниаппа) оставляем русский по умолчанию — аудитория RU.
+       */
+      const tgLang = tg()?.initDataUnsafe?.user?.language_code ?? ''
+      useApp.setState({ lang: /^ru/i.test(tgLang.trim()) ? 'ru' : 'en' })
+    }
   }, [])
 
   /*

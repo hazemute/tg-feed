@@ -135,7 +135,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       const channel = await channelPhotoOf(channelId)
       if (!channel) return new NextResponse('not found', { status: 404 })
 
-      // Постоянная аватарка из Storage — самый быстрый путь: 302 + долгий кэш
+      // Постоянная аватарка из Storage — самый быстрый путь: 302 + долгий кэш.
+      // (v5.33: основной путь аватарок каналов — прокси /api/media в DTO;
+      // этот redirect остаётся фолбэком для /api/avatar/c_<id>.)
       if (channel.avatarUrl && isSafeChannelAvatarUrl(channel.avatarUrl)) {
         return NextResponse.redirect(channel.avatarUrl, {
           headers: {
@@ -168,7 +170,10 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       if (!isSafePhotoUrl(photo)) return new NextResponse('not found', { status: 404 })
       return NextResponse.redirect(photo, {
         headers: {
-          'Cache-Control': 'public, max-age=600, s-maxage=3600, stale-while-revalidate=86400',
+          // v5.33: фото-URL из initData живёт ~час, file_id — вечный; кэшируем
+          // смелее (сутки в браузере + сутки на edge Vercel) — аватар профиля
+          // появляется мгновенно и не дёргает origin на каждой загрузке
+          'Cache-Control': 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800',
         },
       })
     }
@@ -193,7 +198,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       return new NextResponse(buf, {
         headers: {
           'Content-Type': contentType,
-          'Cache-Control': 'public, max-age=1800, stale-while-revalidate=86400',
+          // v5.33: аватар пользователя меняется редко — сутки браузер + сутки
+          // Vercel CDN (s-maxage): повторные открытия приложения отдают мгновенно
+          'Cache-Control': 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800',
         },
       })
     }

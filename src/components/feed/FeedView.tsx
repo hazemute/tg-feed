@@ -50,8 +50,14 @@ function saveHidden(ids: Set<string>) {
  * Фильтр языка ленты (v5.25): выбор пользователя между «всё / русский / другие».
  * Живёт в localStorage — это ПРЕДПОЧТЕНИЕ, как язык интерфейса: не сбрасывается
  * кнопкой «сбросить фильтры» и переживает перезагрузку.
+ *
+ * БАГФИКС (v5.33): ключ 'tgfeed_lang' ДЕЛИЛИ две несвязанные фичи — этот фильтр
+ * (значения any/ru/foreign) и язык интерфейса (store.setLang, значения ru/en).
+ * Итог: выбор языка интерфейса «Русский» втихую включал фильтр «только русские
+ * посты», а переключение фильтра ломало язык интерфейса. Теперь у фильтра свой
+ * ключ 'tgfeed_postlang' (старый остался языку интерфейса).
  */
-const LANG_KEY = 'tgfeed_lang'
+const LANG_KEY = 'tgfeed_postlang'
 const LANG_CYCLE: LangFilter[] = ['any', 'ru', 'foreign']
 function loadLangPref(): LangFilter {
   if (typeof window === 'undefined') return 'any'
