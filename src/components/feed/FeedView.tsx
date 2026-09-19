@@ -851,8 +851,10 @@ export function FeedView() {
     <div className="relative flex h-full flex-col">
       {/* Вкладки категорий — крупные, активная жирная с синей чертой (макет);
           справа — колокольчик уведомлений с бейджем новых постов.
-          relative z-20 — пилюля «N новых» (z-10) выползает ИЗ-ПОД этой панели */}
-      <header className="relative z-20 shrink-0 bg-tg-bg" data-noswipe>
+          relative z-20 — пилюля «N новых» (z-10) выползает ИЗ-ПОД этой панели.
+          На ПК (lg+) шапка центрируется с капом 1280 — на фулл-ширине окна
+          поиск/чипы не тянутся на весь экран (владелец: «фулл, но не растянуто»). */}
+      <header className="relative z-20 shrink-0 bg-tg-bg lg:mx-auto lg:w-full lg:max-w-[1280px]" data-noswipe>
         <div className="flex items-end">
           <div
             className="no-scrollbar flex min-w-0 flex-1 items-end gap-6 overflow-x-auto px-4 pb-1 pt-2.5"
