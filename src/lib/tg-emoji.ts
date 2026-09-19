@@ -170,6 +170,72 @@ export function stripTgEmoji(text: string): string {
   return text.replace(/<tg-emoji[^>]*>([\s\S]*?)<\/tg-emoji>/g, '$1')
 }
 
+/* ----------------- захваченные custom_emoji (из сообщений юзеров) ----------------- */
+
+/**
+ * Премиум-эмодзи, присланные боту сообщениями: Telegram передаёт entity типа
+ * custom_emoji с custom_emoji_id — вебхук складывает их сюда, админ забирает
+ * ID в панель (кнопка «В слот»). Это ОФИЦИАЛЬНЫЙ способ узнать ID:
+ * отправьте/перешлите боту сообщение с нужным премиум-эмодзи.
+ */
+export type CapturedEmoji = {
+  id: string
+  emoji: string
+  fromId: number
+  fromName: string
+  at: string
+}
+
+const CAPTURED_KEY = 'custom_emoji_captured'
+const CAPTURED_MAX = 100
+
+function isCaptured(x: unknown): x is CapturedEmoji {
+  if (!x || typeof x !== 'object') return false
+  const o = x as Record<string, unknown>
+  return typeof o.id === 'string' && typeof o.emoji === 'string'
+}
+
+export async function listCapturedEmoji(): Promise<CapturedEmoji[]> {
+  const row = await db.botSetting
+    .findUnique({ where: { key: CAPTURED_KEY } })
+    .catch(() => null)
+  if (!row) return []
+  try {
+    const v = JSON.parse(row.value) as unknown
+    return Array.isArray(v) ? v.filter(isCaptured) : []
+  } catch {
+    return []
+  }
+}
+
+/** Дописать захваченные эмодзи (дедуп по id, новейшие сверху, максимум 100) */
+export async function addCapturedEmoji(items: CapturedEmoji[]): Promise<void> {
+  if (items.length === 0) return
+  const cur = await listCapturedEmoji().catch(() => [])
+  const byId = new Map(cur.map((c) => [c.id, c]))
+  for (const it of items) byId.set(it.id, it)
+  const next = [...byId.values()]
+    .sort((a, b) => (a.at < b.at ? 1 : -1))
+    .slice(0, CAPTURED_MAX)
+  const value = JSON.stringify(next)
+  await db.botSetting.upsert({
+    where: { key: CAPTURED_KEY },
+    create: { key: CAPTURED_KEY, value },
+    update: { value },
+  })
+}
+
+export async function forgetCapturedEmoji(id: string): Promise<void> {
+  const cur = await listCapturedEmoji().catch(() => [])
+  const next = cur.filter((c) => c.id !== id)
+  const value = JSON.stringify(next)
+  await db.botSetting.upsert({
+    where: { key: CAPTURED_KEY },
+    create: { key: CAPTURED_KEY, value },
+    update: { value },
+  })
+}
+
 /* ------------------------- настройки бота ------------------------- */
 
 export type BusinessConnection = {

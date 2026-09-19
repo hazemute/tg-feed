@@ -1,7 +1,12 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { creditPendingPayment } from '@/lib/payments'
-import { botSendRich, setBusinessConnection } from '@/lib/tg-emoji'
+import {
+  addCapturedEmoji,
+  botSendRich,
+  listCapturedEmoji,
+  setBusinessConnection,
+} from '@/lib/tg-emoji'
 import { externalOrigin } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -81,12 +86,24 @@ type TgFrom = {
   language_code?: string
 }
 
+type TgEntity = {
+  type?: string
+  offset?: number
+  length?: number
+  custom_emoji_id?: string
+}
+
 type TgUpdate = {
   update_id?: number
   message?: {
     chat?: { id?: number }
     from?: TgFrom
     text?: string
+    /** Entities текста: здесь прилетает type='custom_emoji' с custom_emoji_id —
+     *  так бот узнаёт ID премиум-эмодзи из сообщений пользователей */
+    entities?: TgEntity[]
+    caption?: string
+    caption_entities?: TgEntity[]
     successful_payment?: {
       currency?: string
       total_amount?: number
@@ -205,6 +222,99 @@ async function handleStart(from: TgFrom | undefined, chatId?: number) {
       ],
     },
   )
+}
+
+/* ------------------ Приём custom_emoji от пользователей ------------------ */
+
+/**
+ * Entity custom_emoji: offset/length в UTF-16 code units — JS slice нативно совпадает.
+ * Возвращает пары custom_emoji_id → юникод-эмодзи (фолбэк из текста сообщения).
+ */
+function extractCustomEmoji(
+  text: string | undefined,
+  entities: TgEntity[] | undefined,
+): Array<{ id: string; emoji: string }> {
+  if (!text || !entities?.length) return []
+  const out: Array<{ id: string; emoji: string }> = []
+  const seen = new Set<string>()
+  for (const e of entities) {
+    if (e.type !== 'custom_emoji' || !e.custom_emoji_id) continue
+    if (typeof e.offset !== 'number' || typeof e.length !== 'number' || e.length <= 0) continue
+    const emoji = text.slice(e.offset, e.offset + e.length)
+    if (!emoji || seen.has(e.custom_emoji_id)) continue
+    seen.add(e.custom_emoji_id)
+    out.push({ id: e.custom_emoji_id, emoji })
+  }
+  return out
+}
+
+/**
+ * Любое сообщение юзера с премиум-эмодзи: ID складываются в БД (панель → Бот),
+ * владельцу бот отвечает списком ID — ОФИЦИАЛЬНЫЙ способ узнать custom_emoji_id
+ * (вместо сторонних ботов). Остальным юзерам бот не отвечает — молча копит библиотеку.
+ */
+async function handleCustomEmojiCapture(msg: NonNullable<TgUpdate['message']>): Promise<void> {
+  const found = [
+    ...extractCustomEmoji(msg.text, msg.entities),
+    ...extractCustomEmoji(msg.caption, msg.caption_entities),
+  ]
+  if (found.length === 0) return
+
+  const fromId = msg.from?.id ?? 0
+  const fromName = (msg.from?.first_name || msg.from?.username || 'user').slice(0, 64)
+  const at = new Date().toISOString()
+  await addCapturedEmoji(
+    found.map((f) => ({ id: f.id, emoji: f.emoji, fromId, fromName, at })),
+  ).catch(() => {})
+
+  // Ответ только владельцу — юзеров не тревожим
+  if (fromId === BOT_OWNER_TG_ID && msg.chat?.id) {
+    const lines = found
+      .map((f) => `${f.emoji} → <code>${escapeHtml(f.id)}</code>`)
+      .join('\n')
+    await botSendRich(
+      msg.chat.id,
+      [
+        `📌 ${found.length > 1 ? `Захвачено ${found.length} ID` : 'Захвачен custom_emoji_id'}:`,
+        lines,
+        '',
+        'Вставьте в слот: панель → Бот → «Захваченные» → «В слот», либо /emojis — текущие слоты.',
+      ].join('\n'),
+    ).catch(() => {})
+  }
+}
+
+/** /emojis — текущая конфигурация слотов + последние захваченные (для владельца) */
+async function handleEmojisCommand(from: TgFrom | undefined, chatId?: number) {
+  if (!chatId) return
+  if (from?.id !== BOT_OWNER_TG_ID) {
+    await botCall('sendMessage', {
+      chat_id: chatId,
+      text: '⚙️ Настройка эмодзи доступна только владельцу бота.',
+    })
+    return
+  }
+  const rows = await db.botEmoji.findMany({ orderBy: { slot: 'asc' } }).catch(() => [])
+  const slotLines = rows.map(
+    (r) => `${r.emoji} <code>${escapeHtml(r.slot)}</code> → ${
+      r.customEmojiId ? `<code>${escapeHtml(r.customEmojiId)}</code>` : '—'
+    }`,
+  )
+  const captured = (await listCapturedEmoji().catch(() => [])).slice(0, 12)
+  const capLines = captured.map(
+    (c) => `${c.emoji} <code>${escapeHtml(c.id)}</code> · ${escapeHtml(c.fromName)} · ${c.at.slice(0, 10)}`,
+  )
+  const filled = rows.filter((r) => r.customEmojiId).length
+  await botSendRich(
+    chatId,
+    [
+      `⚙️ <b>Слоты премиум-эмодзи (${filled}/${rows.length})</b>`,
+      ...(slotLines.length > 0 ? slotLines : ['—']),
+      '',
+      `📌 <b>Захваченные из сообщений</b>${captured.length > 0 ? '' : ' — пока пусто'}:`,
+      ...(capLines.length > 0 ? capLines : []),
+    ].join('\n'),
+  ).catch(() => {})
 }
 
 /** callback_query login:<token> — подтверждение входа */
@@ -404,6 +514,10 @@ export async function POST(request: Request) {
       await handleStarsPayment(msg.successful_payment, msg.chat?.id)
       return NextResponse.json({ ok: true })
     }
+    if (msg?.text?.startsWith('/emojis')) {
+      await handleEmojisCommand(msg.from, msg.chat?.id)
+      return NextResponse.json({ ok: true })
+    }
     if (msg?.text?.startsWith('/start')) {
       const parts = msg.text.split(/\s+/)
       const param = parts[1] ?? ''
@@ -415,6 +529,10 @@ export async function POST(request: Request) {
         }
       }
       await handleStart(msg.from, msg.chat?.id)
+    }
+    // Захват custom_emoji из любого сообщения (текст или подпись медиа)
+    if (msg && (msg.entities?.length || msg.caption_entities?.length)) {
+      await handleCustomEmojiCapture(msg)
     }
   } catch (e) {
     console.error('[bot/webhook]', e)

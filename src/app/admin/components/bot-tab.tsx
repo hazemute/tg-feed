@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Bot, Loader2, PlugZap, RefreshCw, Send, Trash2 } from 'lucide-react'
+import { Bot, Inbox, Loader2, PlugZap, RefreshCw, Send, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -10,9 +10,18 @@ import type { TabProps } from './bits'
 
 type BotSlot = { slot: string; label: string; emoji: string; customEmojiId: string }
 
+type CapturedEmoji = {
+  id: string
+  emoji: string
+  fromId: number
+  fromName: string
+  at: string
+}
+
 type BotConfig = {
   business: { id: string; userId: number; isEnabled: boolean; updatedAt: string } | null
   slots: BotSlot[]
+  captured: CapturedEmoji[]
   ownerChatId: number
   premiumCount: number
 }
@@ -39,6 +48,8 @@ export function BotTab({ tick, onSettled }: TabProps) {
   const [viaWarn, setViaWarn] = useState<string | null>(null)
   const [bcChecking, setBcChecking] = useState(false)
   const [bcVerdict, setBcVerdict] = useState<string | null>(null)
+  const [probing, setProbing] = useState(false)
+  const [adoptSlot, setAdoptSlot] = useState<Record<string, string>>({})
 
   const load = useCallback(() => {
     setFailed(false)
@@ -63,6 +74,54 @@ export function BotTab({ tick, onSettled }: TabProps) {
       toast.error((e as Error).message || 'Не удалось сохранить')
     } finally {
       setSaving(null)
+    }
+  }
+
+  const adoptCaptured = async (c: CapturedEmoji, slot: string) => {
+    if (!slot) {
+      toast.error('Выберите слот для переноса')
+      return
+    }
+    setSaving(`adopt-${c.id}`)
+    try {
+      await panelFetch('/api/panel/bot', {
+        json: { action: 'adopt', slot, customEmojiId: c.id, emoji: c.emoji },
+      })
+      toast.success(`${c.emoji} → слот «${slot}» — символ эмодзи слота обновлён`)
+      load()
+    } catch (e) {
+      toast.error((e as Error).message || 'Не удалось перенести в слот')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const forgetCaptured = async (c: CapturedEmoji) => {
+    setSaving(`forget-${c.id}`)
+    try {
+      await panelFetch('/api/panel/bot', { json: { action: 'forget', customEmojiId: c.id } })
+      toast.success('Запись удалена из захваченных')
+      load()
+    } catch (e) {
+      toast.error((e as Error).message || 'Не удалось удалить')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const runRichProbe = async () => {
+    setProbing(true)
+    try {
+      const r = await panelFetch<{ ok: boolean; raw: { ok?: boolean; description?: string } | null }>(
+        '/api/panel/bot',
+        { json: { action: 'richprobe' } },
+      )
+      if (r.raw?.ok) toast.success('Rich-сообщение отправлено — проверьте чат (кнопки со стилями)')
+      else toast.error(`Telegram: ${r.raw?.description ?? 'sendRichMessage недоступен'}`)
+    } catch (e) {
+      toast.error((e as Error).message || 'Проба не удалась')
+    } finally {
+      setProbing(false)
     }
   }
 
@@ -243,9 +302,10 @@ export function BotTab({ tick, onSettled }: TabProps) {
               </span>
             </div>
             <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
-              Перешлите сообщение с нужным премиум-эмодзи боту <b>@username_to_id_bot</b> или возьмите
-              custom_emoji_id через @idstickerbot → «Custom Emoji». Вставьте ID в слот — тексты бота
-              заменяют соответствующее эмодзи на анимированное. Пусто → обычное эмодзи.
+              Официальный способ узнать custom_emoji_id: отправьте боту в личку сообщение с нужным
+              премиум-эмодзи (или перешлите его) — ID появится в «Захваченных» ниже, а вам в чат придёт
+              список. Также можно взять ID через @idstickerbot → «Custom Emoji». Вставьте ID в слот —
+              тексты бота заменяют соответствующее эмодзи на анимированное. Пусто → обычное эмодзи.
             </p>
             <div className="overflow-hidden rounded-lg border border-slate-200">
               <table className="w-full text-sm">
@@ -295,6 +355,93 @@ export function BotTab({ tick, onSettled }: TabProps) {
             </div>
           </div>
 
+          {/* Захваченные из сообщений */}
+          <div className="space-y-3 border-t border-slate-200 pt-5">
+            <div className="flex items-center gap-2">
+              <Inbox className="size-4 text-slate-500" aria-hidden />
+              <h3 className="text-sm font-semibold text-slate-800">Захваченные эмодзи</h3>
+              <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                {data.captured.length}
+              </span>
+            </div>
+            <p className="max-w-2xl text-xs leading-relaxed text-slate-500">
+              Пользователь отправляет боту премиум-эмодзи → Telegram передаёт entity
+              <code className="mx-1 rounded bg-slate-100 px-1 font-mono text-[11px]">custom_emoji</code>
+              с custom_emoji_id — бот сохраняет ID. Владелец получает ответ списком ID, остальные — молча.
+            </p>
+            {data.captured.length === 0 ? (
+              <p className="rounded-lg border border-dashed border-slate-200 px-3 py-4 text-center text-xs text-slate-400">
+                Пока пусто — отправьте боту сообщение с премиум-эмодзи
+              </p>
+            ) : (
+              <div className="max-h-96 overflow-y-auto rounded-lg border border-slate-200">
+                <table className="w-full text-sm">
+                  <thead className="sticky top-0 bg-slate-50">
+                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wide text-slate-500">
+                      <th className="px-3 py-2 font-medium">Эмодзи</th>
+                      <th className="px-3 py-2 font-medium">custom_emoji_id</th>
+                      <th className="px-3 py-2 font-medium">От кого</th>
+                      <th className="px-3 py-2 font-medium">В слот</th>
+                      <th className="px-3 py-2" aria-hidden />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.captured.map((c) => (
+                      <tr key={c.id} className="border-b border-slate-100 last:border-0">
+                        <td className="px-3 py-2 text-lg leading-none">{c.emoji}</td>
+                        <td className="max-w-52 truncate px-3 py-2 font-mono text-[11px] text-slate-600" title={c.id}>
+                          {c.id}
+                        </td>
+                        <td className="px-3 py-2 text-xs text-slate-500">
+                          {c.fromName}
+                          <span className="block text-[11px] text-slate-400">{c.at.slice(0, 10)}</span>
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-1.5">
+                            <select
+                              value={adoptSlot[c.id] ?? ''}
+                              onChange={(e) => setAdoptSlot((m) => ({ ...m, [c.id]: e.target.value }))}
+                              aria-label={`Слот для ${c.id}`}
+                              className="h-8 max-w-40 rounded-md border border-slate-200 bg-slate-100 px-1.5 text-xs text-slate-700 outline-none focus:border-emerald-400"
+                            >
+                              <option value="">— слот —</option>
+                              {data.slots.map((s) => (
+                                <option key={s.slot} value={s.slot}>
+                                  {s.emoji} {s.label}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => void adoptCaptured(c, adoptSlot[c.id] ?? '')}
+                              disabled={saving === `adopt-${c.id}` || !(adoptSlot[c.id] ?? '')}
+                              className="flex h-8 items-center gap-1 rounded-md bg-emerald-600 px-2.5 text-xs font-semibold text-white transition hover:bg-emerald-700 disabled:cursor-not-allowed disabled:opacity-40"
+                            >
+                              {saving === `adopt-${c.id}` ? <Loader2 className="size-3 animate-spin" /> : <Sparkles className="size-3" />}
+                              В слот
+                            </button>
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() => void forgetCaptured(c)}
+                            disabled={saving === `forget-${c.id}`}
+                            aria-label="Удалить из захваченных"
+                            title="Удалить"
+                            className="flex size-8 items-center justify-center rounded-md text-slate-400 transition hover:bg-red-50 hover:text-red-600 disabled:opacity-50"
+                          >
+                            {saving === `forget-${c.id}` ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
           {/* Тест */}
           <div className="flex flex-wrap items-center gap-3 border-t border-slate-200 pt-5">
             <button
@@ -305,6 +452,16 @@ export function BotTab({ tick, onSettled }: TabProps) {
             >
               {testing ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
               Тест-сообщение владельцу
+            </button>
+            <button
+              type="button"
+              onClick={() => void runRichProbe()}
+              disabled={probing}
+              title="Новый Bot API: sendRichMessage — кнопки со стилями + кастом-эмодзи внутри кнопки"
+              className="flex h-10 items-center gap-2 rounded-lg border border-emerald-600 px-4 text-sm font-semibold text-emerald-700 transition hover:bg-emerald-50 disabled:opacity-50"
+            >
+              {probing ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              Rich-проба (кнопки)
             </button>
             <span className="text-xs text-slate-500">→ чат {data.ownerChatId}</span>
             {via && (
