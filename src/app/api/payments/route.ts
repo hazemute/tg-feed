@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { paymentMethods } from '@/lib/payments'
+import { yookassaCreatePayment } from '@/lib/yookassa'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,9 +17,10 @@ const createSchema = z.object({
  *
  * Ключи не настроены → честная 503 «метод скоро»: UI показывает только
  * рабочие способы (Telegram Stars / TON). Когда заданы YOOKASSA_SHOP_ID +
- * YOOKASSA_SECRET_KEY, здесь создаётся платёж в API ЮKassa и возвращается
- * confirmationUrl (redirect); статус поведёт вебхук (pending → succeeded),
- * после чего баланс рекламодателя пополнится на amountKop.
+ * YOOKASSA_SECRET_KEY, здесь создаётся платёж в API ЮKassa с embedded-подтверждением
+ * и возвращается confirmation_token: фронт рисует платёжную форму виджетом ЮKassa
+ * ПРЯМО НА САЙТЕ (без переадресаций — требование СБ ЮKassa). Статус поведёт вебхук
+ * (pending → succeeded), после чего баланс рекламодателя пополнится на amountKop.
  *
  * GET /api/payments — история платежей пользователя.
  */
@@ -47,35 +49,14 @@ export async function POST(request: Request) {
       return err('Пополнение картой скоро появится. Сейчас доступны Telegram Stars и TON.', 503)
     }
 
-    /* Реальное создание платежа в ЮKassa (confirmation: redirect) */
-    const idempKey = payment.id
-    const res = await fetch('https://api.yookassa.ru/v3/payments', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Idempotence-Key': idempKey,
-        Authorization: `Basic ${Buffer.from(`${shopId}:${secretKey}`).toString('base64')}`,
-      },
-      body: JSON.stringify({
-        amount: { value: (amountKop / 100).toFixed(2), currency: 'RUB' },
-        capture: true,
-        confirmation: {
-          type: 'redirect',
-          return_url: `${process.env.APP_URL ?? 'https://tg-swipe.vercel.app'}`,
-        },
-        description: 'Пополнение баланса Tg Swipe (свайпы)',
-        metadata: { paymentId: payment.id },
-      }),
-      signal: AbortSignal.timeout(12_000),
+    /* Платёж в ЮKassa: embedded-подтверждение → виджет НА САЙТЕ (без переадресаций, требование СБ) */
+    const yk = await yookassaCreatePayment({
+      amountKop,
+      description: 'Пополнение баланса Tg Swipe (свайпы)',
+      paymentId: payment.id,
     })
-    const data = (await res.json()) as {
-      id?: string
-      confirmation?: { confirmation_url?: string }
-      description?: string
-    }
-    const confirmationUrl = data.confirmation?.confirmation_url ?? null
-    if (!res.ok || !confirmationUrl) {
-      console.error('[payments:create] yookassa failed', data.description)
+    if (!yk || !yk.confirmationToken) {
+      console.error('[payments:create] yookassa failed')
       await db.pendingPayment.updateMany({
         where: { id: payment.id, status: 'pending' },
         data: { status: 'canceled' },
@@ -85,7 +66,7 @@ export async function POST(request: Request) {
 
     await db.pendingPayment.update({
       where: { id: payment.id },
-      data: { providerPaymentId: data.id ?? null, confirmationUrl },
+      data: { providerPaymentId: yk.id, confirmationUrl: yk.confirmationUrl },
     })
 
     return NextResponse.json({
@@ -93,7 +74,9 @@ export async function POST(request: Request) {
       paymentId: payment.id,
       amountKop: payment.amountKop,
       status: payment.status,
-      confirmationUrl,
+      confirmationToken: yk.confirmationToken,
+      // legacy: раньше был redirect; оставляем поле пустым для совместимости
+      confirmationUrl: null,
     })
   } catch (e) {
     console.error('[payments:create]', e)

@@ -24,6 +24,7 @@ import { haptic, openInvoiceUrl, openTelegram } from '@/lib/tg'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
 import { BottomSheet } from '@/components/tg/BottomSheet'
+import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
 import { useIsDesktop } from '@/lib/use-desktop'
 
 /**
@@ -34,7 +35,8 @@ import { useIsDesktop } from '@/lib/use-desktop'
  *    (просто иконка + подпись, активная вкладка подчёркнута);
  *  • ниже — ПАКИ в стиле покупки Stars в Telegram: ряд с радиокружком,
  *    иконкой пакета, ценой и эквивалентом (₽ / TON);
- *  • Карта — эквайринг ЮKassa (redirect), включается ключами env;
+ *  • Карта — виджет ЮKassa ПРЯМО ЗДЕСЬ (embedded, без переадресаций —
+ *    требование СБ), включается ключами env;
  *  • Stars — XTR-инвойс нашего бота, открывается НАТИВНЫМ окном оплаты
  *    через WebApp.openInvoice (openTelegramLink инвойсы не открывает —
  *    именно из-за этого Stars казались «недоступными»);
@@ -169,6 +171,8 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
   const [busy, setBusy] = useState(false)
   const [ton, setTon] = useState<TonInvoice | null>(null)
   const [tonStatus, setTonStatus] = useState<'waiting' | 'succeeded' | 'expired'>('waiting')
+  /** confirmation_token ЮKassa для виджета (оплата картой на сайте) */
+  const [ykToken, setYkToken] = useState<string | null>(null)
   /** Курс TON для превью-эквивалентов в паках (грузится при выборе вкладки) */
   const [tonRate, setTonRate] = useState<number | null>(null)
 
@@ -205,14 +209,13 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     try {
       if (method === 'card') {
         if (!cardValid) return
-        const r = await api<{ ok: boolean; confirmationUrl: string | null }>('/api/payments', {
+        const r = await api<{ ok: boolean; confirmationToken: string | null }>('/api/payments', {
           method: 'POST',
           body: JSON.stringify({ amountKop: effective * 100 }),
         })
-        if (r.confirmationUrl) {
-          openTelegram(r.confirmationUrl)
-          onClose()
-          onReload()
+        if (r.confirmationToken) {
+          // Виджет ЮKassa в шторке поверх — карта вводится НЕ ПОКИДАЯ сайт
+          setYkToken(r.confirmationToken)
         }
         return
       }
@@ -524,6 +527,19 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
           {escrowHint}
         </div>
       )}
+
+      {/* ЮKassa: платёжная форма картой ПРЯМО В ПРИЛОЖЕНИИ (без переадресации) */}
+      <YooKassaWidget
+        open={ykToken !== null}
+        token={ykToken}
+        title={`${formatRub(effective * 100)} · ${t('topup.tabCard')}`}
+        onClose={() => setYkToken(null)}
+        onSuccess={() => {
+          toast.success(t('topup.paid'))
+          haptic('success')
+          onReload()
+        }}
+      />
     </div>
   )
 }

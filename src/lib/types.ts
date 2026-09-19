@@ -242,6 +242,8 @@ export type TiersResponse = {
     { monthKop: number; yearKop: number; monthStars: number; yearStars: number }
   >
   methods: { card: boolean; stars: boolean; ton: boolean }
+  /** Реквизиты исполнителя для документов и требований СБ ЮKassa (env) */
+  legal: { name: string; inn: string; email: string }
 }
 
 /** Ответ POST /api/ai/search — умный поиск: ответ нейросети + посты-источники */

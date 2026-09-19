@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
+import { creditPendingPayment } from '@/lib/payments'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,9 +13,11 @@ export const dynamic = 'force-dynamic'
  *               amount: { value: "500.00", currency: "RUB" },
  *               metadata: { paymentId: "<наш PendingPayment.id>" } } }
  *
- * Начисление свайпов идентемпотентно: платеж помечается succeeded АТОМАРНО
- * (updateMany по status='pending'), баланс растёт только у победителя гонки.
+ * Начисление идемпотентно: платёж помечается succeeded АТОМАРНО
+ * (updateMany по status='pending') — баланс рекламодателя растёт или тир
+ * активируется ровно один раз (общая проводка creditPendingPayment).
  * Свайпы: 1 свайп = 1 ₽ → balanceKop += amountKop, topupsTotalKop += amountKop.
+ * Тарифы: purpose plus_month/plus_year/pro_month/pro_year → tier + tierUntil.
  *
  * Защита: если задан YOOKASSA_WEBHOOK_SECRET — сверяем заголовок
  * x-yookassa-webhook-secret (настраивается в личном кабинете ЮKassa).
@@ -94,27 +97,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ ok: false, error: 'amount mismatch' }, { status: 409 })
     }
 
-    // Атомарная проводка: статус pending → succeeded, зачисление — одной транзакцией
-    const result = await db.$transaction(async (tx) => {
-      const claimed = await tx.pendingPayment.updateMany({
-        where: { id: payment.id, status: 'pending' },
-        data: { status: 'succeeded', providerPaymentId: obj.id ?? payment.providerPaymentId },
-      })
-      if (claimed.count === 0) return false // уже обработан (идемпотентность)
-      await tx.advertiserAccount.upsert({
-        where: { userId: payment.userId },
-        update: {
-          balanceKop: { increment: payment.amountKop },
-          topupsTotalKop: { increment: payment.amountKop },
-        },
-        create: {
-          userId: payment.userId,
-          balanceKop: payment.amountKop,
-          topupsTotalKop: payment.amountKop,
-        },
-      })
-      return true
-    })
+    // Атомарная идемпотентная проводка: pending → succeeded + зачисление.
+    // purpose='balance' → эскроу-баланс рекламодателя; purpose='plus_month'/
+    // 'pro_year'/… → активация/продление тарифа Snap (lib/tiers).
+    const result = await creditPendingPayment(payment.id, obj.id ?? payment.providerPaymentId)
 
     return NextResponse.json({ ok: true, credited: result })
   } catch (e) {

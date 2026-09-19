@@ -3,9 +3,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
   ChevronRight,
+  CreditCard,
   FileText,
   Headset,
   Info,
+  Landmark,
   Lightbulb,
   Loader2,
   MousePointerClick,
@@ -41,6 +43,7 @@ import { Onboarding } from '@/components/tg/Onboarding'
 import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { THEMES, themeName } from '@/lib/themes'
 import { SupportChat } from '@/components/support/SupportChat'
+import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
 
 
 /** Элемент списка закладок — приходит из /api/bookmarks с отметкой прочтения */
@@ -64,6 +67,7 @@ export function ProfileTab() {
   const [aboutOpen, setAboutOpen] = useState(false)
   const [privacyOpen, setPrivacyOpen] = useState(false)
   const [termsOpen, setTermsOpen] = useState(false)
+  const [requisitesOpen, setRequisitesOpen] = useState(false)
   // Меню-шиты (разгрузка профиля, приказ владельца): вместо пяти отдельных строк
   // в списке — две обзорные кнопки «Информация» и «Обратная связь», а конкретные
   // разделы открываются уже внутри них
@@ -606,6 +610,27 @@ export function ProfileTab() {
       >
         <div className="space-y-3 text-snippet leading-relaxed text-tg-text2">
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
+            <h3 className="text-[14.5px] font-bold text-tg-text">Общие положения</h3>
+            <p className="mt-1.5 text-tg-hint">
+              Сервис Tg Swipe — агрегатор публичных постов открытых Telegram-каналов с инструментами
+              продвижения и подписками Snap. Исполнитель указан в разделе
+              «Реквизиты и контакты». Настоящее соглашение — публичная оферта: начало использования
+              сервиса означает согласие с её условиями.
+            </p>
+          </section>
+          <section className="rounded-2xl bg-tg-surface/70 p-3.5">
+            <h3 className="text-[14.5px] font-bold text-tg-text">Услуги и тарифы</h3>
+            <ul className="mt-1.5 space-y-1 text-tg-hint">
+              <li>• Free — бесплатно: лента, свайпы, 3 ИИ-поиска в день;</li>
+              <li>• Snap Plus — 390 ₽/мес или 2 990 ₽/год: безлимитный ИИ-поиск,
+              инкогнито, приоритетная скорость, премиум-эмодзи;</li>
+              <li>• Snap Pro — 1 490 ₽/мес или 9 990 ₽/год: всё из Plus,
+              ИИ-контентщик, продвижение до 7 постов в неделю, CTA-кнопка,</li>
+              <li>• Реклама: внутренняя валюта «свайпы» (1 свайп = 1 ₽) — CPA-кампании
+              за уникальных читателей.</li>
+            </ul>
+          </section>
+          <section className="rounded-2xl bg-tg-surface/70 p-3.5">
             <h3 className="text-[14.5px] font-bold text-tg-text">Валюта сервиса — Свайпы</h3>
             <p className="mt-1.5 text-tg-hint">
               Внутренняя валюта Tg Swipe — <b className="text-tg-text">свайпы</b>. Курс всегда
@@ -615,11 +640,15 @@ export function ProfileTab() {
             </p>
           </section>
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
-            <h3 className="text-[14.5px] font-bold text-tg-text">Пополнение</h3>
+            <h3 className="text-[14.5px] font-bold text-tg-text">Пополнение и оплата</h3>
             <p className="mt-1.5 text-tg-hint">
               Баланс пополняется в рублях (банковская карта или СБП), Telegram Stars или криптовалютой
               TON — от 100 рублей за операцию. Курс TON фиксируется в момент выставления счёта. Свайпы
-              зачисляются на эскроу-счёт автоматически после подтверждения оплаты.
+              зачисляются на эскроу-счёт автоматически после подтверждения оплаты. Оплата картой
+              проходит через платёжную форму ЮKassa, открываемую непосредственно на сайте — без
+              переадресации на сторонние ресурсы. Подписка Snap действует до конца оплаченного
+              периода; возврат средств за неиспользованный период — в порядке, предусмотренном
+              законодательством РФ.
             </p>
           </section>
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
@@ -639,6 +668,9 @@ export function ProfileTab() {
           </section>
         </div>
       </BottomSheet>
+
+      {/* Реквизиты и контакты (требования СБ ЮKassa) */}
+      <RequisitesSheet open={requisitesOpen} onClose={() => setRequisitesOpen(false)} />
 
       {/* Меню «Информация»: соглашение, конфиденциальность, о приложении */}
       <BottomSheet
@@ -668,6 +700,20 @@ export function ProfileTab() {
             onClick={() => {
               setInfoMenuOpen(false)
               setPrivacyOpen(true)
+            }}
+          />
+          <SettingRow
+            icon={<Landmark className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label="Реквизиты и контакты"
+            right={
+              <span className="flex items-center gap-0.5 text-[14px] text-tg-hint">
+                исполнитель, поддержка
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={() => {
+              setInfoMenuOpen(false)
+              setRequisitesOpen(true)
             }}
           />
           <SettingRow
@@ -801,6 +847,8 @@ function TiersSheet({
     pro: 'month',
   })
   const [buying, setBuying] = useState<'plus' | 'pro' | null>(null)
+  /** ЮKassa: confirmation_token открытого виджета оплаты картой (на сайте) */
+  const [yk, setYk] = useState<{ token: string; title: string } | null>(null)
 
   // Загружаем состояние тарифов при каждом открытии шита (и по кнопке «Повторить»)
   useEffect(() => {
@@ -846,6 +894,28 @@ function TiersSheet({
       openInvoiceUrl(r.invoiceUrl, refresh)
       toast.success('Счёт создан — подтвердите оплату в Telegram')
       refresh()
+    } catch (e) {
+      toast.error((e as Error).message || 'Не удалось создать счёт')
+    } finally {
+      setBuying(null)
+    }
+  }
+
+  /** Оплата картой через ЮKassa — виджет открывается прямо в приложении, без переадресаций (требование СБ) */
+  const buyCard = async (plan: 'plus' | 'pro') => {
+    if (buying) return
+    setBuying(plan)
+    haptic('light')
+    try {
+      const r = await api<{ ok: boolean; confirmationToken: string | null }>('/api/tiers', {
+        method: 'POST',
+        body: JSON.stringify({ plan, period: period[plan], method: 'card' }),
+      })
+      if (r.confirmationToken) {
+        const p = data?.prices[plan]
+        const rub = p ? kopToRub(period[plan] === 'month' ? p.monthKop : p.yearKop) : ''
+        setYk({ token: r.confirmationToken, title: `${rub} · Snap ${plan === 'pro' ? 'Pro' : 'Plus'}` })
+      }
     } catch (e) {
       toast.error((e as Error).message || 'Не удалось создать счёт')
     } finally {
@@ -983,16 +1053,92 @@ function TiersSheet({
                       </>
                     )}
                   </button>
+                  {/* Карта: виджет ЮKassa на сайте — показываем, когда эквайринг подключён (methods.card) */}
+                  {data.methods.card && (
+                    <button
+                      type="button"
+                      disabled={buying !== null}
+                      onClick={() => buyCard(meta.plan)}
+                      className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-tg-sep bg-tg-bg text-[15px] font-semibold text-tg-text transition active:scale-[0.98] disabled:opacity-50"
+                    >
+                      <CreditCard className="h-4.5 w-4.5" strokeWidth={1.8} />
+                      Картой {kopToRub(p === 'month' ? price.monthKop : price.yearKop)}
+                    </button>
+                  )}
                 </div>
               )
             })}
           </div>
 
           <p className="mt-3 text-center text-[12px] leading-snug text-tg-hint">
-            Оплата в Telegram Stars. Подписка действует до конца оплаченного периода.
+            Оплата: Telegram Stars или банковская карта (ЮKassa, форма открывается на сайте).
+            Подписка действует до конца оплаченного периода.
           </p>
         </>
       )}
+
+      {/* ЮKassa: форма оплаты картой ПРЯМО ЗДЕСЬ (без переадресаций — требование СБ) */}
+      <YooKassaWidget
+        open={yk !== null}
+        token={yk?.token ?? null}
+        title={yk?.title ?? 'Оплата подписки'}
+        onClose={() => setYk(null)}
+        onSuccess={refresh}
+      />
+    </BottomSheet>
+  )
+}
+
+/**
+ * «Реквизиты и контакты» — обязательный документ для эквайринга (требования
+ * СБ ЮKassa): данные исполнителя, способы оплаты и каналы связи.
+ * Значения приходят из env (LEGAL_NAME / LEGAL_INN / SUPPORT_EMAIL) через
+ * GET /api/tiers — источник истины у владельца, без пересборки интерфейса.
+ */
+function RequisitesSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const [legal, setLegal] = useState<TiersResponse['legal'] | null>(null)
+
+  useEffect(() => {
+    if (!open) return
+    api<TiersResponse>('/api/tiers')
+      .then((d) => setLegal(d.legal))
+      .catch(() => setLegal(null))
+  }, [open])
+
+  const rows: Array<{ label: string; value: string }> = [
+    { label: 'Исполнитель', value: legal?.name || 'Индивидуальный предприниматель' },
+    { label: 'ИНН', value: legal?.inn || '—' },
+    { label: 'Сервис', value: 'Tg Swipe — умная лента Telegram-каналов' },
+    { label: 'Поддержка', value: legal?.email || 'чат в приложении: Профиль → Обратная связь' },
+  ]
+
+  return (
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="Реквизиты и контакты"
+      subtitle="Исполнитель, способы оплаты, поддержка"
+    >
+      <div className="space-y-2">
+        {rows.map((r) => (
+          <div key={r.label} className="rounded-2xl bg-tg-surface/70 p-3.5">
+            <p className="text-[11px] font-medium uppercase tracking-wide text-tg-hint">{r.label}</p>
+            <p className="mt-0.5 break-words text-[14px] font-semibold text-tg-text">{r.value}</p>
+          </div>
+        ))}
+        <div className="rounded-2xl bg-tg-surface/70 p-3.5">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-tg-hint">
+            Способы оплаты
+          </p>
+          <p className="mt-0.5 text-[14px] leading-snug text-tg-text">
+            Банковская карта (ЮKassa — форма открывается прямо на сайте, без переадресаций),
+            Telegram Stars, TON.
+          </p>
+        </div>
+        <p className="px-1 text-[12px] leading-snug text-tg-hint">
+          Полные условия оказания услуг и тарифы — в «Пользовательском соглашении».
+        </p>
+      </div>
     </BottomSheet>
   )
 }
