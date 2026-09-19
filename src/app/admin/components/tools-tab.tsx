@@ -526,7 +526,9 @@ type EmojiRecheckResponse = {
  */
 function EmojiRecheckCard() {
   const [running, setRunning] = useState(false)
+  const [backfilling, setBackfilling] = useState(false)
   const [summary, setSummary] = useState<{ passes: number; checked: number; upgraded: number; remaining: number } | null>(null)
+  const [backfillSummary, setBackfillSummary] = useState<{ scanned: number; added: number } | null>(null)
 
   const runRecheck = async () => {
     if (running) return
@@ -574,18 +576,54 @@ function EmojiRecheckCard() {
         <div className="flex flex-wrap items-center gap-3">
           <Button
             onClick={() => void runRecheck()}
-            disabled={running}
+            disabled={running || backfilling}
             className="bg-violet-600 font-medium text-white hover:bg-violet-500"
           >
             {running ? <Loader2 className="animate-spin" aria-hidden /> : <SmilePlus aria-hidden />}
             Перепроверить статику
           </Button>
+          <Button
+            variant="outline"
+            onClick={async () => {
+              if (backfilling) return
+              setBackfilling(true)
+              try {
+                const res = await panelFetch<EmojiRecheckResponse>('/api/panel/emoji/recheck', {
+                  json: { action: 'backfill' },
+                })
+                setBackfillSummary({ scanned: res.checked, added: res.upgraded })
+                if (res.upgraded > 0) {
+                  toast.success(`Эмодзи: реестр дополнен на ${fmtNum(res.upgraded)} ID`)
+                } else {
+                  toast.success('Эмодзи: все ID из постов уже в реестре')
+                }
+              } catch (e) {
+                if (e instanceof PanelError) {
+                  if (e.status === 429) toast.error(`Слишком часто, подождите ${e.retryAfter ?? 60}с`)
+                  else if (!isAuthOrNetworkError(e)) toast.error(e.message)
+                }
+              } finally {
+                setBackfilling(false)
+              }
+            }}
+            disabled={running || backfilling}
+          >
+            {backfilling ? <Loader2 className="animate-spin" aria-hidden /> : <SmilePlus aria-hidden />}
+            Дописать недостающие ID
+          </Button>
           {running && <span className="text-xs text-slate-500">Идёт перепроверка…</span>}
+          {backfilling && <span className="text-xs text-slate-500">Сканирую посты…</span>}
         </div>
         {summary && (
           <div className="rounded-md border border-violet-500/20 bg-violet-500/[0.06] px-3 py-2 text-xs text-violet-800">
             Прогонов: <b>{summary.passes}</b> · Проверено: <b>{fmtNum(summary.checked)}</b> · Включено анимаций:{' '}
             <b>{fmtNum(summary.upgraded)}</b> · Осталось статичных: <b>{fmtNum(Math.max(0, summary.remaining))}</b>
+          </div>
+        )}
+        {backfillSummary && (
+          <div className="rounded-md border border-violet-500/20 bg-violet-500/[0.06] px-3 py-2 text-xs text-violet-800">
+            Сканировано постов: <b>{fmtNum(backfillSummary.scanned)}</b> · Новых ID в реестре:{' '}
+            <b>{fmtNum(backfillSummary.added)}</b> — анимация включается задним числом на выдаче
           </div>
         )}
       </CardContent>

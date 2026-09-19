@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
-import { useApp } from '@/lib/store'
 
 /**
  * TelegramEmojiRenderer — переиспользуемый рендерер премиум-эмодзи Telegram.
@@ -22,11 +21,10 @@ import { useApp } from '@/lib/store'
  * lottie-web (ленивый чанк, gzip распаковывает браузер), статичные — <img>.
  * Размер вписан в строку текста (1.35em), высота строк не ломается.
  *
- * Гейтинг Snap Plus/Pro: анимированные эмодзи (ev/el → <video>/lottie-web)
- * проигрываются только у подписчиков платных тиров; free всегда получает
- * статичную версию — <img> с thumb-URL из маркера (маркеры ev/el хранят тот
- * же thumb, что и e: апгрейд переписывает только префикс). Без thumb —
- * пустышка. Статичный путь не грузит ни lottie-чанк, ни видео.
+ * v5.26 — ПРИКАЗ ВЛАДЕЛЬЦА: анимации видны ВСЕМ пользователям (гейтинг
+ * Plus/Pro снят). Премиум-эмодзи в постах — контент каналов, а не фича
+ * подписки: скрывать анимацию за пейволлом значило ломать то, что автор
+ * канала уже опубликовал. Free и Plus видят одно и то же.
  */
 
 /** Маркеры эмодзи в тексте из БД: ![ev:ID](url) | ![el:ID](url) | ![e:ID](url) | ![e](url) */
@@ -78,6 +76,13 @@ function useEmojiVisibility() {
 
 /** Браузер умеет распаковывать gzip сам? (Safari 16.4+, Chrome 80+) */
 const CAN_GZIP = typeof DecompressionStream === 'function'
+
+/** Глубокая копия animationData: structuredClone нет в старых WebView —
+ *  там и вовсе не работает lottie (CAN_GZIP=false), но фолбэк не должен ронять код */
+function deepCloneAnimation(json: object): object {
+  if (typeof structuredClone === 'function') return structuredClone(json)
+  return JSON.parse(JSON.stringify(json)) as object
+}
 
 /** Кэш распакованных JSON анимаций: id → promise (одна загрузка на все инстансы) */
 const lottieJsonCache = new Map<string, Promise<object>>()
@@ -146,7 +151,7 @@ function LottieEmoji({ id, fallbackUrl }: { id: string; fallbackUrl?: string }) 
           renderer: 'svg',
           loop: true,
           autoplay: true,
-          animationData: structuredClone(json),
+          animationData: deepCloneAnimation(json),
           rendererSettings: { preserveAspectRatio: 'xMidYMid meet' },
         })
         animRef.current = anim
@@ -201,12 +206,8 @@ export function TgEmoji({
   const [broken, setBroken] = useState(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const { ref, initedOnce, visible } = useEmojiVisibility()
-  /*
-   * Гейтинг тиров: анимации (видео/lottie) — только Snap Plus/Pro.
-   * Селектор возвращает boolean, поэтому перерисовка случается лишь при
-   * фактической смене доступа, а не при любом чихе в сторе.
-   */
-  const allowAnimated = useApp((s) => s.user?.tier === 'plus' || s.user?.tier === 'pro')
+  /* v5.26: гейтинг тиров снят по приказу владельца — анимации (видео/Lottie)
+   * видны ВСЕМ: это контент каналов, а не фича подписки. */
 
   // Пауза вне зоны видимости / автозапуск при появлении (autoplay + loop)
   useEffect(() => {
@@ -216,11 +217,10 @@ export function TgEmoji({
     else v.pause()
   }, [visible])
 
-  // Без доступа (free) анимационные маркеры проваливаются в статичную ветку
-  // ниже: <img src={thumb}>. LottieEmoji при этом не монтируется вовсе —
-  // динамический импорт lottie-web не срабатывает, <video> не создаётся.
-  const wantVideo = allowAnimated && animated && id && !broken
-  const wantLottie = allowAnimated && lottie && id && !broken && CAN_GZIP
+  // Битые загрузки (404 реестра/сеть) проваливаются в статичную ветку ниже:
+  // <img src={thumb}>. LottieEmoji при ошибке декода делает то же самое.
+  const wantVideo = animated && id && !broken
+  const wantLottie = lottie && id && !broken && CAN_GZIP
 
   if (wantLottie) return <LottieEmoji id={id} fallbackUrl={url} />
 

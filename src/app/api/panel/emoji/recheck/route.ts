@@ -4,6 +4,7 @@ import { err } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { getCustomEmojiStickers } from '@/lib/tg-bot'
 import { clearAnimatedEmojiKindsCache } from '@/lib/emoji-registry'
+import { backfillCustomEmoji } from '@/lib/parse-engine'
 
 export const dynamic = 'force-dynamic'
 
@@ -29,6 +30,23 @@ export async function POST(request: Request) {
   if (!g.ok) return g.res
 
   try {
+    /* Режим 'backfill' (v5.26): ДОполняем реестр ID-ами из маркеров уже
+     * существующих постов, которых в CustomEmoji нет вообще (канал не
+     * перепарсивался с появления эмодзи). Отличается от дефолтного режима:
+     * тот перепроверяет уже записанные 'static' строки, этот добавляет
+     * отсутствующие. */
+    let action = 'recheck'
+    try {
+      const body = (await request.json()) as { action?: unknown }
+      if (typeof body?.action === 'string' && body.action === 'backfill') action = 'backfill'
+    } catch {
+      // пустое тело — дефолтный recheck
+    }
+    if (action === 'backfill') {
+      const r = await backfillCustomEmoji({ scan: 2000 })
+      return NextResponse.json({ checked: r.scanned, upgraded: r.added, remaining: 0 })
+    }
+
     const batch = await db.customEmoji.findMany({
       where: { kind: 'static' },
       orderBy: { fetchedAt: 'asc' }, // сначала давно не проверявшиеся

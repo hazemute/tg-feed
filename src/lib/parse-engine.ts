@@ -4,6 +4,7 @@ import { emitAppEvent, emitAdminEvent } from '@/lib/events'
 import { bumpCache } from '@/lib/redis'
 import { warmFeedIndexes } from '@/lib/feed-warm'
 import { botEnabled, getChatPhotoFileId, getChatMemberCount, getCustomEmojiStickers } from '@/lib/tg-bot'
+import { clearAnimatedEmojiKindsCache } from '@/lib/emoji-registry'
 import { syncChannelAvatar } from '@/lib/avatar-store'
 import { isAdCliche } from '@/lib/moderation'
 import { cleanPostText } from '@/lib/text-clean'
@@ -401,6 +402,66 @@ async function upgradeCustomEmoji(posts: ParsedPost[]): Promise<ParsedPost[]> {
     // резолвер не должен ронять парсинг — эмодзи остаются статичными
   }
   return posts
+}
+
+/**
+ * РЕТРОАКТИВНЫЙ бэкфилл реестра CustomEmoji (v5.26 — приказ владельца
+ * «все премиум-эмодзи отображаются с анимациями»).
+ *
+ * ГЭП, который закрывает: ID премиум-эмодзи попадают в реестр только при
+ * парсинге канала, который этот эмодзи использует. Пост старого парсинга
+ * (или пост канала, который ещё не перепарсивался) с маркером ![e:ID] —
+ * ID в реестре ОТСУТСТВУЕТ → /api/emoji/[id] отвечает 404 → эмодзи навсегда
+ * статичный, хотя Bot API знает анимацию.
+ *
+ * ЧТО ДЕЛАЕТ: сканирует свежие посты (по умолчанию 600) с маркерами,
+ * находит ID без строки в CustomEmoji и резолвит их пачками
+ * getCustomEmojiStickers (до 200 ID за вызов) — video/lottie получает fileId,
+ * статика фиксируется с fetchedAt (не дёргаем Bot API повторно).
+ * Вызывается из /api/parse/tick с троттлингом; идемпотентен.
+ */
+export async function backfillCustomEmoji(opts?: { scan?: number }): Promise<{ scanned: number; added: number }> {
+  if (!botEnabled()) return { scanned: 0, added: 0 }
+  const scan = Math.max(50, Math.min(2000, opts?.scan ?? 600))
+
+  const posts = await db.post.findMany({
+    where: { text: { contains: '![e:' } },
+    orderBy: { publishedAt: 'desc' },
+    take: scan,
+    select: { text: true },
+  })
+  const ids = new Set<string>()
+  for (const p of posts) {
+    // Канонический текст в БД хранит ![e:ID]; ev/el-варианты на всякий случай тоже
+    for (const m of p.text.matchAll(/!\[e(?:v|l)?:(\d+)\]\(/g)) ids.add(m[1])
+  }
+  if (ids.size === 0) return { scanned: posts.length, added: 0 }
+
+  const known = await db.customEmoji.findMany({ where: { id: { in: [...ids] } }, select: { id: true } })
+  const knownSet = new Set(known.map((r) => r.id))
+  const missing = [...ids].filter((id) => !knownSet.has(id))
+  if (missing.length === 0) return { scanned: posts.length, added: 0 }
+
+  let added = 0
+  for (let i = 0; i < missing.length; i += 200) {
+    const chunk = missing.slice(i, i + 200)
+    const stickers = await getCustomEmojiStickers(chunk)
+    for (const id of chunk) {
+      const s = stickers.get(id)
+      const row = {
+        id,
+        kind: (s?.video ? 'video' : s?.animated ? 'lottie' : 'static') as 'video' | 'lottie' | 'static',
+        animated: s?.animated === true,
+        fileId: (s?.video || s?.animated) && s?.fileId ? s.fileId : null,
+      }
+      await db.customEmoji
+        .upsert({ where: { id: row.id }, create: row, update: { kind: row.kind, animated: row.animated, fileId: row.fileId } })
+        .catch(() => {})
+      added++
+    }
+  }
+  if (added > 0) clearAnimatedEmojiKindsCache() // dto сразу отдаёт ![ev:]/![el:]
+  return { scanned: posts.length, added }
 }
 
 /**

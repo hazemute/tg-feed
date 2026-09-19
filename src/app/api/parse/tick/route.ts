@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
+import { db } from '@/lib/db'
 import { cronAuthorized, guardIp } from '@/lib/guard'
-import { runParser } from '@/lib/parse-engine'
+import { runParser, backfillCustomEmoji } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
 import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, cardBatchSize } from '@/lib/parse-scheduler'
 
@@ -26,9 +27,36 @@ async function handle(request: Request) {
 
   const started = Date.now()
   try {
+    /* ---------- Ретроактивный бэкфилл реестра премиум-эмодзи (v5.26) ----------
+        ИДЕТ ДО парсинга и независимо от него: пустая партия каналов не должна
+        пропускать бэкфилл. ID из маркеров старых постов резолвятся без
+        перепарсинга канала — иначе эмодзи остаются статичными до неизвестного
+        момента. Троттлинг 25 мин через BotSetting: Bot API дёргается только
+        за ID, которых ещё нет в реестре. */
+    let emojiBackfill: { scanned: number; added: number } | null = null
+    const BACKFILL_KEY = 'emoji_backfill_at'
+    const BACKFILL_TTL_MS = 25 * 60_000
+    try {
+      const last = await db.botSetting.findUnique({ where: { key: BACKFILL_KEY } })
+      const lastAt = last ? Date.parse(last.value) : 0
+      if (Date.now() - lastAt > BACKFILL_TTL_MS && Date.now() - started < 90_000) {
+        emojiBackfill = await backfillCustomEmoji()
+        await db.botSetting
+          .upsert({
+            where: { key: BACKFILL_KEY },
+            create: { key: BACKFILL_KEY, value: new Date().toISOString() },
+            update: { value: new Date().toISOString() },
+          })
+          .catch(() => {})
+        if (emojiBackfill.added > 0) console.log('[tick] emoji backfill:', emojiBackfill)
+      }
+    } catch (e) {
+      console.error('[tick] emoji backfill failed', e)
+    }
+
     const batch = await nextAdaptiveBatch()
     if (batch.length === 0) {
-      return NextResponse.json({ ok: true, batch: 0, added: 0, enriched: 0 })
+      return NextResponse.json({ ok: true, batch: 0, added: 0, enriched: 0, emojiBackfill })
     }
 
     // per=5 новых постов на канал, тайм-бюджет 35с — тик остаётся лёгким.
@@ -76,6 +104,7 @@ async function handle(request: Request) {
       enriched,
       cards,
       notified,
+      emojiBackfill,
       ms: Date.now() - started,
     })
   } catch (e) {
