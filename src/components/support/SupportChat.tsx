@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, ArrowUp, Headset, ShieldCheck, Bot, UserRound, Lightbulb, Bug, Paperclip, X } from 'lucide-react'
+import { ArrowLeft, ArrowUp, Headset, ShieldCheck, Bot, UserRound, Lightbulb, Bug, Paperclip, X, Trash2, Check } from 'lucide-react'
 
 import { api } from '@/lib/api'
 import { haptic } from '@/lib/tg'
@@ -73,10 +73,23 @@ export function SupportChat({
   const [topic, setTopic] = useState<'idea' | 'bug' | null>(null)
   const [pending, setPending] = useState<string[]>([]) // url загруженных картинок перед отправкой
   const [uploading, setUploading] = useState(false)
+  const [confirmClear, setConfirmClear] = useState(false) // подтверждение «Очистить историю»
   const fileRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const endpoint = isFeedback ? '/api/feedback' : '/api/support'
+
+  /** «Очистить историю»: удаляет свои нити этого чата и возвращает приветствие */
+  const clearChat = useCallback(async () => {
+    try {
+      await api<{ ok: boolean }>(endpoint, { method: 'DELETE' })
+      setState({ status: null, topic: null, messages: [] })
+      if (isFeedback) setTopic(null)
+      haptic('success')
+    } catch {
+      haptic('error')
+    }
+  }, [endpoint, isFeedback])
 
   const scrollBottom = useCallback((smooth = true) => {
     const el = scrollRef.current
@@ -100,6 +113,7 @@ export function SupportChat({
   useEffect(() => {
     if (!open) return
     setLoaded(false)
+    setConfirmClear(false)
     void load()
     const timer = setInterval(() => {
       if (!sending) void load()
@@ -220,6 +234,50 @@ export function SupportChat({
                 : t('support.subtitle.idle')}
           </span>
         </span>
+        {/* Очистка истории: тестовый мусор убирается одним тапом, без админа */}
+        {loaded && state.messages.length > 0 && (
+          <div className="ml-auto flex shrink-0 items-center" data-noswipe>
+            {confirmClear ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setConfirmClear(false)
+                    void clearChat()
+                  }}
+                  aria-label={t('support.clearYes')}
+                  title={t('support.clearYes')}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-red-500 active:bg-tg-sep/40"
+                >
+                  <Check className="h-[18px] w-[18px]" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmClear(false)}
+                  aria-label={t('support.clearNo')}
+                  title={t('support.clearNo')}
+                  className="flex h-9 w-9 items-center justify-center rounded-full text-tg-hint active:bg-tg-sep/40"
+                >
+                  <X className="h-[18px] w-[18px]" />
+                </button>
+              </>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  setConfirmClear(true)
+                  window.setTimeout(() => setConfirmClear(false), 3500)
+                }}
+                aria-label={t('support.clear')}
+                title={t('support.clear')}
+                className="flex h-9 w-9 items-center justify-center rounded-full text-tg-hint active:bg-tg-sep/40"
+              >
+                <Trash2 className="h-[18px] w-[18px]" />
+              </button>
+            )}
+          </div>
+        )}
       </header>
 
       {/* Тема предложки: идея или баг (до первого сообщения) */}

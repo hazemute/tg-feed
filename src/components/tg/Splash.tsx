@@ -23,9 +23,9 @@ export function Splash() {
             initial={{ x: -76, y: 64, scale: 0.5, opacity: 0, rotate: 6 }}
             animate={{ x: 0, y: 0, scale: 1, opacity: 1, rotate: -9 }}
             transition={{
-              duration: 1.15,
+              duration: 0.9,
               ease: [0.22, 0.68, 0.3, 1],
-              opacity: { duration: 0.45, ease: 'easeOut' },
+              opacity: { duration: 0.4, ease: 'easeOut' },
             }}
           >
             <motion.div
@@ -44,7 +44,7 @@ export function Splash() {
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5, duration: 0.6, ease: 'easeOut' }}
+          transition={{ delay: 0.35, duration: 0.5, ease: 'easeOut' }}
           className="mt-3 flex flex-col items-center gap-1"
         >
           <span className="text-[27px] font-bold tracking-tight text-tg-text">Tg Swipe</span>

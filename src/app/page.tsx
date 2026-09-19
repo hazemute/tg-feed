@@ -1,6 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import dynamic from 'next/dynamic'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { api, getSessionToken, setSessionToken } from '@/lib/api'
@@ -15,17 +16,23 @@ import { BottomNav } from '@/components/tg/BottomNav'
 import { Sidebar } from '@/components/tg/Sidebar'
 import { Splash } from '@/components/tg/Splash'
 import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
-import { AuthGateSheet } from '@/components/tg/AuthGateSheet'
-import { CommentsSheet } from '@/components/feed/CommentsSheet'
-import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { FeedView } from '@/components/feed/FeedView'
-import { ChannelSheet } from '@/components/feed/ChannelSheet'
-import { PostOverlay } from '@/components/feed/PostOverlay'
-import { ShareSheet } from '@/components/feed/ShareSheet'
-import { TrendingTab } from '@/components/tabs/TrendingTab'
-import { SearchTab } from '@/components/tabs/SearchTab'
-import { MyChannelTab } from '@/components/tabs/MyChannelTab'
-import { ProfileTab } from '@/components/tabs/ProfileTab'
+
+/*
+ * Тяжёлые экраны и шиты — ленивые чанки (next/dynamic): первый кадр
+ * (сплэш + лента) не ждёт их JS. Всё, что открывается ТОЛЬКО по тапу,
+ * грузится при первом открытии; прогрев вероятных — в idle-эффекте ниже.
+ */
+const CommentsSheet = dynamic(() => import('@/components/feed/CommentsSheet').then((m) => m.CommentsSheet), { ssr: false })
+const ChannelSheet = dynamic(() => import('@/components/feed/ChannelSheet').then((m) => m.ChannelSheet), { ssr: false })
+const PostOverlay = dynamic(() => import('@/components/feed/PostOverlay').then((m) => m.PostOverlay), { ssr: false })
+const ShareSheet = dynamic(() => import('@/components/feed/ShareSheet').then((m) => m.ShareSheet), { ssr: false })
+const TrendingTab = dynamic(() => import('@/components/tabs/TrendingTab').then((m) => m.TrendingTab), { ssr: false })
+const SearchTab = dynamic(() => import('@/components/tabs/SearchTab').then((m) => m.SearchTab), { ssr: false })
+const MyChannelTab = dynamic(() => import('@/components/tabs/MyChannelTab').then((m) => m.MyChannelTab), { ssr: false })
+const ProfileTab = dynamic(() => import('@/components/tabs/ProfileTab').then((m) => m.ProfileTab), { ssr: false })
+const AuthGateSheet = dynamic(() => import('@/components/tg/AuthGateSheet').then((m) => m.AuthGateSheet), { ssr: false })
+const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').then((m) => m.LoginByTelegram), { ssr: false })
 
 const TABS: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
 
@@ -40,13 +47,12 @@ export default function Home() {
   const { user, authReady, tab, tabDir, theme, fontScale, maintenance, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, goToTab } =
     useApp()
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
-  // Сплэш живёт минимум 1.35с — влёт самолётика (1.15с) всегда доигрывает
-  // до конца, даже когда API отвечает мгновенно. Иначе на проде анимацию
-  // срезает на середине и загрузка выглядит дёргано.
+  // Сплэш живёт минимум 1.05с — влёт самолётика (0.9с) и подпись (0.35+0.5с)
+  // успевают доиграть, а старт ощущается заметно бодрее.
   const [splashMinDone, setSplashMinDone] = useState(false)
 
   useEffect(() => {
-    const t = setTimeout(() => setSplashMinDone(true), 1350)
+    const t = setTimeout(() => setSplashMinDone(true), 1050)
     return () => clearTimeout(t)
   }, [])
 
@@ -187,6 +193,21 @@ export default function Home() {
     const t = window.setTimeout(() => {
       void api<{ pulse?: unknown }>('/api/trending').catch(() => {})
     }, 2_500)
+    return () => window.clearTimeout(t)
+  }, [authReady, user])
+
+  // Прогрев ленивых чанков в простое (после первых кадров ленты): первый тап
+  // по посту/вкладке/профилю не ждёт докачку JS. Модули те же, что в dynamic —
+  // повторный import() бесплатен, просто кладёт чанк в кэш браузера.
+  useEffect(() => {
+    if (!authReady || !user) return
+    const t = window.setTimeout(() => {
+      void import('@/components/feed/PostOverlay')
+      void import('@/components/feed/CommentsSheet')
+      void import('@/components/tabs/SearchTab')
+      void import('@/components/tabs/TrendingTab')
+      void import('@/components/tabs/ProfileTab')
+    }, 3_500)
     return () => window.clearTimeout(t)
   }, [authReady, user])
 

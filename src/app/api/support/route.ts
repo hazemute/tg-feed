@@ -37,12 +37,43 @@ function toMsg(m: { id: string; sender: string; text: string; images: string | n
  */
 async function activeThread(userId: string) {
   const last = await db.supportThread.findFirst({
-    where: { userId },
+    // kind: только чат поддержки — треды предложки (kind='feedback') —
+    // отдельный чат со своим эндпоинтом, смешивать их нельзя
+    where: { userId, kind: 'support' },
     orderBy: { createdAt: 'desc' },
     include: { messages: { orderBy: { createdAt: 'asc' }, take: 100 } },
   })
   if (last && last.status !== 'closed') return last
   return null
+}
+
+/**
+ * DELETE /api/support — «Очистить историю» (кнопка в шапке чата).
+ * Удаляет ВСЕ нити поддержки текущего пользователя вместе с сообщениями:
+ * тестовый мусор из ранних проверок убирается одним тапом, без участия админа.
+ * Чужие данные не затрагиваются — выборка строго по своему userId.
+ */
+export async function DELETE(request: Request) {
+  const g = guardAuth(request, { limit: 6, windowMs: 60_000, bucket: 'support-clear' })
+  if (!g.ok) return g.res
+
+  try {
+    const threads = await db.supportThread.findMany({
+      where: { userId: g.uid, kind: 'support' },
+      select: { id: true },
+    })
+    const ids = threads.map((t) => t.id)
+    if (ids.length > 0) {
+      // явный deleteMany — работает одинаково на Postgres и SQLite,
+      // не полагаясь на ON DELETE CASCADE в схеме БД
+      await db.supportMessage.deleteMany({ where: { threadId: { in: ids } } })
+      await db.supportThread.deleteMany({ where: { id: { in: ids } } })
+    }
+    return NextResponse.json({ ok: true, cleared: ids.length })
+  } catch (e) {
+    console.error('[support DELETE]', e)
+    return err('support failed', 500)
+  }
 }
 
 /**

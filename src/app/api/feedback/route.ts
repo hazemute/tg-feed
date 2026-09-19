@@ -73,6 +73,32 @@ const sendSchema = z.object({
     .optional(),
 })
 
+/**
+ * DELETE /api/feedback — «Очистить историю» в предложке: удаляет все
+ * feedback-нити текущего пользователя вместе с сообщениями. Свои данные —
+ * своё право; чужие треды (и очередь админа по другим юзерам) не трогаем.
+ */
+export async function DELETE(request: Request) {
+  const g = guardAuth(request, { limit: 6, windowMs: 60_000, bucket: 'feedback-clear' })
+  if (!g.ok) return g.res
+
+  try {
+    const threads = await db.supportThread.findMany({
+      where: { userId: g.uid, kind: 'feedback' },
+      select: { id: true },
+    })
+    const ids = threads.map((t) => t.id)
+    if (ids.length > 0) {
+      await db.supportMessage.deleteMany({ where: { threadId: { in: ids } } })
+      await db.supportThread.deleteMany({ where: { id: { in: ids } } })
+    }
+    return NextResponse.json({ ok: true, cleared: ids.length })
+  } catch (e) {
+    console.error('[feedback DELETE]', e)
+    return err('feedback failed', 500)
+  }
+}
+
 /** POST /api/feedback { text, topic?, images? } — отправить предложение/баг админу */
 export async function POST(request: Request) {
   const g = guardAuth(request, { limit: 10, windowMs: 60_000, bucket: 'feedback-send' })

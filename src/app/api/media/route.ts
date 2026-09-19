@@ -79,10 +79,12 @@ export async function GET(request: Request) {
       const ext = (raw.split('.').pop() ?? 'jpg').split('?')[0].slice(0, 5).replace(/[^a-z0-9]/gi, '')
       headers.set('Content-Disposition', `attachment; filename="tgswipe-media.${ext || 'jpg'}"`)
     }
-    // Кэш: браузер — сутки, CDN Vercel — 7 дней (медиа Telegram неизменяемо по URL)
+    // Кэш: браузер — 7 дней, CDN Vercel — 30 дней (медиа Telegram неизменяемо
+    // по URL: file_id фиксирован, перезаписей нет) — повторные скроллы и
+    // возвращения в приложение отдают картинки мгновенно из кэша
     headers.set(
       'Cache-Control',
-      'public, max-age=86400, s-maxage=604800, stale-while-revalidate=2592000',
+      'public, max-age=604800, s-maxage=2592000, stale-while-revalidate=2592000, immutable',
     )
 
     return new NextResponse(upstream.body, { status: upstream.status, headers })
