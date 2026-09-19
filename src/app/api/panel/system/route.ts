@@ -12,6 +12,7 @@ import {
   setMaintenance,
   setMaintenanceAllowed,
 } from '@/lib/maintenance'
+import { applyNamedMigration } from '@/lib/ensure-schema'
 
 export const dynamic = 'force-dynamic'
 
@@ -168,40 +169,16 @@ export async function POST(request: Request) {
       }
 
       /*
-       * Идемпотентные миграции для прода (когда prisma db push недоступен из
-       * песочницы). ТОЛЬКО фиксированные строки — никакой внешней SQL-строки;
+       * Идемпотентные миграции для прода. SQL живёт в src/lib/ensure-schema.ts
+       * (единый источник: панель + автоприменение при старте + /api/health).
+       * ТОЛЬКО фиксированные строки — никакой внешней SQL-строки;
        * каждый шаг защищён IF NOT EXISTS / IF NOT NULL-safe.
        */
       case 'applyMigration': {
         const version = str(body.version, 16)
         if (version !== 'v5.15' && version !== 'v5.17') return err('unknown migration')
-        const stmts: string[] =
-          version === 'v5.15'
-            ? [
-                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlag" text`,
-                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "aiFlagAt" timestamptz`,
-                `CREATE INDEX IF NOT EXISTS "Post_aiFlag_idx" ON "Post" ("aiFlag")`,
-              ]
-            : [
-                // v5.17: тарифы Snap Plus/Pro + ИИ-поиск + ИИ-ассистент + CTA + продвижение
-                `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tier" text NOT NULL DEFAULT 'free'`,
-                `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "tierUntil" timestamptz`,
-                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "ctaLabel" text`,
-                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "ctaUrl" text`,
-                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "styleProfile" text`,
-                `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "styleAt" timestamptz`,
-                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "promotedAt" timestamptz`,
-                `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "hotScore" double precision NOT NULL DEFAULT 0`,
-                `ALTER TABLE "PendingPayment" ADD COLUMN IF NOT EXISTS "purpose" text NOT NULL DEFAULT 'balance'`,
-                `CREATE TABLE IF NOT EXISTS "AiSearchLog" ("id" text PRIMARY KEY, "userId" text NOT NULL, "query" text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-                `CREATE INDEX IF NOT EXISTS "AiSearchLog_userId_createdAt_idx" ON "AiSearchLog" ("userId", "createdAt" DESC)`,
-              ]
-        const applied: string[] = []
-        for (const sql of stmts) {
-          await db.$executeRawUnsafe(sql)
-          applied.push(sql)
-        }
-        return NextResponse.json({ ok: true, version, applied: applied.length })
+        const applied = await applyNamedMigration(version)
+        return NextResponse.json({ ok: true, version, applied })
       }
 
       default:
