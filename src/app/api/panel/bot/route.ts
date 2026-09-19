@@ -18,6 +18,7 @@ import {
   setBusinessConnection,
 } from '@/lib/tg-emoji'
 import { getCustomEmojiStickers } from '@/lib/tg-bot'
+import type { BotButton } from '@/lib/tg-buttons'
 
 export const dynamic = 'force-dynamic'
 
@@ -32,7 +33,8 @@ export const dynamic = 'force-dynamic'
  *        слот (обновляет и юникод-эмодзи слота — premiumText ищет по символу).
  * POST { action:'forget', customEmojiId } — удалить запись из захваченных.
  * POST { action:'test', chatId? } — тестовое сообщение с текущими слотами
- *        (по умолчанию — чат владельца 7851246214), в ответе — каким каналом
+ *        (по умолчанию — чат владельца 7851246214) + кнопки с премиум-иконками
+ *        (icon_custom_emoji_id) и цветом (style), в ответе — каким каналом
  *        ушло: business / bot_premium / bot_plain.
  * POST { action:'richprobe' } — проба нового Bot API sendRichMessage (rich HTML:
  *        заголовок + styled-кнопки + кастом-эмодзи ВНУТРИ кнопки); ответ —
@@ -190,9 +192,18 @@ export async function POST(request: Request) {
         (filled.length > 0
           ? filled.slice(0, 8).map((s) => s.emoji).join(' ') + '\n\n'
           : 'Слоты не заполнены — сообщение уйдёт обычными эмодзи.\n\n') +
-        'Если выше видны анимированные эмодзи — премиум-канал работает!'
+        'Анимированные эмодзи выше — премиум-канал текста работает.\n' +
+        'Кнопки ниже — премиум-иконки + цвет (icon_custom_emoji_id, v5.29).'
       const wrapped = await premiumText(preview)
-      const r = await botSendRich(chatId, wrapped, { skipPremiumWrap: true })
+      const r = await botSendRich(chatId, wrapped, {
+        skipPremiumWrap: true,
+        keyboard: [
+          [
+            { label: 'Открыть Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' },
+            { label: 'Наш канал', emoji: '✨', url: 'https://t.me/SnapTeamDev' },
+          ],
+        ] satisfies BotButton[][],
+      })
       if (!r.ok) return err(r.error ?? 'Не удалось отправить тест')
       await logAdmin('bot_test', String(chatId), { via: r.via })
 
@@ -245,9 +256,9 @@ export async function POST(request: Request) {
         ].join('\n'),
         {
           keyboard: [
-            [{ text: '✨ Подписаться на Telegram', url: 'https://t.me/SnapTeamDev' }],
-            [{ text: '📖 Открыть Swipe', url: TME_APP_URL }],
-          ],
+            [{ label: 'Подписаться на Telegram', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
+            [{ label: 'Открыть Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+          ] satisfies BotButton[][],
         },
       )
       if (!r.ok) return err(r.error ?? 'Не удалось отправить фото')

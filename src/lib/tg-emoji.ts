@@ -1,4 +1,10 @@
 import { db } from '@/lib/db'
+import {
+  buildIconKeyboard,
+  buildPlainKeyboard,
+  type BotButton,
+  type InlineKeyboardMarkupTg,
+} from '@/lib/tg-buttons'
 
 /**
  * ПРЕМИУМ-ЭМОДЗИ БОТА (v5.22).
@@ -301,7 +307,9 @@ export type BotSendResult = {
 }
 
 type SendOpts = {
-  keyboard?: Array<Array<{ text: string; url?: string; callback_data?: string }>>
+  /** Кнопки: премиум-иконки (icon_custom_emoji_id из слотов) + цветные стили,
+   *  фолбэк — юникод-эмодзи в тексте (см. tg-buttons.ts) */
+  keyboard?: BotButton[][]
   /** Не оборачивать эмодзи (текст уже готов) */
   skipPremiumWrap?: boolean
 }
@@ -328,7 +336,10 @@ async function tgCall(
 
 /**
  * Отправить сообщение с премиум-эмодзи и автоматическим фолбэком:
- * business → бот (tg-emoji) → бот (plain). Никогда не бросает.
+ * business (plain-кнопки) → бот (tg-emoji + иконки в кнопках) →
+ * бот (plain-текст + иконки) → бот (всё plain).
+ * Иконки кнопок — icon_custom_emoji_id (v5.29), стили — success/primary/danger.
+ * Никогда не бросает.
  */
 export async function botSendRich(
   chatId: number | string,
@@ -336,9 +347,16 @@ export async function botSendRich(
   opts: SendOpts = {},
 ): Promise<BotSendResult> {
   const text = opts.skipPremiumWrap ? htmlText : await premiumText(htmlText)
-  const reply_markup = opts.keyboard ? { inline_keyboard: opts.keyboard } : undefined
+  const rows = opts.keyboard
 
-  // 1) От имени премиум-аккаунта (посредник)
+  let iconMarkup: InlineKeyboardMarkupTg | undefined
+  let plainMarkup: InlineKeyboardMarkupTg | undefined
+  if (rows) {
+    iconMarkup = buildIconKeyboard(rows, await premiumMap()).markup
+    plainMarkup = buildPlainKeyboard(rows)
+  }
+
+  // 1) От имени премиум-аккаунта (посредник) — иконки не поддерживаются, plain
   let businessError: string | undefined
   const bc = await getBusinessConnection().catch(() => null)
   if (bc && bc.isEnabled && bc.id) {
@@ -346,35 +364,47 @@ export async function botSendRich(
       chat_id: chatId,
       text,
       parse_mode: 'HTML',
-      ...(reply_markup ? { reply_markup } : {}),
+      ...(plainMarkup ? { reply_markup: plainMarkup } : {}),
       business_connection_id: bc.id,
     })
     if (r.ok) return { ok: true, via: 'business' }
     businessError = r.description
   }
 
-  // 2) Бот сам с кастом-эмодзи (Fragment-username)
+  // 2) Бот сам: кастом-эмодзи в тексте + премиум-иконки в кнопках
   const r2 = await tgCall('sendMessage', {
     chat_id: chatId,
     text,
     parse_mode: 'HTML',
-    ...(reply_markup ? { reply_markup } : {}),
+    ...(iconMarkup ? { reply_markup: iconMarkup } : {}),
   })
   if (r2.ok) return { ok: true, via: 'bot_premium', businessError }
 
-  // 3) Фолбэк: обычный текст без кастом-эмодзи
+  // 3) Фолбэк текста (юникод), иконки в кнопках ещё пробуем
+  const plainText = stripTgEmoji(htmlText)
   const r3 = await tgCall('sendMessage', {
     chat_id: chatId,
-    text: stripTgEmoji(htmlText),
+    text: plainText,
     parse_mode: 'HTML',
-    ...(reply_markup ? { reply_markup } : {}),
+    ...(iconMarkup ? { reply_markup: iconMarkup } : {}),
   })
-  return r3.ok
+  if (r3.ok) return { ok: true, via: 'bot_plain', businessError, premiumError: r2.description }
+
+  // 4) Клавиатура тоже не прошла (Premium истёк / битый ID слота) — совсем plain
+  const r4 = rows
+    ? await tgCall('sendMessage', {
+        chat_id: chatId,
+        text: plainText,
+        parse_mode: 'HTML',
+        ...(plainMarkup ? { reply_markup: plainMarkup } : {}),
+      })
+    : { ok: false, description: undefined as string | undefined }
+  return r4.ok
     ? { ok: true, via: 'bot_plain', businessError, premiumError: r2.description }
     : {
         ok: false,
         via: 'bot_plain',
-        error: r3.description ?? r2.description,
+        error: r4.description ?? r3.description ?? r2.description,
         businessError,
         premiumError: r2.description,
       }
@@ -429,8 +459,10 @@ export type PhotoSendResult = {
 
 /**
  * Фото с премиум-подписью для /start: файл file_id из кэша → URL → фото с
- * обычной подписью → текстовое сообщение. Картинку Telegram качает один раз
- * и дальше отдаёт по file_id (мгновенно). Никогда не бросает.
+ * обычной подписью → фото с plain-клавиатурой → текстовое сообщение.
+ * Картинку Telegram качает один раз и дальше отдаёт по file_id (мгновенно).
+ * Иконки кнопок — icon_custom_emoji_id (v5.29) с фолбэком на юникод.
+ * Никогда не бросает.
  */
 export async function botSendPhotoRich(
   chatId: number | string,
@@ -438,32 +470,31 @@ export async function botSendPhotoRich(
   opts: SendOpts = {},
 ): Promise<PhotoSendResult> {
   const caption = opts.skipPremiumWrap ? captionHtml : await premiumText(captionHtml)
-  const reply_markup = opts.keyboard ? { inline_keyboard: opts.keyboard } : undefined
+  const plainCaption = opts.skipPremiumWrap ? captionHtml : stripTgEmoji(captionHtml)
+  const rows = opts.keyboard
 
-  // 1) Закэшированный file_id — самый быстрый путь
-  const cached = await getStartPhotoFileId()
-  if (cached) {
-    const r = await tgCallFull('sendPhoto', {
-      chat_id: chatId,
-      photo: cached,
-      caption,
-      parse_mode: 'HTML',
-      ...(reply_markup ? { reply_markup } : {}),
-    })
-    if (r.ok) return { ok: true, via: 'photo' }
+  let iconMarkup: InlineKeyboardMarkupTg | undefined
+  let plainMarkup: InlineKeyboardMarkupTg | undefined
+  let hasIcons = false
+  if (rows) {
+    const built = buildIconKeyboard(rows, await premiumMap())
+    iconMarkup = built.markup
+    hasIcons = built.hasIcons
+    plainMarkup = buildPlainKeyboard(rows)
   }
 
-  // 2) Отправка по URL — Telegram скачает картинку сам
-  const r2 = await tgCallFull('sendPhoto', {
-    chat_id: chatId,
-    photo: startPhotoUrl(),
-    caption,
-    parse_mode: 'HTML',
-    ...(reply_markup ? { reply_markup } : {}),
-  })
-  if (r2.ok) {
+  const sendPhoto = (photo: string, cap: string, markup?: InlineKeyboardMarkupTg) =>
+    tgCallFull('sendPhoto', {
+      chat_id: chatId,
+      photo,
+      caption: cap,
+      parse_mode: 'HTML',
+      ...(markup ? { reply_markup: markup } : {}),
+    })
+
+  const saveFileId = async (r: { result?: unknown }) => {
     // Сохраняем file_id самой большой версии фото для будущих отправок
-    const photo = (r2.result as { photo?: Array<{ file_id?: string }> } | undefined)?.photo
+    const photo = (r.result as { photo?: Array<{ file_id?: string }> } | undefined)?.photo
     const fid = Array.isArray(photo) ? photo[photo.length - 1]?.file_id : undefined
     if (fid) {
       await db.botSetting
@@ -474,20 +505,39 @@ export async function botSendPhotoRich(
         })
         .catch(() => {})
     }
+  }
+
+  // 1) Закэшированный file_id — самый быстрый путь
+  const cached = await getStartPhotoFileId()
+  if (cached) {
+    const r = await sendPhoto(cached, caption, iconMarkup)
+    if (r.ok) return { ok: true, via: 'photo' }
+  }
+
+  // 2) Отправка по URL — Telegram скачает картинку сам
+  const r2 = await sendPhoto(startPhotoUrl(), caption, iconMarkup)
+  if (r2.ok) {
+    await saveFileId(r2)
     return { ok: true, via: 'photo' }
   }
 
-  // 3) Подпись с tg-emoji не прошла (или картинка не скачалась) — фото с чистой подписью
-  const r3 = await tgCallFull('sendPhoto', {
-    chat_id: chatId,
-    photo: startPhotoUrl(),
-    caption: stripTgEmoji(captionHtml),
-    parse_mode: 'HTML',
-    ...(reply_markup ? { reply_markup } : {}),
-  })
-  if (r3.ok) return { ok: true, via: 'photo' }
+  // 3) Подпись с tg-emoji не прошла — фото с чистой подписью (иконки ещё пробуем)
+  const r3 = await sendPhoto(startPhotoUrl(), plainCaption, iconMarkup)
+  if (r3.ok) {
+    await saveFileId(r3)
+    return { ok: true, via: 'photo' }
+  }
 
-  // 4) Совсем без картинки: текстовое сообщение с тем же текстом и кнопками
+  // 4) Иконки не прошли (Premium истёк / битый ID) — фото с plain-клавиатурой
+  if (hasIcons && plainMarkup) {
+    const r4 = await sendPhoto(startPhotoUrl(), plainCaption, plainMarkup)
+    if (r4.ok) {
+      await saveFileId(r4)
+      return { ok: true, via: 'photo' }
+    }
+  }
+
+  // 5) Совсем без картинки: текстовое сообщение с тем же текстом и кнопками
   const t = await botSendRich(chatId, captionHtml, { ...opts, skipPremiumWrap: true })
   return t.ok
     ? { ok: true, via: 'text' }

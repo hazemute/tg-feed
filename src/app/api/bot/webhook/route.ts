@@ -6,9 +6,15 @@ import {
   botSendPhotoRich,
   botSendRich,
   listCapturedEmoji,
+  premiumMap,
   premiumText,
   setBusinessConnection,
 } from '@/lib/tg-emoji'
+import {
+  buildIconKeyboard,
+  buildPlainKeyboard,
+  type BotButton,
+} from '@/lib/tg-buttons'
 import { externalOrigin } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
@@ -221,9 +227,10 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
     ].join('\n'),
     {
       keyboard: [
-        [{ text: '✅ Это я, войти', callback_data: `login:${token}` }],
-        [{ text: '🌐 Открыть Tg Swipe', url: SITE_URL }],
-      ],
+        // Иконка ✅ из слота + зелёная кнопка (style: success, Bot API v5.29)
+        [{ label: 'Это я, войти', emoji: '✅', callback_data: `login:${token}`, style: 'success' }],
+        [{ label: 'Открыть Tg Swipe', emoji: '🌐', url: SITE_URL }],
+      ] satisfies BotButton[][],
     },
   )
 }
@@ -247,9 +254,9 @@ async function handleStart(from: TgFrom | undefined, chatId?: number) {
     ].join('\n'),
     {
       keyboard: [
-        [{ text: '✨ Подписаться на Telegram', url: 'https://t.me/SnapTeamDev' }],
-        [{ text: '📖 Открыть Swipe', url: TME_APP_URL }],
-      ],
+        [{ label: 'Подписаться на Telegram', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
+        [{ label: 'Открыть Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+      ] satisfies BotButton[][],
     },
   )
 }
@@ -364,7 +371,7 @@ async function handleLoginCallback(
   if (!snap) {
     await botCall('answerCallbackQuery', {
       callback_query_id: cbId,
-      text: 'Telegram не передал данные аккаунта. Нажмите кнопку ещё раз.',
+      text: '⚠️ Telegram не передал данные аккаунта — нажмите кнопку ещё раз.',
       show_alert: true,
     })
     return
@@ -391,11 +398,12 @@ async function handleLoginCallback(
 
   await botCall('answerCallbackQuery', {
     callback_query_id: cbId,
-    text: 'Вы вошли в Tg Swipe',
+    text: '🎉 Вы вошли в Tg Swipe!',
     show_alert: false,
   })
 
-  // Убираем кнопку «Войти» (чтобы не жмакали повторно), оставляем ссылку на сайт
+  // Убираем кнопку «Войти» (чтобы не жмакали повторно), оставляем ссылку на сайт.
+  // Иконка 📖 из слота; если edit с иконками отвергнут — повтор без них.
   if (msgChatId && msgId) {
     const doneText = await premiumText(
       [
@@ -406,15 +414,25 @@ async function handleLoginCallback(
         'Аккаунт закреплён за этим Telegram — повторный вход не потребуется. Приятного чтения!',
       ].join('\n'),
     )
-    void botCall('editMessageText', {
+    const feedRows: BotButton[][] = [
+      [{ label: 'Читать ленту', emoji: '📖', url: SITE_URL, style: 'primary' }],
+    ]
+    const base = {
       chat_id: msgChatId,
       message_id: msgId,
       text: doneText,
       parse_mode: 'HTML',
-      reply_markup: {
-        inline_keyboard: [[{ text: '📖 Читать ленту', url: SITE_URL }]],
-      },
+    }
+    const sent = await botCall('editMessageText', {
+      ...base,
+      reply_markup: buildIconKeyboard(feedRows, await premiumMap()).markup,
     })
+    if (!sent) {
+      void botCall('editMessageText', {
+        ...base,
+        reply_markup: buildPlainKeyboard(feedRows),
+      })
+    }
   }
 }
 
@@ -487,8 +505,8 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
       ].join('\n'),
       {
         keyboard: [
-          [{ text: '🚀 Продвинуть канал', url: SITE_URL }],
-        ],
+          [{ label: 'Продвинуть канал', emoji: '🚀', url: SITE_URL, style: 'primary' }],
+        ] satisfies BotButton[][],
       },
     )
   }

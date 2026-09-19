@@ -669,8 +669,9 @@ function formatPostMessage(post: NotifiablePost): string {
   const title = escapeHtml(post.channel.title)
   const text = post.text ? escapeHtml(post.text.slice(0, 350)) + (post.text.length > 350 ? '…' : '') : ''
   const url = post.link || `https://t.me/${post.channel.username}`
-  // Воздух и структура: заголовок канала, пустая строка, текст, пустая строка, ссылка
-  return `<b>${title}</b>${text ? `\n\n${text}` : ''}\n\n<a href="${url}">Читать в Telegram →</a>`
+  // Воздух и структура: заголовок канала, пустая строка, текст, пустая строка, ссылка.
+  // Эмодзи ВНЕ <a>: безопасно для premiumText (обёртка tg-emoji внутри ссылки не гарантирована)
+  return `<b>${title}</b>${text ? `\n\n${text}` : ''}\n\n📖 <a href="${url}">Читать в Telegram</a>`
 }
 
 /**
