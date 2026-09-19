@@ -350,6 +350,7 @@ export type ThemeMode =
   | 'crimson'
   | 'aurora'
   | 'cherry'
+  | 'custom' // v5.28: своя палитра (фон+акцент в localStorage, vars поверх data-theme)
 export type FontScale = 'sm' | 'md' | 'lg'
 
 export type Tab = 'feed' | 'trending' | 'search' | 'mychannel' | 'profile'

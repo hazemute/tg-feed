@@ -793,15 +793,9 @@ export function ProfileTab() {
         onLoaded={setTiersData}
       />
 
-      {/* Оформление профиля (v5.27): полная страница с вкладками Палитры/Фон/Рамка.
+      {/* Оформление профиля: полная страница с вкладками Палитры/Фон/Рамка + кастомные цвета.
           Монтируется только при открытии — локальный стиль инициализируется свежими данными */}
-      {customizerOpen && (
-        <ProfileCustomizer
-          open
-          onClose={() => setCustomizerOpen(false)}
-          onOpenTiers={() => setTiersOpen(true)}
-        />
-      )}
+      {customizerOpen && <ProfileCustomizer open onClose={() => setCustomizerOpen(false)} />}
 
       {/* Вход по Telegram (сайт + гости) */}
       <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />

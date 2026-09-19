@@ -31,7 +31,21 @@ export const metadata: Metadata = {
   icons: { icon: '/logo.svg' },
 }
 
-const themeInit = `try{var t=localStorage.getItem('tgfeed_theme')||'light';var f=localStorage.getItem('tgfeed_font');document.documentElement.dataset.theme=t;document.documentElement.dataset.fontscale=f||'md';var dk=['dark','mono','forest','ocean','midnight','plum','coffee','sunset','emerald','crimson','aurora','cherry'].indexOf(t)>=0;if(t==='auto')dk=!!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',dk);}catch(e){document.documentElement.dataset.theme='light';}`
+const themeInit = `try{var t=localStorage.getItem('tgfeed_theme')||'light';var f=localStorage.getItem('tgfeed_font');var h=document.documentElement;h.dataset.theme=t;h.dataset.fontscale=f||'md';
+/* Кастомная палитра (v5.28): vars из {bg,accent} ДО гидрации — формулы синхронны с src/lib/custom-theme.ts */
+var ct=null;try{ct=JSON.parse(localStorage.getItem('tgfeed_custom_theme')||'null')}catch(e){}
+var isHex=function(s){return typeof s==='string'&&/^#[0-9a-fA-F]{6}$/.test(s)};
+var dk=false;
+if(t==='custom'&&ct&&isHex(ct.bg)&&isHex(ct.accent)){
+  var hx=function(s){return[parseInt(s.slice(1,3),16),parseInt(s.slice(3,5),16),parseInt(s.slice(5,7),16)]};
+  var mix=function(a,b,w){var x=hx(a),y=hx(b);return'#'+x.map(function(v,i){return Math.round(v+(y[i]-v)*w).toString(16).padStart(2,'0')}).join('')};
+  var lum=function(s){var c=hx(s);return(0.2126*c[0]+0.7152*c[1]+0.0722*c[2])/255};
+  var dark=lum(ct.bg)<0.45,fg=dark?'#eef2f6':'#17181c';
+  var v=h.style;v.setProperty('--tg-bg',ct.bg);v.setProperty('--tg-surface',mix(ct.bg,fg,0.07));v.setProperty('--tg-surface2',mix(ct.bg,fg,0.14));v.setProperty('--tg-text',fg);v.setProperty('--tg-text2',mix(fg,ct.bg,0.22));v.setProperty('--tg-hint',mix(fg,ct.bg,0.45));v.setProperty('--tg-link',ct.accent);v.setProperty('--tg-button',ct.accent);v.setProperty('--tg-like',ct.accent);v.setProperty('--tg-sep',dark?'rgba(255,255,255,0.10)':'rgba(0,0,0,0.12)');v.setProperty('--tg-green','#34c759');v.setProperty('--tg-star','#f5a623');
+  dk=dark;
+}else if(['dark','mono','forest','ocean','midnight','plum','coffee','sunset','emerald','crimson','aurora','cherry'].indexOf(t)>=0){dk=true;}
+else if(t==='auto'){dk=!!(window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches);}
+h.classList.toggle('dark',dk);}catch(e){document.documentElement.dataset.theme='light';}`
 
 /*
  * Платформа до гидрации: 'web' (открыли по домену в браузере) или 'telegram'

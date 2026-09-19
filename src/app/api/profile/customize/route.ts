@@ -7,14 +7,14 @@ import { getBg, getFrame, getPalette } from '@/lib/profile-style'
 export const dynamic = 'force-dynamic'
 
 /**
- * PUT /api/profile/customize — сохранить оформление профиля (v5.27).
+ * PUT /api/profile/customize — сохранить оформление профиля (v5.28).
  *
  * body: { palette: string, bg: string, frame: string } — id из каталогов
- * src/lib/profile-style.ts. Валидация состава (getPalette/getBg/getFrame):
- * неизвестный id → 400 unknown style. Замки (анимированные рамки Plus/Pro)
- * проверяются на ФРОНТЕНДЕ через isFrameUnlocked; API принимает только
- * существующие id — «протухший» тариф откатит отображение на замок, но
- * сохранённый id не ломает рендер (фронтенд обязан уважать замок сам).
+ * src/lib/profile-style.ts, ВКЛЮЧАЯ кастомные: палитра custom:#hex:#hex
+ * (градиент обложки из двух цветов) и рамка custom:#hex (кольцо цвета).
+ * Валидация состава (getPalette/getBg/getFrame): неизвестный id / не-hex →
+ * 400 unknown style (CSS-инъекция исключена строгой регуляркой hex).
+ * v5.28: анимаций и замков Plus больше нет — все статические стили доступны всем.
  *
  * Ответ: { ok: true, style: { palette, bg, frame } }
  * Rate limit: 30/мин на пользователя (bucket style).

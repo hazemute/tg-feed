@@ -1,37 +1,37 @@
 'use client'
 
 /**
- * Кастомайзер оформления профиля (v5.27) — ПОЛНАЯ СТРАНИЦА (не шит):
+ * Кастомайзер оформления профиля (v5.28) — ПОЛНАЯ СТРАНИЦА (не шит):
  * вкладки «Палитры / Фон / Рамка», живое мини-превью шапки сверху.
  *
- * Сохранение optimistic: каждое применение сразу пишет style в zustand
- * (превью и шапка обновляются мгновенно), PUT /api/profile/customize уходит
- * fire-and-forget; при ошибке — тост, визуал НЕ откатываем (перезагрузка
- * вернёт серверную правду). Гость: локальный preview-only без запроса.
+ * v5.28: анимаций больше нет (решение владельца) — все стили статичные и
+ * доступны всем; замки и шит тарифов убраны. Добавлены КАСТОМНЫЕ стили:
+ * «Своя палитра» — градиент обложки из двух выбранных цветов, «Своя рамка» —
+ * кольцо любого цвета. Цвета кодируются в id (custom:…) и сохраняются
+ * тем же PUT /api/profile/customize — валидация hex на сервере.
  *
- * Замки: анимированные фоны/рамки — только Plus/Pro (или Telegram Premium),
- * hasPlusAccess/isFrameUnlocked из каталога. Тап по закрытому — не
- * применяется, открывает шит тарифов (onOpenTiers) + тост.
+ * Сохранение optimistic: каждое применение сразу пишет style в zustand
+ * (превью и шапка обновляются мгновенно), PUT уходит fire-and-forget;
+ * при ошибке — тост, визуал НЕ откатываем. Гость: локальное превью.
  */
 
 import { useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeft, Check, Lock, Send } from 'lucide-react'
+import { ArrowLeft, Check, Palette, Send } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic, useBackButton, userAvatarUrl } from '@/lib/tg'
 import {
-  BG_ANIM_CLASS,
   DEFAULT_PROFILE_STYLE,
-  FRAME_ANIM_CLASS,
   PROFILE_BGS,
   PROFILE_FRAMES,
   PROFILE_PALETTES,
+  getCustomPaletteColors,
+  getCustomFrameColor,
   getPalette,
-  hasPlusAccess,
-  isFrameUnlocked,
+  isValidHex6,
 } from '@/lib/profile-style'
 import { Avatar } from '@/components/tg/Avatar'
 import { ProfileHeaderCover } from '@/components/profile/ProfileHeaderCover'
@@ -46,15 +46,7 @@ const TABS: { id: CustomizerTab; label: string }[] = [
   { id: 'frame', label: 'Рамка' },
 ]
 
-export function ProfileCustomizer({
-  open,
-  onClose,
-  onOpenTiers,
-}: {
-  open: boolean
-  onClose: () => void
-  onOpenTiers: () => void
-}) {
+export function ProfileCustomizer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const user = useApp((s) => s.user)
   const setUser = useApp((s) => s.setUser)
   const setLoginOpen = useApp((s) => s.setLoginOpen)
@@ -70,7 +62,6 @@ export function ProfileCustomizer({
 
   if (!user) return null
 
-  const plus = hasPlusAccess(user.tier, user.isPremium)
   const name = user.isGuest
     ? 'Читатель'
     : [user.firstName, user.lastName].filter(Boolean).join(' ') || 'Пользователь'
@@ -87,20 +78,6 @@ export function ProfileCustomizer({
       })
     }
     haptic('light')
-  }
-
-  /** Тап по анимированному фону без Plus: не применяем, зовём шит тарифов */
-  const tapLockedBg = () => {
-    haptic('warning')
-    onOpenTiers()
-    toast('Анимированные фоны — в Tg Swipe Plus', { description: 'Открой плюс, чтобы включить' })
-  }
-
-  /** Тап по анимированной рамке без Plus — аналогично */
-  const tapLockedFrame = () => {
-    haptic('warning')
-    onOpenTiers()
-    toast('Анимированные рамки — в Tg Swipe Plus', { description: 'Открой плюс, чтобы включить' })
   }
 
   return (
@@ -128,7 +105,7 @@ export function ProfileCustomizer({
           <h1 className="truncate text-[18px] font-bold leading-tight text-tg-text">
             Оформление профиля
           </h1>
-          <p className="text-[12.5px] text-tg-hint">Анимации — плюс</p>
+          <p className="text-[12.5px] text-tg-hint">Палитры, узоры, рамки — всё доступно</p>
         </div>
       </header>
 
@@ -196,78 +173,77 @@ export function ProfileCustomizer({
       {/* Сетка карточек (панель скроллится) */}
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-4">
         <div className="mx-auto grid max-w-2xl grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
-          {tab === 'palette' &&
-            PROFILE_PALETTES.map((p) => {
-              const selected = style.palette === p.id
-              return (
-                <CardShell key={p.id} selected={selected} onClick={() => apply({ palette: p.id })} label={`Палитра ${p.name}`}>
-                  <div className="relative aspect-[16/7] w-full overflow-hidden rounded-xl" style={{ background: p.css }}>
-                    {selected && <CheckBadge />}
-                  </div>
-                  <CardName>{p.name}</CardName>
-                </CardShell>
-              )
-            })}
+          {tab === 'palette' && (
+            <>
+              <CustomPaletteCard
+                key="custom-palette"
+                currentId={style.palette}
+                onApply={(id) => apply({ palette: id })}
+              />
+              {PROFILE_PALETTES.map((p) => {
+                const selected = style.palette === p.id
+                return (
+                  <CardShell key={p.id} selected={selected} onClick={() => apply({ palette: p.id })} label={`Палитра ${p.name}`}>
+                    <div className="relative aspect-[16/7] w-full overflow-hidden rounded-xl" style={{ background: p.css }}>
+                      {selected && <CheckBadge />}
+                    </div>
+                    <CardName>{p.name}</CardName>
+                  </CardShell>
+                )
+              })}
+            </>
+          )}
 
           {tab === 'bg' &&
             PROFILE_BGS.map((b) => {
-              const locked = b.animated && !plus
               const selected = style.bg === b.id
               const paletteCss = getPalette(style.palette)?.css
               return (
                 <CardShell
                   key={b.id}
                   selected={selected}
-                  onClick={() => (locked ? tapLockedBg() : apply({ bg: b.id }))}
+                  onClick={() => apply({ bg: b.id })}
                   label={`Фон ${b.name}`}
                 >
                   <div className="relative aspect-[16/7] w-full overflow-hidden rounded-xl" style={{ background: paletteCss }}>
-                    {/* Узор поверх текущей палитры; закрытый анимированный — статично */}
-                    <div
-                      aria-hidden
-                      className={cn('absolute inset-0', b.animated && plus ? BG_ANIM_CLASS[b.id] : undefined)}
-                      style={{ background: b.css }}
-                    />
-                    {locked && <Lock className="absolute right-1.5 top-1.5 h-4 w-4 text-white/85 drop-shadow" aria-label="Только для Plus" />}
+                    {/* Узор поверх текущей палитры */}
+                    <div aria-hidden className="absolute inset-0" style={{ background: b.css }} />
                     {selected && <CheckBadge />}
                   </div>
-                  <CardName>
-                    {b.name}
-                    {locked && <PlusBadge />}
-                  </CardName>
+                  <CardName>{b.name}</CardName>
                 </CardShell>
               )
             })}
 
-          {tab === 'frame' &&
-            PROFILE_FRAMES.map((f) => {
-              const locked = !isFrameUnlocked(f.id, user.tier, user.isPremium)
-              const selected = style.frame === f.id
-              return (
-                <CardShell
-                  key={f.id}
-                  selected={selected}
-                  onClick={() => (locked ? tapLockedFrame() : apply({ frame: f.id }))}
-                  label={`Рамка ${f.name}`}
-                >
-                  <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-tg-surface">
-                    {/* Мини-ава в обёртке-рамке: те же p-[3px] + css + glow + класс анимации */}
-                    <div
-                      className={cn('rounded-full p-[3px]', !locked ? FRAME_ANIM_CLASS[f.id] : undefined)}
-                      style={{ background: f.css, boxShadow: f.glow }}
-                    >
-                      <Avatar name="A" size={56} className="rounded-full" />
+          {tab === 'frame' && (
+            <>
+              <CustomFrameCard
+                key="custom-frame"
+                currentId={style.frame}
+                onApply={(id) => apply({ frame: id })}
+              />
+              {PROFILE_FRAMES.map((f) => {
+                const selected = style.frame === f.id
+                return (
+                  <CardShell
+                    key={f.id}
+                    selected={selected}
+                    onClick={() => apply({ frame: f.id })}
+                    label={`Рамка ${f.name}`}
+                  >
+                    <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-tg-surface">
+                      {/* Мини-ава в обёртке-рамке: те же p-[3px] + css + glow */}
+                      <div className="rounded-full p-[3px]" style={{ background: f.css, boxShadow: f.glow }}>
+                        <Avatar name="A" size={56} className="rounded-full" />
+                      </div>
+                      {selected && <CheckBadge />}
                     </div>
-                    {locked && <Lock className="absolute right-1.5 top-1.5 h-4 w-4 text-tg-hint" aria-label="Только для Plus" />}
-                    {selected && <CheckBadge />}
-                  </div>
-                  <CardName>
-                    {f.name}
-                    {locked && <PlusBadge />}
-                  </CardName>
-                </CardShell>
-              )
-            })}
+                    <CardName>{f.name}</CardName>
+                  </CardShell>
+                )
+              })}
+            </>
+          )}
         </div>
       </div>
 
@@ -285,6 +261,91 @@ export function ProfileCustomizer({
         </button>
       </div>
     </motion.div>
+  )
+}
+
+/* ---------- Кастомные карточки с колорпикерами (v5.28) ---------- */
+
+/** «Своя палитра»: два цвета → градиент обложки. id: custom:#hex:#hex */
+function CustomPaletteCard({ currentId, onApply }: { currentId: string; onApply: (id: string) => void }) {
+  const initial = getCustomPaletteColors(currentId) ?? { c1: '#7f1d1d', c2: '#57534e' }
+  const [c1, setC1] = useState(initial.c1)
+  const [c2, setC2] = useState(initial.c2)
+  const selected = currentId.startsWith('custom:')
+  const css = `linear-gradient(165deg, ${c1} 0%, ${c2} 100%)`
+
+  const push = (a: string, b: string) => {
+    if (isValidHex6(a) && isValidHex6(b)) onApply(`custom:${a}:${b}`)
+  }
+
+  return (
+    <div
+      className={cn(
+        'rounded-2xl p-1.5',
+        selected ? 'ring-2 ring-tg-link' : 'ring-1 ring-tg-sep/60',
+      )}
+    >
+      <div className="relative aspect-[16/7] w-full overflow-hidden rounded-xl" style={{ background: css }}>
+        <Palette className="absolute left-1.5 top-1.5 h-4 w-4 text-white/85 drop-shadow" aria-hidden />
+        {selected && <CheckBadge />}
+      </div>
+      <div className="mt-1.5 flex items-center gap-1.5 px-0.5">
+        <ColorDot value={c1} label="Цвет 1" onChange={(v) => { setC1(v); push(v, c2) }} />
+        <ColorDot value={c2} label="Цвет 2" onChange={(v) => { setC2(v); push(c1, v) }} />
+        <span className="truncate text-[12.5px] font-medium leading-tight text-tg-text">Своя палитра</span>
+      </div>
+    </div>
+  )
+}
+
+/** «Своя рамка»: цвет кольца + мягкое свечение в тон. id: custom:#hex */
+function CustomFrameCard({ currentId, onApply }: { currentId: string; onApply: (id: string) => void }) {
+  const initial = getCustomFrameColor(currentId) ?? '#a855f7'
+  const [color, setColor] = useState(initial)
+  const selected = currentId.startsWith('custom:')
+  const glow = `0 0 12px ${color}73`
+
+  const push = (v: string) => {
+    if (isValidHex6(v)) onApply(`custom:${v}`)
+  }
+
+  return (
+    <div
+      className={cn(
+        'rounded-2xl p-1.5',
+        selected ? 'ring-2 ring-tg-link' : 'ring-1 ring-tg-sep/60',
+      )}
+    >
+      <div className="relative flex aspect-square w-full items-center justify-center overflow-hidden rounded-xl bg-tg-surface">
+        <div className="rounded-full p-[3px]" style={{ background: color, boxShadow: glow }}>
+          <Avatar name="A" size={56} className="rounded-full" />
+        </div>
+        {selected && <CheckBadge />}
+      </div>
+      <div className="mt-1.5 flex items-center gap-1.5 px-0.5">
+        <ColorDot value={color} label="Цвет рамки" onChange={(v) => { setColor(v); push(v) }} />
+        <span className="truncate text-[12.5px] font-medium leading-tight text-tg-text">Своя рамка</span>
+      </div>
+    </div>
+  )
+}
+
+/** Круглый колорпикер 44px (доступный тач-таргет) с нативным input[type=color] */
+function ColorDot({ value, label, onChange }: { value: string; label: string; onChange: (v: string) => void }) {
+  return (
+    <span
+      className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-1 ring-tg-sep"
+      title={label}
+    >
+      <span className="h-7 w-7 rounded-full border border-tg-sep" style={{ background: value }} aria-hidden />
+      <input
+        type="color"
+        value={value}
+        aria-label={label}
+        onChange={(e) => onChange(e.target.value)}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+      />
+    </span>
   )
 }
 
@@ -322,15 +383,6 @@ function CheckBadge() {
   return (
     <span className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-tg-link text-white shadow-sm">
       <Check className="h-3 w-3" strokeWidth={3} aria-hidden />
-    </span>
-  )
-}
-
-/** Крошечный бейдж «PLUS» у закрытых карточек */
-function PlusBadge() {
-  return (
-    <span className="ml-1 inline-flex shrink-0 items-center rounded bg-tg-star/15 px-1 py-px text-[10px] font-bold leading-none text-tg-star">
-      PLUS
     </span>
   )
 }

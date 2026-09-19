@@ -1,17 +1,25 @@
 'use client'
 
-import { ArrowLeft, Check, MonitorSmartphone } from 'lucide-react'
+import { ArrowLeft, Check, MonitorSmartphone, Palette } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
+import { useState } from 'react'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { haptic, useBackButton } from '@/lib/tg'
 import { THEMES, type ThemeGroup } from '@/lib/themes'
 import type { ThemeMode } from '@/lib/types'
+import {
+  DEFAULT_CUSTOM_THEME,
+  loadCustomTheme,
+  saveCustomTheme,
+  type CustomTheme,
+} from '@/lib/custom-theme'
 
 /**
- * Галерея тем оформления: синхронизация с Telegram,
- * светлые и тёмные палитры. Карточка — мини-превью интерфейса (фон, строки,
- * акцент). Выбор сохраняется в localStorage и применяется мгновенно.
+ * Галерея тем оформления (v5.28): «Своя палитра» (фон + акцент на выбор,
+ * остальное выводится автоматически), синхронизация с Telegram, светлые
+ * и тёмные палитры. Карточка — мини-превью интерфейса. Выбор сохраняется
+ * в localStorage и применяется мгновенно.
  */
 
 const GROUP_TITLES: Record<ThemeGroup, string> = {
@@ -82,15 +90,131 @@ function ThemeCard({
   )
 }
 
+/** Круглый колорпикер 44px с нативным input[type=color] */
+function ColorDot({
+  value,
+  label,
+  onChange,
+}: {
+  value: string
+  label: string
+  onChange: (v: string) => void
+}) {
+  return (
+    <span
+      className="relative inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full ring-1 ring-tg-sep"
+      title={label}
+    >
+      <span className="h-7 w-7 rounded-full border border-tg-sep" style={{ background: value }} aria-hidden />
+      <input
+        type="color"
+        value={value}
+        aria-label={label}
+        onChange={(e) => onChange(e.target.value)}
+        className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+      />
+    </span>
+  )
+}
+
+/** Секция «Своя палитра»: фон + акцент → живое превью + мгновенное применение */
+function CustomThemeSection({
+  current,
+  active,
+  onApply,
+}: {
+  current: CustomTheme
+  active: boolean
+  onApply: (t: CustomTheme) => void
+}) {
+  const [draft, setDraft] = useState<CustomTheme>(current)
+  const dark = previewIsDark(draft.bg)
+  const fg = dark ? '#eef2f6' : '#17181c'
+
+  const patch = (p: Partial<CustomTheme>) => {
+    const next = { ...draft, ...p }
+    setDraft(next)
+    onApply(next)
+  }
+
+  return (
+    <section aria-label="Своя палитра" className="pt-4">
+      <h3 className="px-0.5 text-[15px] font-bold text-tg-text">Своя палитра</h3>
+      <p className="mt-0.5 px-0.5 text-[13px] leading-snug text-tg-hint">
+        Выбери фон и акцент — остальное подстроится автоматически
+      </p>
+      <div
+        className={cn(
+          'mt-2.5 overflow-hidden rounded-2xl border-2 transition-colors',
+          active ? 'border-tg-link' : 'border-tg-sep',
+        )}
+      >
+        {/* Живое превью из выбранных цветов */}
+        <div className="h-24 p-2.5" style={{ background: draft.bg }}>
+          <div className="flex items-center gap-1.5">
+            <span className="h-5 w-5 rounded-full" style={{ background: draft.accent }} />
+            <span className="h-2 w-14 rounded-full" style={{ background: fg, opacity: 0.85 }} />
+            <Palette className="ml-auto h-3.5 w-3.5" style={{ color: fg, opacity: 0.7 }} />
+          </div>
+          <div className="mt-2 rounded-lg p-1.5" style={{ background: mixHex(draft.bg, fg, 0.07) }}>
+            <span className="block h-1.5 w-full rounded-full" style={{ background: fg, opacity: 0.5 }} />
+            <span className="mt-1 block h-1.5 w-3/4 rounded-full" style={{ background: fg, opacity: 0.35 }} />
+          </div>
+          <div className="mt-2 flex items-center gap-1.5">
+            <span className="h-4 w-12 rounded-md" style={{ background: draft.accent }} />
+            <span className="h-1.5 w-6 rounded-full" style={{ background: fg, opacity: 0.3 }} />
+          </div>
+        </div>
+        <div className="flex items-center gap-2.5 bg-tg-surface px-3 py-2.5">
+          <ColorDot value={draft.bg} label="Фон" onChange={(v) => patch({ bg: v })} />
+          <ColorDot value={draft.accent} label="Акцент" onChange={(v) => patch({ accent: v })} />
+          <div className="min-w-0 flex-1">
+            <span className="block text-[13.5px] font-semibold text-tg-text">Фон и акцент</span>
+            <span className="block text-[12px] text-tg-hint">Тапни по кругу — откроется выбор цвета</span>
+          </div>
+          {active && (
+            <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-tg-link">
+              <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />
+            </span>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
+function previewIsDark(bg: string): boolean {
+  const n = parseInt(bg.slice(1), 16)
+  const lum =
+    (0.2126 * ((n >> 16) & 255) + 0.7152 * ((n >> 8) & 255) + 0.0722 * (n & 255)) / 255
+  return lum < 0.45
+}
+
+function mixHex(a: string, b: string, w: number): string {
+  const pa = parseInt(a.slice(1), 16)
+  const pb = parseInt(b.slice(1), 16)
+  const r = Math.round(((pa >> 16) & 255) + (((pb >> 16) & 255) - ((pa >> 16) & 255)) * w)
+  const g = Math.round(((pa >> 8) & 255) + (((pb >> 8) & 255) - ((pa >> 8) & 255)) * w)
+  const bl = Math.round((pa & 255) + ((pb & 255) - (pa & 255)) * w)
+  return `#${((1 << 24) | (r << 16) | (g << 8) | bl).toString(16).slice(1)}`
+}
+
 export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => void }) {
   const theme = useApp((s) => s.theme)
   const setTheme = useApp((s) => s.setTheme)
+  // Черновик кастомной палитры: монтируется при каждом открытии галереи
+  const [custom] = useState<CustomTheme>(() => loadCustomTheme() ?? DEFAULT_CUSTOM_THEME)
 
   useBackButton(open, onClose)
 
   const pick = (id: ThemeMode) => {
     setTheme(id)
     haptic('light')
+  }
+
+  const applyCustom = (t: CustomTheme) => {
+    saveCustomTheme(t)
+    setTheme('custom')
   }
 
   const groups: ThemeGroup[] = ['sync', 'light', 'dark']
@@ -127,7 +251,12 @@ export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => 
 
           {/* Сетка тем */}
           <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-28">
-            <p className="pt-3 text-[13.5px] leading-snug text-tg-hint">
+            <CustomThemeSection
+              current={custom}
+              active={theme === 'custom'}
+              onApply={applyCustom}
+            />
+            <p className="pt-4 text-[13.5px] leading-snug text-tg-hint">
               Светлые и тёмные палитры на любой вкус. «Как в Telegram»
               подстраивается под оформление клиента автоматически.
             </p>

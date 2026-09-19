@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Обложка профиля (v5.27): палитра-фон + узор поверх + аватар по центру,
+ * Обложка профиля (v5.28): палитра-фон + узор поверх + аватар по центру,
  * наполовину выступающий из обложки вниз. Общий рендер для шапки вкладки
  * «Профиль» и публичного профиля (UserProfileSheet).
  *
@@ -11,25 +11,15 @@
  *
  * Контракт каталога — src/lib/profile-style.ts: css — значение CSS-шортката
  * `background`; узор — отдельный absolute-слой поверх палитры; рамка —
- * обёртка аватара p-[3px] rounded-full (css + glow); анимационные классы
- * BG_ANIM_CLASS / FRAME_ANIM_CLASS вешаются только при доступе Plus/Pro
- * (у free анимированный узор/рамка рендерятся статично, без класса).
+ * обёртка аватара p-[3px] rounded-full (css + glow). Всё статично
+ * (v5.28: анимации оформления убраны).
  */
 
 import type { ReactNode } from 'react'
 import { Star, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Avatar } from '@/components/tg/Avatar'
-import {
-  BG_ANIM_CLASS,
-  DEFAULT_PROFILE_STYLE,
-  FRAME_ANIM_CLASS,
-  getBg,
-  getFrame,
-  getPalette,
-  hasPlusAccess,
-  isFrameUnlocked,
-} from '@/lib/profile-style'
+import { DEFAULT_PROFILE_STYLE, getBg, getFrame, getPalette } from '@/lib/profile-style'
 
 export function ProfileHeaderCover({
   paletteId,
@@ -65,12 +55,6 @@ export function ProfileHeaderCover({
   const palette = getPalette(paletteId) ?? getPalette(DEFAULT_PROFILE_STYLE.palette)
   const bg = getBg(bgId) ?? getBg(DEFAULT_PROFILE_STYLE.bg)
   const frame = getFrame(frameId) ?? getFrame(DEFAULT_PROFILE_STYLE.frame)
-  const plus = hasPlusAccess(tier, isPremium)
-  // Анимированный узор: класс только если узор анимированный И есть доступ
-  const bgAnimClass = bg?.animated && plus ? BG_ANIM_CLASS[bg.id] : undefined
-  // Рамка: анимационный класс — только для открытой пользователю рамки
-  const frameAnimClass =
-    frame && isFrameUnlocked(frame.id, tier, isPremium) ? FRAME_ANIM_CLASS[frame.id] : undefined
 
   return (
     <div className={cn('relative h-28 sm:h-32', className)}>
@@ -82,14 +66,14 @@ export function ProfileHeaderCover({
         className={cn('absolute inset-0 overflow-hidden rounded-b-2xl', coverClassName)}
         style={{ background: palette?.css }}
       >
-        <div className={cn('absolute inset-0', bgAnimClass)} style={{ background: bg?.css ?? 'none' }} />
+        <div className="absolute inset-0" style={{ background: bg?.css ?? 'none' }} />
       </div>
       {/* Оверлеи вызывающего (кнопки в углах) */}
       {children}
       {/* Аватар по центру: наполовину выступает из обложки вниз (рамка-обёртка) */}
       <div className="absolute bottom-0 left-1/2 z-10 -translate-x-1/2 translate-y-1/2">
         <div
-          className={cn('rounded-full p-[3px]', frameAnimClass)}
+          className="rounded-full p-[3px]"
           style={{ background: frame?.css ?? 'transparent', boxShadow: frame?.glow }}
         >
           <Avatar name={avatarName} src={avatarSrc} size={avatarSize} className="rounded-full" />

@@ -11,6 +11,13 @@ import type { Lang } from '@/lib/i18n'
 import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
 import { isInTelegram } from '@/lib/platform'
 import { THEME_BY_ID, isDarkPalette } from '@/lib/themes'
+import {
+  applyCustomVars,
+  customThemeIsDark,
+  loadCustomTheme,
+  removeCustomVars,
+  type CustomTheme,
+} from '@/lib/custom-theme'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
 import { BottomNav } from '@/components/tg/BottomNav'
 import { Sidebar } from '@/components/tg/Sidebar'
@@ -38,11 +45,13 @@ const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').
 const TABS: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
 
 /*
- * v5.27.1: фактическая «темнота» активной темы — нужна для синхрона класса
+ * v5.28: фактическая «темнота» активной темы — нужна для синхрона класса
  * .dark на <html> (dark:-утилиты shadcn: свитчи, табы, outline-кнопки).
- * auto = как клиент Telegram (в миниаппе) или как система (в браузере).
+ * auto = как клиент Telegram (в миниаппе) или как система (в браузере);
+ * custom = по яркости сохранённого кастомного фона.
  */
-function resolveIsDark(theme: ThemeMode): boolean {
+function resolveIsDark(theme: ThemeMode, custom: CustomTheme | null): boolean {
+  if (theme === 'custom') return custom ? customThemeIsDark(custom) : false
   if (theme !== 'auto') return isDarkPalette(theme)
   if (isInTelegram()) return tg()?.colorScheme === 'dark'
   return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false
@@ -76,16 +85,23 @@ export default function Home() {
     const savedFont = (localStorage.getItem('tgfeed_font') as FontScale | null) ?? null
     const savedLang = localStorage.getItem('tgfeed_lang') as Lang | null
     const inTg = isInTelegram()
-    setTheme(savedTheme ?? (inTg ? 'auto' : 'light'))
+    // custom без сохранённой палитры — откат на светлую (нечего показывать)
+    const valid = savedTheme !== 'custom' || loadCustomTheme() !== null
+    setTheme(savedTheme && valid ? savedTheme : inTg ? 'auto' : 'light')
     setFontScale(savedFont ?? 'md')
     if (savedLang === 'ru' || savedLang === 'en') setLang(savedLang)
 
   }, [])
 
-  // Применение темы к DOM (+ класс .dark для dark:-утилит shadcn, v5.27.1)
+  // Применение темы к DOM: data-theme + класс .dark + инлайн-vars кастомной
+  // палитры (v5.28: theme='custom' перекрашивает --tg-* из localStorage)
   useEffect(() => {
-    document.documentElement.dataset.theme = theme
-    document.documentElement.classList.toggle('dark', resolveIsDark(theme))
+    const html = document.documentElement
+    const custom = theme === 'custom' ? loadCustomTheme() : null
+    if (theme === 'custom' && custom) applyCustomVars(custom, html)
+    else removeCustomVars(html)
+    html.dataset.theme = theme
+    html.classList.toggle('dark', resolveIsDark(theme, custom))
   }, [theme])
 
   /*
@@ -96,10 +112,14 @@ export default function Home() {
    */
   useEffect(() => {
     const apply = () => {
-      const hex =
-        theme === 'auto'
-          ? (tg()?.themeParams?.bg_color ?? '#ffffff')
-          : (THEME_BY_ID.get(theme)?.preview.bg ?? '#ffffff')
+      let hex: string
+      if (theme === 'custom') {
+        hex = loadCustomTheme()?.bg ?? '#ffffff'
+      } else if (theme === 'auto') {
+        hex = tg()?.themeParams?.bg_color ?? '#ffffff'
+      } else {
+        hex = THEME_BY_ID.get(theme)?.preview.bg ?? '#ffffff'
+      }
       applyTgFrame(hex)
       document
         .querySelector('meta[name="theme-color"]')
@@ -110,7 +130,7 @@ export default function Home() {
     // смена темы клиента Telegram/системы — актуально для auto-темы
     const onSys = () => {
       syncTelegramThemeVars()
-      document.documentElement.classList.toggle('dark', resolveIsDark(theme))
+      document.documentElement.classList.toggle('dark', resolveIsDark(theme, theme === 'custom' ? loadCustomTheme() : null))
       apply()
     }
     const mq = window.matchMedia('(prefers-color-scheme: dark)')

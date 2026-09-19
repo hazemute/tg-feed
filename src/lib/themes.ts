@@ -167,5 +167,6 @@ export function isDarkPalette(id: ThemeMode): boolean {
 }
 
 export function themeName(id: ThemeMode): string {
+  if (id === 'custom') return 'Своя палитра'
   return THEME_BY_ID.get(id)?.name ?? 'Светлая'
 }
