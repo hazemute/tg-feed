@@ -206,7 +206,15 @@ export async function setBusinessConnection(v: {
 
 /* ------------------------- вызовы Bot API ------------------------- */
 
-export type BotSendResult = { ok: boolean; via: 'business' | 'bot_premium' | 'bot_plain'; error?: string }
+export type BotSendResult = {
+  ok: boolean
+  via: 'business' | 'bot_premium' | 'bot_plain'
+  error?: string
+  /** Почему не сработал канал business (описание ошибки Telegram), если не сработал */
+  businessError?: string
+  /** Почему не сработала отправка самим ботом с tg-emoji */
+  premiumError?: string
+}
 
 type SendOpts = {
   keyboard?: Array<Array<{ text: string; url?: string; callback_data?: string }>>
@@ -247,6 +255,7 @@ export async function botSendRich(
   const reply_markup = opts.keyboard ? { inline_keyboard: opts.keyboard } : undefined
 
   // 1) От имени премиум-аккаунта (посредник)
+  let businessError: string | undefined
   const bc = await getBusinessConnection().catch(() => null)
   if (bc && bc.isEnabled && bc.id) {
     const r = await tgCall('sendMessage', {
@@ -257,6 +266,7 @@ export async function botSendRich(
       business_connection_id: bc.id,
     })
     if (r.ok) return { ok: true, via: 'business' }
+    businessError = r.description
   }
 
   // 2) Бот сам с кастом-эмодзи (Fragment-username)
@@ -266,7 +276,7 @@ export async function botSendRich(
     parse_mode: 'HTML',
     ...(reply_markup ? { reply_markup } : {}),
   })
-  if (r2.ok) return { ok: true, via: 'bot_premium' }
+  if (r2.ok) return { ok: true, via: 'bot_premium', businessError }
 
   // 3) Фолбэк: обычный текст без кастом-эмодзи
   const r3 = await tgCall('sendMessage', {
@@ -276,6 +286,12 @@ export async function botSendRich(
     ...(reply_markup ? { reply_markup } : {}),
   })
   return r3.ok
-    ? { ok: true, via: 'bot_plain' }
-    : { ok: false, via: 'bot_plain', error: r3.description ?? r2.description }
+    ? { ok: true, via: 'bot_plain', businessError, premiumError: r2.description }
+    : {
+        ok: false,
+        via: 'bot_plain',
+        error: r3.description ?? r2.description,
+        businessError,
+        premiumError: r2.description,
+      }
 }

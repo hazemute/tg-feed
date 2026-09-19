@@ -134,7 +134,39 @@ export async function POST(request: Request) {
       const r = await botSendRich(chatId, wrapped, { skipPremiumWrap: true })
       if (!r.ok) return err(r.error ?? 'Не удалось отправить тест')
       await logAdmin('bot_test', String(chatId), { via: r.via })
-      return NextResponse.json({ ok: true, via: r.via })
+
+      // Диагностика: если бизнес-канал не сработал — сырой запрос БЕЗ клавиатуры,
+      // чтобы увидеть настоящую ошибку Telegram (клавиатура / соединение / чат)
+      let diag: { attempt?: unknown; note?: string } | undefined
+      if (r.via !== 'business') {
+        const bc = await getBusinessConnection().catch(() => null)
+        const token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
+        if (bc?.isEnabled && bc.id && token) {
+          const attempt = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              chat_id: chatId,
+              text: '🔎 Диагностика business-канала Tg Swipe (без клавиатуры)',
+              business_connection_id: bc.id,
+            }),
+            signal: AbortSignal.timeout(10_000),
+          })
+            .then((x) => x.json() as Promise<unknown>)
+            .catch((e) => ({ ok: false, description: String((e as Error)?.message ?? e) }))
+          diag = { attempt, note: 'raw sendMessage через business_connection_id, без reply_markup и parse_mode' }
+        } else {
+          diag = { note: `business-connection неактивен: ${JSON.stringify(bc)}` }
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        via: r.via,
+        businessError: r.businessError ?? null,
+        premiumError: r.premiumError ?? null,
+        diag: diag ?? null,
+      })
     }
 
     /* ---------- Перерегистрация вебхука (вручную) ---------- */
