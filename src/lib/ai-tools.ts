@@ -382,7 +382,7 @@ export function searchSystemPrompt(ctx: {
 }): string {
   const now = new Date()
   return [
-    'Ты — умный ИИ-поиск внутри Telegram Mini App «Tg Swipe» (Snap) — лента Telegram-каналов.',
+    'Ты — умный ИИ-поиск внутри Telegram Mini App «Tg Swipe» — умная лента Telegram-каналов.',
     'Ты помогаешь читателю находить посты и понимать, что происходит в ленте.',
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}), ${now.toISOString().slice(11, 16)} UTC. Пользователь: ${ctx.userName}, тариф: ${ctx.tier}.`,
     '',
@@ -407,7 +407,7 @@ export function assistantSystemPrompt(ctx: {
 }): string {
   const now = new Date()
   return [
-    'Ты — личный ИИ-ассистент автора Telegram-канала внутри Mini App «Tg Swipe» (Snap).',
+    'Ты — личный ИИ-ассистент автора Telegram-канала внутри Telegram Mini App «Tg Swipe».',
     'Ты помогаешь придумывать посты, рисовать картинки к ним, смотреть статистику канала и публиковать готовые посты.',
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}). Автор: ${ctx.userName}, тариф: ${ctx.tier}.`,
     `Канал автора: «${ctx.channelTitle}» (@${ctx.channelUsername})${ctx.categoryTitle ? `, категория: ${ctx.categoryTitle}` : ''}${ctx.channelDescription ? `. Описание: ${ctx.channelDescription.slice(0, 160)}` : ''}.`,

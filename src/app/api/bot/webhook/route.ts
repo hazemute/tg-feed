@@ -105,6 +105,8 @@ function nameOf(from: TgFrom | undefined): string {
 }
 
 const SITE_URL = 'https://tg-swipe.vercel.app'
+/** t.me deep link на мини-апп бота — открывает ленту прямо в Telegram */
+const TME_APP_URL = 'https://t.me/tgswipe_bot/tgswipe'
 
 /* ------------------------------ Обработчики ------------------------------ */
 
@@ -145,22 +147,18 @@ async function handleStart(from: TgFrom | undefined, chatId?: number) {
   await botSendRich(
     chatId,
     [
-      '👋 <b>Привет, ' + name + '!</b>',
+      '👋 <b>Привет, ' + name + '!</b> Это <b>Tg Swipe</b> — умная лента Telegram-каналов.',
       '',
-      'Это <b>Snap</b> — умная лента Telegram-каналов, собранная под тебя.',
+      '⚡ Свайпай по интересам.',
+      '📖 Читай каналы без подписок.',
+      '🚀 Продвигай свой канал в топ.',
       '',
-      '🔥 <b>Что внутри</b>',
-      '⚡ Свайпай посты по интересам — алгоритм подстраивается за секунды',
-      '📖 Читай каналы без подписок на лишние чаты',
-      '⭐ Сохраняй лучшее в закладки и открывай в один тап',
-      '🚀 Продвигай свой канал — на баланс и в топ ленты',
-      '',
-      '✨ Подпишись на наш канал — там новости, обновления и фишки Snap:',
+      '✨ Подпишись на наш канал — там новости, обновления и фишки:',
     ].join('\n'),
     {
       keyboard: [
         [{ text: '✨ Подписаться на Telegram', url: 'https://t.me/SnapTeamDev' }],
-        [{ text: '📖 Открыть Snap', url: SITE_URL }],
+        [{ text: '📖 Открыть Swipe', url: TME_APP_URL }],
       ],
     },
   )
@@ -249,7 +247,7 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
     }
     const credited = await creditPendingPayment(payment.id, sp.telegram_payment_charge_id ?? null)
     if (credited && chatId) {
-      const label = purpose?.startsWith('pro') ? 'Snap Pro' : 'Snap Plus'
+      const label = purpose?.startsWith('pro') ? 'Tg Swipe Pro' : 'Tg Swipe Plus'
       await botCall('sendMessage', {
         chat_id: chatId,
         text: `⭐️ Оплата получена — тариф <b>${label}</b> активирован. Приятного чтения!`,

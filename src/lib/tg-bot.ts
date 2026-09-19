@@ -529,7 +529,7 @@ async function callMethod(method: string, body: Record<string, unknown>): Promis
 }
 
 /**
- * Публикация поста в реальный Telegram-канал (Snap Pro, ИИ-ассистент:
+ * Публикация поста в реальный Telegram-канал (Tg Swipe Pro, ИИ-ассистент:
  * кнопка «Одобрить» → пост улетает в канал админа).
  *
  * Бот должен быть АДМИНИСТРАТОРОМ канала с правом публикации — иначе Bot API

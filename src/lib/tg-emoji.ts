@@ -18,6 +18,37 @@ import { db } from '@/lib/db'
 
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
 
+/** Слоты, которые админ очистил ВРУЧНУЮ — автозаполнение их не трогает */
+const CLEARED_KEY = 'bot_emoji_cleared'
+
+async function getClearedSlots(): Promise<Set<string>> {
+  const row = await db.botSetting.findUnique({ where: { key: CLEARED_KEY } }).catch(() => null)
+  if (!row) return new Set()
+  try {
+    const v = JSON.parse(row.value) as unknown
+    return new Set(Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [])
+  } catch {
+    return new Set()
+  }
+}
+
+/** Админ задал/очистил ID слота: фиксируем, чтобы сид не перезатирал его выбор */
+export async function markSlotCleared(slot: string, cleared: boolean): Promise<void> {
+  try {
+    const cur = await getClearedSlots()
+    if (cleared) cur.add(slot)
+    else cur.delete(slot)
+    const value = JSON.stringify([...cur])
+    await db.botSetting.upsert({
+      where: { key: CLEARED_KEY },
+      create: { key: CLEARED_KEY, value },
+      update: { value },
+    })
+  } catch {
+    // некритично: worst case — сид вернёт дефолт в пустой слот
+  }
+}
+
 export type BotEmojiSlot = {
   slot: string
   emoji: string
@@ -40,7 +71,25 @@ export const DEFAULT_SLOTS: Array<{ slot: string; emoji: string; label: string }
   { slot: 'party', emoji: '🎉', label: 'Праздник' },
   { slot: 'link', emoji: '🔗', label: 'Ссылка' },
   { slot: 'chat', emoji: '💬', label: 'Чат' },
+  { slot: 'thumbsup', emoji: '👍', label: 'Одобрение' },
+  { slot: 'alert', emoji: '⚠️', label: 'Важно/предупреждение' },
 ]
+
+/**
+ * БИБЛИОТЕКА ПРЕМИУМ-ЭМОДЗИ (custom_emoji_id по слотам).
+ * Заполняется в пустые слоты при первом чтении; очистка слота админом
+ * фиксируется в BotSetting ('bot_emoji_cleared') и автозаполнение её не трогает.
+ */
+export const DEFAULT_EMOJI_IDS: Record<string, string> = {
+  wave: '5432110534282155555', // 👋 Waving hand (машущая рука)
+  fire: '5432110534282151111', // 🔥 Fire animated (огонь)
+  star: '5432110534282152222', // ⭐ Blue Star (синяя звезда)
+  rocket: '5433890253483321901', // 🚀 Rocket (ракета)
+  book: '5456140674028019486', // 📖 Notebook (книга/блокнот)
+  zap: '5432110534282154444', // ⚡ Lightning (молния)
+  thumbsup: '5432110534282153333', // 👍 Thumbs up (палец вверх)
+  alert: '5456140674028019123', // ⚠️ Alert (восклицательный знак)
+}
 
 /* ------------------------- кэш слотов ------------------------- */
 
@@ -48,16 +97,33 @@ type SlotMap = Map<string, string> // emoji char → custom_emoji_id
 let slotsCache: { map: SlotMap; exp: number } | null = null
 const SLOTS_TTL_MS = 60_000
 
-async function ensureSeeded(): Promise<void> {
-  // Сидируем недостающие слоты (идемпотентно, one insert per slot)
-  const existing = await db.botEmoji.findMany({ select: { slot: true } })
+export async function ensureSeeded(): Promise<void> {
+  // 1) Сидируем недостающие слоты (идемпотентно), сразу с дефолтными ID
+  const existing = await db.botEmoji.findMany({ select: { slot: true, customEmojiId: true } })
   const have = new Set(existing.map((e) => e.slot))
   const missing = DEFAULT_SLOTS.filter((d) => !have.has(d.slot))
   if (missing.length > 0) {
     await db.botEmoji
       .createMany({
-        data: missing.map((d) => ({ slot: d.slot, emoji: d.emoji, customEmojiId: '' })),
+        data: missing.map((d) => ({
+          slot: d.slot,
+          emoji: d.emoji,
+          customEmojiId: DEFAULT_EMOJI_IDS[d.slot] ?? '',
+        })),
       })
+      .catch(() => {})
+  }
+
+  // 2) Заполняем ПУСТЫЕ custom_emoji_id из библиотеки по умолчанию —
+  //    кроме слотов, которые админ очистил вручную
+  const emptySlots = existing.filter((r) => !r.customEmojiId).map((r) => r.slot)
+  const fillable = Object.entries(DEFAULT_EMOJI_IDS).filter(([slot]) => emptySlots.includes(slot))
+  if (fillable.length === 0) return
+  const cleared = await getClearedSlots().catch(() => new Set<string>())
+  for (const [slot, id] of fillable) {
+    if (cleared.has(slot)) continue
+    await db.botEmoji
+      .updateMany({ where: { slot, customEmojiId: '' }, data: { customEmojiId: id } })
       .catch(() => {})
   }
 }

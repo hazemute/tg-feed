@@ -7,8 +7,10 @@ import { logAdmin } from '@/lib/admin-log'
 import {
   DEFAULT_SLOTS,
   botSendRich,
+  ensureSeeded,
   getBusinessConnection,
   invalidateSlotsCache,
+  markSlotCleared,
   premiumText,
   setBusinessConnection,
 } from '@/lib/tg-emoji'
@@ -52,16 +54,9 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    // Сидируем недостающие слоты
+    // Сидируем недостающие слоты + заполняем пустые ID из библиотеки по умолчанию
+    await ensureSeeded().catch(() => {})
     const rows = await db.botEmoji.findMany({ orderBy: { slot: 'asc' } })
-    const have = new Set(rows.map((r) => r.slot))
-    const missing = DEFAULT_SLOTS.filter((d) => !have.has(d.slot))
-    if (missing.length > 0) {
-      await db.botEmoji
-        .createMany({ data: missing.map((d) => ({ slot: d.slot, emoji: d.emoji, customEmojiId: '' })) })
-        .catch(() => {})
-      rows.push(...missing.map((d) => ({ slot: d.slot, emoji: d.emoji, customEmojiId: '', updatedAt: new Date() })))
-    }
 
     const slots = DEFAULT_SLOTS.map((d) => {
       const row = rows.find((r) => r.slot === d.slot)
@@ -111,6 +106,8 @@ export async function POST(request: Request) {
         create: { slot: d.slot, emoji: def.emoji, customEmojiId: id },
         update: { customEmojiId: id },
       })
+      // Пустое значение = админ ОСОЗНАННО очистил слот — сид его не перезальёт
+      await markSlotCleared(d.slot, id === '')
       invalidateSlotsCache()
       await logAdmin('bot_emoji', d.slot, { customEmojiId: id || null })
       return NextResponse.json({ ok: true })
@@ -122,7 +119,7 @@ export async function POST(request: Request) {
       const slots = await db.botEmoji.findMany()
       const filled = slots.filter((s) => s.customEmojiId)
       const preview =
-        '🧪 <b>Тест премиум-эмодзи Snap</b>\n\n' +
+        '🧪 <b>Тест премиум-эмодзи Tg Swipe</b>\n\n' +
         (filled.length > 0
           ? filled.slice(0, 8).map((s) => s.emoji).join(' ') + '\n\n'
           : 'Слоты не заполнены — сообщение уйдёт обычными эмодзи.\n\n') +
