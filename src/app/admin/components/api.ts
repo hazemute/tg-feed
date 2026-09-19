@@ -119,6 +119,30 @@ export interface ModerationResponse {
   items: ModerationItem[]
 }
 
+export interface CommentModItem {
+  id: string
+  text: string
+  createdAt: string
+  author: {
+    id: string
+    name: string
+    username: string | null
+    avatarUrl: string | null
+    banned: boolean
+  }
+  post: {
+    id: string
+    excerpt: string
+    commentsCount: number
+    channelTitle: string
+    channelUsername: string
+  }
+}
+
+export interface CommentModResponse {
+  items: CommentModItem[]
+}
+
 export interface PanelUser {
   id: string
   username: string

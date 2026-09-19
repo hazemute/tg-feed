@@ -152,6 +152,9 @@ export function FeedView() {
   const [initial, setInitial] = useState(true)
   // Ошибка загрузки ленты (сеть/сервер): показываем отдельный блок вместо «пустого»
   const [loadFailed, setLoadFailed] = useState(false)
+  // Первая загрузка тянется дольше 7с (холодная пересборка индекса на дальнем
+  // Supabase) — честный статус «готовим ленту» вместо мгновенной ошибки
+  const [slowLoad, setSlowLoad] = useState(false)
   const [summaryPost, setSummaryPost] = useState<PostDTO | null>(null)
   const [showTop, setShowTop] = useState(false)
   // Офлайн-режим: сеть недоступна — показываем кэш из IndexedDB
@@ -355,16 +358,22 @@ export function FeedView() {
   }, [loadNotifData])
 
   const load = useCallback(
-    async (p: number, replace: boolean) => {
+    async (p: number, replace: boolean, isRetry = false) => {
       if (!userRef.current || busyRef.current) return
       busyRef.current = true
       setLoading(true)
+      const slowTimer = setTimeout(() => setSlowLoad(true), 7000)
       try {
         // Новый сид перемешивания при каждой полной перезагрузке ленты —
         // «Обновить» показывает ДРУГИЙ порядок постов; внутри сессии порядок стабилен
         if (replace || !seedRef.current) seedRef.current = Math.random().toString(36).slice(2, 12)
+        /* Свой терпеливый таймаут 45с вместо дефолтных 20с из api(): холодная
+           пересборка ленты (дальний Supabase, пустой индекс) занимает ~20-35с —
+           дефолт обрубал ответ ровно в момент, когда сервер почти отвечал.
+           «Бесконечной загрузки» нет: ниже авто-ретрай и статус-пилюля. */
         const data = await api<FeedResponse>(
           `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}`,
+          { signal: AbortSignal.timeout(45_000) },
         )
         /* Дедуп: внутри ответа (ранк может вернуть пост дважды) и против уже
            виденных (окно пагинации съезжает — шедулер вставляет новые посты).
@@ -410,7 +419,17 @@ export function FeedView() {
         // Кэшируем свежую страницу (офлайн-режим)
         if (replace) void saveFeedCache(category, data.items)
         else void saveFeedCache(category, [...itemsRef.current, ...data.items])
-      } catch {
+      } catch (e) {
+        // Таймаут первой страницы (холодный кэш) — ОДИН тихий ретрай, прежде чем
+        // показывать ошибку: сервер почти всегда успевает со второй попытки
+        const isTimeout = (e as { name?: string } | null)?.name === 'TimeoutError'
+        if (p === 0 && replace && !isRetry && isTimeout) {
+          busyRef.current = false
+          clearTimeout(slowTimer)
+          setSlowLoad(true) // прошлый заход уже тянулся 45с — статус сразу
+          await load(0, true, true)
+          return
+        }
         // Нет сети → показываем кэш из IndexedDB с баннером; иная ошибка → тост
         const isOffline = typeof navigator !== 'undefined' && navigator.onLine === false
         if (isOffline) {
@@ -431,6 +450,8 @@ export function FeedView() {
           if (itemsRef.current.length === 0) toast.error('Не удалось загрузить ленту')
         }
       } finally {
+        clearTimeout(slowTimer)
+        setSlowLoad(false)
         busyRef.current = false
         setLoading(false)
         setInitial(false)
@@ -1034,7 +1055,22 @@ export function FeedView() {
         </motion.div>
 
         {initial ? (
-          <FeedSkeleton />
+          <>
+            <FeedSkeleton />
+            {/* Долгая первая загрузка (холодная пересборка индекса): честный
+                статус вместо мгновенной ошибки — лента готовится, уже тянем */}
+            {slowLoad ? (
+              <div className="pointer-events-none sticky bottom-24 z-20 flex justify-center">
+                <span
+                  role="status"
+                  className="flex items-center gap-2 rounded-full bg-tg-surface/95 px-4 py-2 text-[13px] font-medium text-tg-hint shadow-lg shadow-black/10 backdrop-blur"
+                >
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+                  Готовим ленту — это занимает до минуты
+                </span>
+              </div>
+            ) : null}
+          </>
         ) : items.length === 0 && loadFailed ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
             <span className="flex h-14 w-14 items-center justify-center rounded-full bg-tg-surface">
