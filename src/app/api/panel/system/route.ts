@@ -7,10 +7,13 @@ import {
   MAINT_PASS_SET,
   adminUids,
   isMaintenanceOn,
+  isReleased,
   maintenanceAllowList,
   maintenanceDbMirror,
+  releasedDbMirror,
   setMaintenance,
   setMaintenanceAllowed,
+  setReleased,
 } from '@/lib/maintenance'
 import { applyNamedMigration, MIGRATIONS } from '@/lib/ensure-schema'
 
@@ -20,9 +23,12 @@ export const dynamic = 'force-dynamic'
  * Системные настройки панели: режим техработ, белый список допуска,
  * сброс кэша. Доступ: x-admin-key.
  *
- * GET  → { maintenance: {enabled, dbMirror}, admins: string[], allow: {...},
- *          cache: {redis, versions} }
- * POST { action: 'setEnabled', enabled: boolean }
+ * GET  → { release: {released, dbMirror}, maintenance: {enabled, dbMirror},
+ *          admins: string[], allow: {...}, cache: {redis, versions} }
+ * POST { action: 'setReleased', released: boolean } — кнопка «Выпустить» /
+ *    «Вернуть в разработку» (до релиза пользователи видят экран разработки,
+ *    а НЕ техработы — приказ владельца)
+ *    | { action: 'setEnabled', enabled: boolean }
  *    | { action: 'allow', userId } | { action: 'disallow', userId }
  *    | { action: 'allowByTgId', tgId: string } — допустить заранее (создаёт запись)
  *    | { action: 'resetCache' }
@@ -30,7 +36,7 @@ export const dynamic = 'force-dynamic'
  *      (безопасно: только фиксированные строки из supabase/schema.sql)
  */
 
-type Body = { action?: unknown; enabled?: unknown; userId?: unknown; tgId?: unknown; version?: unknown; tier?: unknown; days?: unknown }
+type Body = { action?: unknown; enabled?: unknown; userId?: unknown; tgId?: unknown; version?: unknown; tier?: unknown; days?: unknown; released?: unknown }
 
 function str(v: unknown, max: number): string | null {
   return typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null
@@ -41,9 +47,11 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    const [enabled, dbMirror, allowUids, cacheState] = await Promise.all([
+    const [enabled, dbMirror, released, releaseMirror, allowUids, cacheState] = await Promise.all([
       isMaintenanceOn(),
       maintenanceDbMirror(),
+      isReleased(),
+      releasedDbMirror(),
       maintenanceAllowList(),
       redisHealth(),
     ])
@@ -80,6 +88,7 @@ export async function GET(request: Request) {
     }
 
     return NextResponse.json({
+      release: { released, dbMirror: releaseMirror },
       maintenance: { enabled, dbMirror },
       admins: adminUids(),
       allow: {
@@ -110,6 +119,13 @@ export async function POST(request: Request) {
     const action = str(body.action, 32)
 
     switch (action) {
+      case 'setReleased': {
+        // Кнопка «Выпустить»: открывает миниапп всем. До этого — экран «ещё разрабатываем».
+        const released = body.released === true
+        await setReleased(released)
+        return NextResponse.json({ ok: true, released })
+      }
+
       case 'setEnabled': {
         const enabled = body.enabled === true
         await setMaintenance(enabled)

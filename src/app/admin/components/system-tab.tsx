@@ -9,9 +9,11 @@ import {
   KeyRound,
   Plus,
   RefreshCw,
+  Rocket,
   Search,
   ShieldCheck,
   Trash2,
+  Undo2,
   UserX,
   Wrench,
 } from 'lucide-react'
@@ -44,9 +46,10 @@ import {
 } from './bits'
 
 /**
- * Вкладка «Система»: техработы (вкл/выкл), белый список допуска
- * (поиск по пользователям + добавление по Telegram ID) и кэш
- * (статус Redis, версии семейств, сброс).
+ * Вкладка «Система»: релиз (кнопка «Выпустить» — приказ владельца), техработы
+ * (вкл/выкл, ТОЛЬКО после релиза), белый список допуска (поиск по
+ * пользователям + добавление по Telegram ID) и кэш (статус Redis, версии,
+ * сброс).
  */
 export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMaintenance?: (on: boolean) => void }) {
   const [data, setData] = useState<SystemInfo | null>(null)
@@ -99,13 +102,30 @@ export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMai
   const toggleMaintenance = (enabled: boolean) => {
     if (enabled) {
       const sure = window.confirm(
-        'Включить техработы?\n\nОбычные пользователи увидят экран техработ, API закроется для всех, кроме админов и белого списка.',
+        'Включить техработы?\n\nОбычные пользователи увидят экран техработ, API закроется для всех, кроме админов и белого списка.\n\nНапоминание: до релиза техработы НЕ используем — пользователи и так видят экран «Приложение ещё разрабатывается».',
       )
       if (!sure) return
     }
     void act('maint', () =>
       panelFetch('/api/panel/system', { json: { action: 'setEnabled', enabled } }),
     ).then(() => toast.success(enabled ? 'Техработы включены' : 'Техработы выключены'))
+  }
+
+  const setRelease = (released: boolean) => {
+    if (released) {
+      const sure = window.confirm(
+        'Выпустить приложение?\n\nМиниапп откроется всем пользователям — экран «Приложение ещё разрабатывается» больше показываться не будет.',
+      )
+      if (!sure) return
+    } else {
+      const sure = window.confirm(
+        'Вернуть в разработку?\n\nВсе пользователи снова увидят экран «Приложение ещё разрабатывается» вместо миниаппа.',
+      )
+      if (!sure) return
+    }
+    void act('release', () =>
+      panelFetch('/api/panel/system', { json: { action: 'setReleased', released } }),
+    ).then(() => toast.success(released ? '🚀 Приложение выпущено' : 'Возвращено в разработку'))
   }
 
   const addToAllow = (userId: string) =>
@@ -157,11 +177,82 @@ export function SystemTab({ tick, onSettled, onMaintenance }: TabProps & { onMai
 
   if (!data) return null
 
+  const released = data.release.released
   const maintOn = data.maintenance.enabled
   const allowUsers = data.allow.users
 
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-5">
+      {/* ------------------- Релиз (кнопка «Выпустить») ------------------- */}
+      <Card className={cn(panelCard, !released && 'border-violet-300 ring-1 ring-violet-200')}>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle className="flex items-center gap-2 text-base text-slate-900">
+                <Rocket className={cn('size-4', released ? 'text-emerald-600' : 'text-violet-600')} aria-hidden />
+                Релиз приложения
+              </CardTitle>
+              <CardDescription className="text-xs text-slate-500">
+                Пока не выпущено: пользователи видят экран «Приложение ещё разрабатывается» — оповестим, когда будет релиз
+              </CardDescription>
+            </div>
+            <Badge
+              variant="outline"
+              className={cn(
+                'shrink-0',
+                released
+                  ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                  : 'border-violet-200 bg-violet-50 text-violet-700',
+              )}
+            >
+              {released ? 'Выпущено' : 'В разработке'}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {released ? (
+            <div className="flex flex-wrap items-center gap-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setRelease(false)}
+                disabled={busy === 'release'}
+                className="h-9 gap-1.5 border-slate-200 text-red-600 hover:bg-red-50 hover:text-red-700"
+              >
+                <Undo2 className="size-3.5" aria-hidden /> Вернуть в разработку
+              </Button>
+              <span className="text-xs text-slate-400">
+                Для кратковременных остановок после релиза используйте техработы ниже.
+              </span>
+            </div>
+          ) : (
+            <Button
+              size="lg"
+              onClick={() => setRelease(true)}
+              disabled={busy === 'release'}
+              className="h-12 gap-2 bg-emerald-600 text-base font-bold text-white shadow-sm hover:bg-emerald-700"
+            >
+              {busy === 'release' ? <RefreshCw className="size-4 animate-spin" aria-hidden /> : <Rocket className="size-4" aria-hidden />}
+              Выпустить
+            </Button>
+          )}
+          <div className="flex items-start gap-2 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-relaxed text-slate-600">
+            <ShieldCheck className="mt-0.5 size-3.5 shrink-0 text-slate-400" aria-hidden />
+            <span>
+              {released
+                ? 'Приложение открыто всем. Флаг хранится в базе данных — не слетит при деплоях и перезапусках.'
+                : 'Миниапп закрыт для обычных пользователей: они видят экран разработки, API отвечает 503. Админы (ADMIN_TG_IDS) и белый список допуска заходят свободно. Флаг хранится в БД — не слетит при деплоях.'}
+            </span>
+          </div>
+          {data.release.dbMirror !== released && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-800">
+              <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+              <span>Зеркало релиза в БД расходится с рантаймом — переключите режим ещё раз.</span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* ------------------- Техработы ------------------- */}
       <Card className={cn(panelCard, maintOn && 'border-amber-300 ring-1 ring-amber-200')}>
         <CardHeader>

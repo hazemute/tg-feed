@@ -23,6 +23,8 @@ interface AppState {
   searchSeed: string | null // внешний поисковый запрос (тап по хэштегу в ленте); null — запроса нет
   maintenance: boolean // включён режим техработ и пользователь без допуска
   setMaintenance: (v: boolean) => void
+  prerelease: boolean // приложение ещё НЕ выпущено («Выпустить» не нажато) и пользователь без допуска
+  setPrerelease: (v: boolean) => void
   /* Ленивая регистрация: гость свободно читает/свайпает, но лайк/закладка
    * открывают шторку «привяжи Telegram за 2 секунды» (authGate) и,
    * по кнопке, шит входа (loginOpen) — глобально, чтобы открываться
@@ -100,6 +102,8 @@ export const useApp = create<AppState>((set, get) => ({
   searchSeed: null,
   maintenance: false,
   setMaintenance: (maintenance) => set({ maintenance }),
+  prerelease: false,
+  setPrerelease: (prerelease) => set({ prerelease }),
   authGate: null,
   openAuthGate: (action) => set({ authGate: action }),
   closeAuthGate: () => set({ authGate: null }),

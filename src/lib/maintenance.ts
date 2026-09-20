@@ -30,6 +30,19 @@ export const MAINT_SETTING_KEY = 'maintenance'
 /** Зеркало забаненных пользователей (Edge не видит Postgres — см. шапку) */
 export const BANS_SET = 'sys:banned'
 
+/*
+ * РЕЛИЗ (v5.42, приказ владельца): приложение выпускается ТОЛЬКО явным нажатием
+ * кнопки «Выпустить» в админ-панели. Пока не выпущено — миниапп показывает
+ * экран «Приложение ещё разрабатывается — оповестим, когда будет релиз»,
+ * а НЕ техработы (техработы — режим ПОСТ-релизных остановок). Источник истины —
+ * SystemSetting.key='released' ('1' = выпущено), зеркало Redis sys:released
+ * для Edge-middleware — тот же паттерн, что у техработ (самолечение + heartbeat).
+ * УМОЛЧАНИЕ (нет записи) — НЕ выпущено: безопасность наоборот чревата лишь
+ * тем, что пользователи увидят экран разработки, а не сырой продукт.
+ */
+export const RELEASED_KEY = 'sys:released'
+export const RELEASED_SETTING_KEY = 'released'
+
 const MEM_TTL_MS = 15_000
 /** Явное 'off' из Redis можно кэшировать дольше — включение подхватится ≤60с */
 const MEM_TTL_OFF_MS = 60_000
@@ -41,6 +54,9 @@ let lastIdleSyncAt = 0
 
 let memFlag: { v: boolean; exp: number } | null = null
 let dbMirrorCache: { v: boolean; exp: number } | null = null
+
+let releasedMem: { v: boolean; exp: number } | null = null
+let releasedDbCache: { v: boolean; exp: number } | null = null
 
 // ------------------------- Прямое чтение зеркала БД -------------------------
 
@@ -64,6 +80,118 @@ async function dbMirrorCached(): Promise<boolean> {
 /** Свежее значение из БД (панель показывает расхождение рантайма и зеркала) */
 export async function maintenanceDbMirror(): Promise<boolean> {
   return dbMirrorRead()
+}
+
+// ------------------------------ Флаг релиза ------------------------------
+
+async function releasedDbRead(): Promise<boolean> {
+  try {
+    const row = await db.systemSetting.findUnique({ where: { key: RELEASED_SETTING_KEY } })
+    return row?.value === '1'
+  } catch {
+    return false // БД недоступна — считаем невыпущенным (экран разработки)
+  }
+}
+
+async function releasedDbCached(): Promise<boolean> {
+  if (releasedDbCache && releasedDbCache.exp > Date.now()) return releasedDbCache.v
+  const v = await releasedDbRead()
+  releasedDbCache = { v, exp: Date.now() + DB_MIRROR_TTL_MS }
+  return v
+}
+
+/** Свежее значение зеркала БД (панель показывает расхождение рантайма и зеркала) */
+export async function releasedDbMirror(): Promise<boolean> {
+  return releasedDbRead()
+}
+
+async function redisReleasedValue(): Promise<boolean | null> {
+  if (!redis) return null
+  try {
+    const raw = await redis.get<string | number>(RELEASED_KEY)
+    if (raw === 'on' || raw === '1' || raw === 1) return true
+    if (raw === 'off' || raw === '0' || raw === 0) return false
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Выпущено ли приложение. УМОЛЧАНИЕ — НЕТ (экран «ещё разрабатывается»),
+ * пока владелец не нажал «Выпустить». Redis-ключ при этом может и отсутствовать
+ * (локальная среда без Upstash) — тогда читаем БД.
+ */
+export async function isReleased(): Promise<boolean> {
+  ensureHeartbeat()
+  if (releasedMem && releasedMem.exp > Date.now()) return releasedMem.v
+
+  const explicit = await redisReleasedValue()
+  if (explicit !== null) {
+    // выпущено кэшируем дольше (штатный режим), «разработка» — коротко (релиз подхватится быстро)
+    releasedMem = { v: explicit, exp: Date.now() + (explicit ? MEM_TTL_OFF_MS : MEM_TTL_MS) }
+    return explicit
+  }
+
+  const v = await releasedDbCached()
+  releasedMem = { v, exp: Date.now() + MEM_TTL_MS }
+  if (!v && redis) void healRedisReleased()
+  return v
+}
+
+/** Самолечение: вернуть явное 'off' в Redis, пока идёт разработка */
+async function healRedisReleased(): Promise<void> {
+  if (!redis) return
+  try {
+    await redis.set(RELEASED_KEY, 'off')
+  } catch {
+    /* heartbeat повторит */
+  }
+}
+
+/**
+ * Кнопка «Выпустить» / «Вернуть в разработку»: СНАЧАЛА БД (не слетает при
+ * перезапусках/деплоях), затем Redis-зеркало для Edge.
+ */
+export async function setReleased(released: boolean): Promise<void> {
+  ensureHeartbeat()
+  releasedMem = { v: released, exp: Date.now() + MEM_TTL_MS }
+  releasedDbCache = { v: released, exp: Date.now() + DB_MIRROR_TTL_MS }
+  try {
+    await db.systemSetting.upsert({
+      where: { key: RELEASED_SETTING_KEY },
+      update: { value: released ? '1' : '0' },
+      create: { key: RELEASED_SETTING_KEY, value: released ? '1' : '0' },
+    })
+  } catch {
+    /* БД недоступна — Redis ниже всё равно применит; запись повторится при следующем действии */
+  }
+  if (redis) {
+    try {
+      await redis.set(RELEASED_KEY, released ? 'on' : 'off')
+    } catch {
+      /* восстановится heartbeat'ом */
+    }
+  }
+}
+
+/** Сверка зеркала релиза Redis с БД (heartbeat) */
+async function syncReleasedFromDb(): Promise<void> {
+  if (!redis) return
+  try {
+    const on = await releasedDbCached()
+    const cur = await redisReleasedValue()
+    if (cur !== on) {
+      try {
+        await redis.set(RELEASED_KEY, on ? 'on' : 'off')
+      } catch {
+        /* повтор на следующем тике */
+      }
+      releasedMem = { v: on, exp: Date.now() + MEM_TTL_MS }
+    }
+  } catch {
+    /* тихо */
+  }
 }
 
 // ------------------------------ Флаг техработ ------------------------------
@@ -319,6 +447,7 @@ async function heartbeatTick(): Promise<void> {
       } catch {
         /* повтор на следующем цикле */
       }
+      await syncReleasedFromDb()
       await syncBansFromDb()
       return
     }
@@ -332,6 +461,7 @@ async function heartbeatTick(): Promise<void> {
       }
     }
     await syncAllowSetFromDb()
+    await syncReleasedFromDb()
     await syncBansFromDb()
   } catch {
     /* тихо */

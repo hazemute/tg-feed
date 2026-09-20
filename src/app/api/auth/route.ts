@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { validateInitData } from '@/lib/tg-auth'
 import { signSession } from '@/lib/session'
 import { getBotUsername, getUserPhotoFileId } from '@/lib/tg-bot'
-import { adminUids, isMaintenanceOn } from '@/lib/maintenance'
+import { adminUids, isMaintenanceOn, isReleased } from '@/lib/maintenance'
 import { err, parseJsonArray, readJson } from '@/lib/server'
 import { guardAuth, guardIp } from '@/lib/guard'
 import { effectiveTier } from '@/lib/tiers'
@@ -46,7 +46,8 @@ export async function GET(request: Request) {
   try {
     const user = await db.user.findUnique({ where: { id: g.uid } })
     if (!user) return err('user not found', 401)
-    const maintenanceActive = await isMaintenanceOn()
+    const [maintenanceActive, released] = await Promise.all([isMaintenanceOn(), isReleased()])
+    const canBypass = adminUids().includes(user.id) || user.bypassMaintenance
     const dto: UserDTO = {
       id: user.id,
       username: user.username,
@@ -67,8 +68,9 @@ export async function GET(request: Request) {
       user: dto,
       maintenance: {
         active: maintenanceActive,
-        canBypass: adminUids().includes(user.id) || user.bypassMaintenance,
+        canBypass,
       },
+      release: { released, canBypass },
     })
   } catch (e) {
     console.error('[auth] me failed', e)
@@ -123,10 +125,11 @@ export async function POST(request: Request) {
     // независимое выполняется ОДНИМ батчем параллельно: Bot API + upsert +
     // maintenance идут одновременно, вход быстрее на 1-2 RTT.
     const tgId = Number(id.slice('tg_'.length))
-    const [fileId, botUsername, maintenanceActive, user] = await Promise.all([
+    const [fileId, botUsername, maintenanceActive, released, user] = await Promise.all([
       Number.isInteger(tgId) && tgId > 0 ? getUserPhotoFileId(tgId) : Promise.resolve(null),
       getBotUsername(),
       isMaintenanceOn(),
+      isReleased(),
       db.user.upsert({
         where: { id },
         update: {
@@ -153,6 +156,7 @@ export async function POST(request: Request) {
       active: maintenanceActive,
       canBypass: adminUids().includes(user.id) || user.bypassMaintenance,
     }
+    const release = { released, canBypass: maintenance.canBypass }
 
     const token = signSession(user.id, false)
 
@@ -173,7 +177,7 @@ export async function POST(request: Request) {
       createdAt: user.createdAt.toISOString(),
     }
 
-    return NextResponse.json({ user: dto, token, bot: botUsername ? { username: botUsername } : null, maintenance })
+    return NextResponse.json({ user: dto, token, bot: botUsername ? { username: botUsername } : null, maintenance, release })
   } catch (e) {
     console.error('[auth]', e)
     return err('auth failed', 500)

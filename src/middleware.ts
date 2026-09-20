@@ -34,6 +34,12 @@ import { bearerToken, verifySessionEdge } from '@/lib/session-edge'
  *    sys:maint_pass (проверка JWT в Edge + SISMEMBER).
  *    HTML-страницы не блокируются — клиент показывает экран техработ.
  *
+ * 3) ДО РЕЛИЗА (v5.42): пока владелец не нажал «Выпустить» в админке
+ *    (Redis sys:released='off'), API закрыт так же, но отвечает 503
+ *    {prerelease:true} — клиент показывает экран «Приложение ещё
+ *    разрабатывается», а НЕ техработы (приказ владельца: техработы включать
+ *    нельзя, мы ещё не выпустились).
+ *
  * УСТОЙЧИВОСТЬ: у Edge нет доступа к PostgreSQL, поэтому Node-рантайм
  * сам держит зеркало тёплым — lib/maintenance.ts самолечит ключ sys:maintenance
  * из БД при первом же чтении и сверяет Redis с БД heartbeat'ом раз в 30с
@@ -147,6 +153,7 @@ function clientIp(request: NextRequest): string {
 const MAINT_KEY = 'sys:maintenance'
 const MAINT_PASS_SET = 'sys:maint_pass'
 const BANS_SET = 'sys:banned'
+const RELEASED_KEY = 'sys:released'
 let maintCache: { v: boolean; exp: number } | null = null
 const MAINT_MEM_TTL_MS = 15_000
 /** Явное 'off' кэшируем дольше: штатный режим = минимум GET-ов на Upstash */
@@ -164,6 +171,29 @@ async function maintenanceOn(): Promise<boolean> {
     v = false
   }
   maintCache = { v, exp: Date.now() + (v ? MAINT_MEM_TTL_MS : MAINT_MEM_TTL_OFF_MS) }
+  return v
+}
+
+/**
+ * Флаг релиза (v5.42): 'off' = идёт разработка, владелец ещё не нажал «Выпустить».
+ * Ключа нет / Redis недоступен → считаем выпущенным (fail-open, как у техработ:
+ * доступность важнее строгости — БД-зеркало самолечится в Redis ≤10 мин).
+ * Явное 'off' кэшируем коротко — нажатие «Выпустить» подхватится быстро.
+ */
+let releasedCache: { v: boolean; exp: number } | null = null
+
+async function releasedOn(): Promise<boolean> {
+  if (!redis) return true
+  if (releasedCache && releasedCache.exp > Date.now()) return releasedCache.v
+  let v = true
+  try {
+    const raw = await redis.get<string | number>(RELEASED_KEY)
+    if (raw === 'off' || raw === '0' || raw === 0) v = false
+    // 'on' или ключ вымыт — открыто (самолечение из БД не блокируем)
+  } catch {
+    v = true
+  }
+  releasedCache = { v, exp: Date.now() + (v ? MAINT_MEM_TTL_OFF_MS : MAINT_MEM_TTL_MS) }
   return v
 }
 
@@ -425,6 +455,27 @@ export async function middleware(request: NextRequest) {
       return harden(
         NextResponse.json(
           { error: 'maintenance', maintenance: true },
+          { status: 503, headers: { 'Retry-After': '120' } },
+        ),
+        false,
+      )
+    }
+  }
+
+  // --- До релиза (v5.42): владелец ещё не нажал «Выпустить» → API закрыт для
+  //     всех, кроме админов и допуска. Клиент показывает экран «Приложение ещё
+  //     разрабатывается — оповестим, когда будет релиз» (НЕ техработы).
+  //     /api/auth остаётся свободным — клиент должен узнавать статус. ---
+  if (redis && !maintenanceExempt(path) && !(await releasedOn())) {
+    const session = await verifySessionEdge(bearerToken(request))
+    let allowed = session !== null && adminUids().includes(session.uid)
+    if (!allowed && session) {
+      allowed = await maintenanceAllowed(session.uid)
+    }
+    if (!allowed) {
+      return harden(
+        NextResponse.json(
+          { error: 'prerelease', prerelease: true },
           { status: 503, headers: { 'Retry-After': '120' } },
         ),
         false,

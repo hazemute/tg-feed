@@ -44,35 +44,45 @@ export async function POST(request: Request) {
        * Просмотр остужает пост (-1): «горячим» остаётся то, на что реагируют,
        * а не то, что просто показали каждому.
        */
-      added = await db.$transaction(async (tx) => {
-        let createdIds: string[]
-        try {
-          const rows = await tx.postView.createManyAndReturn({
-            data: newIds.map((postId) => ({ userId, postId })),
-            select: { postId: true },
-          })
-          createdIds = rows.map((r) => r.postId)
-        } catch {
-          // P2002: уникальный конфликт — атомарный INSERT откатился целиком;
-          // создаём построчно (в той же транзакции), пропуская уже созданные
-          createdIds = []
-          for (const postId of newIds) {
-            try {
-              await tx.postView.create({ data: { userId, postId } })
-              createdIds.push(postId)
-            } catch {
-              /* параллельный запрос уже создал просмотр */
+      added = await db.$transaction(
+        async (tx) => {
+          let createdIds: string[]
+          try {
+            const rows = await tx.postView.createManyAndReturn({
+              data: newIds.map((postId) => ({ userId, postId })),
+              select: { postId: true },
+            })
+            createdIds = rows.map((r) => r.postId)
+          } catch {
+            // P2002: уникальный конфликт — атомарный INSERT откатился целиком;
+            // создаём построчно (в той же транзакции), пропуская уже созданные
+            createdIds = []
+            for (const postId of newIds) {
+              try {
+                await tx.postView.create({ data: { userId, postId } })
+                createdIds.push(postId)
+              } catch {
+                /* параллельный запрос уже создал просмотр */
+              }
             }
           }
-        }
-        if (createdIds.length > 0) {
-          await tx.post.updateMany({
-            where: { id: { in: createdIds } },
-            data: { viewsCount: { increment: 1 }, hotScore: { decrement: 1 } },
-          })
-        }
-        return createdIds.length
-      })
+          if (createdIds.length > 0) {
+            await tx.post.updateMany({
+              where: { id: { in: createdIds } },
+              data: { viewsCount: { increment: 1 }, hotScore: { decrement: 1 } },
+            })
+          }
+          return createdIds.length
+        },
+        /*
+         * Таймауты транзакции подняты (v5.42): дефолтных 5с не хватает на
+         * холодном старте/дальней БД — транзакция умирала (P2028) и запрос
+         * отдавал 500 «view failed», просмотры не засчитывались. 15с + 8с
+         * maxWait покрывают и построчный фолбэк на 50 постов, и медленный
+         * Supabase; для батча из 2 запросов это безопасно.
+         */
+        { timeout: 15_000, maxWait: 8_000 },
+      )
     }
 
     return NextResponse.json({ ok: true, added })

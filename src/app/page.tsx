@@ -24,6 +24,7 @@ import { BottomNav } from '@/components/tg/BottomNav'
 import { Sidebar } from '@/components/tg/Sidebar'
 import { Splash } from '@/components/tg/Splash'
 import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
+import { PreReleaseScreen } from '@/components/tg/PreReleaseScreen'
 import { FeedView } from '@/components/feed/FeedView'
 
 /*
@@ -66,8 +67,13 @@ const tabVariants = {
 }
 
 export default function Home() {
-  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, goToTab, setLoginOpen } =
+  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, prerelease, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, setPrerelease, goToTab, setLoginOpen } =
     useApp()
+  /*
+   * Приложение закрыто (техработы или ещё не выпущено) — префетчи не нужны:
+   * API всё равно отвечает 503, не тратим запросы и не сыпем ошибками.
+   */
+  const appOpen = !maintenance && !prerelease
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
   // Сплэш живёт минимум 1.05с — влёт самолётика (0.9с) и подпись (0.35+0.5с)
   // успевают доиграть, а старт ощущается заметно бодрее.
@@ -238,11 +244,16 @@ export default function Home() {
           const me = (await res.json()) as {
             user: UserDTO
             maintenance?: { active: boolean; canBypass: boolean }
+            release?: { released: boolean; canBypass: boolean }
           }
           setUser(me.user)
           const blocked = me.maintenance?.active === true && me.maintenance.canBypass !== true
           setMaintenance(blocked)
-          if (!blocked) {
+          // До релиза («Выпустить» ещё не нажато) — экран разработки, НЕ техработы
+          const pre =
+            !blocked && me.release?.released === false && me.release?.canBypass !== true
+          setPrerelease(pre)
+          if (!blocked && !pre) {
             const cats = await api<{ items: CategoryDTO[] }>('/api/categories')
             setCategories(cats.items)
           }
@@ -259,17 +270,21 @@ export default function Home() {
         user: UserDTO
         token: string
         maintenance?: { active: boolean; canBypass: boolean }
+        release?: { released: boolean; canBypass: boolean }
       }>('/api/auth', {
         method: 'POST',
         body: JSON.stringify({ initData: w?.initData ?? '' }),
       })
       setSessionToken(res.token)
       setUser(res.user)
-      // Техработы: без допуска — переключаемся на экран техработ;
-      // категории не запрашиваем (API закрыт middleware), чтобы не сыпать тостами
+      // Техработы: без допуска — экран техработ; категории не запрашиваем
+      // (API закрыт middleware), чтобы не сыпать тостами
       const blocked = res.maintenance?.active === true && res.maintenance.canBypass !== true
       setMaintenance(blocked)
-      if (blocked) return true
+      // Релиз: пока владелец не нажал «Выпустить» — экран «ещё разрабатывается»
+      const pre = !blocked && res.release?.released === false && res.release?.canBypass !== true
+      setPrerelease(pre)
+      if (blocked || pre) return true
       const cats = await api<{ items: CategoryDTO[] }>('/api/categories')
       setCategories(cats.items)
       return true
@@ -282,7 +297,7 @@ export default function Home() {
       toast.error('Ошибка входа. Обновите страницу.')
       return false
     }
-  }, [setUser, setCategories, setMaintenance])
+  }, [setUser, setCategories, setMaintenance, setPrerelease])
 
   // Любой API вернул 503 {maintenance:true} — весь app на экран техработ
   useEffect(() => {
@@ -291,11 +306,18 @@ export default function Home() {
     return () => window.removeEventListener('tgfeed:maintenance', onMaintenance)
   }, [setMaintenance])
 
+  // Любой API вернул 503 {prerelease:true} — весь app на экран «ещё разрабатываем»
+  useEffect(() => {
+    const onPrerelease = () => setPrerelease(true)
+    window.addEventListener('tgfeed:prerelease', onPrerelease)
+    return () => window.removeEventListener('tgfeed:prerelease', onPrerelease)
+  }, [setPrerelease])
+
   // Прогрев ВСЕХ ключевых экранов ПОСЛЕ первого рендера ленты (v5.34): тренды,
   // каталог каналов и трендовые хэштеги ложатся в клиентский кэш apiCached —
   // вкладки «Тренды» и «Поиск» затем открываются МГНОВЕННО, без сетевого раунд-трипа
   useEffect(() => {
-    if (!authReady || !user) return
+    if (!authReady || !user || !appOpen) return
     const t = window.setTimeout(() => {
       prefetchIdle(
         [
@@ -307,13 +329,13 @@ export default function Home() {
       )
     }, 2_500)
     return () => window.clearTimeout(t)
-  }, [authReady, user])
+  }, [authReady, user, appOpen])
 
   // Прогрев ленивых чанков в простое (после первых кадров ленты): первый тап
   // по посту/вкладке/профилю не ждёт докачку JS. Модули те же, что в dynamic —
   // повторный import() бесплатен, просто кладёт чанк в кэш браузера.
   useEffect(() => {
-    if (!authReady || !user) return
+    if (!authReady || !user || !appOpen) return
     const t = window.setTimeout(() => {
       void import('@/components/feed/PostOverlay')
       void import('@/components/feed/CommentsSheet')
@@ -323,7 +345,7 @@ export default function Home() {
       void import('@/components/tabs/ProfileTab')
     }, 3_500)
     return () => window.clearTimeout(t)
-  }, [authReady, user])
+  }, [authReady, user, appOpen])
 
   useEffect(() => {
     let cancelled = false
@@ -400,6 +422,18 @@ export default function Home() {
         onRetry={async () => {
           await authenticate()
           return !useApp.getState().maintenance
+        }}
+      />
+    )
+  }
+
+  // Не выпущено (владелец ещё не нажал «Выпустить») — экран разработки, НЕ техработы
+  if (prerelease) {
+    return (
+      <PreReleaseScreen
+        onRetry={async () => {
+          await authenticate()
+          return !useApp.getState().prerelease
         }}
       />
     )

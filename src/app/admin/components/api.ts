@@ -296,6 +296,10 @@ export interface LoginResponse {
 }
 
 export interface SystemInfo {
+  release: {
+    released: boolean
+    dbMirror: boolean
+  }
   maintenance: {
     enabled: boolean
     dbMirror: boolean

@@ -92,10 +92,18 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) {
     // Тело читаем ОДИН раз (повторный res.json() бросает «body used already»
     // и терял поле error — тост показывал безликое «HTTP 503»)
-    const data = (await res.json().catch(() => ({}))) as { error?: string; maintenance?: unknown }
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string
+      maintenance?: unknown
+      prerelease?: unknown
+    }
     // Режим техработ: middleware режет API с {maintenance:true} — весь app на экран техработ
     if (data.maintenance === true && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('tgfeed:maintenance'))
+    }
+    // До релиза: экран «Приложение ещё разрабатывается» (НЕ техработы, приказ владельца)
+    if (data.prerelease === true && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tgfeed:prerelease'))
     }
     throw new Error(data.error || `HTTP ${res.status}`)
   }
@@ -196,9 +204,16 @@ export async function apiStream(
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
   }
   if (!res.ok || !res.body) {
-    const data = (await res.json().catch(() => ({}))) as { error?: string; maintenance?: unknown }
+    const data = (await res.json().catch(() => ({}))) as {
+      error?: string
+      maintenance?: unknown
+      prerelease?: unknown
+    }
     if (data.maintenance === true && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('tgfeed:maintenance'))
+    }
+    if (data.prerelease === true && typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('tgfeed:prerelease'))
     }
     throw new Error(data.error || `HTTP ${res.status}`)
   }
