@@ -37,7 +37,7 @@ export async function POST(request: Request) {
 
   try {
     const parsed = createSchema.safeParse(await readJson(request))
-    if (!parsed.success) return err('Сумма: от 100 до 50 000 свайпов')
+    if (!parsed.success) return err('Сумма: от 100 до 50 000 ₽')
     const { swipes } = parsed.data
 
     const rate = await getTonRubRate()

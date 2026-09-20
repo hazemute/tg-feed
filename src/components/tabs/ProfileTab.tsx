@@ -44,6 +44,8 @@ import { THEMES, themeName } from '@/lib/themes'
 import { SupportChat } from '@/components/support/SupportChat'
 import { UserBadges } from '@/components/badges/UserBadges'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
+import { WalletCard } from '@/components/tabs/WalletCard'
+import { TopUpModal } from '@/components/tabs/TopUpModal'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 
@@ -95,6 +97,9 @@ export function ProfileTab() {
   const [tiersData, setTiersData] = useState<TiersResponse | null>(null)
   // Оформление профиля (v5.27): отдельная полная страница кастомайзера
   const [customizerOpen, setCustomizerOpen] = useState(false)
+  // Кошелёк (v5.39): шторка пополнения + счётчик изменений для обновления баланса
+  const [topUpOpen, setTopUpOpen] = useState(false)
+  const [walletReload, setWalletReload] = useState(0)
 
   // Единая точка обновления закладок: пишем и в состояние, и в SWR-кэш модуля —
   // иначе оптимистичные удаления/отметки «прочитано» терялись при уходе с вкладки
@@ -317,6 +322,14 @@ export function ProfileTab() {
         <div className="w-px shrink-0 bg-tg-sep" aria-hidden />
         <StatBlock value={stats?.bookmarks} label="Сохранено" />
       </section>
+
+      {/* Кошелёк (v5.39): рубли + свайпы, вкладки Рубли/Свайпы — только авторизованным */}
+      {!user.isGuest && (
+        <WalletCard
+          reloadSignal={walletReload}
+          onTopUp={() => setTopUpOpen(true)}
+        />
+      )}
 
       {/* Мои категории */}
       <section className="pt-7">
@@ -690,25 +703,29 @@ export function ProfileTab() {
               инкогнито, приоритетная скорость, премиум-эмодзи;</li>
               <li>• Snap Pro — 1 490 ₽/мес или 9 990 ₽/год: всё из Plus,
               ИИ-контентщик, продвижение до 7 постов в неделю, CTA-кнопка;</li>
-              <li>• Реклама: внутренняя валюта «свайпы» (1 свайп = 1 ₽) — CPA-кампании
+              <li>• Реклама: оплата с рублёвого баланса — CPA-кампании
               за уникальных читателей.</li>
             </ul>
           </section>
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
-            <h3 className="text-[14.5px] font-bold text-tg-text">Валюта сервиса — Свайпы</h3>
+            <h3 className="text-[14.5px] font-bold text-tg-text">Валюты сервиса — рубли и свайпы</h3>
             <p className="mt-1.5 text-tg-hint">
-              Внутренняя валюта Tg Swipe — <b className="text-tg-text">свайпы</b>. Курс всегда
-              один: <b className="text-tg-text">1 свайп = 1 рубль</b>. Свайпы тратятся на
-              продвижение Telegram-каналов: рекламные кампании в ленте (оплата за уникальных
-              читателей, CPA) и premium-размещение.
+              На балансе две валюты: <b className="text-tg-text">рубли</b> и{' '}
+              <b className="text-tg-text">свайпы</b>. Курс всегда один:{' '}
+              <b className="text-tg-text">100 свайпов = 1 рубль</b> (1 копейка = 1 свайп).
+              Свайпы — валюта нейросетей: списываются за запросы к ИИ по токенам
+              (как в OpenRouter — за реальные входные и выходные токены).
+              Рублёвый баланс покупает всё в сервисе: свайпы, тарифы Snap,
+              рекламные кампании — без оплаты картой на месте.
             </p>
           </section>
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
             <h3 className="text-[14.5px] font-bold text-tg-text">Пополнение и оплата</h3>
             <p className="mt-1.5 text-tg-hint">
               Баланс пополняется в рублях (банковская карта или СБП), Telegram Stars или криптовалютой
-              TON — от 100 рублей за операцию. Курс TON фиксируется в момент выставления счёта. Свайпы
-              зачисляются на эскроу-счёт автоматически после подтверждения оплаты. Оплата картой
+              TON — от 100 рублей за операцию. Курс TON фиксируется в момент выставления счёта.
+              Деньги зачисляются на рублёвый баланс автоматически после подтверждения оплаты.
+              Оплата картой
               проходит через платёжную форму ЮKassa, открываемую непосредственно на сайте — без
               переадресации на сторонние ресурсы. Подписка Snap действует до конца оплаченного
               периода; возврат средств за неиспользованный период — в порядке, предусмотренном
@@ -718,9 +735,11 @@ export function ProfileTab() {
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
             <h3 className="text-[14.5px] font-bold text-tg-text">Списание и возврат</h3>
             <p className="mt-1.5 text-tg-hint">
-              Списание идёт только за реальные уникальные переходы читателей (эскроу). Не
-              израсходованный баланс остаётся на счёте. Свайпы — внутренняя валюта сервиса и не
-              подлежат обмену обратно на деньги, кроме случаев, предусмотренных законом.
+              Свайпы списываются за запросы к нейросетям — по фактическим токенам OpenRouter
+              (тяжёлые запросы стоят дороже, лёгкие дешевле). Рекламные кампании списывают
+              рубли с баланса за уникальных читателей. Не израсходованный баланс остаётся
+              на счёте. Рубли и свайпы — внутренняя валюта сервиса и не подлежат выводу
+              в деньги, кроме случаев, предусмотренных законом.
             </p>
           </section>
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
@@ -735,6 +754,16 @@ export function ProfileTab() {
 
       {/* Реквизиты и контакты (требования СБ ЮKassa) */}
       <RequisitesSheet open={requisitesOpen} onClose={() => setRequisitesOpen(false)} />
+
+      {/* Пополнение рублёвого баланса (v5.39): после оплаты обновляем кошелёк */}
+      <TopUpModal
+        open={topUpOpen}
+        onClose={() => setTopUpOpen(false)}
+        onReload={() => {
+          setWalletReload((n) => n + 1)
+          reload()
+        }}
+      />
 
       {/* Меню «Информация»: соглашение, конфиденциальность, о приложении */}
       <BottomSheet

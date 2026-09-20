@@ -15,6 +15,29 @@
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
+/* ==================== УЧЁТ ТОКЕНОВ (v5.39) ==================== *
+ * Все вызовы просят у OpenRouter usage: { include: true } — в ответе приходят
+ * prompt_tokens (входные) и completion_tokens (выходные). Наверху по стеку
+ * (lib/wallet.ts) по ним считается стоимость запроса в свайпах — тяжёлые
+ * запросы списывают больше, лёгкие меньше. onUsage-колбэк не обязателен:
+ * если вызывающему коду тарификация не нужна — он его просто не передаёт.
+ */
+export type AiUsage = {
+  promptTokens: number
+  completionTokens: number
+  totalTokens: number
+  model?: string
+}
+
+type ApiUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number }
+
+function usageOf(u: ApiUsage | undefined, model: string): AiUsage | null {
+  const p = Math.max(0, Math.floor(u?.prompt_tokens ?? 0))
+  const c = Math.max(0, Math.floor(u?.completion_tokens ?? 0))
+  if (p === 0 && c === 0) return null // модель не отдала usage
+  return { promptTokens: p, completionTokens: c, totalTokens: u?.total_tokens ?? p + c, model }
+}
+
 /** Приоритет бесплатных моделей: первая живая отвечает. Только :free — ноль рублей.
  *  Переопределяется env OPENROUTER_MODELS.
  *  v5.35: z-ai/glm-5.3-flash:free ИСЧЕЗ из каталога OpenRouter (2026-09) —
@@ -85,20 +108,18 @@ async function postWith429Retry(body: Record<string, unknown>, timeoutMs: number
     'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
     'X-Title': 'Tg Swipe',
   }
-  let res = await fetch(API_URL, {
-    method: 'POST',
-    headers,
-    body: JSON.stringify(body),
-    signal: AbortSignal.timeout(timeoutMs),
-  })
-  if (res.status === 429) {
-    await sleep(1100 + Math.floor(Math.random() * 800))
-    res = await fetch(API_URL, {
+  const send = () =>
+    fetch(API_URL, {
       method: 'POST',
       headers,
-      body: JSON.stringify(body),
+      // usage: { include: true } — OpenRouter возвращает token-usage запроса (v5.39)
+      body: JSON.stringify({ usage: { include: true }, ...body }),
       signal: AbortSignal.timeout(timeoutMs),
     })
+  let res = await send()
+  if (res.status === 429) {
+    await sleep(1100 + Math.floor(Math.random() * 800))
+    res = await send()
   }
   return res
 }
@@ -148,7 +169,14 @@ export function freeModelChain(): string[] {
  */
 export async function chatMessages(
   messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number; models?: string[] },
+  opts?: {
+    maxTokens?: number
+    timeoutMs?: number
+    temperature?: number
+    models?: string[]
+    /** Реальный token-usage успешного вызова (для тарификации в свайпах) */
+    onUsage?: (u: AiUsage) => void
+  },
 ): Promise<string> {
   const key = process.env.OPENROUTER_API_KEY
   if (!key) throw new Error('OPENROUTER_API_KEY не задан')
@@ -168,9 +196,14 @@ export async function chatMessages(
       }
       const data = (await res.json()) as {
         choices?: Array<{ message?: { content?: string } }>
+        usage?: ApiUsage
       }
       const content = data.choices?.[0]?.message?.content?.trim()
-      if (content) return content
+      if (content) {
+        const u = usageOf(data.usage, model)
+        if (u) opts?.onUsage?.(u)
+        return content
+      }
       lastError = new Error(`OpenRouter ${model}: пустой ответ`)
     } catch (e) {
       lastError = e
@@ -200,6 +233,8 @@ export async function chatStream(
     /** Сколько ждать первого токена до переключения на следующую модель */
     firstTokenMs?: number
     onDelta: (chunk: string) => void
+    /** Реальный token-usage успешного вызова (приходит в последнем чанке потока) */
+    onUsage?: (u: AiUsage) => void
   },
 ): Promise<string> {
   const key = process.env.OPENROUTER_API_KEY
@@ -263,9 +298,13 @@ export async function chatStream(
             try {
               const json = JSON.parse(payload) as {
                 choices?: Array<{ delta?: { content?: string } }>
+                usage?: ApiUsage
                 error?: { message?: string }
               }
               if (json.error?.message) throw new Error(json.error.message)
+              // Usage приходит в финальном чанке (choices пустой) — запоминаем
+              const u = usageOf(json.usage, model)
+              if (u) opts?.onUsage?.(u)
               const piece = json.choices?.[0]?.delta?.content ?? ''
               if (piece) {
                 dropFirstTokenTimer()
@@ -301,7 +340,14 @@ export async function chatStream(
 export async function chatSimple(
   system: string,
   user: string,
-  opts?: { maxTokens?: number; timeoutMs?: number; temperature?: number; models?: string[] },
+  opts?: {
+    maxTokens?: number
+    timeoutMs?: number
+    temperature?: number
+    models?: string[]
+    /** Реальный token-usage успешного вызова (для тарификации в свайпах) */
+    onUsage?: (u: AiUsage) => void
+  },
 ): Promise<string> {
   return chatMessages(
     [
@@ -409,6 +455,8 @@ export async function chatWithTools(
     timeoutMs?: number
     temperature?: number
     models?: string[]
+    /** Реальный token-usage успешного вызова (для тарификации в свайпах) */
+    onUsage?: (u: AiUsage) => void
   },
 ): Promise<{ content: string; toolCalls: ToolCall[]; model?: string }> {
   const key = process.env.OPENROUTER_API_KEY
@@ -487,13 +535,24 @@ export async function chatWithTools(
               'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
               'X-Title': 'Tg Swipe',
             },
-            body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages: encode(false) }),
+            body: JSON.stringify({
+              model,
+              max_tokens: maxTokens,
+              temperature,
+              messages: encode(false),
+              usage: { include: true },
+            }),
             signal: AbortSignal.timeout(timeoutMs),
           })
           if (t.ok) {
-            const td = (await t.json()) as { choices?: Array<{ message?: { content?: string } }> }
+            const td = (await t.json()) as {
+              choices?: Array<{ message?: { content?: string } }>
+              usage?: ApiUsage
+            }
             const content = td.choices?.[0]?.message?.content?.trim()
             if (content) {
+              const u = usageOf(td.usage, model)
+              if (u) opts?.onUsage?.(u)
               const parsed = parseToolJsonBlock(content)
               if (parsed) return { content: parsed.rest, toolCalls: [parsed.call], model }
               return { content, toolCalls: [], model }
@@ -505,12 +564,18 @@ export async function chatWithTools(
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
         continue
       }
-      const data = (await res.json()) as { choices?: ToolResponseChoice[] }
+      const data = (await res.json()) as { choices?: ToolResponseChoice[]; usage?: ApiUsage }
       const msg = data.choices?.[0]?.message
       const content = (typeof msg?.content === 'string' ? msg.content.trim() : '') ?? ''
       const toolCalls = normalizeToolCalls(msg?.tool_calls)
-      if (toolCalls.length > 0) return { content, toolCalls, model }
+      if (toolCalls.length > 0) {
+        const u = usageOf(data.usage, model)
+        if (u) opts?.onUsage?.(u)
+        return { content, toolCalls, model }
+      }
       if (content) {
+        const u = usageOf(data.usage, model)
+        if (u) opts?.onUsage?.(u)
         // Текст-фолбэк: некоторые модели отвечают JSON-блоком даже с tools
         const parsed = parseToolJsonBlock(content)
         if (parsed) return { content: parsed.rest, toolCalls: [parsed.call], model }

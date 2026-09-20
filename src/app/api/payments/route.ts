@@ -30,7 +30,7 @@ export async function POST(request: Request) {
 
   try {
     const parsed = createSchema.safeParse(await readJson(request))
-    if (!parsed.success) return err('amountKop: от 100 до 50 000 свайпов')
+    if (!parsed.success) return err('Сумма: от 100 ₽ до 50 000 ₽')
     const { amountKop } = parsed.data
 
     const payment = await db.pendingPayment.create({
@@ -52,7 +52,7 @@ export async function POST(request: Request) {
     /* Платёж в ЮKassa: embedded-подтверждение → виджет НА САЙТЕ (без переадресаций, требование СБ) */
     const yk = await yookassaCreatePayment({
       amountKop,
-      description: 'Пополнение баланса Tg Swipe (свайпы)',
+      description: 'Пополнение рублёвого баланса Tg Swipe',
       paymentId: payment.id,
     })
     if (!yk || !yk.confirmationToken) {

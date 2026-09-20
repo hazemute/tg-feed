@@ -32,14 +32,14 @@ export async function POST(request: Request) {
 
   try {
     const parsed = createSchema.safeParse(await readJson(request))
-    if (!parsed.success) return err('Сумма: от 50 до 2500 свайпов за один платёж Stars')
+    if (!parsed.success) return err('Сумма: от 50 до 2500 ₽ за один платёж Stars')
     const { swipes } = parsed.data
 
     // Платёж создаём ДО ссылки: вебхук найдёт его по payload
     const payment = await db.pendingPayment.create({
       data: {
         userId: g.uid,
-        amountKop: swipes * 100, // 1 свайп = 1 ₽ = 100 коп (учёт в валюте сервиса)
+        amountKop: swipes * 100, // 1 Star = 1 ₽ (учёт в копейках)
         provider: 'stars',
         providerPaymentId: null, // придёт в successful_payment
         confirmationUrl: null,
@@ -52,11 +52,11 @@ export async function POST(request: Request) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        title: `${swipes} свайпов — Tg Swipe`,
-        description: 'Пополнение эскроу-баланса для продвижения канала. 1 свайп = 1 ₽.',
+        title: `${swipes} ₽ — Tg Swipe`,
+        description: 'Пополнение рублёвого баланса Tg Swipe: свайпы для нейросетей, тарифы, продвижение.',
         payload,
         currency: 'XTR',
-        prices: [{ label: `${swipes} свайпов`, amount: swipes }],
+        prices: [{ label: `${swipes} ₽`, amount: swipes }],
       }),
       signal: AbortSignal.timeout(8000),
     })

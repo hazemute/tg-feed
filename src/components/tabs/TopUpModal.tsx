@@ -20,16 +20,15 @@ import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { formatCount } from '@/lib/format'
-import { pluralSwipes } from '@/lib/money'
 import { haptic, openInvoiceUrl, openTelegram } from '@/lib/tg'
-import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
 import { useIsDesktop } from '@/lib/use-desktop'
 
 /**
- * Пополнение баланса свайпов (1 свайп = 1 ₽).
+ * Пополнение РУБЛЁВОГО баланса (v5.38–v5.39): деньги тратятся на всё в сервисе —
+ * свайпы для нейросетей, тарифы Snap, продвижение каналов.
  *
  * СТРАНИЦА ОПЛАТЫ (как в Telegram):
  *  • сверху ТРИ ВКЛАДКИ — Карта / Stars / TON: иконки БЕЗ подложек и рамок
@@ -164,8 +163,7 @@ export function TopUpModal({
 
 function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: () => void }) {
   const t = useT()
-  const lang = useApp((s) => s.lang)
-  const [amount, setAmount] = useState(1000) // свайпы
+  const [amount, setAmount] = useState(1000) // ₽ (пресет по умолчанию)
   const [custom, setCustom] = useState('')
   const [methods, setMethods] = useState<Methods | null>(null)
   const [method, setMethod] = useState<Method>('stars')
@@ -296,7 +294,6 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     },
   ]
 
-  const swipesWord = (n: number) => (lang === 'en' ? t('topup.swipes') : pluralSwipes(n))
   const tonFor = (swipes: number): string | null => {
     if (tonRate === null || tonRate <= 0) return null
     const exact = (swipes / tonRate) * 1.02
@@ -345,7 +342,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
         ? `${t('topup.payStars')} ${formatCount(starsAmount)} ⭐`
         : method === 'ton'
           ? t('topup.payTon')
-          : `${t('topup.payCard')} ${formatCount(effective)} ${swipesWord(effective)}`}
+          : `${t('topup.payCard')} ${formatCount(effective)} ₽`}
     </button>
   )
 
@@ -487,7 +484,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
                 icon: <Star className="h-5 w-5 shrink-0 fill-tg-star text-tg-star" strokeWidth={1.2} />,
                 name: `${formatCount(sw)} ${t('topup.packName')}`,
                 main: formatRub(sw * 100),
-                sub: `${formatCount(sw)} ${swipesWord(sw)}`,
+                sub: null,
                 onSelect: () => {
                   setAmount(sw)
                   setCustom('')
@@ -513,9 +510,9 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
               return packRow(sw, {
                 selected: effective === sw,
                 icon: <TonIcon className="h-5 w-5 shrink-0" />,
-                name: `${formatCount(sw)} ${swipesWord(sw)}`,
+                name: `${formatCount(sw)} ₽`,
                 main: tonEq ? `≈ ${tonEq} TON` : formatRub(sw * 100),
-                sub: formatRub(sw * 100),
+                sub: null,
                 onSelect: () => {
                   setAmount(sw)
                   setCustom('')

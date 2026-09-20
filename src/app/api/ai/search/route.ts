@@ -3,7 +3,15 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
-import { AI_COST_SWIPES, spendSwipes } from '@/lib/wallet'
+import {
+  AI_MTOK_IN_SWP,
+  AI_MTOK_OUT_SWP,
+  estimateAiSwipes,
+  aiCanAfford,
+  chargeAiUsage,
+  swipesForUsage,
+  type AiUsage,
+} from '@/lib/wallet'
 import { cacheGet, cacheSet, shortHash } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import { looksLikeGarbage } from '@/lib/text-clean'
@@ -27,6 +35,10 @@ export const dynamic = 'force-dynamic'
  *
  * ЛИМИТЫ (режим q): free — 3/сутки; Plus/Pro — безлимит. Кэш 10 мин не списывает.
  * ЛИМИТЫ (чат): только авторизованные; free — 3/сутки (aiSearchLog на вопрос).
+ * ТАРИФ (v5.39): сверх бесплатного лимита — ПО ТОКЕНАМ OpenRouter (usage):
+ * цены за 1 млн входных/выходных токенов (lib/wallet.ts, env AI_MTOK_*_SWP);
+ * лёгкий запрос ≈ 2–5 свайпов, тяжёлый — десятки. До вызова — проверка
+ * худшего случая, после — списание по факту в BalanceLog.
  */
 
 const chatSchema = z.object({
@@ -61,9 +73,17 @@ type SearchPayload = {
   answer: string
   /** id постов-источников в порядке значимости */
   sourceIds: string[]
+  /** Реальный token-usage вызова OpenRouter (для тарификации) */
+  usage?: AiUsage | null
 }
 
-async function buildAnswer(q: string, categorySlug: string | undefined): Promise<SearchPayload> {
+async function buildAnswer(
+  q: string,
+  categorySlug: string | undefined,
+  onUsage?: (u: AiUsage) => void,
+): Promise<SearchPayload> {
+  const uc = usageCollector()
+  const reportUsage = onUsage ?? uc.onUsage
   const since = new Date(Date.now() - 3 * 24 * 60 * 60_000)
 
   const candidates = await db.post.findMany({
@@ -128,7 +148,7 @@ async function buildAnswer(q: string, categorySlug: string | undefined): Promise
     '"SOURCES: 1, 4, 7" — номера постов из дайджеста, которые ты использовал (от 1 до 6 штук, самые важные).'
   const user = `Вопрос пользователя: ${q}\n\nДайджест свежих постов:\n${digest}`
 
-  const raw = await chatSimple(system, user, { maxTokens: 320, timeoutMs: 30_000, temperature: 0.2 })
+  const raw = await chatSimple(system, user, { maxTokens: 320, timeoutMs: 30_000, temperature: 0.2, onUsage: reportUsage })
 
   const m = raw.match(/SOURCES\s*:\s*([0-9,\s]+)/i)
   const answer = (m ? raw.slice(0, m.index) : raw).replace(/SOURCES\s*:[\s\S]*/i, '').trim()
@@ -140,7 +160,39 @@ async function buildAnswer(q: string, categorySlug: string | undefined): Promise
   const sourceIds = idxs.slice(0, 6).map((n) => scored[n - 1]!.p.id)
   const finalIds = sourceIds.length > 0 ? sourceIds : scored.slice(0, 3).map((s) => s.p.id)
 
-  return { answer, sourceIds: finalIds }
+  return { answer, sourceIds: finalIds, usage: uc.acc.usage }
+}
+
+/** Копилка token-usage за цепочку вызовов (чат с инструментами делает несколько вызовов) */
+function usageCollector() {
+  const acc: { usage: AiUsage | null } = { usage: null }
+  return {
+    acc,
+    onUsage: (u: AiUsage) => {
+      if (!acc.usage) {
+        acc.usage = { promptTokens: u.promptTokens, completionTokens: u.completionTokens, model: u.model }
+      } else {
+        acc.usage.promptTokens += u.promptTokens
+        acc.usage.completionTokens += u.completionTokens
+        if (u.model) acc.usage.model = u.model
+      }
+    },
+  }
+}
+
+/** Единый 402 «не хватает свайпов» с тарифом по токенам */
+function notEnoughSwipes(tier: string) {
+  return NextResponse.json(
+    {
+      error: 'ai_search_limit',
+      message:
+        `Не хватает свайпов. ИИ тарифицируется по токенам: ${AI_MTOK_IN_SWP} свайпов за 1 млн входных ` +
+        `+ ${AI_MTOK_OUT_SWP} за 1 млн выходных (обычный запрос ≈ 2–10 свайпов). ` +
+        'Пополните баланс — свайпы купятся автоматически (1 ₽ = 100 свайпов).',
+      tier,
+    },
+    { status: 402 },
+  )
 }
 
 /** Посты-источники → PostDTO (валидные, активные каналы) */
@@ -169,22 +221,19 @@ export async function POST(request: Request) {
     /* ================= РЕЖИМ ЧАТА (SSE, инструменты) ================= */
     if (d.action === 'chat') {
       if (!g.uid) return err('Войдите через Telegram', 401)
+      const uid = g.uid
 
       const allowance = await aiSearchAllowance(g.uid)
-      if (!allowance.allowed) {
-        // Лимит free исчерпан — списываем свайпы (100 = 1 ₽), если хватает
-        const charged = await spendSwipes(g.uid, AI_COST_SWIPES, 'ИИ-поиск (чат)')
-        if (!charged) {
-          return NextResponse.json(
-            {
-              error: 'ai_search_limit',
-              message: `Не хватает свайпов: 1 запрос = ${AI_COST_SWIPES} свайпов (1 ₽). Пополните баланс — свайпы купятся автоматически`,
-              tier: allowance.tier,
-            },
-            { status: 402 },
-          )
-        }
+      // Платный режим (лимит исчерпан): проверяем худший случай ДО генерации —
+      // списание будет ПОСЛЕ, по реальному usage OpenRouter
+      const est = estimateAiSwipes(
+        d.messages.reduce((a, m) => a + m.content.length, 0) + 800,
+        1000 * 3, // до трёх вызовов в цепочке (инструменты + финал); по факту — дешевле
+      )
+      if (!allowance.allowed && !(await aiCanAfford(uid, est))) {
+        return notEnoughSwipes(allowance.tier)
       }
+      const paid = !allowance.allowed
 
       const user = await db.user.findUnique({
         where: { id: g.uid },
@@ -206,15 +255,26 @@ export async function POST(request: Request) {
 
       return sseStream(async (send) => {
         let messages = history
+        const collector = usageCollector()
+        // Списать по факту после цепочки (best-effort: ответ уже отдан)
+        const settle = async () => {
+          if (!paid) return
+          await chargeAiUsage(uid, collector.acc.usage, 'ИИ-поиск (чат)', est)
+          if (collector.acc.usage) {
+            send('paid', { swipes: swipesForUsage(collector.acc.usage) })
+          }
+        }
         try {
           for (let i = 0; i < MAX_LOOP; i++) {
             const r = await chatWithTools(messages, schemasFor('search'), {
               maxTokens: 1000,
               timeoutMs: 60_000,
               temperature: 0.3,
+              onUsage: collector.onUsage,
             })
             if (r.toolCalls.length === 0) {
               const sources = await sourcesDTO(sourceIds.slice(0, 6))
+              await settle()
               send('done', { reply: r.content || 'Не нашёл — переформулируйте вопрос.', ...meta, sources })
               return
             }
@@ -248,12 +308,15 @@ export async function POST(request: Request) {
               { role: 'user', content: '[система] Больше не вызывай инструменты — ответь текстом по найденному.' },
             ],
             [],
-            { maxTokens: 800, timeoutMs: 45_000, temperature: 0.3 },
+            { maxTokens: 800, timeoutMs: 45_000, temperature: 0.3, onUsage: collector.onUsage },
           )
           const sources = await sourcesDTO(sourceIds.slice(0, 6))
+          await settle()
           send('done', { reply: tail.content || 'Не нашёл — переформулируйте вопрос.', ...meta, sources })
         } catch (e) {
           console.error('[ai/search chat]', e)
+          // Токены уже потрачены на частичную цепочку — тарифицируем тоже
+          await settle().catch(() => {})
           send('error', { message: openRouterErrorText(e) })
         }
       })
@@ -281,22 +344,16 @@ export async function POST(request: Request) {
     let payload = await cacheGet<SearchPayload>(cacheKey)
     let fromCache = true
     if (!payload) {
-      // Свежая генерация сверх лимита — платно (свайпы), кэш-хит бесплатен
-      if (allowance && !allowance.allowed) {
-        const charged = await spendSwipes(g.uid, AI_COST_SWIPES, 'ИИ-поиск')
-        if (!charged) {
-          return NextResponse.json(
-            {
-              error: 'ai_search_limit',
-              message: `Не хватает свайпов: 1 запрос = ${AI_COST_SWIPES} свайпов (1 ₽). Пополните баланс — свайпы купятся автоматически`,
-              tier: allowance.tier,
-            },
-            { status: 402 },
-          )
-        }
+      // Свежая генерация сверх лимита — платно (по токенам), кэш-хит бесплатен
+      const paid = Boolean(allowance && !allowance.allowed)
+      const est = estimateAiSwipes(q.length + 12_500, 400) // дайджест ~36×320 симв + вопрос
+      if (paid && g.uid && !(await aiCanAfford(g.uid, est))) {
+        return notEnoughSwipes(allowance?.tier ?? 'free')
       }
-      payload = await buildAnswer(q, category)
+      const collector = usageCollector()
+      payload = await buildAnswer(q, category, collector.onUsage)
       fromCache = false
+      if (paid && g.uid) await chargeAiUsage(g.uid, payload.usage ?? null, 'ИИ-поиск', est)
       await cacheSet(cacheKey, payload, 600).catch(() => {})
       if (g.uid) {
         await db.aiSearchLog.create({ data: { userId: g.uid, query: q.slice(0, 300) } }).catch(() => {})

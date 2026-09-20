@@ -1,24 +1,57 @@
 import { db } from '@/lib/db'
 
 /**
- * КОШЕЛЁК (v5.38) — единая двухвалютная система.
+ * КОШЕЛЁК (v5.38–v5.39) — единая двухвалютная система.
  *
  *  • Рубли — balanceKop (копейки), пополняется картой/Stars/TON.
- *    Покупается ВСЁ: тарифы Snap, рекламные кампании, всё что есть в сервисе.
+ *    Покупается ВСЁ: свайпы для нейросетей, тарифы Snap, рекламные кампании.
  *  • Свайпы — swipes. Валюта нейросетей (как кредиты в ChatGPT):
- *    1 запрос к ИИ = 1 свайп. Конвертируются в рубли и обратно.
+ *    списываются за запросы к ИИ ПО ТОКЕНАМ (v5.39), конвертируются в рубли.
  *
  * КУРС: 100 свайпов = 1 ₽ (1 копейка = 1 свайп — конвертация без потерь).
  *
- * Все операции атомарны (транзакции), велись в BalanceLog (журнал кошелька).
+ * Все операции атомарны (транзакции), ведутся в BalanceLog (журнал кошелька).
  * Инвариант: balanceKop ≥ 0, swipes ≥ 0 — условные декременты не дают уйти в минус.
  */
 
 export const SWP_PER_RUB = 100
-/** Стоимость одного запроса к нейросети, в свайпах */
-export const AI_COST_SWIPES = 100 // 1 запрос к ИИ = 100 свайпов = 1 ₽ (константа, легко поменять)
 /** Минимум свайпов для конвертации в рубли */
 export const SWP_CONVERT_MIN = SWP_PER_RUB
+
+/* ===================== ТАРИФИКАЦИЯ ИИ (v5.39): по токенам ===================== *
+ * Решение владельца: свайпы списываются не «за запрос», а по РЕАЛЬНО потраченным
+ * токенам OpenRouter (usage.prompt_tokens / completion_tokens приходят в ответе
+ * каждого вызова) — тяжёлые запросы стоят дороже, лёгкие дешевле.
+ *
+ * Цены — за 1 млн токенов (как в прайсах OpenRouter), настраиваются env:
+ *   AI_MTOK_IN_SWP  — свайпов за 1 млн ВХОДНЫХ токенов (по умолчанию 1 000 = 10 ₽)
+ *   AI_MTOK_OUT_SWP — свайпов за 1 млн ВЫХОДНЫХ токенов (по умолчанию 4 000 = 40 ₽)
+ * Типичный запрос (≈2 000 входных + 300 выходных токенов) ≈ 3 свайпа = 0,03 ₽.
+ */
+function envNum(v: string | undefined, dflt: number): number {
+  const n = Number(v ?? '')
+  return Number.isFinite(n) && n >= 0 ? n : dflt
+}
+export const AI_MTOK_IN_SWP = envNum(process.env.AI_MTOK_IN_SWP, 1000)
+export const AI_MTOK_OUT_SWP = envNum(process.env.AI_MTOK_OUT_SWP, 4000)
+
+export type AiUsage = { promptTokens: number; completionTokens: number; model?: string }
+
+/** Свайпы за реальный usage OpenRouter. Минимум 1 свайп за запрос к ИИ. */
+export function swipesForUsage(u: AiUsage): number {
+  const raw = ((u.promptTokens || 0) * AI_MTOK_IN_SWP + (u.completionTokens || 0) * AI_MTOK_OUT_SWP) / 1_000_000
+  return Math.max(1, Math.ceil(raw))
+}
+
+/** Оценка числа токенов по символам промпта (кириллица ≈ 3.2 символа на токен) */
+export function estimateTokens(chars: number): number {
+  return Math.max(1, Math.ceil(chars / 3.2))
+}
+
+/** Худший случай ДО вызова: вход по оценке символов + максимум выхода (max_tokens) */
+export function estimateAiSwipes(inputChars: number, maxTokens: number): number {
+  return swipesForUsage({ promptTokens: estimateTokens(inputChars), completionTokens: maxTokens })
+}
 
 export type Wallet = { balanceKop: number; swipes: number }
 
@@ -179,4 +212,41 @@ export async function walletHistory(userId: string, take = 20) {
     take,
     select: { id: true, kind: true, currency: true, amount: true, note: true, createdAt: true },
   })
+}
+
+/* ==================== ПЛАТНЫЕ ВЫЗОВЫ ИИ (v5.39) ==================== *
+ * Схема «проверка до → списание по факту после»:
+ *  1) до платного вызова — aiCanAfford по ХУДШЕМУ случаю (оценка входа +
+ *     max_tokens): не хватает свайпов И рублей → отказ до генерации;
+ *  2) после вызова — chargeAiUsage по РЕАЛЬНОМУ usage OpenRouter
+ *     (spendSwipes сам докупит недостающее с рублёвого баланса).
+ * Если модель не отдала usage (редко) — списываем fallback-оценку.
+ */
+
+/** Хватает ли на кошельке на платный вызов ИИ (свайпы + авто-покупка с рублей 1:1) */
+export async function aiCanAfford(userId: string, estSwipes: number): Promise<boolean> {
+  if (estSwipes <= 0) return true
+  const u = await db.user.findUnique({
+    where: { id: userId },
+    select: { swipes: true, balanceKop: true },
+  })
+  if (!u) return false
+  return u.swipes + u.balanceKop >= estSwipes // 1 копейка = 1 свайп
+}
+
+/**
+ * Списать свайпы по фактическому token-usage OpenRouter.
+ * best-effort: false (баланса нет) вызывающий код игнорирует — ответ уже отдан.
+ */
+export async function chargeAiUsage(
+  userId: string,
+  usage: AiUsage | null,
+  feature: string,
+  fallbackSwipes = 1,
+): Promise<boolean> {
+  const cost = usage ? swipesForUsage(usage) : Math.max(1, fallbackSwipes)
+  const note = usage
+    ? `${feature}: ${usage.promptTokens} вх. + ${usage.completionTokens} вых. токенов${usage.model ? ` · ${usage.model}` : ''}`
+    : `${feature}: расчёт по оценке (usage не получен)`
+  return spendSwipes(userId, cost, note)
 }

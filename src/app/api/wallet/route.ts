@@ -4,7 +4,8 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import {
-  AI_COST_SWIPES,
+  AI_MTOK_IN_SWP,
+  AI_MTOK_OUT_SWP,
   SWP_PER_RUB,
   SWP_CONVERT_MIN,
   convertRubToSwp,
@@ -15,7 +16,7 @@ import {
 export const dynamic = 'force-dynamic'
 
 /**
- * GET /api/wallet — кошелёк: рубли (balanceKop), свайпы, курс, журнал (20 последних).
+ * GET /api/wallet — кошелёк: рубли (balanceKop), свайпы, курс, тариф ИИ, журнал (20 последних).
  * POST /api/wallet { action: 'swp2rub' | 'rub2swp', amount } — конвертация.
  *   • swp2rub: amount в свайпах (≥100) → рубли по курсу 100 свайпов = 1 ₽,
  *     остаток < 100 остаётся свайпами;
@@ -49,7 +50,8 @@ export async function GET(request: Request) {
       balanceKop: user.balanceKop,
       swipes: user.swipes,
       swpPerRub: SWP_PER_RUB,
-      aiCostSwipes: AI_COST_SWIPES,
+      // Тариф нейросетей (v5.39): списание по токенам OpenRouter за 1 млн in/out
+      aiPricing: { inSwpPerMtok: AI_MTOK_IN_SWP, outSwpPerMtok: AI_MTOK_OUT_SWP },
       swpConvertMin: SWP_CONVERT_MIN,
       history,
     })

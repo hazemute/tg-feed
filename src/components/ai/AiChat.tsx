@@ -10,7 +10,7 @@ import { api, getSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic, useBackButton } from '@/lib/tg'
 import { stripMarkdown } from '@/lib/markdown'
-import { timeAgo, timeAgoRu } from '@/lib/format'
+import { timeAgo, timeAgoRu, pluralRu } from '@/lib/format'
 import type { PostDTO } from '@/lib/types'
 import { RichText } from '@/components/feed/RichText'
 import { Avatar } from '@/components/tg/Avatar'
@@ -315,6 +315,10 @@ export function AiChat({
       const onEvent = (type: string, data: Record<string, unknown>) => {
         if (type === 'status') {
           setStatus((data.label as string) ?? null)
+        } else if (type === 'paid') {
+          // v5.39: тарификация по токенам — сервер вернул фактическую списанную сумму
+          const sw = Number(data.swipes ?? 0)
+          if (sw > 0) toast(`−${sw} ${pluralRu(sw, 'свайп', 'свайпа', 'свайпов')} за запрос к ИИ`, { icon: '⚡' })
         } else if (type === 'done') {
           const stepsRaw = (data.steps as Array<{ label: string; ok: boolean }> | undefined) ?? []
           const botMsg: AiMsg = {
