@@ -1138,8 +1138,10 @@ function RequisitesSheet({ open, onClose }: { open: boolean; onClose: () => void
   }, [open])
 
   const rows: Array<{ label: string; value: string }> = [
-    { label: 'Исполнитель', value: legal?.name || 'Индивидуальный предприниматель' },
-    { label: 'ИНН', value: legal?.inn || '—' },
+    // v5.33.1: реквизиты указаны владельцем — дефолт и в API (/api/tiers →
+    // legalInfo), и здесь на случай, если запрос не ответил
+    { label: 'Исполнитель', value: legal?.name || 'ИП Муравьев Константин Алексеевич' },
+    { label: 'ИНН', value: legal?.inn || '713304603876' },
     { label: 'Сервис', value: 'Tg Swipe — умная лента Telegram-каналов' },
     { label: 'Поддержка', value: legal?.email || 'чат в приложении: Профиль → Обратная связь' },
   ]

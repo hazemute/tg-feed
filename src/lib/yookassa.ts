@@ -16,11 +16,22 @@ export function yookassaEnabled(): boolean {
   return Boolean(process.env.YOOKASSA_SHOP_ID?.trim() && process.env.YOOKASSA_SECRET_KEY?.trim())
 }
 
-/** Реквизиты исполнителя для документов/СБ (env, заполняет владелец) */
+/**
+ * Реквизиты исполнителя для документов/СБ ЮKassa.
+ * v5.33.1: владелец указал данные — теперь они ДЕФОЛТ в коде (раньше были
+ * только env LEGAL_NAME/LEGAL_INN, в проде не заданы → в «Реквизитах и
+ * контактах» красовались «Индивидуальный предприниматель» и «—», что СБ
+ * ЮKassa не принимает). Env по-прежнему перекрывает дефолт.
+ */
+const DEFAULT_LEGAL = {
+  name: 'ИП Муравьев Константин Алексеевич',
+  inn: '713304603876',
+} as const
+
 export function legalInfo(): { name: string; inn: string; email: string } {
   return {
-    name: process.env.LEGAL_NAME?.trim() ?? '',
-    inn: process.env.LEGAL_INN?.trim() ?? '',
+    name: process.env.LEGAL_NAME?.trim() || DEFAULT_LEGAL.name,
+    inn: process.env.LEGAL_INN?.trim() || DEFAULT_LEGAL.inn,
     email: process.env.SUPPORT_EMAIL?.trim() ?? '',
   }
 }
