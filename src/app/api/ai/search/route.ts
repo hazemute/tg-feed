@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
+import { AI_COST_SWIPES, spendSwipes } from '@/lib/wallet'
 import { cacheGet, cacheSet, shortHash } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import { looksLikeGarbage } from '@/lib/text-clean'
@@ -171,14 +172,18 @@ export async function POST(request: Request) {
 
       const allowance = await aiSearchAllowance(g.uid)
       if (!allowance.allowed) {
-        return NextResponse.json(
-          {
-            error: 'ai_search_limit',
-            message: 'Лимит ИИ-поиска на сегодня исчерпан (3 в день)',
-            tier: allowance.tier,
-          },
-          { status: 402 },
-        )
+        // Лимит free исчерпан — списываем свайпы (100 = 1 ₽), если хватает
+        const charged = await spendSwipes(g.uid, AI_COST_SWIPES, 'ИИ-поиск (чат)')
+        if (!charged) {
+          return NextResponse.json(
+            {
+              error: 'ai_search_limit',
+              message: `Не хватает свайпов: 1 запрос = ${AI_COST_SWIPES} свайпов (1 ₽). Пополните баланс — свайпы купятся автоматически`,
+              tier: allowance.tier,
+            },
+            { status: 402 },
+          )
+        }
       }
 
       const user = await db.user.findUnique({
@@ -258,7 +263,7 @@ export async function POST(request: Request) {
     const q = 'q' in d ? d.q : ''
     const category = 'category' in d ? d.category : undefined
 
-    // Лимит до генерации: free — 3/сутки; plus/pro — безлимит
+    // Лимит до генерации: free — 3/сутки; plus/pro — безлимит; сверх лимита — свайпы
     const allowance = g.uid ? await aiSearchAllowance(g.uid) : null
     if (allowance && !allowance.allowed) {
       return NextResponse.json(
@@ -271,11 +276,25 @@ export async function POST(request: Request) {
       )
     }
 
-    // Кэш ответа: повтор того же запроса в 10 минутах НЕ списывает лимит
+    // Кэш ответа: повтор того же запроса в 10 минутах НЕ списывает лимит и свайпы
     const cacheKey = `ais:${shortHash(`${q.toLowerCase()}|${category ?? ''}`)}`
     let payload = await cacheGet<SearchPayload>(cacheKey)
     let fromCache = true
     if (!payload) {
+      // Свежая генерация сверх лимита — платно (свайпы), кэш-хит бесплатен
+      if (allowance && !allowance.allowed) {
+        const charged = await spendSwipes(g.uid, AI_COST_SWIPES, 'ИИ-поиск')
+        if (!charged) {
+          return NextResponse.json(
+            {
+              error: 'ai_search_limit',
+              message: `Не хватает свайпов: 1 запрос = ${AI_COST_SWIPES} свайпов (1 ₽). Пополните баланс — свайпы купятся автоматически`,
+              tier: allowance.tier,
+            },
+            { status: 402 },
+          )
+        }
+      }
       payload = await buildAnswer(q, category)
       fromCache = false
       await cacheSet(cacheKey, payload, 600).catch(() => {})

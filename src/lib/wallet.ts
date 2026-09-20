@@ -16,7 +16,7 @@ import { db } from '@/lib/db'
 
 export const SWP_PER_RUB = 100
 /** Стоимость одного запроса к нейросети, в свайпах */
-export const AI_COST_SWIPES = 1
+export const AI_COST_SWIPES = 100 // 1 запрос к ИИ = 100 свайпов = 1 ₽ (константа, легко поменять)
 /** Минимум свайпов для конвертации в рубли */
 export const SWP_CONVERT_MIN = SWP_PER_RUB
 
