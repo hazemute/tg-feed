@@ -157,6 +157,8 @@ export async function POST(request: Request) {
         return NextResponse.json({ ok: true, op, altered_db: name, ...(await diagnostics()) })
       }
       if (op === 'vacuum') {
+        // Чекпойнт перед full-вакуумом: освобождает WAL под копию таблицы.
+        await client.query('checkpoint').catch(() => {})
         const r = await client.query('vacuum (full, analyze) "Post"')
         return NextResponse.json({ ok: true, op, command: r.command, ...(await diagnostics()) })
       }
