@@ -32,7 +32,8 @@ export async function POST(request: Request) {
     try {
       const ro = await db.$queryRaw<{ read_only: string }[]>`SHOW transaction_read_only`
       const size = await db.$queryRaw<{ size: bigint | number }[]>`SELECT pg_database_size(current_database()) AS size`
-      return { read_only: ro[0]?.read_only, db_size_mb: Math.round(Number(size[0]?.size ?? 0) / 1048576) }
+      const dbname = await db.$queryRaw<{ db: string }[]>`SELECT current_database() AS db`
+      return { read_only: ro[0]?.read_only, db_size_mb: Math.round(Number(size[0]?.size ?? 0) / 1048576), db_name: dbname[0]?.db }
     } catch (e) {
       return { diag_error: e instanceof Error ? e.message.slice(0, 120) : String(e) }
     }
@@ -44,19 +45,28 @@ export async function POST(request: Request) {
     let lastBatch = 0
 
     for (;;) {
-      // select только id: проверка IS NOT NULL не тянет сам блоб из TOAST
-      const rows = await db.post.findMany({
-        where: { ttsAudio: { not: null } },
-        select: { id: true },
-        take: BATCH,
-        orderBy: { id: 'asc' },
-      })
-      lastBatch = rows.length
+      // Официальный обход Supabase read-only (25006) из док «Disabling read-only
+      // mode»: SET LOCAL transaction_read_only = off ВНУТРИ транзакции перед
+      // записью. select только id: проверка IS NOT NULL не тянет блоб из TOAST.
+      lastBatch = await db.$transaction(
+        async (tx) => {
+          await tx.$executeRawUnsafe('set local transaction_read_only = off')
+          const rows = await tx.post.findMany({
+            where: { ttsAudio: { not: null } },
+            select: { id: true },
+            take: BATCH,
+            orderBy: { id: 'asc' },
+          })
+          if (rows.length === 0) return 0
+          await tx.post.updateMany({
+            where: { id: { in: rows.map((r) => r.id) } },
+            data: { ttsAudio: null, ttsAt: null },
+          })
+          return rows.length
+        },
+        { timeout: 25_000, maxWait: 5_000 }, // мегабайтные TOAST-строки не влезают в дефолтные 5с Prisma
+      )
       if (lastBatch === 0) break
-      await db.post.updateMany({
-        where: { id: { in: rows.map((r) => r.id) } },
-        data: { ttsAudio: null, ttsAt: null },
-      })
       cleared += lastBatch
       if (Date.now() - t0 > BUDGET_MS) break
     }
