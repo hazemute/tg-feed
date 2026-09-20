@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server'
-import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { runParser } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
-import { guardAuth } from '@/lib/guard'
+import { guardAdmin } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,19 +10,17 @@ export const dynamic = 'force-dynamic'
  * POST /api/parse/run { perChannel? } — ручной запуск парсера из UI
  * (кнопки в админ-зоне AdminTab / ProfileTab).
  *
- * Защита: только авторизованный пользователь (Bearer-сессия); подмена userId
- * невозможна — идентификатор берётся из токена. Лимит 3 запуска в 5 минут.
- * После парсинга новые посты рассылаются подписчикам через Bot API.
+ * Защита (v5.48): guardAdmin — раньше был guardAuth, любой юзер мог гонять
+ * полный прогон парсера (scrape t.me + рассылка Bot API) 3 раза за 5 минут.
+ * Лимит 3 запуска в 5 минут. После парсинга новые посты рассылаются
+ * подписчикам через Bot API.
  */
 export async function POST(request: Request) {
-  const g = guardAuth(request, { limit: 3, windowMs: 5 * 60_000, bucket: 'parse-run' })
+  const g = guardAdmin(request, { limit: 3, windowMs: 5 * 60_000, bucket: 'parse-run' })
   if (!g.ok) return g.res
 
   try {
     const body = (await request.json().catch(() => ({}))) as { perChannel?: unknown; username?: unknown }
-    const user = await db.user.findUnique({ where: { id: g.uid }, select: { id: true } })
-    if (!user) return err('user not found', 404)
-
     const perChannel = typeof body?.perChannel === 'number' ? body.perChannel : 5
     // Опциональный одиночный канал (кнопка «парсить канал» в админ-зоне);
     // валидность username проверяет runParser (SSRF-защита)

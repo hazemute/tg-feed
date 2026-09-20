@@ -42,14 +42,18 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    const user = await db.user.findUnique({
-      where: { id: g.uid },
-      select: { balanceKop: true, swipes: true },
-    })
+    // v5.48: баланс и журнал операций независимы — один параллельный batch
+    // (раньше два последовательных RTT)
+    const [user, history] = await Promise.all([
+      db.user.findUnique({
+        where: { id: g.uid },
+        select: { balanceKop: true, swipes: true },
+      }),
+      walletHistory(g.uid, 20),
+    ])
     if (!user) return err('Пользователь не найден', 404)
     // Write-through: свежий баланс → Redis (горячий путь edge-роута /api/wallet/balance)
     void cacheBalance(g.uid, { balanceKop: user.balanceKop, swipes: user.swipes })
-    const history = await walletHistory(g.uid, 20)
     return NextResponse.json({
       ok: true,
       balanceKop: user.balanceKop,

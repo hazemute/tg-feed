@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
-import { computeRankedIndex } from '@/lib/feed'
+import { computeRankedIndex, feedScopeSignature } from '@/lib/feed'
 
 /**
  * ПРОГРЕВ ГЛОБАЛЬНЫХ ИНДЕКСОВ ЛЕНТЫ (защита от «лавины кэша»).
@@ -51,20 +51,20 @@ async function warmOnce(): Promise<number> {
   let warmed = 0
   for (const category of categories) {
     if (warmed > 0 && Date.now() > deadline) break
-    // Формула ключа — ТОЧНО как в /api/feed: `${category}:v6:${shortHash(sig)}`
-    const sig = `${category}||`
-    const key = await famKey('feed', `${category}:v6:${shortHash(sig)}`)
+    // Формула ключа — ТОЧНО как в /api/feed: feedScopeSignature (v5.48 —
+    // единая функция в lib/feed.ts, расхождение исключено)
+    const where =
+      category === 'all'
+        ? { channel: { status: 'active' as const } }
+        : { channel: { status: 'active' as const, category: { slug: category } } }
+    const sig = feedScopeSignature(category, where.channel)
+    const key = await famKey('feed', `${category}:v7:${shortHash(sig)}`)
     try {
       await cacheAside({
         key,
         ttlSec: WARM_KEY_TTL_SEC,
         memoryTtlMs: 5_000,
-        fetcher: () =>
-          computeRankedIndex(
-            category === 'all'
-              ? { channel: { status: 'active' } }
-              : { channel: { status: 'active', category: { slug: category } } },
-          ),
+        fetcher: () => computeRankedIndex(where),
       })
       warmed++
     } catch {

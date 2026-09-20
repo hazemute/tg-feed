@@ -58,39 +58,45 @@ export async function GET(request: Request) {
   const g = guardAdmin(request, { limit: 60, windowMs: 60_000, bucket: 'panel-campaigns' })
   if (!g.ok) return g.res
 
-  const [campaigns, accounts] = await Promise.all([
-    db.adCampaign.findMany({
-      orderBy: { createdAt: 'desc' },
-      take: 60,
-      include: { owner: { select: { username: true, firstName: true } } },
-    }),
-    db.advertiserAccount.findMany({ take: 50, orderBy: { updatedAt: 'desc' } }),
-  ])
+  // v5.48: try/catch — сбой БД раньше давал 500 без единой строки в логе
+  try {
+    const [campaigns, accounts] = await Promise.all([
+      db.adCampaign.findMany({
+        orderBy: { createdAt: 'desc' },
+        take: 60,
+        include: { owner: { select: { username: true, firstName: true } } },
+      }),
+      db.advertiserAccount.findMany({ take: 50, orderBy: { updatedAt: 'desc' } }),
+    ])
 
-  return NextResponse.json({
-    campaigns: campaigns.map((c) => ({
-      id: c.id,
-      title: c.title,
-      body: c.body,
-      ctaLabel: c.ctaLabel,
-      link: c.link,
-      costPerClickKop: c.costPerClickKop,
-      budgetKop: c.budgetKop,
-      spentKop: c.spentKop,
-      impressions: c.impressions,
-      clicks: c.clicks,
-      status: c.status,
-      note: c.note,
-      createdAt: c.createdAt.toISOString(),
-      owner: c.owner?.username ?? c.owner?.firstName ?? c.ownerId,
-    })),
-    accounts: accounts.map((a) => ({
-      userId: a.userId,
-      balanceKop: a.balanceKop,
-      topupsTotalKop: a.topupsTotalKop,
-      spentTotalKop: a.spentTotalKop,
-    })),
-  })
+    return NextResponse.json({
+      campaigns: campaigns.map((c) => ({
+        id: c.id,
+        title: c.title,
+        body: c.body,
+        ctaLabel: c.ctaLabel,
+        link: c.link,
+        costPerClickKop: c.costPerClickKop,
+        budgetKop: c.budgetKop,
+        spentKop: c.spentKop,
+        impressions: c.impressions,
+        clicks: c.clicks,
+        status: c.status,
+        note: c.note,
+        createdAt: c.createdAt.toISOString(),
+        owner: c.owner?.username ?? c.owner?.firstName ?? c.ownerId,
+      })),
+      accounts: accounts.map((a) => ({
+        userId: a.userId,
+        balanceKop: a.balanceKop,
+        topupsTotalKop: a.topupsTotalKop,
+        spentTotalKop: a.spentTotalKop,
+      })),
+    })
+  } catch (e) {
+    console.error('[panel/campaigns:get]', e)
+    return err('Не удалось загрузить кампании', 500)
+  }
 }
 
 export async function POST(request: Request) {

@@ -68,6 +68,9 @@ export async function GET(request: Request) {
   if (cached) return NextResponse.json(cached)
 
   try {
+    // v5.48: пользователь нужен первым (из него «since»), остальные выборки
+    // независимы — раньше 5 последовательных await на поллинге, который
+    // бьёт каждые 20–45с от каждого пользователя
     const user = await db.user.findUnique({
       where: { id: userId },
       select: { id: true, lastSeenNotifiedAt: true },
@@ -78,18 +81,20 @@ export async function GET(request: Request) {
 
     // Активность (инбокс) считается всегда — и для юзеров без подписок тоже:
     // ответы поддержки не должны зависеть от колокольчиков каналов
-    const subs = await db.subscription.findMany({
-      where: { userId, notify: true },
-      select: { channelId: true },
-    })
+    const [subs, unreadActivity, activityRows] = await Promise.all([
+      db.subscription.findMany({
+        where: { userId, notify: true },
+        select: { channelId: true },
+      }),
+      db.notification.count({ where: { userId, readAt: null } }),
+      db.notification.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+      }),
+    ])
     const channelIds = subs.map((s) => s.channelId)
 
-    const unreadActivity = await db.notification.count({ where: { userId, readAt: null } })
-    const activityRows = await db.notification.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      take: 20,
-    })
     const activity: NotificationDTO[] = activityRows.map((n) => ({
       id: n.id,
       type: (n.type as NotificationDTO['type']) ?? 'system',

@@ -21,6 +21,15 @@ export type RankedIndex = { entries: IndexEntry[]; total: number }
 /** Максимум постов одного канала в окне индекса (разнообразие ленты) */
 const MAX_PER_CHANNEL = 5
 
+/**
+ * Единая формула сигнатуры скоупа для ключа кэша индекса (v5.48).
+ * Используется в /api/feed (через buildFeedScope) и в прогреве (feed-warm) —
+ * расхождение ключей исключено по построению.
+ */
+export function feedScopeSignature(category: string, whereChannel: unknown): string {
+  return `${category}|${JSON.stringify(whereChannel)}`
+}
+
 /** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
 type IndexWhere = {
   channel: {
@@ -254,10 +263,16 @@ async function buildFeedScopeUncached(userId: string, category: string) {
     }
   }
 
-  const sig =
-    category === 'discover'
-      ? null
-      : `${category}|${interests.join(',')}|${hiddenIds.join(',')}`
+  /*
+   * v5.48: сигнатура скоупа строится ИЗ ФАКТИЧЕСКОГО where (категория +
+   * интересы/набор категорий + скрытые каналы) — в том числе для 'discover'.
+   * Одинаковый where → одинаковый глобальный индекс, поэтому Redis-кэш
+   * индекса безопасен и для discover, хотя состав категорий и зависит от
+   * истории просмотров (меняется редко; scope-кэш 60с сглаживает переходы).
+   * Раньше discover уходил мимо кэша — тяжёлый computeRankedIndex (400 постов
+   * + веса + sort) выполнялся на КАЖДЫЙ запрос ленты.
+   */
+  const sig = feedScopeSignature(category, where.channel)
 
   return { where, user, sig }
 }

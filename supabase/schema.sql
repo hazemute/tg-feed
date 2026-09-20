@@ -474,3 +474,17 @@ CREATE UNIQUE INDEX IF NOT EXISTS "GiveawayReferral_referrerUserId_invitedTgId_k
 CREATE INDEX IF NOT EXISTS "GiveawayReferral_referrerUserId_activatedAt_idx" ON "GiveawayReferral" ("referrerUserId", "activatedAt");
 
 CREATE INDEX IF NOT EXISTS "PostView_userId_createdAt_idx" ON "PostView" ("userId", "createdAt");
+
+-- ===================== v5.48: СКОРОСТЬ-2 + АРХИТЕКТУРА =====================
+-- Недостающие индексы горячих запросов (зеркально с ensure-schema v5.48).
+CREATE INDEX IF NOT EXISTS "GiveawayReferral_invitedTgId_activatedAt_idx" ON "GiveawayReferral" ("invitedTgId", "activatedAt");
+CREATE INDEX IF NOT EXISTS "Subscription_channelId_idx" ON "Subscription" ("channelId");
+CREATE INDEX IF NOT EXISTS "Channel_categoryId_idx" ON "Channel" ("categoryId");
+CREATE INDEX IF NOT EXISTS "Channel_addedById_idx" ON "Channel" ("addedById");
+CREATE INDEX IF NOT EXISTS "Bookmark_userId_createdAt_idx" ON "Bookmark" ("userId", "createdAt" DESC);
+CREATE INDEX IF NOT EXISTS "PostView_postId_idx" ON "PostView" ("postId");
+CREATE INDEX IF NOT EXISTS "TranslationLog_createdAt_idx" ON "TranslationLog" ("createdAt");
+CREATE INDEX IF NOT EXISTS "Notification_createdAt_idx" ON "Notification" ("createdAt");
+CREATE INDEX IF NOT EXISTS "AdCampaign_ownerId_idx" ON "AdCampaign" ("ownerId");
+-- Частичный индекс бэкфилла медиа (почти пустой — только «ещё не пробовали»)
+CREATE INDEX IF NOT EXISTS "Post_pending_media_idx" ON "Post" ("publishedAt" DESC) WHERE "embedTried" = false AND "mediaUrl" IS NULL;

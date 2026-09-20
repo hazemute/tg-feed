@@ -101,10 +101,13 @@ async function trackCampaign(campaignId: string, isClick: boolean, uid: string |
   })
   let billed = false
   if (!existing) {
-    await db.campaignClick
+    // v5.48: billed=true ТОЛЬКО если create реально прошёл — раньше при гонке
+    // (двойной клик) create падал по unique, но billed оставался true →
+    // двойное списание за один клик
+    const created = await db.campaignClick
       .create({ data: { campaignId, userId: uid, lastBilledAt: new Date(), billedCount: 1 } })
-      .catch(() => {})
-    billed = true
+      .catch(() => null)
+    billed = created !== null
   } else if (!sameDay(existing.lastBilledAt, dayStart)) {
     await db.campaignClick.update({
       where: { id: existing.id },
@@ -126,17 +129,37 @@ async function trackCampaign(campaignId: string, isClick: boolean, uid: string |
     return { ok: true, tracked: true, billed: false, completed: true }
   }
 
-  const spentAfter = campaign.spentKop + charge
-  await db.adCampaign.update({
-    where: { id: campaignId },
-    data: {
-      spentKop: { increment: charge },
-      clicks: { increment: 1 },
-      ...(spentAfter >= campaign.budgetKop
-        ? { status: 'completed', completedAt: new Date() }
-        : {}),
+  // v5.48: АТОМАРНОЕ списание с условием — раньше spentKop читался вне
+  // транзакции и параллельные клики считали remaining по устаревшему значению
+  // → перерасход бюджета рекламодателя. Условие spentKop <= budget - charge
+  // гарантирует: списание пройдёт только если бюджет реально хватает.
+  const billedRows = await db.adCampaign.updateMany({
+    where: {
+      id: campaignId,
+      status: 'active',
+      spentKop: { lte: campaign.budgetKop - charge },
     },
+    data: { spentKop: { increment: charge }, clicks: { increment: 1 } },
   })
+  if (billedRows.count === 0) {
+    // бюджет исчерпан в гонке / кампания уже закрыта — списания нет
+    await db.adCampaign
+      .updateMany({
+        where: { id: campaignId, status: 'active', spentKop: { gte: campaign.budgetKop } },
+        data: { status: 'completed', completedAt: new Date() },
+      })
+      .catch(() => {})
+    return { ok: true, tracked: true, billed: false, completed: true }
+  }
+  // кампания исчерпана этим кликом — закрываем (дочитываем строку после инкремента)
+  const after = await db.adCampaign
+    .findUnique({ where: { id: campaignId }, select: { spentKop: true, budgetKop: true } })
+    .catch(() => null)
+  if (after && after.spentKop >= after.budgetKop) {
+    await db.adCampaign
+      .update({ where: { id: campaignId }, data: { status: 'completed', completedAt: new Date() } })
+      .catch(() => {})
+  }
   await db.advertiserAccount
     .update({
       where: { userId: campaign.ownerId },

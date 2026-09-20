@@ -107,6 +107,11 @@ model Channel {
   subscriptions    Subscription[]
   mutedBy     ChannelMute[]
   campaigns   AdCampaign[]
+
+  // v5.48: индексы каналов — зеркально с schema.prisma (локальная песочница)
+  @@index([status])
+  @@index([categoryId])
+  @@index([addedById])
 }
 
 model Post {
@@ -178,6 +183,8 @@ model PostView {
   @@index([createdAt])
   // v5.46 (розыгрыши): прогресс задания «пролистай X свайпов»
   @@index([userId, createdAt])
+  // v5.48: счётчики/джойны просмотров по посту
+  @@index([postId])
 }
 
 model Subscription {
@@ -193,6 +200,7 @@ model Subscription {
   channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@unique([userId, channelId])
+  @@index([channelId]) // v5.48: рассылка новых постов подписчикам канала
 }
 
 model ChannelMute {
@@ -220,6 +228,8 @@ model Bookmark {
   @@unique([userId, postId])
   // v5.44 (скорость): подзапрос COUNT bookmarksCount в SQL-странице ленты — на каждый пост
   @@index([postId])
+  // v5.48: /api/bookmarks — сортировка «свежие сверху»
+  @@index([userId, createdAt])
 }
 
 model Ad {
@@ -332,6 +342,8 @@ model Notification {
   @@index([userId, createdAt])
   // v5.44 (скорость): бейдж непрочитанных поллится каждые ~20-45с
   @@index([userId, readAt])
+  // v5.48: retention-очистка старых уведомлений
+  @@index([createdAt])
 }
 
 model CustomEmoji {
@@ -451,6 +463,7 @@ model TranslationLog {
   createdAt DateTime @default(now())
 
   @@index([postId])
+  @@index([createdAt]) // v5.48: retention-очистка логов переводов
 }
 
 // Вход на сайт через Telegram-бота (каноническая модель из schema.prisma):
@@ -611,4 +624,5 @@ model GiveawayReferral {
 
   @@unique([referrerUserId, invitedTgId])
   @@index([referrerUserId, activatedAt])
+  @@index([invitedTgId, activatedAt]) // v5.48: activateReferrals на каждый вход
 }

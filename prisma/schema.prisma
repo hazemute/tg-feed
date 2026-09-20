@@ -116,6 +116,8 @@ model Channel {
   campaigns        AdCampaign[]
 
   @@index([status])
+  @@index([categoryId]) // v5.48: join категории в ленте/каталоге/трендах
+  @@index([addedById]) // v5.48: «каналы, добавленные модератором» в админке
   mutedBy     ChannelMute[]
 }
 
@@ -195,6 +197,8 @@ model PostView {
   // v5.46 (розыгрыши): прогресс задания «пролистай X свайпов» — count просмотров
   // пользователя с начала розыгрыша (count по (userId, createdAt) — индексный сик)
   @@index([userId, createdAt])
+  // v5.48: счётчики/джойны просмотров по посту (канальная статистика, дедуп)
+  @@index([postId])
 }
 
 model Subscription {
@@ -210,6 +214,7 @@ model Subscription {
   channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@unique([userId, channelId])
+  @@index([channelId]) // v5.48: рассылка новых постов подписчикам канала (notifyNewPosts), панели
 }
 
 model ChannelMute {
@@ -239,6 +244,8 @@ model Bookmark {
   // v5.44 (скорость): подзапрос COUNT в SQL-странице ленты бежит ПО КАЖДОМУ ПОСТУ
   // каждой страницы (bookmarksCount) — без индекса это скан таблицы на пост
   @@index([postId])
+  // v5.48: /api/bookmarks — сортировка «свежие сверху» без in-memory sort
+  @@index([userId, createdAt])
 }
 
 model Ad {
@@ -352,6 +359,7 @@ model TranslationLog {
   createdAt DateTime @default(now())
 
   @@index([postId])
+  @@index([createdAt]) // v5.48: retention-очистка логов переводов (полный скан раньше)
 }
 
 // Дневная аналитика рекламы (одна строка на рекламу в день): CTR и динамика
@@ -561,6 +569,8 @@ model Notification {
   @@index([userId, createdAt])
   // v5.44 (скорость): бейдж непрочитанных поллится каждые ~20-45с (count по userId+readAt)
   @@index([userId, readAt])
+  // v5.48: retention-очистка старых уведомлений (полный скан раньше)
+  @@index([createdAt])
 }
 
 // Загруженные пользователями картинки (чат поддержки/предложка): клиент сжимает
@@ -695,4 +705,5 @@ model GiveawayReferral {
 
   @@unique([referrerUserId, invitedTgId])
   @@index([referrerUserId, activatedAt])
+  @@index([invitedTgId, activatedAt]) // v5.48: activateReferrals ищет неактивированные приглашения на КАЖДЫЙ вход
 }

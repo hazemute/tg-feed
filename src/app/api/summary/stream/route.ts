@@ -28,15 +28,22 @@ export async function POST(request: Request) {
   const g = guardAuth(request, { limit: 10, windowMs: 60_000, bucket: 'summary' })
   if (!g.ok) return g.res
 
-  const parsed = bodySchema.safeParse(await readJson(request))
-  if (!parsed.success) return err('postId required')
-  const postId = parsed.data.postId
+  // v5.48: try/catch до SSE — сбой БД раньше давал сырую 500 без лога
+  let postId = ''
+  let text = ''
+  try {
+    const parsed = bodySchema.safeParse(await readJson(request))
+    if (!parsed.success) return err('postId required')
+    postId = parsed.data.postId
 
-  // select вместо полной строки (egress: ttsAudio/translations не нужны)
-  const post = await db.post.findUnique({ where: { id: postId }, select: { text: true, aiSummary: true } })
-  if (!post) return err('post not found', 404)
-
-  const text = post.text.trim()
+    // select вместо полной строки (egress: ttsAudio/translations не нужны)
+    const post = await db.post.findUnique({ where: { id: postId }, select: { text: true, aiSummary: true } })
+    if (!post) return err('post not found', 404)
+    text = post.text.trim()
+  } catch (e) {
+    console.error('[summary/stream]', e)
+    return err('summary failed', 500)
+  }
 
   return sseStream(async (send) => {
     // 1) Слишком короткий — саммари не нужно (честно и мгновенно)

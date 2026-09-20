@@ -23,14 +23,23 @@ export const SESSION_TTL_SEC = 30 * 24 * 60 * 60
 /** Максимальный возраст initData на момент проверки (защита от replay) */
 export const INIT_DATA_MAX_AGE_SEC = 24 * 60 * 60
 
+// v5.48: секрет вычисляется ОДИН раз (lazy singleton) — раньше sha256
+// выполнялся синхронно на КАЖДОМ verifySession, то есть на каждом API-запросе
+let cachedSecret: string | null = null
+
 function getSecret(): string {
+  if (cachedSecret) return cachedSecret
   const explicit = process.env.AUTH_SECRET?.trim()
-  if (explicit) return explicit
+  if (explicit) {
+    cachedSecret = explicit
+    return cachedSecret
+  }
   // Фолбэк: детерминированная производная от служебных секретов окружения.
   const parts = [process.env.TELEGRAM_BOT_TOKEN ?? '', process.env.CRON_SECRET ?? '']
     .filter(Boolean)
     .join('|')
-  return crypto.createHash('sha256').update(`tgfeed-session|${parts}`).digest('hex')
+  cachedSecret = crypto.createHash('sha256').update(`tgfeed-session|${parts}`).digest('hex')
+  return cachedSecret
 }
 
 function b64url(input: Buffer | string): string {

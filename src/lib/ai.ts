@@ -67,6 +67,32 @@ export async function translateText(text: string, lang: string): Promise<string>
 }
 
 /**
+ * Слияние перевода в кэш Post.translations БЕЗ lost update (v5.48):
+ * феш-версия перечитывается в транзакции непосредственно перед записью —
+ * два параллельных перевода на разные языки больше не затирают друг друга
+ * (раньше кэш, прочитанный до многосекундной генерации, перезаписывался целиком).
+ */
+async function mergeTranslation(postId: string, lang: string, text: string): Promise<void> {
+  try {
+    await db.$transaction(async (tx) => {
+      const fresh = await tx.post.findUnique({ where: { id: postId }, select: { translations: true } })
+      let merged: Record<string, { text: string; at: string }> = {}
+      if (fresh?.translations) {
+        try {
+          merged = JSON.parse(fresh.translations)
+        } catch {
+          merged = {}
+        }
+      }
+      merged[lang] = { text, at: new Date().toISOString() }
+      await tx.post.update({ where: { id: postId }, data: { translations: JSON.stringify(merged) } })
+    })
+  } catch {
+    /* кэш переводов — best effort */
+  }
+}
+
+/**
  * Перевод поста с кэшем в Post.translations ({lang: {text, at}}).
  * Возвращает null — переводить нечего (короткий/русский), ошибку — LLM недоступен.
  */
@@ -98,18 +124,12 @@ export async function translatePostCached(
   // Бесплатный быстрый провайдер (Google gtx) — сначала он; LLM — фолбэк
   const gtx = await gtxTranslate(text, lang).catch(() => null)
   if (gtx) {
-    cache[lang] = { text: gtx, at: new Date().toISOString() }
-    await db.post
-      .update({ where: { id: postId }, data: { translations: JSON.stringify(cache) } })
-      .catch(() => {})
+    await mergeTranslation(postId, lang, gtx)
     return { ok: true, text: gtx, cached: false }
   }
 
   const translated = await translateText(text, lang)
-  cache[lang] = { text: translated, at: new Date().toISOString() }
-  await db.post
-    .update({ where: { id: postId }, data: { translations: JSON.stringify(cache) } })
-    .catch(() => {})
+  await mergeTranslation(postId, lang, translated)
   return { ok: true, text: translated, cached: false }
 }
 

@@ -4,6 +4,7 @@ import { botEnabled, getBotUsername, botBanRemainSecAsync } from '@/lib/tg-bot'
 import { redisHealth } from '@/lib/redis'
 import { APP_VERSION } from '@/lib/server'
 import { checkSchema, ensureAppSchema } from '@/lib/ensure-schema'
+import { cronAuthorized } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
 
@@ -12,6 +13,10 @@ export const dynamic = 'force-dynamic'
  * Нужно для диагностики cutover'а (в Vercel могут оказаться значения от
  * другого проекта Supabase — видено в 5.36.1: приложение молча само создало
  * пустую схему на чужой БД).
+ *
+ * v5.48: выдается ТОЛЬКО за cron-секретом — раньше хост/юзер/имя БД и
+ * фингерпринт (размер БД, current_user) отдавались любому, это инфра-
+ * разведка для прицельного брутфорса/прямого подключения.
  */
 function envDbSummary(raw: string | undefined): Record<string, string> | null {
   if (!raw) return null
@@ -31,9 +36,12 @@ function envDbSummary(raw: string | undefined): Record<string, string> | null {
 
 /**
  * GET /api/health — статус здоровья бэкенда (мониторинг/cron-сервис).
- * Публичный, но без чувствительных данных (env-сводка без паролей).
+ * Публичная часть: ok/db/schema/cache/bot/version. Диагностические сводки
+ * env/фингерпринт — только с cron-секретом (v5.48: закрыта инфра-разведка).
  */
-export async function GET() {
+export async function GET(request: Request) {
+  const diag = cronAuthorized(request)
+
   let dbOk = false
   try {
     await db.$queryRaw`SELECT 1`
@@ -52,14 +60,16 @@ export async function GET() {
 
   const cache = await redisHealth()
   const bot = botEnabled()
-  const botUsername = bot ? await getBotUsername() : null
+  // botUsername — наружу не отдаём (цель для спам-ботов), только факт наличия
+  const botUsername = diag && bot ? await getBotUsername() : null
 
   // Фингерпринт фактической БД (какой проект реально подключён): размер,
   // наличие таблиц, current_user. Достаточно, чтобы различить старый/новый/
   // посторонний пустой проект Supabase. pg_* существует только на Postgres —
   // на SQLite-песочнице (file:) запрос бессмыслен и шумел ошибкой в лог.
+  // v5.48: только за cron-секретом.
   let dbFinger: Record<string, unknown> | null = null
-  if (!(process.env.DATABASE_URL ?? '').startsWith('file:')) {
+  if (diag && !(process.env.DATABASE_URL ?? '').startsWith('file:')) {
     try {
       const r = await db.$queryRaw<{ sz: string; usr: string; has_post: string | null; has_sys: string | null }[]>`
         select pg_database_size(current_database())::text as sz,
@@ -77,11 +87,15 @@ export async function GET() {
       ok: dbOk && schema.ok,
       db: dbOk,
       schema,
-      dbFinger,
-      dbEnv: {
-        database_url: envDbSummary(process.env.DATABASE_URL),
-        direct_url: envDbSummary(process.env.DIRECT_URL),
-      },
+      ...(diag
+        ? {
+            dbFinger,
+            dbEnv: {
+              database_url: envDbSummary(process.env.DATABASE_URL),
+              direct_url: envDbSummary(process.env.DIRECT_URL),
+            },
+          }
+        : {}),
       cache,
       bot,
       botUsername,

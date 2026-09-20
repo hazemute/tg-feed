@@ -29,18 +29,35 @@ export async function POST(request: Request) {
   const g = guardAuth(request, { limit: 12, windowMs: 60_000, bucket: 'translate' })
   if (!g.ok) return g.res
 
-  const parsed = bodySchema.safeParse(await readJson(request))
-  if (!parsed.success) return err('postId required')
-  const { postId } = parsed.data
+  // v5.48: try/catch до SSE — раньше сбой БД давал сырую 500 без лога
+  let post: { text: string; translations: string | null } | null = null
+  let postId = ''
+  let langParam: string | undefined
+  try {
+    const parsed = bodySchema.safeParse(await readJson(request))
+    if (!parsed.success) return err('postId required')
+    postId = parsed.data.postId
+    langParam = parsed.data.lang
 
-  const post = await db.post.findUnique({ where: { id: postId }, select: { text: true } })
-  if (!post) return err('post not found', 404)
+    // v5.48: текст + кэш переводов ОДНИМ чтением (раньше повторный findUnique
+    // внутри стрима — лишний RTT до дальнего Supabase)
+    post = await db.post.findUnique({
+      where: { id: postId },
+      select: { text: true, translations: true },
+    })
+    if (!post) return err('post not found', 404)
+  } catch (e) {
+    console.error('[translate/stream]', e)
+    return err('translate failed', 500)
+  }
 
   const text = post.text.trim()
 
   // Целевой язык: параметр → язык клиента Telegram → русский
-  const user = await db.user.findUnique({ where: { id: g.uid }, select: { languageCode: true } })
-  const lang = (parsed.data.lang ?? user?.languageCode ?? 'ru').slice(0, 2).toLowerCase()
+  const user = await db.user
+    .findUnique({ where: { id: g.uid }, select: { languageCode: true } })
+    .catch(() => null)
+  const lang = (langParam ?? user?.languageCode ?? 'ru').slice(0, 2).toLowerCase()
 
   // Быстрые пред-проверки (без LLM) — мгновенный честный ответ
   if (text.length < 24) {
@@ -55,15 +72,11 @@ export async function POST(request: Request) {
   }
 
   return sseStream(async (send) => {
-    // 1) Кэш Post.translations — мгновенный показ без LLM
-    const fresh = await db.post.findUnique({
-      where: { id: postId },
-      select: { translations: true },
-    })
+    // 1) Кэш Post.translations (прочитан выше) — мгновенный показ без LLM
     let cache: Record<string, { text: string; at: string }> = {}
-    if (fresh?.translations) {
+    if (post.translations) {
       try {
-        cache = JSON.parse(fresh.translations)
+        cache = JSON.parse(post.translations)
       } catch {
         cache = {}
       }
@@ -94,10 +107,26 @@ export async function POST(request: Request) {
         return
       }
     }
-    cache[lang] = { text: translated, at: new Date().toISOString() }
-    await db.post
-      .update({ where: { id: postId }, data: { translations: JSON.stringify(cache) } })
-      .catch(() => {})
+    // v5.48: слияние с ФЕШ-версией translations в транзакции — раньше кэш
+    // читался ДО многосекундной генерации и перезаписывался целиком: два
+    // параллельных перевода на разные языки теряли записи друг друга (lost update)
+    try {
+      await db.$transaction(async (tx) => {
+        const fresh = await tx.post.findUnique({ where: { id: postId }, select: { translations: true } })
+        let merged: Record<string, { text: string; at: string }> = {}
+        if (fresh?.translations) {
+          try {
+            merged = JSON.parse(fresh.translations)
+          } catch {
+            merged = {}
+          }
+        }
+        merged[lang] = { text: translated, at: new Date().toISOString() }
+        await tx.post.update({ where: { id: postId }, data: { translations: JSON.stringify(merged) } })
+      })
+    } catch {
+      /* кэш переводов — best effort */
+    }
     // Журнал для анти-абьюза (раз в пост — не на каждый показ)
     db.translationLog.create({ data: { userId: g.uid, postId, srcLang: lang } }).catch(() => {})
     if (provider === 'gtx') send('delta', { v: translated }) // gtx не стримил дельты — отдаём целиком

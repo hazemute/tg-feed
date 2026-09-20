@@ -249,7 +249,10 @@ export async function POST(request: Request) {
             username: uname,
             avatarColor: '#3390ec',
             categoryId: fallback.id,
-            status: 'active',
+            // v5.48: НЕ active — иначе новый канал попадает в каталог/ленту
+            // до проверки владения (обход модерации). Активируем в claimVerify,
+            // когда владелец докажет владение кодом-словом.
+            status: 'moderation',
           },
         })
       }
@@ -297,7 +300,9 @@ export async function POST(request: Request) {
 
       await db.channel.update({
         where: { id: channel.id },
-        data: { claimedById: g.uid, claimedAt: new Date() },
+        // v5.48: владение доказано постом с кодом — канал активируется здесь
+        // (и только здесь); вместе с правами владельца
+        data: { claimedById: g.uid, claimedAt: new Date(), status: 'active' },
       })
       return NextResponse.json({ ok: true, channelId: channel.id })
     }

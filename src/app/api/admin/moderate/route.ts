@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
-import { guardAuth } from '@/lib/guard'
+import { guardAdmin } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
 
-// Модерация — приватное действие; сессия обязательна.
+// Модерация — приватное действие; только админ-ключ (v5.48: раньше было
+// guardAuth — любой юзер с Bearer-сессией мог одобрить/отклонить любой канал).
 const bodySchema = z.object({
   channelId: z.string().min(1).max(64),
   action: z.enum(['approve', 'reject']),
@@ -18,7 +19,7 @@ const bodySchema = z.object({
  * или отклонить (status -> rejected). Лимит 30 запросов в минуту.
  */
 export async function POST(request: Request) {
-  const g = guardAuth(request, { limit: 30, windowMs: 60_000, bucket: 'adm-mod' })
+  const g = guardAdmin(request, { limit: 30, windowMs: 60_000, bucket: 'adm-mod' })
   if (!g.ok) return g.res
 
   try {

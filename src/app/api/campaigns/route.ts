@@ -40,46 +40,52 @@ export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'campaigns' })
   if (!g.ok) return g.res
 
-  const [campaigns, user, account] = await Promise.all([
-    db.adCampaign.findMany({
-      where: { ownerId: g.uid },
-      orderBy: { createdAt: 'desc' },
-      take: 30,
-    }),
-    db.user.findUnique({ where: { id: g.uid }, select: { balanceKop: true } }),
-    db.advertiserAccount
-      .findUnique({
-        where: { userId: g.uid },
-        select: { topupsTotalKop: true, spentTotalKop: true },
-      })
-      .catch(() => null),
-  ])
+  // v5.48: try/catch — раньше сбой БД здесь давал 500 без единой строки в логе
+  try {
+    const [campaigns, user, account] = await Promise.all([
+      db.adCampaign.findMany({
+        where: { ownerId: g.uid },
+        orderBy: { createdAt: 'desc' },
+        take: 30,
+      }),
+      db.user.findUnique({ where: { id: g.uid }, select: { balanceKop: true } }),
+      db.advertiserAccount
+        .findUnique({
+          where: { userId: g.uid },
+          select: { topupsTotalKop: true, spentTotalKop: true },
+        })
+        .catch(() => null),
+    ])
 
-  return NextResponse.json({
-    campaigns: campaigns.map((c) => ({
-      id: c.id,
-      title: c.title,
-      body: c.body,
-      ctaLabel: c.ctaLabel,
-      link: c.link,
-      imageUrl: c.imageUrl,
-      costPerClickKop: c.costPerClickKop,
-      budgetKop: c.budgetKop,
-      spentKop: c.spentKop,
-      impressions: c.impressions,
-      clicks: c.clicks,
-      rawClicks: c.rawClicks,
-      status: c.status,
-      note: c.note,
-      createdAt: c.createdAt.toISOString(),
-    })),
-    advertiser: {
-      // v5.39: реальный баланс — рублёвый кошелёк пользователя
-      balanceKop: user?.balanceKop ?? 0,
-      topupsTotalKop: account?.topupsTotalKop ?? 0,
-      spentTotalKop: account?.spentTotalKop ?? 0,
-    },
-  })
+    return NextResponse.json({
+      campaigns: campaigns.map((c) => ({
+        id: c.id,
+        title: c.title,
+        body: c.body,
+        ctaLabel: c.ctaLabel,
+        link: c.link,
+        imageUrl: c.imageUrl,
+        costPerClickKop: c.costPerClickKop,
+        budgetKop: c.budgetKop,
+        spentKop: c.spentKop,
+        impressions: c.impressions,
+        clicks: c.clicks,
+        rawClicks: c.rawClicks,
+        status: c.status,
+        note: c.note,
+        createdAt: c.createdAt.toISOString(),
+      })),
+      advertiser: {
+        // v5.39: реальный баланс — рублёвый кошелёк пользователя
+        balanceKop: user?.balanceKop ?? 0,
+        topupsTotalKop: account?.topupsTotalKop ?? 0,
+        spentTotalKop: account?.spentTotalKop ?? 0,
+      },
+    })
+  } catch (e) {
+    console.error('[campaigns:get]', e)
+    return err('Не удалось загрузить кампании', 500)
+  }
 }
 
 /** POST — создать кампанию (бюджет резервируется с баланса сразу) */
@@ -185,33 +191,42 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ ok: true, status: 'active' })
     }
 
-    // cancel: возврат остатка бюджета в кошелёк + завершение
-    if (campaign.status === 'completed') return err('Кампания уже завершена')
-    const refund = Math.max(0, campaign.budgetKop - campaign.spentKop)
-    await db.$transaction([
-      db.adCampaign.update({
-        where: { id },
-        data: { status: 'completed', completedAt: new Date() },
-      }),
-      ...(refund > 0
-        ? [
-            db.user.update({
-              where: { id: g.uid },
-              data: { balanceKop: { increment: refund } },
-            }),
-            db.balanceLog.create({
-              data: {
-                userId: g.uid,
-                kind: 'refund',
-                currency: 'rub',
-                amount: refund,
-                note: `возврат остатка кампании «${campaign.title.slice(0, 40)}»`,
-              },
-            }),
-          ]
-        : []),
-    ])
-    await invalidateBalance(g.uid)
+    // cancel: возврат остатка бюджета в кошелёк + завершение.
+    // v5.48: закрытие кампании АТОМАРНОЕ (updateMany с условием) — раньше refund
+    // считался из прочитанного вне транзакции spentKop, и клик, зачисленный
+    // между чтением и возвратом, увеличивал сумму возврата выше остатка.
+    // После атомарного закрытия новый биллинг невозможен (в ads/track условие
+    // status:'active'), значит возврат по дочитанной строке — финальный.
+    const closed = await db.adCampaign.updateMany({
+      where: { id, ownerId: g.uid, status: { notIn: ['completed', 'cancelled'] } },
+      data: { status: 'completed', completedAt: new Date() },
+    })
+    if (closed.count === 0) {
+      return campaign.status === 'completed' ? err('Кампания уже завершена') : err('Приостановить можно только активную кампанию')
+    }
+    const fresh = await db.adCampaign.findUnique({
+      where: { id },
+      select: { title: true, budgetKop: true, spentKop: true },
+    })
+    const refund = Math.max(0, (fresh?.budgetKop ?? 0) - (fresh?.spentKop ?? 0))
+    if (refund > 0) {
+      await db.$transaction([
+        db.user.update({
+          where: { id: g.uid },
+          data: { balanceKop: { increment: refund } },
+        }),
+        db.balanceLog.create({
+          data: {
+            userId: g.uid,
+            kind: 'refund',
+            currency: 'rub',
+            amount: refund,
+            note: `возврат остатка кампании «${(fresh?.title ?? campaign.title).slice(0, 40)}»`,
+          },
+        }),
+      ])
+      await invalidateBalance(g.uid)
+    }
     return NextResponse.json({ ok: true, status: 'completed', refundKop: refund })
   } catch (e) {
     console.error('[campaigns:patch]', e)

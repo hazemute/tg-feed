@@ -125,6 +125,32 @@ export const MIGRATIONS: Record<string, string[]> = {
     // Прогресс задания «пролистай X свайпов» — count просмотров с начала розыгрыша
     `CREATE INDEX IF NOT EXISTS "PostView_userId_createdAt_idx" ON "PostView" ("userId", "createdAt")`,
   ],
+  'v5.48': [
+    // v5.48: СКОРОСТЬ-2 + архитектура — недостающие индексы горячих запросов.
+    // GiveawayReferral(invitedTgId, activatedAt): activateReferrals ищет
+    //   неактивированные приглашения на КАЖДЫЙ POST /api/auth — таблица
+    //   растёт монотонно, без индекса это скан.
+    // Subscription.channelId: рассылка новых постов подписчикам (каждый тик
+    //   парсера), панели. Channel.categoryId: join категории в ленте/каталоге.
+    // Bookmark(userId, createdAt): /api/bookmarks сортирует по createdAt —
+    //   раньше in-memory sort по всей выборке пользователя.
+    // PostView.postId: счётчики/джойны просмотров по посту.
+    // TranslationLog/Notification.createdAt: retention-очистка — раньше полный
+    //   скан самых больших таблиц раз в 19ч.
+    // AdCampaign.ownerId / Channel.addedById: кабинеты рекламодателя/модератора.
+    // Post partial (embedTried): бэкфилл медиа каждый тик парсера фильтрует
+    //   «ещё не пробовали и без медиа» — частичный индекс почти пустой.
+    `CREATE INDEX IF NOT EXISTS "GiveawayReferral_invitedTgId_activatedAt_idx" ON "GiveawayReferral" ("invitedTgId", "activatedAt")`,
+    `CREATE INDEX IF NOT EXISTS "Subscription_channelId_idx" ON "Subscription" ("channelId")`,
+    `CREATE INDEX IF NOT EXISTS "Channel_categoryId_idx" ON "Channel" ("categoryId")`,
+    `CREATE INDEX IF NOT EXISTS "Channel_addedById_idx" ON "Channel" ("addedById")`,
+    `CREATE INDEX IF NOT EXISTS "Bookmark_userId_createdAt_idx" ON "Bookmark" ("userId", "createdAt" DESC)`,
+    `CREATE INDEX IF NOT EXISTS "PostView_postId_idx" ON "PostView" ("postId")`,
+    `CREATE INDEX IF NOT EXISTS "TranslationLog_createdAt_idx" ON "TranslationLog" ("createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "Notification_createdAt_idx" ON "Notification" ("createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "AdCampaign_ownerId_idx" ON "AdCampaign" ("ownerId")`,
+    `CREATE INDEX IF NOT EXISTS "Post_pending_media_idx" ON "Post" ("publishedAt" DESC) WHERE "embedTried" = false AND "mediaUrl" IS NULL`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()

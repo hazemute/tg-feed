@@ -98,29 +98,45 @@ export async function POST(request: Request) {
     }
 
     if (existing) {
-      await db.subscription.deleteMany({ where: { id: existing.id } })
-      const updated = await db.channel.update({
-        where: { id: channel.id },
-        data: { subscribersCount: { decrement: 1 } },
-      })
+      // v5.48: декремент ТОЛЬКО если реально удалили строку — при гонке
+      // (двойной тап, параллельные запросы) deleteMany у второго запроса
+      // вернёт 0, и счётчик больше не проваливается ниже нуля
+      const del = await db.subscription.deleteMany({ where: { id: existing.id } })
+      const updated =
+        del.count > 0
+          ? await db.channel.update({
+              where: { id: channel.id },
+              data: { subscribersCount: { decrement: 1 } },
+            })
+          : null
       return NextResponse.json({
         subscribed: false,
         // Реальный счётчик Telegram не меняется от локальной отписки
-        subscribersCount: channel.membersCount ?? Math.max(0, updated.subscribersCount),
+        subscribersCount: channel.membersCount ?? Math.max(0, updated?.subscribersCount ?? channel.subscribersCount),
       })
     }
 
     // Идемпотентно даже при гонке (двойной тап / параллельные запросы):
-    // upsert не падает на unique-конфликте, в отличие от create
-    await db.subscription.upsert({
-      where: { userId_channelId: { userId, channelId: channel.id } },
-      create: { userId, channelId: channel.id, notify: true },
-      update: {},
-    })
-    // Клик по [+] учитывается в дашборде админа (CTR)
+    // create + ловим unique-конфликт; increment ТОЛЬКО если строка создана
+    // (раньше upsert-гонка дважды +1 — счётчик раздувался)
+    let created = false
+    try {
+      await db.subscription.create({
+        data: { userId, channelId: channel.id, notify: true },
+      })
+      created = true
+    } catch (e) {
+      // P2002 — подписка уже создана параллельным запросом: не ошибка
+      if ((e as { code?: string }).code !== 'P2002') throw e
+    }
+    // Клик по [+] учитывается в дашборде админа (CTR) — фактический тап,
+    // поэтому клик считаем всегда, а подписку — только при создании
     const updated = await db.channel.update({
       where: { id: channel.id },
-      data: { subscribersCount: { increment: 1 }, clicksCount: { increment: 1 } },
+      data: {
+        clicksCount: { increment: 1 },
+        ...(created ? { subscribersCount: { increment: 1 } } : {}),
+      },
     })
     return NextResponse.json({
       subscribed: true,

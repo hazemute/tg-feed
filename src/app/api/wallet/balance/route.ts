@@ -40,6 +40,9 @@ export async function GET(request: Request) {
     cached: true,
     balanceKop: b.balanceKop,
     swipes: b.swipes,
-    swpPerRub: 100,
+    // v5.48: было 100 — расхождение с SWP_PER_RUB=500 (lib/wallet.ts) ломало
+    // клиентскую конверсию в 5 раз. Константа продублирована литералом:
+    // edge-роут не может импортировать lib/wallet (там Node-Prisma)
+    swpPerRub: 500,
   })
 }

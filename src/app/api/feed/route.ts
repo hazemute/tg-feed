@@ -150,13 +150,48 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
             WHERE p."id" = ANY(${ids}::text[])`
   }
 
-  /* SQLite-путь (локальная разработка): Prisma include + флаги пользователя */
+  /* SQLite-путь (локальная разработка): Prisma include + флаги пользователя.
+   * v5.48: точный select вместо include — include тянул ВСЕ колонки Post
+   * (ttsAudio ~3.5МБ/пост, translations, aiSummary) и полный Channel впустую. */
   const [posts, likes, bookmarks, bookmarkCounts] = await Promise.all([
     db.post.findMany({
       where: { id: { in: ids } },
-      include: {
+      select: {
+        id: true,
+        channelId: true,
+        text: true,
+        mediaUrl: true,
+        mediaType: true,
+        mediaMeta: true,
+        gallery: true,
+        link: true,
+        viewsCount: true,
+        viewsTg: true,
+        reactionsTg: true,
+        likesCount: true,
+        commentsCount: true,
+        publishedAt: true,
         channel: {
-          include: { category: true, claimedBy: { select: { tier: true, tierUntil: true } } },
+          select: {
+            id: true,
+            title: true,
+            username: true,
+            description: true,
+            avatarColor: true,
+            photoFileId: true,
+            avatarUrl: true,
+            membersCount: true,
+            subscribersCount: true,
+            isPremium: true,
+            verified: true,
+            status: true,
+            teaserMode: true,
+            teaserLimit: true,
+            ctaLabel: true,
+            ctaUrl: true,
+            claimedBy: { select: { tier: true, tierUntil: true } },
+            category: { select: { slug: true, title: true } },
+          },
         },
       },
     }),
@@ -293,11 +328,12 @@ export async function GET(request: Request) {
         ~2с и грузит пул; TTL 300с + инвалидация famKey при новых постах
         парсером + ПРОГРЕВ ключей парсером/warm'ом (feed-warm.ts) — юзеры
         почти никогда не платят за пересчёт; кросс-инстансный лок в cacheAside
-        не даёт бёрсту запросов умножить холодную пересборку. v4 — кап канала. */
-    const indexKey =
-      scope.sig !== null
-        ? await famKey('feed', `${category}:v6:${shortHash(scope.sig)}`) // v6 — язык в записи индекса (фильтр «Русский/Другие»)
-        : null // discover — персональный скоуп по интересам, без кэша
+        не даёт бёрсту запросов умножить холодную пересборку. v4 — кап канала.
+        v5.48: discover кэшируется ТОЖЕ — сигнатура скоупа строится из
+        фактического where (v7), одинаковый where → одинаковый индекс. */
+    const indexKey = scope.sig
+      ? await famKey('feed', `${category}:v7:${shortHash(scope.sig)}`)
+      : null // сигнатуры нет только при ошибке скоупа (не бывает на этом пути)
 
     const loadIndex = () => computeRankedIndex(scope.where)
 

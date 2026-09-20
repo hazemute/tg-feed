@@ -41,8 +41,22 @@ export async function POST(request: Request) {
     })
 
     if (existing) {
+      // v5.48: удаление лайка + декремент счётчика — АТОМАРНО (раньше между
+      // delete и update мог упасть decrement → likesCount дрейфовал вверх навсегда)
       try {
-        await db.like.delete({ where: { id: existing.id } })
+        const [, updated] = await db.$transaction([
+          db.like.delete({ where: { id: existing.id } }),
+          db.post.update({
+            where: { id: postId },
+            data: { likesCount: { decrement: 1 } },
+            select: { reactionsTg: true, likesCount: true },
+          }),
+        ])
+        putFlagsOverride(userId, postId, { liked: false })
+        return NextResponse.json({
+          liked: false,
+          likesCount: Math.max(0, updated.reactionsTg + updated.likesCount),
+        })
       } catch {
         // гонка (двойной тап): лайк уже снял параллельный запрос — честный ответ
         const fresh = await db.post.findUnique({
@@ -52,21 +66,21 @@ export async function POST(request: Request) {
         putFlagsOverride(userId, postId, { liked: false })
         return NextResponse.json({ liked: false, likesCount: Math.max(0, (fresh?.reactionsTg ?? 0) + (fresh?.likesCount ?? 0)) })
       }
-      const updated = await db.post.update({
-        where: { id: postId },
-        data: { likesCount: { decrement: 1 } },
-        select: { reactionsTg: true, likesCount: true },
-      })
-      // Показываем сумму: реакции исходного поста + локальные лайки
-      putFlagsOverride(userId, postId, { liked: false })
-      return NextResponse.json({
-        liked: false,
-        likesCount: Math.max(0, updated.reactionsTg + updated.likesCount),
-      })
     }
 
+    // v5.48: создание лайка + инкремент счётчика/температуры — тоже атомарно
     try {
-      await db.like.create({ data: { userId, postId } })
+      const [, updated] = await db.$transaction([
+        db.like.create({ data: { userId, postId } }),
+        db.post.update({
+          where: { id: postId },
+          // Лайк — сильный сигнал температуры: +10 (см. lib/rank.ts computeWeight)
+          data: { likesCount: { increment: 1 }, hotScore: { increment: 10 } },
+          select: { reactionsTg: true, likesCount: true },
+        }),
+      ])
+      putFlagsOverride(userId, postId, { liked: true })
+      return NextResponse.json({ liked: true, likesCount: updated.reactionsTg + updated.likesCount })
     } catch {
       // гонка (двойной тап): лайк уже поставил параллельный запрос — идемпотентно
       const fresh = await db.post.findUnique({
@@ -76,14 +90,6 @@ export async function POST(request: Request) {
       putFlagsOverride(userId, postId, { liked: true })
       return NextResponse.json({ liked: true, likesCount: (fresh?.reactionsTg ?? 0) + (fresh?.likesCount ?? 0) })
     }
-    // Лайк — сильный сигнал температуры: +10 (см. lib/rank.ts computeWeight)
-    const updated = await db.post.update({
-      where: { id: postId },
-      data: { likesCount: { increment: 1 }, hotScore: { increment: 10 } },
-      select: { reactionsTg: true, likesCount: true },
-    })
-    putFlagsOverride(userId, postId, { liked: true })
-    return NextResponse.json({ liked: true, likesCount: updated.reactionsTg + updated.likesCount })
   } catch (e) {
     console.error('[like]', e)
     return err('like failed', 500)

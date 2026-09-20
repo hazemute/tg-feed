@@ -357,12 +357,11 @@ export async function POST(request: Request) {
 
     let remaining: number | null = null
     if (allowance) {
-      const after = fromCache
-        ? allowance
-        : g.uid
-          ? await aiSearchAllowance(g.uid)
-          : null
-      remaining = after && Number.isFinite(after.remaining) ? after.remaining : null
+      // v5.48: остаток считается ЛОКАЛЬНО — раньше здесь был повторный
+      // aiSearchAllowance (+2 SQL: tier + count) на каждый запрос
+      remaining = Number.isFinite(allowance.remaining)
+        ? Math.max(0, allowance.remaining - (fromCache ? 0 : 1))
+        : null
     }
 
     return NextResponse.json({

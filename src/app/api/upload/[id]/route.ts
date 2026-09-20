@@ -10,7 +10,14 @@ export async function GET(_request: Request, ctx: { params: Promise<{ id: string
   const { id } = await ctx.params
   if (!/^[a-zA-Z0-9_-]{10,40}$/.test(id)) return new Response('bad id', { status: 400 })
 
-  const row = await db.upload.findUnique({ where: { id }, select: { mime: true, data: true } })
+  // v5.48: try/catch — сбой пула БД раньше давал 500 без лога
+  let row: { mime: string; data: string } | null = null
+  try {
+    row = await db.upload.findUnique({ where: { id }, select: { mime: true, data: true } })
+  } catch (e) {
+    console.error('[upload:get]', e)
+    return new Response('storage error', { status: 500 })
+  }
   if (!row) return new Response('not found', { status: 404 })
 
   const buf = Buffer.from(row.data, 'base64')
