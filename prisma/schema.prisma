@@ -37,7 +37,10 @@ model User {
   profilePalette String @default("crimson")
   profileBg      String @default("none")
   profileFrame   String @default("none")
-  createdAt     DateTime @default(now())
+  // === Кошелёк (v5.38): единый баланс — рубли + свайпы (100 свайпов = 1 ₽) ===
+  balanceKop     Int      @default(0) // рубли, в копейках
+  swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
+  createdAt      DateTime @default(now())
 
   @@index([tier])
   @@index([createdAt])
@@ -50,6 +53,7 @@ model User {
   claimed       Channel[]      @relation("claimedChannels")
   bookmarks     Bookmark[]
   advertiser    AdvertiserAccount?
+  balanceLogs   BalanceLog[]
   campaigns     AdCampaign[]
   translations  TranslationLog[]
   supportThreads SupportThread[]
@@ -266,8 +270,8 @@ model AdCampaign {
   @@index([status])
 }
 
-// Баланс рекламодателя (эскроу): пополнение админом после оплаты, списание
-// за уникальные клики кампаний. userId = @id — один кошелёк на пользователя.
+// ЛЕГАСИ (v5.38): эскроу рекламодателя выведен из оборота — деньги живут
+// в User.balanceKop/swipes. Таблица оставлена для истории, не используется.
 model AdvertiserAccount {
   userId         String   @id
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -275,6 +279,22 @@ model AdvertiserAccount {
   topupsTotalKop Int      @default(0)
   spentTotalKop  Int      @default(0)
   updatedAt      DateTime @updatedAt
+}
+
+// Журнал операций кошелька (v5.38): пополнения, конвертации, списания ИИ,
+// покупки за баланс. amount — знаковый: + зачисление, − списание.
+// currency: 'rub' (amount в копейках) | 'swp' (amount в свайпах).
+model BalanceLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String // topup | convert | ai_spend | purchase | ad_campaign | refund | admin
+  currency  String   @default("rub") // rub | swp
+  amount    Int // знаковый: + зачисление, − списание
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
 }
 
 // Анти-накрутка: один оплаченный клик на пару (кампания, пользователь) в сутки.

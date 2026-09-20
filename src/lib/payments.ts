@@ -3,8 +3,9 @@ import { parseTierPurpose, tierExpiryFor } from '@/lib/tiers'
 
 /**
  * Общая проводка зачисления: pending → succeeded атомарно.
- *  - purpose='balance' (пополнение эскроу): баланс рекламодателя растёт ровно
- *    один раз (идемпотентность);
+ *  - purpose='balance' (пополнение): РУБЛЁВЫЙ КОШЕЛЁК пользователя растёт ровно
+ *    один раз (идемпотентность) — User.balanceKop += amountKop (v5.38: единый
+ *    кошелёк, эскроу рекламодателя выведен из оборота);
  *  - purpose='plus_month'/'pro_year'/… (тариф Snap): срок действия тира
  *    продлевается от текущего tierUntil (или от «сейчас», если подписки не было).
  * Используется вебхуком ЮKassa, зачислением Telegram Stars и проверкой TON.
@@ -24,7 +25,7 @@ export async function creditPendingPayment(
     if (claimed.count === 0) return false // уже зачислен — повтор безопасен
     const payment = await tx.pendingPayment.findUnique({
       where: { id: paymentId },
-      select: { userId: true, amountKop: true, purpose: true },
+      select: { userId: true, amountKop: true, purpose: true, provider: true },
     })
     if (!payment) return false
 
@@ -45,16 +46,23 @@ export async function creditPendingPayment(
       return true
     }
 
-    await tx.advertiserAccount.upsert({
-      where: { userId: payment.userId },
-      update: {
-        balanceKop: { increment: payment.amountKop },
-        topupsTotalKop: { increment: payment.amountKop },
-      },
-      create: {
+    // Пополнение кошелька (v5.38): рубли идут на User.balanceKop
+    const updated = await tx.user.updateMany({
+      where: { id: payment.userId },
+      data: { balanceKop: { increment: payment.amountKop } },
+    })
+    if (updated.count === 0) {
+      // Пользователя нет (не должен случаться: платежи создают только авторизованные) —
+      // транзакцию роняем, вебхук вернёт 500 и ЮKassa ретранит позже.
+      throw new Error(`creditPendingPayment: user ${payment.userId} not found`)
+    }
+    await tx.balanceLog.create({
+      data: {
         userId: payment.userId,
-        balanceKop: payment.amountKop,
-        topupsTotalKop: payment.amountKop,
+        kind: 'topup',
+        currency: 'rub',
+        amount: payment.amountKop,
+        note: `пополнение · ${payment.provider}`,
       },
     })
     return true

@@ -65,6 +65,14 @@ export const MIGRATIONS: Record<string, string[]> = {
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileBg" text NOT NULL DEFAULT 'none'`,
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "profileFrame" text NOT NULL DEFAULT 'none'`,
   ],
+  'v5.38': [
+    // v5.38: кошелёк — единый баланс (рубли + свайпы, 100 свайпов = 1 ₽)
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "balanceKop" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "swipes" integer NOT NULL DEFAULT 0`,
+    `CREATE TABLE IF NOT EXISTS "BalanceLog" ("id" text PRIMARY KEY, "userId" text NOT NULL, "kind" text NOT NULL, "currency" text NOT NULL DEFAULT 'rub', "amount" integer NOT NULL, "note" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "BalanceLog_userId_createdAt_idx" ON "BalanceLog" ("userId", "createdAt")`,
+    `ALTER TABLE "BalanceLog" ADD CONSTRAINT "BalanceLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
