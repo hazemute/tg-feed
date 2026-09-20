@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { RefreshCw } from 'lucide-react'
+import { CODE_WORD } from '@/components/legal/LegalShell'
 
 /**
  * Экран «Приложение ещё разрабатывается» (v5.42, приказ владельца).
@@ -147,6 +148,36 @@ export function PreReleaseScreen({
           <span className="text-xs tabular-nums text-tg-hint">
             Автопроверка через {left} с
           </span>
+        </motion.div>
+
+        {/* v5.43: документы сервиса — постоянные ссылки (требование платёжного
+            провайдера: документация всегда доступна из бота/сайта) */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.55, duration: 0.5 }}
+          className="mt-10 flex flex-col items-center gap-2"
+        >
+          <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 px-8">
+            {[
+              ['/terms', 'Соглашение'],
+              ['/privacy', 'Конфиденциальность'],
+              ['/pricing', 'Тарифы'],
+              ['/contacts', 'Поддержка'],
+            ].map(([href, label]) => (
+              <a
+                key={href}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[13px] text-tg-hint underline-offset-2 transition-colors hover:text-tg-link hover:underline"
+              >
+                {label}
+              </a>
+            ))}
+          </div>
+          {/* ВРЕМЕННО (проверка владения проектом) — убрать после согласования */}
+          <p className="text-[11.5px] text-tg-hint opacity-60">Кодовое слово проверки: {CODE_WORD}</p>
         </motion.div>
       </div>
     </div>

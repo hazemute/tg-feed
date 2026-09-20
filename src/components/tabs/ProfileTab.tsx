@@ -565,6 +565,15 @@ export function ProfileTab() {
             Лайки, подписки и закладки хранятся, чтобы восстановить вашу ленту на любом устройстве.
             Вы можете отписаться от канала или убрать закладку в любой момент.
           </p>
+          {/* v5.43: полная политика — постоянная ссылка на сайте */}
+          <a
+            href="/privacy"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block rounded-2xl bg-tg-surface/70 p-3.5 text-[14px] font-semibold text-tg-link active:opacity-60"
+          >
+            Полная политика конфиденциальности — открыть на сайте ↗
+          </a>
         </div>
       </BottomSheet>
 
@@ -639,6 +648,15 @@ export function ProfileTab() {
               у авторов каналов. Скрыть свой канал из ленты можно по обращению в поддержку.
             </p>
           </section>
+          {/* v5.43: полная редакция документа — постоянная ссылка на сайте */}
+          <a
+            href="/terms"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="block rounded-2xl bg-tg-surface/70 p-3.5 text-[14px] font-semibold text-tg-link active:opacity-60"
+          >
+            Полная редакция соглашения — открыть на сайте ↗
+          </a>
         </div>
       </BottomSheet>
 
@@ -1158,13 +1176,17 @@ function RequisitesSheet({ open, onClose }: { open: boolean; onClose: () => void
       .catch(() => setLegal(null))
   }, [open])
 
+  // v5.43 (требование Platega): персональные данные (ИП/ИНН) НЕ показываем —
+  // вместо них полные документы по постоянным ссылкам на сайте
   const rows: Array<{ label: string; value: string }> = [
-    // v5.33.1: реквизиты указаны владельцем — дефолт и в API (/api/tiers →
-    // legalInfo), и здесь на случай, если запрос не ответил
-    { label: 'Исполнитель', value: legal?.name || 'ИП Муравьев Константин Алексеевич' },
-    { label: 'ИНН', value: legal?.inn || '713304603876' },
-    { label: 'Сервис', value: 'Tg Swipe — умная лента Telegram-каналов' },
+    { label: 'Сервис', value: legal?.name || 'Tg Swipe — умная лента Telegram-каналов' },
     { label: 'Поддержка', value: legal?.email || 'чат в приложении: Профиль → Обратная связь' },
+  ]
+  const docs: Array<[string, string]> = [
+    ['/terms', 'Пользовательское соглашение'],
+    ['/privacy', 'Политика конфиденциальности'],
+    ['/pricing', 'Тарифы и цены'],
+    ['/contacts', 'Поддержка и контакты'],
   ]
 
   return (
@@ -1186,12 +1208,28 @@ function RequisitesSheet({ open, onClose }: { open: boolean; onClose: () => void
             Способы оплаты
           </p>
           <p className="mt-0.5 text-[14px] leading-snug text-tg-text">
-            Банковская карта (ЮKassa — форма открывается прямо на сайте, без переадресаций),
+            Банковская карта (форма открывается прямо на сайте, без переадресаций), СБП,
             Telegram Stars, TON.
           </p>
         </div>
+        <div className="rounded-2xl bg-tg-surface/70 p-3.5">
+          <p className="text-[11px] font-medium uppercase tracking-wide text-tg-hint">Документы</p>
+          <div className="mt-1.5 flex flex-col gap-1">
+            {docs.map(([href, label]) => (
+              <a
+                key={href}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-[14px] font-medium text-tg-link active:opacity-60"
+              >
+                {label} ↗
+              </a>
+            ))}
+          </div>
+        </div>
         <p className="px-1 text-[12px] leading-snug text-tg-hint">
-          Полные условия оказания услуг и тарифы — в «Пользовательском соглашении».
+          Полные условия оказания услуг и тарифы — в «Пользовательском соглашении» на сайте.
         </p>
       </div>
     </BottomSheet>

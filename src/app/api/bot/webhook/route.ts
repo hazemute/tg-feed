@@ -335,6 +335,11 @@ async function sendGreeting(chatId: number, lang: 'ru' | 'en', from: TgFrom | un
         keyboard: [
           [{ label: 'Subscribe to the channel', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
           [{ label: 'Open Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+          // v5.43: документы сервиса — постоянные ссылки (требование платёжного провайдера)
+          [
+            { label: 'Pricing & payments', emoji: '💳', url: `${SITE_URL}/pricing` },
+            { label: 'Legal docs', emoji: '📄', url: `${SITE_URL}/terms` },
+          ],
         ] satisfies BotButton[][],
       },
     )
@@ -357,6 +362,11 @@ async function sendGreeting(chatId: number, lang: 'ru' | 'en', from: TgFrom | un
       keyboard: [
           [{ label: 'Подписаться на канал', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
           [{ label: 'Открыть Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+          // v5.43: документы сервиса — постоянные ссылки (требование платёжного провайдера)
+          [
+            { label: 'Тарифы и оплата', emoji: '💳', url: `${SITE_URL}/pricing` },
+            { label: 'Документы', emoji: '📄', url: `${SITE_URL}/terms` },
+          ],
       ] satisfies BotButton[][],
     },
   )

@@ -70,7 +70,7 @@ export async function creditPendingPayment(
 }
 
 /** Доступность способов пополнения по env (UI скрывает недоступные честно) */
-export function paymentMethods(): { card: boolean; stars: boolean; ton: boolean } {
+export function paymentMethods(): { card: boolean; stars: boolean; ton: boolean; sbp: boolean } {
   return {
     // ЮKassa: нужны ключи магазина — до подключения метода не показываем
     card: Boolean(
@@ -80,5 +80,9 @@ export function paymentMethods(): { card: boolean; stars: boolean; ton: boolean 
     stars: Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim()),
     // TON: нужен адрес кошелька владельца для приёма переводов
     ton: Boolean(process.env.TON_WALLET_ADDRESS?.trim()),
+    // v5.43 Platega: СБП/QR и карты МИР — нужны MerchantId (UUID) + Secret (vcp_…)
+    sbp: Boolean(
+      process.env.PLATEGA_MERCHANT_ID?.trim() && process.env.PLATEGA_SECRET?.trim(),
+    ),
   }
 }
