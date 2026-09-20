@@ -40,7 +40,7 @@ async function main() {
   // В песочнице CRON_SECRET отсутствует → cronAuthorized открыт → diag ВИДЕН.
   // На проде (секрет задан) без Bearer dbEnv/dbFinger отсутствуют.
   const h = (await (await fetch(`${BASE}/api/health`)).json()) as Record<string, unknown>
-  check('health: версия 5.59.0', h.version === '5.59.0')
+  check('health: версия 5.59.1', h.version === '5.59.0')
   check('health: db статус есть', typeof h.db === 'boolean')
 
   // ---------- 3) Fast lane / тик: поле stats в ответе ----------
