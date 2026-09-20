@@ -5,6 +5,7 @@ import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { bumpCache } from '@/lib/redis'
 import { clearPageCache } from '@/lib/page-cache'
+import { clearFeedExtras } from '@/lib/feed-extras'
 import { getChatCard } from '@/lib/tg-bot'
 import { classifyChannelsBatch } from '@/lib/classify'
 import { logAdmin } from '@/lib/admin-log'
@@ -48,6 +49,7 @@ function toTgKey(raw: string): string | null {
 async function invalidateFeed(): Promise<void> {
   await bumpCache(['feed', 'tr', 'ch', 'ct', 'sr']).catch(() => {})
   clearPageCache()
+  clearFeedExtras()
 }
 
 export async function POST(request: Request) {

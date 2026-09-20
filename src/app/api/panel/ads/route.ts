@@ -5,6 +5,7 @@ import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { bumpCache } from '@/lib/redis'
 import { clearPageCache } from '@/lib/page-cache'
+import { clearFeedExtras } from '@/lib/feed-extras'
 
 export const dynamic = 'force-dynamic'
 
@@ -205,6 +206,7 @@ export async function PATCH(request: Request) {
       })
       await bumpCache(['ct']).catch(() => {})
       clearPageCache() // спонсорские посты не доживают в кэше страниц
+      clearFeedExtras() // и в memo-кэше экстрас кампаний (feed-extras)
       return NextResponse.json({ ok: true, campaign: serializeCampaign(campaign) })
     }
 

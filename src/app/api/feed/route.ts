@@ -12,32 +12,17 @@ import { detectLang, langPasses } from '@/lib/lang'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { getCachedPage, putCachedPage } from '@/lib/page-cache'
-import { nsfwPostNotIn } from '@/lib/moderation'
+import { getSponsorChannelIds, getPromotedCandidates, getSponsorCandidates } from '@/lib/feed-extras'
 import { IS_SQLITE } from '@/lib/server'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
 /**
- * Спонсорские каналы (активные CPA-кампании с бюджетом): channelId → campaignId.
- * L0-кэш 20с — таблица крошечная, но запрос не нужен на каждую загрузку ленты.
+ * Спонсорские/промо-экстры страницы 0 (кампании, промо-посты, кандидаты) —
+ * ГЛОБАЛЬНЫЕ выборки, вынесены в L0-кэш src/lib/feed-extras.ts (TTL 20с):
+ * раньше каждый запрос первой страницы делал 2-3 дополнительных SQL-запроса.
  */
-let sponsorCache: { map: Map<string, string>; exp: number } | null = null
-async function sponsorChannelIds(): Promise<Map<string, string>> {
-  if (sponsorCache && sponsorCache.exp > Date.now()) return sponsorCache.map
-  const rows = await db.adCampaign.findMany({
-    where: { status: 'active', channelId: { not: null } },
-    select: { id: true, channelId: true, budgetKop: true, spentKop: true },
-  })
-  const map = new Map<string, string>()
-  for (const r of rows) {
-    if (r.channelId && r.spentKop < r.budgetKop && !map.has(r.channelId)) {
-      map.set(r.channelId, r.id)
-    }
-  }
-  sponsorCache = { map, exp: Date.now() + 20_000 }
-  return map
-}
 
 
 /** Строка сырого SQL страницы ленты (одна JOIN-выборка вместо 4 последовательных) */
@@ -384,7 +369,7 @@ export async function GET(request: Request) {
         Выборка страницы, лайки, закладки и посты спонсоров независимы —
         уходят ОДНИМ параллельным batch’ем (каждый RTT до дальнего Supabase
         стоит ~0.3-0.9с: последовательная цепочка и была причиной «тормозов»). */
-    const sponsors = page === 0 ? await sponsorChannelIds() : null
+    const sponsors = page === 0 ? await getSponsorChannelIds() : null
     let sponSet: Set<string> | null = null
     mark('sponsors-ids')
 
@@ -394,23 +379,11 @@ export async function GET(request: Request) {
         от просмотренности/маутов. Окно промо — 24 часа с момента продвижения;
         после — пост остаётся высоко за счёт веса (rank.ts PROMO_BONUS 48ч). */
     const promoSet: Set<string> = new Set()
+    // Промо-кандидаты из L0-кэша (feed-extras, 20с): персонализации в выборке нет,
+    // язык фильтруем на каждом запросе (кэш общий для всех фильтров)
     const promotedPosts =
       page === 0
-        ? (
-            await db.post.findMany({
-              where: {
-                promotedAt: { gt: new Date(Date.now() - 24 * 3_600_000) },
-                channel: { status: 'active' },
-                AND: [
-                  ...nsfwPostNotIn(),
-                  { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
-                ],
-              },
-              orderBy: { promotedAt: 'desc' },
-              take: 6,
-              select: { id: true, channelId: true, text: true },
-            })
-          ).filter((p) => langPasses(detectLang(p.text), lang)) // язык фильтра уважают и платные посты
+        ? (await getPromotedCandidates()).filter((p) => langPasses(detectLang(p.text), lang))
         : []
     if (promotedPosts.length > 0) {
       for (const p of promotedPosts) promoSet.add(p.id)
@@ -428,26 +401,14 @@ export async function GET(request: Request) {
     const pageRows: PageRow[] = await fetchPageRows(sliceIds, userId)
     mark('page-batch')
 
-    // Посты спонсоров — отдельным ходом ПОСЛЕ основного SQL: последовательность
-    // на тёплом соединении (~0.9с) дешевле, чем параллельный запрос, вынуждающий
-    // открывать второе TLS-соединение к пулеру (~1.7с+)
+    // Посты спонсоров — кандидаты из L0-кэша (feed-extras, 20с): персональное
+    // «уже просмотренное/промо» вычитается в JS по каждому запросу; пул берётся
+    // с запасом (18), поэтому после вычитания кандидатов на выборку хватает
     const sponsorPosts =
       sponsors && sponsors.size > 0
-        ? (
-            await db.post.findMany({
-              where: {
-                channelId: { in: [...sponsors.keys()] },
-                id: { notIn: [...signals.viewedIds, ...promoSet] },
-                AND: [
-                  ...nsfwPostNotIn(), // CPA-спам тоже проходит гигиену текста
-                  // ИИ-модерация: реклама не должна вести на junk/nsfw-посты
-                  { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
-                ],
-              },
-              orderBy: { publishedAt: 'desc' },
-              take: 12,
-            })
-          ).filter((p) => langPasses(detectLang(p.text), lang))
+        ? (await getSponsorCandidates([...sponsors.keys()]))
+            .filter((p) => !signals.viewedIds.has(p.id) && !promoSet.has(p.id))
+            .filter((p) => langPasses(detectLang(p.text), lang))
         : []
     mark('sponsor-posts')
 

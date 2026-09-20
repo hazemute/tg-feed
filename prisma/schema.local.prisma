@@ -141,6 +141,11 @@ model Post {
   viewedBy    PostView[]
   bookmarkedBy Bookmark[]
   comments    Comment[]
+
+  // v5.44 (скорость): срезы ленты по времени, категории/тренды, промо-посты (page 0)
+  @@index([channelId, publishedAt])
+  @@index([publishedAt])
+  @@index([promotedAt])
 }
 
 model Like {
@@ -153,6 +158,9 @@ model Like {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  // v5.44 (скорость): счётчики по посту + «пульс» трендов за 24ч
+  @@index([postId])
+  @@index([createdAt])
 }
 
 model PostView {
@@ -166,6 +174,8 @@ model PostView {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  // v5.44 (скорость): «пульс» трендов — count просмотров за 24ч
+  @@index([createdAt])
 }
 
 model Subscription {
@@ -206,6 +216,8 @@ model Bookmark {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  // v5.44 (скорость): подзапрос COUNT bookmarksCount в SQL-странице ленты — на каждый пост
+  @@index([postId])
 }
 
 model Ad {
@@ -245,6 +257,8 @@ model HashtagClick {
   createdAt DateTime @default(now())
 
   @@index([tag, createdAt])
+  // v5.44 (скорость): «пульс» трендов — count кликов за 24ч
+  @@index([createdAt])
 }
 
 // Загруженные пользователями картинки (чат поддержки/предложка)
@@ -314,6 +328,8 @@ model Notification {
   createdAt       DateTime  @default(now())
 
   @@index([userId, createdAt])
+  // v5.44 (скорость): бейдж непрочитанных поллится каждые ~20-45с
+  @@index([userId, readAt])
 }
 
 model CustomEmoji {

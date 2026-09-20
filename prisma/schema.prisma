@@ -154,6 +154,12 @@ model Post {
   comments    Comment[]
 
   @@index([channelId, publishedAt])
+  // v5.44 (скорость): глобальный срез ленты (all-скоуп: orderBy publishedAt
+  // take 400), «новое за сегодня» в /api/categories, окна трендов и /api/feed/fresh —
+  // составной индекс (channelId, publishedAt) не обслуживает выборки без фильтра по каналу
+  @@index([publishedAt])
+  // промо-посты (Snap Pro): выборка на КАЖДОЙ странице 0 ленты (не кэшируется)
+  @@index([promotedAt])
 }
 
 model Like {
@@ -167,6 +173,10 @@ model Like {
 
   @@unique([userId, postId])
   @@index([userId])
+  // v5.44 (скорость): счётчики/джойны по посту и «пульс» трендов (createdAt за 24ч —
+  // раньше полный скан самой горячей таблицы лайков)
+  @@index([postId])
+  @@index([createdAt])
 }
 
 model PostView {
@@ -180,6 +190,8 @@ model PostView {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
+  // v5.44 (скорость): «пульс» трендов — count просмотров за 24ч (раньше полный скан)
+  @@index([createdAt])
 }
 
 model Subscription {
@@ -221,6 +233,9 @@ model Bookmark {
 
   @@unique([userId, postId])
   @@index([userId])
+  // v5.44 (скорость): подзапрос COUNT в SQL-странице ленты бежит ПО КАЖДОМУ ПОСТУ
+  // каждой страницы (bookmarksCount) — без индекса это скан таблицы на пост
+  @@index([postId])
 }
 
 model Ad {
@@ -358,6 +373,8 @@ model HashtagClick {
   createdAt DateTime @default(now())
 
   @@index([tag, createdAt])
+  // v5.44 (скорость): «пульс» трендов — count кликов за 24ч (индекс по tag не помогает)
+  @@index([createdAt])
 }
 
 // Системные настройки (key-value): флаг техработ и прочее. Redis — рантайм,
@@ -539,6 +556,8 @@ model Notification {
   createdAt       DateTime  @default(now())
 
   @@index([userId, createdAt])
+  // v5.44 (скорость): бейдж непрочитанных поллится каждые ~20-45с (count по userId+readAt)
+  @@index([userId, readAt])
 }
 
 // Загруженные пользователями картинки (чат поддержки/предложка): клиент сжимает

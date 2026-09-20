@@ -425,3 +425,11 @@ CREATE TABLE IF NOT EXISTS "AiSearchLog" (
     CONSTRAINT "AiSearchLog_pkey" PRIMARY KEY ("id")
 );
 CREATE INDEX IF NOT EXISTS "AiSearchLog_userId_createdAt_idx" ON "AiSearchLog"("userId", "createdAt" DESC);
+
+-- v5.44: СКОРОСТЬ — недостающие индексы горячих запросов
+-- (см. ensure-schema.ts 'v5.44': auto-applied on boot; секция здесь — зеркальная копия)
+CREATE INDEX IF NOT EXISTS "Post_promotedAt_idx"          ON "Post" ("promotedAt");
+CREATE INDEX IF NOT EXISTS "Like_createdAt_idx"           ON "Like" ("createdAt" DESC);
+CREATE INDEX IF NOT EXISTS "PostView_createdAt_idx"       ON "PostView" ("createdAt" DESC);
+CREATE INDEX IF NOT EXISTS "HashtagClick_createdAt_idx"   ON "HashtagClick" ("createdAt" DESC);
+CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification" ("userId", "readAt");

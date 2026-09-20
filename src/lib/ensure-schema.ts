@@ -83,6 +83,26 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE UNIQUE INDEX IF NOT EXISTS "GiveawayEntry_giveawayId_userId_key" ON "GiveawayEntry" ("giveawayId", "userId")`,
     `ALTER TABLE "GiveawayEntry" ADD CONSTRAINT "GiveawayEntry_giveawayId_fkey" FOREIGN KEY ("giveawayId") REFERENCES "Giveaway"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
   ],
+  'v5.44': [
+    // v5.44: СКОРОСТЬ — недостающие индексы горячих запросов.
+    // Post.publishedAt: all-скоуп ленты (orderBy publishedAt take 400),
+    //   «новое за сегодня» /api/categories, окна трендов, /api/feed/fresh.
+    // Post.promotedAt: промо-посты на каждой странице 0 ленты.
+    // Bookmark.postId: подзапрос COUNT bookmarksCount в SQL-странице ленты
+    //   выполняется ПО КАЖДОМУ ПОСТУ каждой страницы (без индекса — скан).
+    // Like.postId: симметричные счётчики/джойны по посту.
+    // Like/PostView/HashtagClick.createdAt: «пульс» трендов (count за 24ч —
+    //   раньше полный скан самых больших таблиц).
+    // Notification(userId, readAt): бейдж непрочитанных поллится каждые 20-45с.
+    `CREATE INDEX IF NOT EXISTS "Post_publishedAt_idx" ON "Post" ("publishedAt" DESC)`,
+    `CREATE INDEX IF NOT EXISTS "Post_promotedAt_idx" ON "Post" ("promotedAt")`,
+    `CREATE INDEX IF NOT EXISTS "Bookmark_postId_idx" ON "Bookmark" ("postId")`,
+    `CREATE INDEX IF NOT EXISTS "Like_postId_idx" ON "Like" ("postId")`,
+    `CREATE INDEX IF NOT EXISTS "Like_createdAt_idx" ON "Like" ("createdAt" DESC)`,
+    `CREATE INDEX IF NOT EXISTS "PostView_createdAt_idx" ON "PostView" ("createdAt" DESC)`,
+    `CREATE INDEX IF NOT EXISTS "HashtagClick_createdAt_idx" ON "HashtagClick" ("createdAt" DESC)`,
+    `CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification" ("userId", "readAt")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
