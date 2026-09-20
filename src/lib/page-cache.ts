@@ -14,13 +14,25 @@ import type { PostDTO } from '@/lib/types'
  */
 
 type PageEntry = { items: PostDTO[]; hasMore: boolean; exp: number }
+type Flags = { liked?: boolean; bookmarked?: boolean }
 
-const pages = new Map<string, PageEntry>()
+/*
+ * v5.52: хранилище через globalThis-синглтон (паттерн lib/db.ts). В dev Next.js
+ * изолирует модули разных route-бандлов: /api/like писал override в СВОЮ копию
+ * Map, /api/feed читал СВОЮ — «свежий лайк откатывался» на 45с. globalThis
+ * гарантирует один инстанс на процесс для всех роутов (в проде — то же самое).
+ */
+type PageCacheStore = {
+  pages: Map<string, PageEntry>
+  overrides: Map<string, { flags: Flags; exp: number }>
+}
+const G = globalThis as unknown as { __tgFeedPageCache?: PageCacheStore }
+const store: PageCacheStore = (G.__tgFeedPageCache ??= { pages: new Map(), overrides: new Map() })
+const pages = store.pages
+const overrides = store.overrides
+
 const PAGE_TTL_MS = 45_000
 const PAGE_MAX = 400
-
-type Flags = { liked?: boolean; bookmarked?: boolean }
-const overrides = new Map<string, { flags: Flags; exp: number }>()
 const OVERRIDE_TTL_MS = 10 * 60_000
 
 const keyOf = (uid: string, category: string, page: number, limit: number, seed: string, lang: string) =>
