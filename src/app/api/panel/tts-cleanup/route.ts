@@ -20,7 +20,7 @@ export const maxDuration = 60
  *
  * Доступ: x-admin-key.
  */
-const BATCH = 30
+const BATCH = 8
 const BUDGET_MS = 20_000
 
 export async function POST(request: Request) {
@@ -54,7 +54,8 @@ export async function POST(request: Request) {
     await logAdmin('tts-cleanup', 'posts.ttsAudio', { cleared, done })
     return NextResponse.json({ ok: true, cleared, done })
   } catch (e) {
-    console.error('[panel/tts-cleanup]', e)
-    return NextResponse.json({ error: 'cleanup failed' }, { status: 500 })
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error('[panel/tts-cleanup]', msg)
+    return NextResponse.json({ error: 'cleanup failed', detail: msg.slice(0, 200) }, { status: 500 })
   }
 }
