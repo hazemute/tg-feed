@@ -59,8 +59,15 @@ function directConnectionString(): string | null {
 async function runRawCleanup(): Promise<{ cleared: number; done: boolean; direct: boolean; ro_before?: string }> {
   const cs = directConnectionString()
   if (!cs) throw new Error('no DATABASE_URL/DIRECT_URL')
+  // Парсим URL вручную: sslmode из connectionString перекрывает ssl-объект
+  // и ломает соединение («self-signed certificate in certificate chain»).
+  const u = new URL(cs)
   const client = new Client({
-    connectionString: cs,
+    host: u.hostname,
+    port: Number(u.port || 5432),
+    user: decodeURIComponent(u.username),
+    password: decodeURIComponent(u.password),
+    database: u.pathname.replace(/^\//, '') || 'postgres',
     ssl: { rejectUnauthorized: false },
     connectionTimeoutMillis: 10_000,
     statement_timeout: 25_000,
