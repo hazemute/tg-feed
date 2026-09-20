@@ -504,3 +504,36 @@ CREATE TABLE IF NOT EXISTS "UserSource" (
 CREATE UNIQUE INDEX IF NOT EXISTS "UserSource_userId_tgId_key" ON "UserSource" ("userId", "tgId");
 CREATE INDEX IF NOT EXISTS "UserSource_userId_createdAt_idx" ON "UserSource" ("userId", "createdAt" DESC);
 CREATE INDEX IF NOT EXISTS "UserSource_channelId_idx" ON "UserSource" ("channelId");
+
+-- ===================== v5.51: ЗАДАНИЯ С НАГРАДОЙ (вкладка «Задания») =====================
+-- Подписка на канал / вступление в чат за свайпы. Проверка getChatMember (бот-админ
+-- в цели), реверификация по расписанию: отписался → аннулирование + штраф ×2
+-- (см. ensure-schema.ts 'v5.51', lib/quests.ts).
+CREATE TABLE IF NOT EXISTS "Quest" (
+  "id" text PRIMARY KEY,
+  "title" text NOT NULL,
+  "description" text,
+  "kind" text NOT NULL DEFAULT 'subscribe',
+  "target" text NOT NULL,
+  "link" text,
+  "rewardSwp" integer NOT NULL DEFAULT 100,
+  "active" boolean NOT NULL DEFAULT true,
+  "sort" integer NOT NULL DEFAULT 0,
+  "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "updatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS "QuestCompletion" (
+  "id" text PRIMARY KEY,
+  "questId" text NOT NULL,
+  "userId" text NOT NULL,
+  "status" text NOT NULL DEFAULT 'done',
+  "rewardSwp" integer NOT NULL,
+  "checks" integer NOT NULL DEFAULT 1,
+  "lastCheck" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "QuestCompletion_questId_userId_key" ON "QuestCompletion" ("questId", "userId");
+CREATE INDEX IF NOT EXISTS "Quest_active_sort_idx" ON "Quest" ("active", "sort");
+CREATE INDEX IF NOT EXISTS "QuestCompletion_userId_status_idx" ON "QuestCompletion" ("userId", "status");
+CREATE INDEX IF NOT EXISTS "QuestCompletion_status_lastCheck_idx" ON "QuestCompletion" ("status", "lastCheck");
+CREATE INDEX IF NOT EXISTS "QuestCompletion_questId_idx" ON "QuestCompletion" ("questId");

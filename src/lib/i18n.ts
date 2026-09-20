@@ -19,7 +19,7 @@ export const LANG_LIST: { id: Lang; label: string; native: string }[] = [
 const DICT = {
   /* Навигация */
   'nav.feed': ['Лента', 'Feed'],
-  'nav.trending': ['Тренды', 'Trending'],
+  'nav.quests': ['Задания', 'Quests'],
   'nav.search': ['Поиск', 'Search'],
   'nav.channel': ['Канал', 'Channel'],
   'nav.mychannel': ['Мой канал', 'My channel'],

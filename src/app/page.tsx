@@ -37,14 +37,14 @@ const UserProfileSheet = dynamic(() => import('@/components/profile/UserProfileS
 const ChannelSheet = dynamic(() => import('@/components/feed/ChannelSheet').then((m) => m.ChannelSheet), { ssr: false })
 const PostOverlay = dynamic(() => import('@/components/feed/PostOverlay').then((m) => m.PostOverlay), { ssr: false })
 const ShareSheet = dynamic(() => import('@/components/feed/ShareSheet').then((m) => m.ShareSheet), { ssr: false })
-const TrendingTab = dynamic(() => import('@/components/tabs/TrendingTab').then((m) => m.TrendingTab), { ssr: false })
+const QuestsTab = dynamic(() => import('@/components/tabs/QuestsTab').then((m) => m.QuestsTab), { ssr: false })
 const SearchTab = dynamic(() => import('@/components/tabs/SearchTab').then((m) => m.SearchTab), { ssr: false })
 const MyChannelTab = dynamic(() => import('@/components/tabs/MyChannelTab').then((m) => m.MyChannelTab), { ssr: false })
 const ProfileTab = dynamic(() => import('@/components/tabs/ProfileTab').then((m) => m.ProfileTab), { ssr: false })
 const AuthGateSheet = dynamic(() => import('@/components/tg/AuthGateSheet').then((m) => m.AuthGateSheet), { ssr: false })
 const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').then((m) => m.LoginByTelegram), { ssr: false })
 
-const TABS: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
+const TABS: Tab[] = ['feed', 'quests', 'search', 'mychannel', 'profile']
 
 /*
  * v5.28: фактическая «темнота» активной темы — нужна для синхрона класса
@@ -313,15 +313,15 @@ export default function Home() {
     return () => window.removeEventListener('tgfeed:prerelease', onPrerelease)
   }, [setPrerelease])
 
-  // Прогрев ВСЕХ ключевых экранов ПОСЛЕ первого рендера ленты (v5.34): тренды,
+  // Прогрев ВСЕХ ключевых экранов ПОСЛЕ первого рендера ленты (v5.34): задания,
   // каталог каналов и трендовые хэштеги ложатся в клиентский кэш apiCached —
-  // вкладки «Тренды» и «Поиск» затем открываются МГНОВЕННО, без сетевого раунд-трипа
+  // вкладки «Задания» и «Поиск» затем открываются МГНОВЕННО, без сетевого раунд-трипа
   useEffect(() => {
     if (!authReady || !user || !appOpen) return
     const t = window.setTimeout(() => {
       prefetchIdle(
         [
-          '/api/trending',
+          '/api/quests',
           '/api/hashtags/trending',
           `/api/channels${user.id ? `?userId=${encodeURIComponent(user.id)}` : ''}`,
         ],
@@ -341,7 +341,7 @@ export default function Home() {
       void import('@/components/feed/CommentsSheet')
       void import('@/components/profile/UserProfileSheet')
       void import('@/components/tabs/SearchTab')
-      void import('@/components/tabs/TrendingTab')
+      void import('@/components/tabs/QuestsTab')
       void import('@/components/tabs/ProfileTab')
     }, 3_500)
     return () => window.clearTimeout(t)
@@ -484,7 +484,7 @@ export default function Home() {
               onTouchEnd={onTouchEnd}
             >
               {tab === 'feed' && <FeedView />}
-              {tab === 'trending' && <TrendingTab />}
+              {tab === 'quests' && <QuestsTab />}
               {tab === 'search' && <SearchTab />}
               {tab === 'mychannel' && <MyChannelTab />}
               {tab === 'profile' && <ProfileTab />}

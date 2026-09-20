@@ -76,7 +76,7 @@ interface AppState {
 // с TABS в page.tsx (swipe между вкладками). 'mychannel' скрыт из навигации,
 // но вкладка жива (открывается из профиля/уведомлений/промо) — без неё indexOf
 // возвращал -1 и слайд перехода шёл в обратную сторону.
-const TAB_ORDER: Tab[] = ['feed', 'trending', 'search', 'mychannel', 'profile']
+const TAB_ORDER: Tab[] = ['feed', 'quests', 'search', 'mychannel', 'profile']
 
 export const useApp = create<AppState>((set, get) => ({
   user: null,

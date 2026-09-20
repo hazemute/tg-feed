@@ -6,6 +6,7 @@ import { notifyNewPosts } from '@/lib/tg-bot'
 import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, refreshHotChannelStats, cardBatchSize } from '@/lib/parse-scheduler'
 import { pruneAll } from '@/lib/retention'
 import { checkDueGiveaways } from '@/lib/giveaways'
+import { reverifyQuestCompletions } from '@/lib/quests'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -117,6 +118,11 @@ async function handle(request: Request) {
     // если у бота не было трафика — вебхук дергает планировщик лениво)
     const giveaways = await checkDueGiveaways().catch(() => null)
 
+    // v5.51: реверификация заданий — до 10 выполнений за тик перепроверяются
+    // через getChatMember (очередь: самые старые проверки — первыми).
+    // Отписался → аннулирование + штраф ×2 (см. lib/quests.ts).
+    const questChecks = await reverifyQuestCompletions(10).catch(() => null)
+
     return NextResponse.json({
       ok: true,
       batch: batch.length,
@@ -129,6 +135,7 @@ async function handle(request: Request) {
       emojiBackfill,
       pruned,
       giveaways,
+      questChecks,
       ms: Date.now() - started,
     })
   } catch (e) {

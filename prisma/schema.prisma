@@ -60,6 +60,7 @@ model User {
   comments      Comment[]
   notifications Notification[]
   uploads       Upload[]
+  questCompletions QuestCompletion[]
 }
 
 model Category {
@@ -725,4 +726,45 @@ model UserSource {
   @@unique([userId, tgId])
   @@index([userId, createdAt])
   @@index([channelId])
+}
+
+// Задания с наградой (v5.51): вкладка «Задания» — подписка на канал / вступление
+// в чат за свайпы. Проверка членства честная — Bot API getChatMember (бот-админ
+// в цели). Умная защита от фарминга: если юзер получил награду и отписался,
+// реверификация аннулирует задание и списывает ДВОЙНУЮ награду; повторно
+// выполнить отозванное задание нельзя (уникальная пара quest+user).
+model Quest {
+  id          String   @id @default(cuid())
+  title       String // название для карточки («Подпишись на @channel»)
+  description String?  // пояснение под названием
+  kind        String   @default("subscribe") // subscribe | join_chat
+  target      String   // @username канала/чата (или числовой chat_id)
+  link        String?  // кнопка-ссылка (по умолчанию https://t.me/<target>)
+  rewardSwp   Int      @default(100) // награда в свайпах
+  active      Boolean  @default(true)
+  sort        Int      @default(0) // порядок в списке (меньше — выше)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  completions QuestCompletion[]
+
+  @@index([active, sort])
+}
+
+model QuestCompletion {
+  id        String   @id @default(cuid())
+  questId   String
+  userId    String   // User.id ("tg_<uid>")
+  status    String   @default("done") // done | revoked
+  rewardSwp Int // сколько начислено (заморозка на момент выдачи)
+  checks    Int      @default(1) // успешных реверификаций
+  lastCheck DateTime @default(now()) // время последней проверки членства
+  createdAt DateTime @default(now())
+
+  quest Quest @relation(fields: [questId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([questId, userId])
+  @@index([userId, status])
+  @@index([status, lastCheck]) // очередь реверификации: старые проверки первыми
 }

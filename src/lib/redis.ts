@@ -26,8 +26,10 @@ import { Redis } from '@upstash/redis'
  * без участия пользователей — feed-warm.ts (парсер/CRON).
  */
 
-const url = process.env.UPSTASH_REDIS_REST_URL?.trim() ?? ''
-const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim() ?? ''
+// v5.51: поддержка имён переменных Vercel-интеграции Upstash (REDIS_KV_REST_API_*)
+// — если проект подключён через Marketplace, код работает без ручных env.
+const url = (process.env.UPSTASH_REDIS_REST_URL ?? process.env.REDIS_KV_REST_API_URL ?? '').trim()
+const token = (process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.REDIS_KV_REST_API_TOKEN ?? '').trim()
 
 /** Единый клиент (null — Redis не настроен, все вызовы no-op) */
 export const redis: Redis | null = url && token ? new Redis({ url, token }) : null
@@ -291,7 +293,7 @@ export async function cacheAside<T>(opts: CacheAsideOpts<T>): Promise<T> {
  * bump обновляет локальную копию мгновенно (свой инстанс видит инвалидацию
  * сразу) и пайплайнит все INCR в один REST-запрос.
  */
-export const CACHE_FAMILIES = ['feed', 'tr', 'ch', 'ct', 'sr'] as const
+export const CACHE_FAMILIES = ['feed', 'tr', 'ch', 'ct', 'sr', 'qt'] as const
 export type CacheFamily = (typeof CACHE_FAMILIES)[number]
 
 const VERSION_TTL_MS = 60_000

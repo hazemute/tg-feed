@@ -486,13 +486,19 @@ export async function getUserPhotoFileId(tgUserId: number): Promise<string | nul
 export async function isTelegramMember(
   username: string,
   tgUserId: number,
+  opts?: { fresh?: boolean },
 ): Promise<boolean | null> {
   if (!botEnabled()) return null
   const clean = username.replace(/^@/, '')
 
   const mk = `cm:${clean}:${tgUserId}`
-  const local = memGet(mk)
-  if (local !== undefined) return local === '1' ? true : local === '0' ? false : null
+  // v5.51: opts.fresh — анти-фарм реверификация заданий читает ТОЛЬКО свежий
+  // ответ Bot API (5-минутный позитивный кэш давал отписавшимся «грейс-период»
+  // и ломал очередь реверификации). Ответ всё равно пишется в кэш.
+  if (opts?.fresh !== true) {
+    const local = memGet(mk)
+    if (local !== undefined) return local === '1' ? true : local === '0' ? false : null
+  }
 
   try {
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMember`, {

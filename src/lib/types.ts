@@ -355,7 +355,7 @@ export type ThemeMode =
   | 'custom' // v5.28: своя палитра (фон+акцент в localStorage, vars поверх data-theme)
 export type FontScale = 'sm' | 'md' | 'lg'
 
-export type Tab = 'feed' | 'trending' | 'search' | 'mychannel' | 'profile'
+export type Tab = 'feed' | 'quests' | 'search' | 'mychannel' | 'profile'
 
 /** Один день статистики активности в профиле (мини-барчарт «Активность за 7 дней») */
 export type ActivityDayDTO = {

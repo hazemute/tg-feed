@@ -1,6 +1,6 @@
 'use client'
 
-import { Flame, Home, Search, UserRound } from 'lucide-react'
+import { Home, ListChecks, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -10,9 +10,9 @@ import type { Tab } from '@/lib/types'
 
 /* «Мой канал» убран из навигации (запрос владельца: разгрузка интерфейса) —
  * строка «Мой канал» переехала в низ профиля. */
-const items: { id: Tab; labelKey: 'nav.feed' | 'nav.trending' | 'nav.search' | 'nav.profile'; icon: typeof Home }[] = [
+const items: { id: Tab; labelKey: 'nav.feed' | 'nav.quests' | 'nav.search' | 'nav.profile'; icon: typeof Home }[] = [
   { id: 'feed', labelKey: 'nav.feed', icon: Home },
-  { id: 'trending', labelKey: 'nav.trending', icon: Flame },
+  { id: 'quests', labelKey: 'nav.quests', icon: ListChecks },
   { id: 'search', labelKey: 'nav.search', icon: Search },
   { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]
@@ -66,7 +66,7 @@ export function BottomNav() {
                   active ? 'text-tg-link' : 'text-tg-hint',
                 )}
                 strokeWidth={active ? 2.3 : 1.8}
-                fill={active && (id === 'feed' || id === 'trending') ? 'currentColor' : 'none'}
+                fill={active && (id === 'feed' || id === 'quests') ? 'currentColor' : 'none'}
               />
               <span
                 className={cn(
