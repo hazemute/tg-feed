@@ -12,12 +12,9 @@ const nextConfig: NextConfig = {
   /* v5.57: строгий type-check на сборке — tsc чист, ошибки больше не
      «проталкиваются» в прод молча (ignoreBuildErrors удалён) */
   reactStrictMode: false,
-  /* v5.60: /_next/image как AVIF/WebP-компрессор нашего медиа-прокси.
-     В Next 16 локальные источники с query-string запрещены по умолчанию —
-     разрешаем ровно /api/media (любые ?u=), остальное закрыто. */
-  images: {
-    localPatterns: [{ pathname: "/api/media" }],
-  },
+  /* v5.60: сжатие картинок делает НАШ /api/media (sharp, w/q в query) —
+     Vercel-оптимизатор /_next/image на этом проекте отдаёт
+     INVALID_IMAGE_OPTIMIZE_REQUEST на любой запрос, не используем его. */
   // Anti-scan: не раскрываем стек (X-Powered-By: Next.js) в ответах
   poweredByHeader: false,
   // Security-заголовки на все ответы (в т.ч. статику).

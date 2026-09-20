@@ -40,6 +40,30 @@ const RANGE_MAX_CONNECTIONS = 8
 const RANGE_TIMEOUT_MS = 25_000
 
 /* ------------------------------------------------------------------ */
+/* v5.60 — СЖАТИЕ КАРТИНОК НА ЛЕТУ (sharp, lazy): w/q из query.         */
+/* WebP вместо исходного JPEG = ×3-5 меньше байт — главное ускорение    */
+/* на медленных каналах. Ресайз только ВНИЗ (withoutEnlargement),       */
+/* только для image/*, только без Range. Результат — в L0/edge.         */
+/* ------------------------------------------------------------------ */
+async function resizeImageWebp(raw: Buffer, width: number, quality: number): Promise<{ buf: Buffer; type: string } | null> {
+  try {
+    const mod = (await import('sharp').catch(() => null)) as
+      | { default: (b: Buffer) => any }
+      | null
+    if (!mod) return null
+    const out = (await mod.default(raw)
+      .rotate() // уважаем EXIF-ориентацию до ресайза
+      .resize({ width, withoutEnlargement: true })
+      .webp({ quality })
+      .toBuffer()) as Buffer
+    if (!out || out.length === 0 || out.length >= raw.length) return null // сжатие не состоялось — отдаём оригинал
+    return { buf: out, type: 'image/webp' }
+  } catch {
+    return null
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* L0-кэш байтов медиа: url → буфер (30 мин, кап 64МБ)                 */
 /* Мгновенные 200/206 (перемотка видео) после первой докачки.          */
 /* ------------------------------------------------------------------ */
@@ -152,6 +176,13 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url)
   const raw = searchParams.get('u')
   const asDownload = searchParams.get('dl') === '1'
+  /* v5.60: параметры сжатия — w в [64..2048], q в [30..90]; без w — оригинал.
+     ВАЖНО: clamp применяем только когда w реально передан (иначе фолбэк в 64
+     сжимал бы «оригинал» до иконки — реальный баг первого запуска). */
+  const wRaw = Number(searchParams.get('w')) || 0
+  const wantW = wRaw > 0 ? Math.max(64, Math.min(2048, wRaw)) : 0
+  const wantQ = Math.max(30, Math.min(90, Number(searchParams.get('q')) || 70))
+  const resizeKey = wantW ? `w${wantW}q${wantQ}` : ''
   if (!raw || !isTrustedMediaUrl(raw)) {
     return new NextResponse('bad url', { status: 400 })
   }
@@ -260,9 +291,36 @@ export async function GET(request: Request) {
     return new NextResponse(upstream.body, { status: upstream.status, headers })
   }
 
+  /**
+   * v5.60 — отдача ПОЛНОСТЬЮ скачанного файла: при запросе w= сжимаем через
+   * sharp в WebP (только вниз, только статичные картинки), кладём в L0 под
+   * ключом с w/q и отдаём; иначе — оригинал как раньше (тоже в L0).
+   */
+  const serveResizedOrRaw = async (
+    part: { buf: Buffer; type: string },
+    source: string,
+    fallbackType?: string,
+  ): Promise<NextResponse> => {
+    const type = part.type.startsWith('application/') ? (fallbackType ?? part.type) : part.type
+    const resizable =
+      resizeKey &&
+      !asDownload &&
+      /^image\/(jpe?g|png|webp|avif)/i.test(part.type) &&
+      !/^image\/gif/i.test(part.type)
+    if (resizable) {
+      const resized = await resizeImageWebp(part.buf, wantW, wantQ)
+      if (resized) {
+        mediaBufSet(`${resizeKey}|${raw}`, resized.buf, resized.type)
+        return serveBuffer(resized.buf, resized.type, source)
+      }
+    }
+    mediaBufSet(raw, part.buf, part.type)
+    return serveBuffer(part.buf, type, source)
+  }
+
   try {
-    // L0: буфер уже в процессе — 200/206 мгновенно
-    const cached = mediaBufGet(raw)
+    // L0: буфер уже в процессе — 200/206 мгновенно (ключ включает сжатие)
+    const cached = mediaBufGet(resizeKey ? `${resizeKey}|${raw}` : raw)
     if (cached) {
       return range ? serveRangeFromBuffer(cached, range, raw) : serveBuffer(cached.buf, cached.type, raw)
     }
@@ -316,9 +374,7 @@ export async function GET(request: Request) {
         }
         const stitched = await fetchParallel(targetUrl)
         if (stitched) {
-          mediaBufSet(raw, stitched.buf, stitched.type)
-          const type = upstream.headers.get('content-type') ?? stitched.type
-          return serveBuffer(stitched.buf, type.startsWith('application/') ? stitched.type : type, targetUrl)
+          return await serveResizedOrRaw(stitched, targetUrl)
         }
         // не сшлось — заново одним соединением (стрим)
         try {
@@ -331,8 +387,7 @@ export async function GET(request: Request) {
         try {
           const buf = Buffer.from(await upstream.arrayBuffer())
           const type = upstream.headers.get('content-type') ?? 'application/octet-stream'
-          mediaBufSet(raw, buf, type)
-          return serveBuffer(buf, type, targetUrl)
+          return await serveResizedOrRaw({ buf, type }, targetUrl)
         } catch {
           /* клиент ушёл — стрим уже не восстановить, отдадим ошибку */
           return new NextResponse('upstream error', { status: 502, headers: { 'Cache-Control': 'public, max-age=30' } })

@@ -183,10 +183,11 @@ export function MediaLightbox({
                 draggable={false}
                 onClick={onSurfaceClick}
                 onError={(e) => {
-                  /* Оптимизатор споткнулся — фолбэк на прямые байты прокси */
+                  /* Оптимизатор споткнулся — фолбэк на прямые байты прокси
+                     (сравниваем по атрибуту: img.src браузер делает абсолютным) */
                   const img = e.currentTarget
                   const direct = item.url
-                  if (direct && img.src !== direct && !img.src.includes('/api/media?u=')) img.src = direct
+                  if (direct && img.getAttribute('src') !== direct) img.src = direct
                 }}
                 onDoubleClick={(e) => {
                   // дублируем зум по dblclick (десктоп)
