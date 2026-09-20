@@ -23,7 +23,7 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    const [totals, byProvider, byDayRaw, adsAgg, liabAgg, dauRow, wauRow, mauRow, usersDayRaw, likesDayRaw, commentsDayRaw] =
+    const [totals, byProvider, byDayRaw, adsAgg, liabAgg, walletAgg, dauRow, wauRow, mauRow, usersDayRaw, likesDayRaw, commentsDayRaw] =
       await Promise.all([
         db.pendingPayment.aggregate({
           where: { status: 'succeeded' },
@@ -44,6 +44,9 @@ export async function GET(request: Request) {
           GROUP BY 1 ORDER BY 1`,
         db.adCampaign.aggregate({ _sum: { spentKop: true }, _count: true }),
         db.advertiserAccount.aggregate({ _sum: { balanceKop: true }, _count: true }),
+        // v5.54: реальный долг перед юзерами — кошельки User (рубли + свайпы в рублёвом эквиваленте),
+        // а не легаси AdvertiserAccount, выведенный из оборота в v5.39
+        db.user.aggregate({ _sum: { balanceKop: true, swipes: true }, _count: true }),
         db.$queryRaw<{ n: number }[]>`SELECT COUNT(DISTINCT "userId")::int AS n FROM "PostView" WHERE "createdAt" >= NOW() - INTERVAL '1 day'`,
         db.$queryRaw<{ n: number }[]>`SELECT COUNT(DISTINCT "userId")::int AS n FROM "PostView" WHERE "createdAt" >= NOW() - INTERVAL '7 days'`,
         db.$queryRaw<{ n: number }[]>`SELECT COUNT(DISTINCT "userId")::int AS n FROM "PostView" WHERE "createdAt" >= NOW() - INTERVAL '30 days'`,
@@ -76,6 +79,10 @@ export async function GET(request: Request) {
       liabilities: {
         balanceKop: liabAgg._sum.balanceKop ?? 0,
         accounts: liabAgg._count,
+        // v5.54: настоящие обязательства — User-кошельки (рубли + свайпы по курсу 500/₽)
+        userBalanceKop: walletAgg._sum.balanceKop ?? 0,
+        userSwipes: walletAgg._sum.swipes ?? 0,
+        users: walletAgg._count,
       },
       engagement: {
         dau: Number(dauRow[0]?.n ?? 0),

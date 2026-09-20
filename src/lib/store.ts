@@ -21,6 +21,10 @@ interface AppState {
   post: PostDTO | null // открытый полный экран поста (внутренний)
   postQueue: PostDTO[] // снимок списка постов вокруг открытого — для свайпов ←/→ в полном экране
   searchSeed: string | null // внешний поисковый запрос (тап по хэштегу в ленте); null — запроса нет
+  /** v5.54: единый источник баланса (кошелёк/задания/ИИ/топап) — компоненты
+   *  читают отсюда свежее значение после мутаций и пишут сюда после fetch */
+  balance: { balanceKop: number; swipes: number } | null
+  patchBalance: (p: Partial<{ balanceKop: number; swipes: number }>) => void
   maintenance: boolean // включён режим техработ и пользователь без допуска
   setMaintenance: (v: boolean) => void
   prerelease: boolean // приложение ещё НЕ выпущено («Выпустить» не нажато) и пользователь без допуска
@@ -100,6 +104,9 @@ export const useApp = create<AppState>((set, get) => ({
   post: null,
   postQueue: [],
   searchSeed: null,
+  balance: null,
+  patchBalance: (p) =>
+    set((s) => ({ balance: { balanceKop: 0, swipes: 0, ...(s.balance ?? {}), ...p } })),
   maintenance: false,
   setMaintenance: (maintenance) => set({ maintenance }),
   prerelease: false,

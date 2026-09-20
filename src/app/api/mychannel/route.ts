@@ -65,8 +65,15 @@ function normalizeUsername(raw: string): string {
 
 /** Код-слово владения каналом: детерминированный, без хранения в БД */
 function claimCodeFor(channelId: string): string {
+  // v5.54: 'tgswipe'-фолбэк — только в dev; в проде константа позволяла
+  // подобрать код владения чужого канала (перебор 16^6 всё равно проще, чем
+  // надо, но зная секрет — мгновенно)
+  const secret =
+    process.env.AUTH_SECRET?.trim() ||
+    process.env.TELEGRAM_BOT_TOKEN?.trim() ||
+    (process.env.NODE_ENV === 'production' ? process.env.CRON_SECRET?.trim() || '' : 'tgswipe')
   const h = createHash('sha256')
-    .update(`${channelId}:${process.env.AUTH_SECRET ?? 'tgswipe'}`)
+    .update(`${channelId}:${secret}`)
     .digest('hex')
   return `swipe-${h.slice(0, 6)}`
 }

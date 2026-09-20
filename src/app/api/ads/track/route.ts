@@ -109,11 +109,15 @@ async function trackCampaign(campaignId: string, isClick: boolean, uid: string |
       .catch(() => null)
     billed = created !== null
   } else if (!sameDay(existing.lastBilledAt, dayStart)) {
-    await db.campaignClick.update({
-      where: { id: existing.id },
-      data: { lastBilledAt: new Date(), billedCount: { increment: 1 } },
-    })
-    billed = true
+    // v5.54: условный апдейт по дате — раньше два параллельных клика одного
+    // юзера оба читали старую lastBilledAt и оба тарифицировались (×2 billing)
+    const upd = await db.campaignClick
+      .updateMany({
+        where: { id: existing.id, lastBilledAt: { lt: dayStart } },
+        data: { lastBilledAt: new Date(), billedCount: { increment: 1 } },
+      })
+      .catch(() => ({ count: 0 }))
+    billed = upd.count === 1
   }
 
   if (!billed) return { ok: true, tracked: true, billed: false }

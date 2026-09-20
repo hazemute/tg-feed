@@ -5,9 +5,10 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { AlertTriangle, BadgeCheck, Check, ExternalLink, RefreshCw, Sparkles } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { api, apiCached } from '@/lib/api'
+import { api, apiCached, invalidateApiCache } from '@/lib/api'
 import { formatCount, pluralRu } from '@/lib/format'
 import { haptic, tg } from '@/lib/tg'
+import { useApp } from '@/lib/store'
 
 /**
  * Экран «Задания» (v5.51, вместо «Трендов»): подписка на канал / вступление
@@ -42,6 +43,11 @@ export function QuestsTab() {
   const [claimingId, setClaimingId] = useState<string | null>(null)
   const [justDone, setJustDone] = useState<string | null>(null)
   const doneTimer = useRef(0)
+  // v5.54: гость не клэймит (сервер всё равно не сможет проверить tgId) —
+  // показываем шторку входа; баланс мутаций пишем в общий стор
+  const user = useApp((s) => s.user)
+  const openAuthGate = useApp((s) => s.openAuthGate)
+  const patchBalance = useApp((s) => s.patchBalance)
 
   const load = useCallback(() => {
     // Клиентский кэш 15с — повторное открытие вкладки мгновенно; claim всегда
@@ -73,6 +79,10 @@ export function QuestsTab() {
 
   const claim = async (q: QuestItem) => {
     if (claimingId) return
+    if (user?.isGuest) {
+      openAuthGate('quest')
+      return
+    }
     setClaimingId(q.id)
     haptic('light')
     try {
@@ -82,6 +92,10 @@ export function QuestsTab() {
       )
       if (res.status === 'done') {
         haptic('success')
+        // v5.54: баланс сразу в общий стор (кошелёк в профиле перестал показывать
+        // устаревшее значение) + сброс клиентского кэша списка заданий
+        patchBalance({ swipes: res.balance ?? 0 })
+        invalidateApiCache('/api/quests')
         setData((prev) =>
           prev
             ? {
@@ -108,6 +122,7 @@ export function QuestsTab() {
             : prev,
         )
       } else if (res.status === 'revoked') {
+        invalidateApiCache('/api/quests')
         setData((prev) =>
           prev
             ? {

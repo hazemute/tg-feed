@@ -5,6 +5,7 @@ import { premiumText, stripTgEmoji, premiumMap } from '@/lib/tg-emoji'
 import { buildPlainKeyboard, type BotButton } from '@/lib/tg-buttons'
 import { fmtRub, SWP_PER_RUB } from '@/lib/wallet'
 import { tierExpiryFor } from '@/lib/tiers'
+import { invalidateBalance } from '@/lib/balance-cache'
 import { cacheIncr, cacheExpire, cacheSet } from '@/lib/redis'
 import {
   parseTasks,
@@ -500,29 +501,58 @@ export function pickWinners(entries: GiveawayWinner[], prizes: Prize[]): Giveawa
   return winners
 }
 
-/** Начислить приз победителю (идемпотентность на вызывающем коде — одна финализация) */
-async function creditPrize(userId: string, prize: Prize): Promise<void> {
+/**
+ * Начислить приз победителю. v5.54: ИДЕМПОТЕНТНО — маркер в BalanceLog:
+ * перед начислением проверяем, не начислен ли уже этот приз этим юзеру
+ * (защита от повторной выдачи при rescue-прогонах после сбоя процесса).
+ * Возвращает true, если начисление выполнено именно сейчас.
+ */
+async function creditPrize(userId: string, prize: Prize, giveawayTitle: string, place: number): Promise<boolean> {
+  const note = `Приз розыгрыша «${giveawayTitle}» — ${prize.label} (место ${place})`
   if (prize.kind === 'swipes' && prize.amount > 0) {
+    // v5.54: дедуп смотрит и на старый формат note «Приз розыгрыша» —
+    // чтобы rescue не пере-начислил призы, выданные до обновления
+    const already = await db.balanceLog
+      .findFirst({
+        where: { userId, kind: 'admin', currency: 'swp', amount: prize.amount, OR: [{ note }, { note: 'Приз розыгрыша' }] },
+        select: { id: true },
+      })
+      .catch(() => null)
+    if (already) return false
     await db.user.update({
       where: { id: userId },
       data: { swipes: { increment: prize.amount } },
     })
     await db.balanceLog.create({
-      data: { userId, kind: 'admin', currency: 'swp', amount: prize.amount, note: 'Приз розыгрыша' },
+      data: { userId, kind: 'admin', currency: 'swp', amount: prize.amount, note },
     }).catch(() => {})
-    return
+    await invalidateBalance(userId)
+    return true
   }
   if (prize.kind === 'rub' && prize.amount > 0) {
+    const already = await db.balanceLog
+      .findFirst({
+        where: { userId, kind: 'admin', currency: 'rub', amount: prize.amount, OR: [{ note }, { note: 'Приз розыгрыша' }] },
+        select: { id: true },
+      })
+      .catch(() => null)
+    if (already) return false
     await db.user.update({
       where: { id: userId },
       data: { balanceKop: { increment: prize.amount } },
     })
     await db.balanceLog.create({
-      data: { userId, kind: 'admin', currency: 'rub', amount: prize.amount, note: 'Приз розыгрыша' },
+      data: { userId, kind: 'admin', currency: 'rub', amount: prize.amount, note },
     }).catch(() => {})
-    return
+    await invalidateBalance(userId)
+    return true
   }
   if (prize.kind === 'tier') {
+    // маркер-запись (currency 'swp', amount 0) — чтобы rescue-прогон не продлевал тариф повторно
+    const already = await db.balanceLog
+      .findFirst({ where: { userId, kind: 'admin', currency: 'swp', amount: 0, note }, select: { id: true } })
+      .catch(() => null)
+    if (already) return false
     const tier = prize.amount >= 2 ? 'pro' : 'plus'
     const u = await db.user.findUnique({ where: { id: userId }, select: { tierUntil: true } })
     const until =
@@ -533,8 +563,13 @@ async function creditPrize(userId: string, prize: Prize): Promise<void> {
           )
         : tierExpiryFor(u?.tierUntil, 'month')
     await db.user.update({ where: { id: userId }, data: { tier, tierUntil: until } })
+    await db.balanceLog
+      .create({ data: { userId, kind: 'admin', currency: 'swp', amount: 0, note } })
+      .catch(() => {})
+    return true
   }
   // custom — ничего не начисляем, только объявляем
+  return false
 }
 
 /** Пост с победителями: премиум-эмодзи, ссылки на профили, приз каждого места */
@@ -579,12 +614,16 @@ export function winnersPostHtml(g: {
 /**
  * Финализировать ОДИН розыгрыш: взвешенный выбор по билетам, призы,
  * утешительные свайпы проигравшим, пост в канал, ЛС победителям/проигравшим.
- * Идемпотентность — атомарный перевод статуса в finished (updateMany guard).
+ * v5.54: атомарный ЗАХВАТ финализации (статус → finished) выполняется ДО любых
+ * начислений; начисления идемпотентны (маркеры в BalanceLog). Гонка тик × панель ×
+ * вебхук раньше выбирала разных победителей и платила призы дважды; сбой процесса
+ * посреди начислений теперь дочищается rescue-прогоном (см. checkDueGiveaways).
  */
 export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolean; error?: string; winners?: number }> {
   const g = await db.giveaway.findUnique({ where: { id: giveawayId } })
   if (!g) return { ok: false, error: 'не найден' }
-  if (g.status === 'finished') return { ok: true, winners: parseWinners(g.winners).length }
+  // полностью завершён (есть и победители, и пост) — ничего не делаем
+  if (g.status === 'finished' && g.winnersMessageId) return { ok: true, winners: parseWinners(g.winners).length }
   if (g.status === 'draft' || g.status === 'scheduled') return { ok: false, error: 'ещё не опубликован' }
 
   const entries = await db.giveawayEntry.findMany({
@@ -601,78 +640,121 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
   const nameOf = (e: (typeof entries)[number]) =>
     e.firstName || userById.get(e.userId)?.firstName || (e.username ? `@${e.username}` : 'участник')
 
-  // v5.46: ЧЕСТНЫЙ ВЗВЕШЕННЫЙ РАНДОМ по билетам. В розыгрыше только те,
-  // кто заработал хотя бы один билет (ticketsCount > 0).
-  const seats = totalWinners(prizes)
-  const weighted = pickWinnersWeighted(
-    entries.map((e) => ({ userId: e.userId, tickets: e.ticketsCount })),
-    seats,
-  )
-  const hasTickets = entries.some((e) => e.ticketsCount > 0)
-  // Фолбэк для розыгрышей БЕЗ билетных заданий: равномерный shuffle по всем заявкам
-  const winnersIds = new Set(hasTickets ? weighted.map((w) => w.userId) : pickUniform(entries, seats))
-  const ticketsByUser = new Map(entries.map((e) => [e.userId, e.ticketsCount]))
+  let participants: GiveawayWinner[]
+  const rescue = g.status === 'finished' && !!g.winners
+  if (rescue) {
+    // RESCUE: финализатор уже захватил розыгрыш, но оборвался до поста —
+    // победители зафиксированы в winners JSON, дочищаем их начисления.
+    participants = parseWinners(g.winners)
+  } else {
+    // v5.46: ЧЕСТНЫЙ ВЗВЕШЕННЫЙ РАНДОМ по билетам. В розыгрыше только те,
+    // кто заработал хотя бы один билет (ticketsCount > 0).
+    const seats = totalWinners(prizes)
+    const weighted = pickWinnersWeighted(
+      entries.map((e) => ({ userId: e.userId, tickets: e.ticketsCount })),
+      seats,
+    )
+    const hasTickets = entries.some((e) => e.ticketsCount > 0)
+    // Фолбэк для розыгрышей БЕЗ билетных заданий: равномерный shuffle по всем заявкам
+    const winnersIds = new Set(hasTickets ? weighted.map((w) => w.userId) : pickUniform(entries, seats))
+    const ticketsByUser = new Map(entries.map((e) => [e.userId, e.ticketsCount]))
 
-  const participants: GiveawayWinner[] = entries
-    .filter((e) => winnersIds.has(e.userId))
-    .map((e) => ({
-      userId: e.userId,
-      name: nameOf(e),
-      ...(e.tgId ? { tgId: e.tgId } : {}),
-      prizeIndex: 0,
-      ...(hasTickets ? { tickets: ticketsByUser.get(e.userId) ?? 0 } : {}),
-    }))
-  // Порядок мест: победители взвешенного выбора — по порядку выпадения; фолбэк — как вышел shuffle
-  if (hasTickets) {
-    let idx = 0
-    for (const w of weighted) {
-      if (idx >= participants.length) break
-      const p = participants.find((x) => x.userId === w.userId)
-      if (p) {
-        participants.splice(idx, 1)
-        participants.splice(idx, 0, p)
-        idx++
+    participants = entries
+      .filter((e) => winnersIds.has(e.userId))
+      .map((e) => ({
+        userId: e.userId,
+        name: nameOf(e),
+        ...(e.tgId ? { tgId: e.tgId } : {}),
+        prizeIndex: 0,
+        ...(hasTickets ? { tickets: ticketsByUser.get(e.userId) ?? 0 } : {}),
+      }))
+    // Порядок мест: победители взвешенного выбора — по порядку выпадения; фолбэк — как вышел shuffle
+    if (hasTickets) {
+      let idx = 0
+      for (const w of weighted) {
+        if (idx >= participants.length) break
+        const p = participants.find((x) => x.userId === w.userId)
+        if (p) {
+          participants.splice(idx, 1)
+          participants.splice(idx, 0, p)
+          idx++
+        }
       }
     }
-  }
-  // распределение по призам: первый приз — первые места
-  let pidx = 0
-  for (let pi = 0; pi < prizes.length && pidx < participants.length; pi++) {
-    for (let k = 0; k < prizes[pi]!.winners && pidx < participants.length; k++) {
-      participants[pidx]!.prizeIndex = pi
-      pidx++
+    // распределение по призам: первый приз — первые места
+    let pidx = 0
+    for (let pi = 0; pi < prizes.length && pidx < participants.length; pi++) {
+      for (let k = 0; k < prizes[pi]!.winners && pidx < participants.length; k++) {
+        participants[pidx]!.prizeIndex = pi
+        pidx++
+      }
     }
+
+    // v5.54: АТОМАРНЫЙ ЗАХВАТ — статус → finished + фиксация победителей ДО начислений.
+    // Проигравший гонку выходит сразу и НЕ начисляет (иначе — двойная выплата).
+    const claim = await db.giveaway.updateMany({
+      where: { id: g.id, status: { not: 'finished' } },
+      data: { status: 'finished', winners: JSON.stringify(participants) },
+    })
+    if (claim.count === 0) {
+      return { ok: true, winners: parseWinners(g.winners).length }
+    }
+    invalidateActiveCache()
   }
 
-  // Начисление призов (до смены статуса — сбой начисления должен ретраиться)
-  for (const w of participants) {
+  // Начисление призов — идемпотентно (маркер в BalanceLog): rescue-прогон не задвоит.
+  let creditedNow = false
+  for (let i = 0; i < participants.length; i++) {
+    const w = participants[i]!
     const prize = prizes[w.prizeIndex]
-    if (prize) await creditPrize(w.userId, prize).catch((e) => console.error('[giveaway] creditPrize', e))
+    if (!prize) continue
+    const credited = await creditPrize(w.userId, prize, g.title, i + 1).catch((e) => {
+      console.error('[giveaway] creditPrize', e)
+      return false
+    })
+    if (credited) creditedNow = true
   }
 
   // v5.46: УТЕШИТЕЛЬНЫЕ СВАЙПЫ проигравшим участникам с билетами (ticketsCount > 0,
   // без победы) + ЛС-уведомление. Призёры с ticketsCount = 0 (кликнули и ушли без
   // единого билета) — не считаем участниками розыгрыша, ничего не начисляем.
+  // v5.54: идемпотентно — начисляем только тем, у кого ещё нет записи в журнале.
+  const winnersIds = new Set(participants.map((p) => p.userId))
   const loserReward = g.losersRewardSwipes ?? 0
   if (loserReward > 0) {
     const losers = entries.filter((e) => e.ticketsCount > 0 && !winnersIds.has(e.userId))
     if (losers.length > 0) {
-      await db.user.updateMany({
-        where: { id: { in: losers.map((l) => l.userId) } },
-        data: { swipes: { increment: loserReward } },
-      })
-      await db.balanceLog.createMany({
-        data: losers.map((l) => ({
-          userId: l.userId,
-          kind: 'admin',
-          currency: 'swp',
-          amount: loserReward,
-          note: `Утешительный приз — розыгрыш «${g.title}»`,
-        })),
-      }).catch(() => {})
-      for (const l of losers) {
-        // Инбокс + ЛС бота (очередь внутри sendBotNotification)
-        await notifyLoser(l.userId, g.title, loserReward).catch(() => {})
+      const loserNote = `Утешительный приз — розыгрыш «${g.title}»`
+      const paid = await db.balanceLog
+        .findMany({
+          where: { userId: { in: losers.map((l) => l.userId) }, kind: 'admin', currency: 'swp', amount: loserReward, note: loserNote },
+          select: { userId: true },
+        })
+        .catch(() => [] as Array<{ userId: string }>)
+      const paidSet = new Set(paid.map((p) => p.userId))
+      const pending = losers.filter((l) => !paidSet.has(l.userId))
+      if (pending.length > 0) {
+        await db.user.updateMany({
+          where: { id: { in: pending.map((l) => l.userId) } },
+          data: { swipes: { increment: loserReward } },
+        })
+        await db.balanceLog
+          .createMany({
+            data: pending.map((l) => ({
+              userId: l.userId,
+              kind: 'admin',
+              currency: 'swp',
+              amount: loserReward,
+              note: loserNote,
+            })),
+          })
+          .catch(() => {})
+        await Promise.allSettled(pending.map((l) => invalidateBalance(l.userId)))
+        creditedNow = true
+        for (const l of pending) {
+          // Инбокс + ЛС бота (очередь внутри sendBotNotification)
+          await notifyLoser(l.userId, g.title, loserReward).catch(() => {})
+        }
       }
     }
   }
@@ -694,21 +776,20 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
     }
   }
 
-  // Атомарная смена статуса (повторный вызов ничего не сломает)
-  const upd = await db.giveaway.updateMany({
-    where: { id: g.id, status: { not: 'finished' } },
-    data: { status: 'finished', winners: winnersJson, ...(winnersMessageId ? { winnersMessageId } : {}) },
-  })
-  if (upd.count === 0) return { ok: true, winners: parseWinners(g.winners).length }
-  invalidateActiveCache()
+  // v5.54: messageId пишется отдельно — статус/победители уже зафиксированы захватом;
+  // наличие messageId = финализация полностью завершена (rescue больше не нужен).
+  if (winnersMessageId) {
+    await db.giveaway.update({ where: { id: g.id }, data: { winnersMessageId } }).catch(() => {})
+  }
 
   // Спрятать кнопку участия в исходном посте (приём окончен)
   if (g.chatId && g.messageId && !botBanned()) {
     void tgCall('editMessageReplyMarkup', { chat_id: g.chatId, message_id: g.messageId, reply_markup: { inline_keyboard: [] } })
   }
 
-  // ЛС победителям (после смены статуса — чтобы не задвоить при ретрае финализации)
-  if (participants.length > 0) {
+  // ЛС победителям — только если что-то начисляли сейчас (rescue-прогон без
+  // новых начислений не спамит повторными поздравлениями)
+  if (participants.length > 0 && creditedNow) {
     for (const w of participants) {
       const prize = prizes[w.prizeIndex]
       notifyWinner(w.userId, g.title, prize?.label ?? 'приз')
@@ -821,6 +902,23 @@ export async function checkDueGiveaways(): Promise<{ published: number; finished
   })
   for (const a of active) finished += await finishOne(a.id)
   for (const id of expiredIds) finished += await finishOne(id)
+
+  // 3) v5.54: RESCUE — финализация захвачена (status finished, победители записаны),
+  // но процесс оборвался до поста (messageId нет): дочищаем начисления/пост —
+  // finalizeGiveaway идемпотентен, уже выданное не задвоит. Окно — сутки от endAt.
+  const stuck = await db.giveaway
+    .findMany({
+      where: {
+        status: 'finished',
+        winners: { not: null },
+        winnersMessageId: null,
+        endAt: { gte: new Date(now.getTime() - 24 * 86_400_000) },
+      },
+      select: { id: true },
+      take: 3,
+    })
+    .catch(() => [] as Array<{ id: string }>)
+  for (const s of stuck) finished += await finishOne(s.id)
 
   return { published, finished }
 }

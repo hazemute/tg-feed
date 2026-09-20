@@ -105,50 +105,67 @@ export async function spendSwipes(
   note?: string,
 ): Promise<boolean> {
   if (cost <= 0) return true
-  const ok = await db.$transaction(async (tx) => {
-    const u = await tx.user.findUnique({
-      where: { id: userId },
-      select: { swipes: true, balanceKop: true },
-    })
-    if (!u) return false
-
-    if (u.swipes >= cost) {
-      await tx.user.update({
+  // v5.54: Reject — «недостаточно средств/проиграна гонка» → откат всей транзакции.
+  // Раньше ветка докупки делала безусловный decrement после read-then-write:
+  // два параллельных списания читали один баланс и оба проходили → баланс в минус.
+  class Reject extends Error {}
+  try {
+    await db.$transaction(async (tx) => {
+      const u = await tx.user.findUnique({
         where: { id: userId },
+        select: { swipes: true, balanceKop: true },
+      })
+      if (!u) throw new Reject()
+
+      if (u.swipes >= cost) {
+        // Условный декремент: WHERE swipes >= cost — БД не даст уйти в минус
+        // даже если параллельный запрос уже списал свайпы после нашего чтения.
+        const dec = await tx.user.updateMany({
+          where: { id: userId, swipes: { gte: cost } },
+          data: { swipes: { decrement: cost } },
+        })
+        if (dec.count === 0) throw new Reject()
+        await log(tx, userId, 'ai_spend', 'swp', -cost, note)
+        return
+      }
+
+      // Не хватает свайпов — докупаем с рублёвого баланса по курсу SWP_PER_RUB
+      const deficit = cost - u.swipes
+      // Пакет докупки: кратен 500, но не меньше дефицита; если денег впритык — берём ровно дефицит
+      const buy = Math.max(
+        deficit,
+        Math.ceil(deficit / SWP_PER_RUB) * SWP_PER_RUB,
+      ) // ≥ deficit, обычно круглыми пятисотками
+      const buyKop = swpToKop(buy) // стоимость пакета в копейках (500 свайпов = 1 ₽)
+      const deficitKop = swpToKop(deficit)
+      const affordable = u.balanceKop >= buyKop ? buy : u.balanceKop >= deficitKop ? deficit : 0
+      const payKop = swpToKop(affordable)
+      if (affordable <= 0) throw new Reject()
+
+      // Условный декремент рублей: WHERE balanceKop >= payKop
+      const paid = await tx.user.updateMany({
+        where: { id: userId, balanceKop: { gte: payKop } },
+        data: { balanceKop: { decrement: payKop }, swipes: { increment: affordable } },
+      })
+      if (paid.count === 0) throw new Reject()
+      await log(tx, userId, 'convert', 'rub', -payKop, 'авто-покупка свайпов с баланса')
+      await log(tx, userId, 'convert', 'swp', affordable, 'авто-покупка свайпов с баланса')
+
+      const dec2 = await tx.user.updateMany({
+        where: { id: userId, swipes: { gte: cost } },
         data: { swipes: { decrement: cost } },
       })
+      // Свайпы могли уйти параллельной трате между покупкой и списанием —
+      // откатываем и покупку тоже (деньги не конвертируются «в никуда»).
+      if (dec2.count === 0) throw new Reject()
       await log(tx, userId, 'ai_spend', 'swp', -cost, note)
-      return true
-    }
-
-    // Не хватает свайпов — докупаем с рублёвого баланса по курсу SWP_PER_RUB
-    const deficit = cost - u.swipes
-    // Пакет докупки: кратен 500, но не меньше дефицита; если денег впритык — берём ровно дефицит
-    const buy = Math.max(
-      deficit,
-      Math.ceil(deficit / SWP_PER_RUB) * SWP_PER_RUB,
-    ) // ≥ deficit, обычно круглыми пятисотками
-    const buyKop = swpToKop(buy) // стоимость пакета в копейках (500 свайпов = 1 ₽)
-    const deficitKop = swpToKop(deficit)
-    const affordable = u.balanceKop >= buyKop ? buy : u.balanceKop >= deficitKop ? deficit : 0
-    const payKop = swpToKop(affordable)
-    if (affordable <= 0 || u.balanceKop < payKop) return false
-
-    await tx.user.update({
-      where: { id: userId },
-      data: { balanceKop: { decrement: payKop }, swipes: { increment: affordable } },
     })
-    await log(tx, userId, 'convert', 'rub', -payKop, 'авто-покупка свайпов с баланса')
-    await log(tx, userId, 'convert', 'swp', affordable, 'авто-покупка свайпов с баланса')
-    await tx.user.update({
-      where: { id: userId },
-      data: { swipes: { decrement: cost } },
-    })
-    await log(tx, userId, 'ai_spend', 'swp', -cost, note)
-    return true
-  })
-  if (ok) await invalidateBalance(userId) // кэш баланса устарел — edge увидит свежие данные после перечита
-  return ok
+  } catch (e) {
+    if (e instanceof Reject) return false
+    throw e
+  }
+  await invalidateBalance(userId) // кэш баланса устарел — edge увидит свежие данные после перечита
+  return true
 }
 
 /** Конвертация свайпы → рубли: 500 свайпов = 1 ₽. Остаток (<500) остаётся свайпами. */
@@ -218,6 +235,26 @@ export async function payWithBalance(
   })
   if (ok) await invalidateBalance(userId)
   return ok
+}
+
+/**
+ * v5.54: вернуть списанное с баланса (компенсация сбоя после payWithBalance —
+ * например покупка тира списала деньги, но тир не выдался). Атомарный increment.
+ */
+export async function refundToBalance(
+  userId: string,
+  amountKop: number,
+  note?: string,
+): Promise<void> {
+  if (amountKop <= 0) return
+  await db.$transaction(async (tx) => {
+    await tx.user.update({
+      where: { id: userId },
+      data: { balanceKop: { increment: amountKop } },
+    })
+    await log(tx, userId, 'refund', 'rub', amountKop, note)
+  })
+  await invalidateBalance(userId)
 }
 
 /** Журнал кошелька (новые сверху) */

@@ -45,6 +45,41 @@ export type YkPayment = {
 }
 
 /**
+ * v5.54: ПРЯМАЯ ПРОВЕРКА платежа через API ЮKassa (GET /v3/payments/{id}).
+ * Используется вебхуком, когда YOOKASSA_WEBHOOK_SECRET не задан: телу
+ * нотификации без аутентификации доверять нельзя (подделка = бесплатное
+ * пополнение), а вот статус в API магазина — источник истины.
+ * Возвращает { paid, status, amountKop } или null (сеть/креды отсутствуют).
+ */
+export async function yookassaGetPayment(
+  ykPaymentId: string,
+): Promise<{ paid: boolean; status: string; amountKop: number } | null> {
+  const shopId = process.env.YOOKASSA_SHOP_ID?.trim() ?? ''
+  const secretKey = process.env.YOOKASSA_SECRET_KEY?.trim() ?? ''
+  if (!shopId || !secretKey || !ykPaymentId) return null
+  try {
+    const res = await fetch(`${API}/${encodeURIComponent(ykPaymentId)}`, {
+      headers: {
+        Authorization: `Basic ${Buffer.from(`${shopId}:${secretKey}`).toString('base64')}`,
+      },
+      signal: AbortSignal.timeout(10_000),
+      cache: 'no-store',
+    })
+    if (!res.ok) return null
+    const d = (await res.json().catch(() => null)) as {
+      paid?: boolean
+      status?: string
+      amount?: { value?: string }
+    } | null
+    if (!d) return null
+    const kop = d.amount?.value ? Math.round(parseFloat(d.amount.value) * 100) : 0
+    return { paid: d.paid === true, status: d.status ?? '', amountKop: kop }
+  } catch {
+    return null
+  }
+}
+
+/**
  * Создать платёж в ЮKassa (embedded-подтверждение).
  * Возвращает confirmation_token для виджета. Ошибки — null ( caller даёт 502).
  */

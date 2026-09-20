@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
+  AlertTriangle,
   ArrowUpRight,
   Bot,
   Check,
@@ -20,6 +21,7 @@ import {
   Play,
   Plus,
   Radio,
+  RefreshCw,
   Rocket,
   Scissors,
   Send,
@@ -74,6 +76,9 @@ export function MyChannelTab() {
   const { user } = useApp()
   const [data, setData] = useState<MyChannelResponse | null>(null)
   const [loading, setLoading] = useState(true)
+  // v5.54: сетевой сбой ≠ «канал не привязан» — отдельный экран повтора вместо
+  // ввода @username (иначе у владельца канала сбои провоцировали повторный claim)
+  const [failed, setFailed] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [tab, setTab] = useState<McTab>('stats')
   const t = useT()
@@ -87,14 +92,10 @@ export function MyChannelTab() {
         ? await apiCached<MyChannelResponse>('/api/mychannel', 15_000)
         : await api<MyChannelResponse>('/api/mychannel')
       setData(r)
+      setFailed(false)
       setActiveId((prev) => prev ?? r.channels[0]?.id ?? null)
     } catch {
-      setData({
-        channels: [],
-        advertiser: { balanceKop: 0, topupsTotalKop: 0, spentTotalKop: 0 },
-        tier: 'free',
-        promotion: { used: 0, limit: 7, available: false },
-      })
+      setFailed(true)
     } finally {
       setLoading(false)
     }
@@ -138,6 +139,23 @@ export function MyChannelTab() {
           {[0, 1, 2].map((i) => (
             <div key={i} className="h-28 rounded-2xl tg-shimmer" />
           ))}
+        </div>
+      ) : failed && !data ? (
+        <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl bg-tg-surface px-4 py-10 text-center">
+          <AlertTriangle className="h-7 w-7 text-tg-hint" aria-hidden />
+          <p className="text-[14.5px] text-tg-hint">Не удалось загрузить кабинет</p>
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light')
+              setFailed(false)
+              setLoading(true)
+              reload()
+            }}
+            className="flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white active:opacity-80"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden /> Повторить
+          </button>
         </div>
       ) : !data || data.channels.length === 0 ? (
         <ClaimCard onDone={reload} />
@@ -999,6 +1017,8 @@ function AdsSection({
 }) {
   const [topUpOpen, setTopUpOpen] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
+  // v5.54: баланс — в общем сторе: мутировал другую вкладку — кабинет видит свежим
+  const patchBalance = useApp((s) => s.patchBalance)
   // Баланс ОБЩЕГО кошелька (v5.39): edge-кэш Redis → фолбэк на /api/wallet (Node + БД)
   const [bal, setBal] = useState<{ balanceKop: number; swipes: number } | null>(null)
   const active = channel.campaigns.filter((c) => c.status === 'active' || c.status === 'moderation' || c.status === 'paused')
@@ -1009,15 +1029,19 @@ function AdsSection({
       .then((r) => {
         if (r.ok && typeof r.balanceKop === 'number') {
           setBal({ balanceKop: r.balanceKop, swipes: r.swipes ?? 0 })
+          patchBalance({ balanceKop: r.balanceKop, swipes: r.swipes ?? 0 })
           return null
         }
         return api<{ balanceKop: number; swipes: number }>('/api/wallet')
       })
       .then((fallback) => {
-        if (fallback) setBal({ balanceKop: fallback.balanceKop, swipes: fallback.swipes })
+        if (fallback) {
+          setBal({ balanceKop: fallback.balanceKop, swipes: fallback.swipes })
+          patchBalance({ balanceKop: fallback.balanceKop, swipes: fallback.swipes })
+        }
       })
       .catch(() => {})
-  }, [])
+  }, [patchBalance])
 
   useEffect(() => {
     loadBalance()

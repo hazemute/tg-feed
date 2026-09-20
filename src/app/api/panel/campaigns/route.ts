@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { invalidateBalance } from '@/lib/balance-cache'
+import { logAdmin } from '@/lib/admin-log'
 
 export const dynamic = 'force-dynamic'
 
@@ -109,19 +111,30 @@ export async function POST(request: Request) {
     const d = parsed.data
 
     if (d.action === 'topup') {
-      const account = await db.advertiserAccount.upsert({
-        where: { userId: d.userId },
-        create: {
-          userId: d.userId,
-          balanceKop: d.amountKop,
-          topupsTotalKop: d.amountKop,
-        },
-        update: {
-          balanceKop: { increment: d.amountKop },
-          topupsTotalKop: { increment: d.amountKop },
-        },
+      // v5.54: зачисляем на НАСТОЯЩИЙ кошелёк (User.balanceKop) — раньше деньги
+      // уходили в выведенную из оборота легаси-таблицу AdvertiserAccount и
+      // «исчезали»: в кошельке их не было, кампанию создать было нельзя.
+      const user = await db.user.findUnique({ where: { id: d.userId }, select: { balanceKop: true } })
+      if (!user) return err('Пользователь не найден', 404)
+      const updated = await db.user.update({
+        where: { id: d.userId },
+        data: { balanceKop: { increment: d.amountKop } },
+        select: { balanceKop: true },
       })
-      return NextResponse.json({ ok: true, balanceKop: account.balanceKop })
+      await db.balanceLog
+        .create({
+          data: {
+            userId: d.userId,
+            kind: 'topup',
+            currency: 'rub',
+            amount: d.amountKop,
+            note: 'Пополнение администратором (СБП/перевод)',
+          },
+        })
+        .catch(() => {})
+      await invalidateBalance(d.userId).catch(() => {})
+      await logAdmin('campaign_topup', d.userId, { amountKop: d.amountKop })
+      return NextResponse.json({ ok: true, balanceKop: updated.balanceKop })
     }
 
     const campaign = await db.adCampaign.findUnique({ where: { id: d.campaignId } })
@@ -150,6 +163,7 @@ export async function POST(request: Request) {
     }
 
     // reject: остаток бюджета возвращается на баланс рекламодателя
+    // (v5.54: в User.balanceKop — реальный кошелёк, не легаси-таблицу)
     const refund = Math.max(0, campaign.budgetKop - campaign.spentKop)
     await db.$transaction([
       db.adCampaign.update({
@@ -158,13 +172,23 @@ export async function POST(request: Request) {
       }),
       ...(refund > 0
         ? [
-            db.advertiserAccount.update({
-              where: { userId: campaign.ownerId },
+            db.user.update({
+              where: { id: campaign.ownerId },
               data: { balanceKop: { increment: refund } },
+            }),
+            db.balanceLog.create({
+              data: {
+                userId: campaign.ownerId,
+                kind: 'refund',
+                currency: 'rub',
+                amount: refund,
+                note: `Возврат остатка бюджета — кампания «${campaign.title}» отклонена`,
+              },
             }),
           ]
         : []),
     ])
+    if (refund > 0) await invalidateBalance(campaign.ownerId).catch(() => {})
     notifyCampaignOwner(campaign.ownerId, campaign.title, 'rejected', d.note ?? null)
     return NextResponse.json({ ok: true, status: 'rejected', refundKop: refund })
   } catch (e) {

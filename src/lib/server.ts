@@ -1,7 +1,19 @@
 import { NextResponse } from 'next/server'
+import { timingSafeEqual } from 'node:crypto'
 import { APP_VERSION } from '@/lib/version'
 
 export { APP_VERSION }
+
+/**
+ * v5.54: сравнение секретов в постоянном времени (webhook-секреты, админ-ключи).
+ * Пустые/разной длины строки — сразу false (без утечки по длине ответа — длина
+ * сравнивается как часть константы).
+ */
+export function timingSafeEqualStr(a: string, b: string): boolean {
+  const ba = Buffer.from(a)
+  const bb = Buffer.from(b)
+  return ba.length > 0 && ba.length === bb.length && timingSafeEqual(ba, bb)
+}
 
 /**
  * Провайдер БД: локальная песочница работает на SQLite (DATABASE_URL=file:…),

@@ -316,11 +316,15 @@ export async function POST(request: Request) {
     }
 
     /* ================= Одиночный вопрос (legacy) ================= */
+    // v5.54: режим требует сессию — раньше аноним получал бесплатную LLM-
+    // генерацию без дневного лимита (расход OpenRouter), тормозил только
+    // in-memory лимит 12/мин/инстанс. Чат и так требует вход.
+    if (!g.uid) return err('Войдите через Telegram', 401)
     const q = 'q' in d ? d.q : ''
     const category = 'category' in d ? d.category : undefined
 
     // Лимит до генерации: free — 3/сутки; plus/pro — безлимит; сверх лимита — свайпы
-    const allowance = g.uid ? await aiSearchAllowance(g.uid) : null
+    const allowance = await aiSearchAllowance(g.uid)
     if (allowance && !allowance.allowed) {
       return NextResponse.json(
         {

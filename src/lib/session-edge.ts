@@ -18,6 +18,10 @@ const enc = new TextEncoder()
 
 let cachedSecret: string | null = null
 
+/**
+ * v5.54: синхронно с session.ts — в проде без AUTH_SECRET/BOT-токена/CRON_SECRET
+ * «публичный» секрет запрещён (fail-closed), в dev/песочнице — разрешён.
+ */
 async function deriveSecret(): Promise<string> {
   if (cachedSecret) return cachedSecret
   const explicit = process.env.AUTH_SECRET?.trim()
@@ -28,6 +32,11 @@ async function deriveSecret(): Promise<string> {
   const parts = [process.env.TELEGRAM_BOT_TOKEN ?? '', process.env.CRON_SECRET ?? '']
     .filter(Boolean)
     .join('|')
+  if (!parts && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[session-edge] AUTH_SECRET/TELEGRAM_BOT_TOKEN/CRON_SECRET не заданы в production — сессии отключены (fail-closed)',
+    )
+  }
   const digest = await crypto.subtle.digest('SHA-256', enc.encode(`tgfeed-session|${parts}`))
   // session.ts использует hex-дайджест как секрет — повторяем байт в байт
   cachedSecret = [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')

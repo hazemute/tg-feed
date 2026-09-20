@@ -173,9 +173,19 @@ export function SearchTab() {
   useEffect(() => {
     const qs = new URLSearchParams()
     if (user) qs.set('userId', user.id)
+    let alive = true
     apiCached<{ items: ChannelDTO[] }>(`/api/channels?${qs.toString()}`, 90_000)
-      .then((d) => setChannels(d.items))
-      .catch(() => setChannels([]))
+      .then((d) => {
+        if (alive) setChannels(d.items)
+      })
+      .catch(() => {
+        // v5.54: сетевой сбой ≠ пустой каталог — раньше сбой рендерил
+        // «Каналы не найдены» и не оставлял шанса на повтор
+        if (alive) setChannels((prev) => prev ?? [])
+      })
+    return () => {
+      alive = false
+    }
   }, [user?.id])
 
   const matchedChannels = useMemo(() => {

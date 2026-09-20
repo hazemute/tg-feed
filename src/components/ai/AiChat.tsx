@@ -331,7 +331,12 @@ export function AiChat({
         } else if (type === 'paid') {
           // v5.39: тарификация по токенам — сервер вернул фактическую списанную сумму
           const sw = Number(data.swipes ?? 0)
-          if (sw > 0) toast(`−${sw} ${pluralRu(sw, 'свайп', 'свайпа', 'свайпов')} за запрос к ИИ`, { icon: '⚡' })
+          if (sw > 0) {
+            toast(`−${sw} ${pluralRu(sw, 'свайп', 'свайпа', 'свайпов')} за запрос к ИИ`, { icon: '⚡' })
+            // v5.54: баланс в общем сторе синхронизируется мгновенно (кошелёк не устаревает)
+            const cur = useApp.getState().balance
+            useApp.getState().patchBalance({ swipes: Math.max(0, (cur?.swipes ?? 0) - sw) })
+          }
         } else if (type === 'done') {
           const stepsRaw = (data.steps as Array<{ label: string; ok: boolean }> | undefined) ?? []
           const botMsg: AiMsg = {

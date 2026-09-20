@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { parseTierPurpose, tierExpiryFor } from '@/lib/tiers'
+import { invalidateBalance } from '@/lib/balance-cache'
 
 /**
  * Общая проводка зачисления: pending → succeeded атомарно.
@@ -14,7 +15,8 @@ export async function creditPendingPayment(
   paymentId: string,
   providerPaymentId?: string | null,
 ): Promise<boolean> {
-  return db.$transaction(async (tx) => {
+  let creditedUserId: string | null = null
+  const ok = await db.$transaction(async (tx) => {
     const claimed = await tx.pendingPayment.updateMany({
       where: { id: paymentId, status: 'pending' },
       data: {
@@ -28,6 +30,7 @@ export async function creditPendingPayment(
       select: { userId: true, amountKop: true, purpose: true, provider: true },
     })
     if (!payment) return false
+    creditedUserId = payment.userId
 
     // Тарифный платёж: активируем/продлеваем тир вместо зачисления на баланс
     const tierPurpose = parseTierPurpose(payment.purpose)
@@ -67,6 +70,10 @@ export async function creditPendingPayment(
     })
     return true
   })
+  // v5.54: кэш баланса устарел — инвалидируем после проводки (раньше edge-роут
+  // /api/wallet/balance отдавал старый баланс до 2 минут после пополнения)
+  if (ok && creditedUserId) await invalidateBalance(creditedUserId).catch(() => {})
+  return ok
 }
 
 /** Доступность способов пополнения по env (UI скрывает недоступные честно) */

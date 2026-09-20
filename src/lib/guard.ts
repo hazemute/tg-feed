@@ -2,7 +2,7 @@ import crypto from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { getSession } from '@/lib/session'
 import { clientIp, rateLimit } from '@/lib/rate-limit'
-import { unauthorized, tooMany } from '@/lib/server'
+import { unauthorized, tooMany, IS_SQLITE } from '@/lib/server'
 
 /**
  * Единая точка входа авторизации + rate limiting для API-роутов.
@@ -73,10 +73,15 @@ export function guardAdmin(request: Request, rl: RL = { limit: 120, windowMs: 60
   const headerKey = (request.headers.get('x-admin-key') ?? '').trim()
   const auth = request.headers.get('authorization') ?? ''
   const bearerKey = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : ''
-  // ?key= — фолбэк для EventSource/SSE: он не умеет кастомные заголовки
+  // v5.54: ?key= — ТОЛЬКО для EventSource/SSE (/api/panel/events): он не умеет
+  // кастомные заголовки. Раньше ключ принимался query-параметром на ВСЕХ
+  // панельных роутах и утекал в access-логи/Referer/историю браузера.
   let queryKey = ''
   try {
-    queryKey = (new URL(request.url).searchParams.get('key') ?? '').trim()
+    const url = new URL(request.url)
+    if (url.pathname.startsWith('/api/panel/events')) {
+      queryKey = (url.searchParams.get('key') ?? '').trim()
+    }
   } catch {
     // невалидный url — игнорируем
   }
@@ -96,11 +101,19 @@ export function guardAdmin(request: Request, rl: RL = { limit: 120, windowMs: 60
 /** Проверка CRON-секрета в постоянном времени */
 export function cronAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET?.trim()
-  if (!secret) return true // в песочнице секрет может отсутствовать — режим открыт
+  if (!secret) {
+    // v5.54: в проде секрет ОБЯЗАТЕЛЕН — иначе /api/parse/tick, /api/warm
+    // (жгут OpenRouter) и /api/events/emit открыты всем. Песочница (SQLite)
+    // и dev — остаются открытыми для локальной разработки.
+    if (IS_SQLITE || process.env.NODE_ENV !== 'production') return true
+    console.error('[guard] CRON_SECRET не задан в production — cron-роуты закрыты (fail-closed)')
+    return false
+  }
   const auth = request.headers.get('authorization') ?? ''
   const bearer = auth.startsWith('Bearer ') ? auth.slice('Bearer '.length).trim() : ''
   const header = (request.headers.get('x-cron-secret') ?? '').trim()
-  const a = Buffer.from(bearer.length ? bearer : header)
+  const provided = bearer.length ? bearer : header
+  const a = Buffer.from(provided)
   const b = Buffer.from(secret)
-  return a.length === b.length && a.equals(b)
+  return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b)
 }

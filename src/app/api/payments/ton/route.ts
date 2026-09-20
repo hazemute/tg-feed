@@ -141,8 +141,11 @@ async function findTonTransaction(
 ): Promise<string | null> {
   if (!address) return null
   try {
+    // v5.54: окно 25 → 100 транзакций — при входящем потоке чужих переводов
+    // платёж юзера выпадал из окна за время часового поллинга, деньги
+    // отправлены, зачисления нет
     const res = await fetch(
-      `https://tonapi.io/v2/accounts/${address}/transactions?limit=25`,
+      `https://tonapi.io/v2/accounts/${address}/transactions?limit=100`,
       { signal: AbortSignal.timeout(8000), cache: 'no-store' },
     )
     if (!res.ok) return null

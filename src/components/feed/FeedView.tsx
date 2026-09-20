@@ -305,6 +305,11 @@ export function FeedView() {
    *  Тост с «Вернуть» откатывает мьют. */
   const hidePost = useCallback(
     (post: { channel: { id: string; title: string } }) => {
+      // v5.54: гость «только читает» — мьют уходит в БД, шторка входа вместо записи
+      if (user?.isGuest) {
+        openAuthGate('mute')
+        return
+      }
       const cid = post.channel.id
       setMutedChannels((prev) => new Set(prev).add(cid))
       api('/api/subscribe', {
@@ -329,7 +334,7 @@ export function FeedView() {
         },
       })
     },
-    [t],
+    [t, user, openAuthGate],
   )
 
   /** Видимые посты: мьютнутые каналы + скрытые + фильтры + поиск + сортировка (клиентски, мгновенно) */
@@ -594,6 +599,16 @@ export function FeedView() {
     [category],
   )
 
+  // v5.54: свежие ссылки для отложенных вызовов — эффект смены языка ждёт до 30с
+  // освобождения busyRef и раньше звал УСТАРЕВШИЙ load (старая категория): смена
+  // категории во время ожидания перезаписывала новую ленту постами старой
+  const loadRef = useRef(load)
+  const categoryRef = useRef(category)
+  useEffect(() => {
+    loadRef.current = load
+    categoryRef.current = category
+  }, [load, category])
+
   /**
    * Ручная проверка «пора ли грузить дальше»: истина, если сентинел
    * видим или близко к кадру. Вызывается из IO и после каждой загрузки.
@@ -664,7 +679,10 @@ export function FeedView() {
         for (let i = 0; busyRef.current && i < 200; i++) {
           await new Promise((r) => setTimeout(r, 150))
         }
+        // За время ожидания сменилась категория или началась другая смена языка — выходим,
+        // актуальную загрузку сделает эффект категории/новая смена языка
         if (seq !== langSwitchSeqRef.current || !userRef.current) return
+        if (categoryRef.current !== category_) return
         const uid = userRef.current.id
 
         // 1) Мгновенная подмена прогретого варианта
@@ -694,7 +712,7 @@ export function FeedView() {
         })
 
         // 3) Сеть: тот же сид → серверный L0-кэш тёплый от прогрева
-        await load(0, true, false, { silent: true, keepSeed: true })
+        await loadRef.current(0, true, false, { silent: true, keepSeed: true })
       } finally {
         if (seq === langSwitchSeqRef.current) setLangSwitching(false)
       }
@@ -808,7 +826,12 @@ export function FeedView() {
     }
 
     const connect = async () => {
+      // v5.54: экспоненциальный бэкофф вместо слепых 5с. Раньше при 401/429
+      // (протухшая сессия) клиент долбил сервер 12 раз/мин в вечном цикле,
+      // ловя лимит 10/мин/IP и никогда не запуская re-auth
+      let delay = 5000
       while (!stopped) {
+        let unauthorized = false
         try {
           const res = await fetch('/api/events', {
             signal: ac.signal,
@@ -818,7 +841,9 @@ export function FeedView() {
               Authorization: `Bearer ${getSessionToken() ?? ''}`,
             },
           })
+          if (res.status === 401 || res.status === 403) unauthorized = true
           if (!res.ok || !res.body) throw new Error(`sse ${res.status}`)
+          delay = 5000 // успешное соединение — бэкофф сброшен
           const reader = res.body.getReader()
           const decoder = new TextDecoder()
           let buf = ''
@@ -837,9 +862,15 @@ export function FeedView() {
           // обрыв сети или abort — тихо уходим в retry
         }
         if (stopped) return
+        if (unauthorized) {
+          // Сессия невалидна — глобальное событие запускает re-auth, SSE останавливаем
+          window.dispatchEvent(new Event('tgfeed:unauthorized'))
+          return
+        }
         await new Promise<void>((r) => {
-          retry = setTimeout(r, 5000)
+          retry = setTimeout(r, delay)
         })
+        delay = Math.min(delay * 2, 60_000)
       }
     }
 
@@ -997,6 +1028,11 @@ export function FeedView() {
   const onSubscribe = useCallback(
     async (post: PostDTO) => {
       if (!user) return
+      // v5.54: гость не подписывается (раньше legacy-гость молча создавал записи)
+      if (user.isGuest) {
+        openAuthGate('subscribe')
+        return
+      }
       const ch = post.channel
       const next = !ch.subscribed
       setItems((prev) =>

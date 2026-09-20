@@ -110,7 +110,10 @@ export function ProfileTab() {
         cachedSubs = d.items
         setSubs(d.items)
       })
-      .catch(() => setSubs([]))
+      .catch(() => {
+        // v5.54: сбой сети не затирает закэшированный список — раньше профиль
+        // после сбоя навсегда показывал «Вы пока не подписаны»
+      })
   }
 
   useEffect(() => {

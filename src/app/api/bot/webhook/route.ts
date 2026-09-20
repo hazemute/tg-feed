@@ -15,7 +15,7 @@ import {
   buildPlainKeyboard,
   type BotButton,
 } from '@/lib/tg-buttons'
-import { externalOrigin } from '@/lib/server'
+import { externalOrigin, timingSafeEqualStr } from '@/lib/server'
 import { botBanned, markBotBan } from '@/lib/tg-bot'
 import { joinGiveaway, kickDueGiveaways, refreshGiveawayButton } from '@/lib/giveaways'
 import {
@@ -852,11 +852,13 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
 export async function POST(request: Request) {
   // Секрет вебхука (setWebhook secret_token → Telegram эхом шлёт заголовок)
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
+  let trusted = false
   if (secret) {
     const got = (request.headers.get('x-telegram-bot-api-secret-token') ?? '').trim()
-    if (got !== secret) {
+    if (!timingSafeEqualStr(got, secret)) {
       return NextResponse.json({ ok: false }, { status: 401 })
     }
+    trusted = true
   } else if (Date.now() - lastSecretWarnAt > SECRET_WARN_INTERVAL_MS) {
     // Дыра в конфигурации: без секрета вебхук отвечает ЛЮБОму отправителю
     // (ложные апдейты тратят БД/вызовы Bot API). Не спамим — раз в 60с.
@@ -865,6 +867,8 @@ export async function POST(request: Request) {
       '[bot/webhook] TELEGRAM_WEBHOOK_SECRET не задан — вебхук принимает запросы без проверки подлинности (задай secret_token в setWebhook)',
     )
   }
+  // v5.54: ДЕНЕЖНЫЕ апдейты (Stars-пополнения) без секрета НЕ принимаются —
+  // поддельный successful_payment зачислял свайпы бесплатно (fail-closed ниже).
 
   // Content-type: Telegram шлёт строго application/json; прочее — сканеры/мусор
   const contentType = (request.headers.get('content-type') ?? '')
@@ -1005,6 +1009,10 @@ export async function POST(request: Request) {
 
     const msg = update.message
     if (msg?.successful_payment) {
+      if (!trusted) {
+        console.error('[bot/webhook] successful_payment без секрета вебхука — отклонено (fail-closed)')
+        return NextResponse.json({ ok: false }, { status: 401 })
+      }
       await handleStarsPayment(msg.successful_payment, msg.chat?.id)
       return NextResponse.json({ ok: true })
     }

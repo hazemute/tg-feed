@@ -195,17 +195,27 @@ export async function PATCH(request: Request) {
       // v5.53: панель правит НАСТОЯЩИЙ кошелёк (User.swipes — валюта, которую
       // юзер видит в кошельке). Раньше значение уходило в рекламный баланс
       // AdvertiserAccount — из-за этого выданные свайпы не отображались у юзера.
+      // v5.54: применяем АТОМАРНЫЙ increment дельты, а не абсолютную запись —
+      // иначе параллельные операции (claim задания, списание ИИ, штраф) между
+      // нашим чтением и записью молча затирались (lost update).
       const before = await db.user.findUnique({
         where: { id: userId },
         select: { swipes: true },
       })
       if (!before) return err('user not found', 404)
-      const updated = await db.user.update({
-        where: { id: userId },
-        data: { swipes },
-        select: { swipes: true },
-      })
-      const delta = updated.swipes - before.swipes
+      const delta = swipes - before.swipes
+      let updated =
+        delta === 0
+          ? { swipes: before.swipes }
+          : await db.user.update({
+              where: { id: userId },
+              data: { swipes: { increment: delta } },
+              select: { swipes: true },
+            })
+      // Параллельное списание между чтением и записью могло увести результат в минус — клампим
+      if (updated.swipes < 0) {
+        updated = await db.user.update({ where: { id: userId }, data: { swipes: 0 }, select: { swipes: true } })
+      }
       if (delta !== 0) {
         // Журнал кошелька — виден юзеру в истории операций
         await db.balanceLog

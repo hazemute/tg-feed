@@ -13,14 +13,15 @@
  * reloadSignal — счётчик внешних изменений (после пополнения в TopUpModal).
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowLeftRight, ChevronDown, Loader2, Plus, Zap } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, ChevronDown, Loader2, Plus, RefreshCw, Zap } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { haptic } from '@/lib/tg'
 import { pluralRu } from '@/lib/format'
+import { useApp } from '@/lib/store'
 
 type WalletHistoryItem = {
   id: string
@@ -82,18 +83,40 @@ export function WalletCard({
 }) {
   const [tab, setTab] = useState<Tab>('rub')
   const [data, setData] = useState<WalletData | null>(null)
+  const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  // v5.54: мутации из других вкладок (claim заданий, ИИ) прилетают сюда —
+  // кошелёк больше не показывает устаревший баланс
+  const storeBalance = useApp((s) => s.balance)
+  const patchBalance = useApp((s) => s.patchBalance)
 
+  const hasLoadedRef = useRef(false)
   const load = useCallback(() => {
     api<WalletData & { ok: boolean }>('/api/wallet')
-      .then((r) => setData({ ...r, history: r.history ?? [] }))
-      .catch(() => {})
-  }, [])
+      .then((r) => {
+        hasLoadedRef.current = true
+        setData({ ...r, history: r.history ?? [] })
+        setFailed(false)
+        patchBalance({ balanceKop: r.balanceKop, swipes: r.swipes })
+      })
+      .catch(() => {
+        // v5.54: ошибка сети ≠ нулевой баланс — показываем экран повтора,
+        // а не «0 ₽ / 0 свайпов» с активной кнопкой пополнения
+        setFailed(!hasLoadedRef.current)
+      })
+  }, [patchBalance])
 
   useEffect(() => {
     load()
   }, [load, reloadSignal])
+
+  // Внешние мутации баланса (задания/топап в других вкладках) — догоняем мгновенно
+  useEffect(() => {
+    if (storeBalance && data) {
+      setData((d) => (d ? { ...d, balanceKop: storeBalance.balanceKop, swipes: storeBalance.swipes } : d))
+    }
+  }, [storeBalance])
 
   const swipes = data?.swipes ?? 0
   const balanceKop = data?.balanceKop ?? 0
@@ -116,6 +139,7 @@ export function WalletCard({
         body: JSON.stringify({ action, amount }),
       })
       setData({ ...data, balanceKop: r.balanceKop, swipes: r.swipes })
+      patchBalance({ balanceKop: r.balanceKop, swipes: r.swipes })
       haptic('success')
       toast.success(
         action === 'rub2swp'
@@ -143,6 +167,22 @@ export function WalletCard({
       </div>
 
       <div className="px-4 pt-3">
+        {failed ? (
+          <div className="flex flex-col items-center gap-3 rounded-2xl bg-tg-surface px-4 py-8 text-center">
+            <AlertTriangle className="h-7 w-7 text-tg-hint" aria-hidden />
+            <p className="text-[14.5px] text-tg-hint">Не удалось загрузить кошелёк</p>
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                load()
+              }}
+              className="flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white active:opacity-80"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden /> Повторить
+            </button>
+          </div>
+        ) : (
         <div className="overflow-hidden rounded-2xl bg-tg-surface">
           {/* ВКЛАДКИ: Рубли | Свайпы — горизонтальные, с бегущим подчёркиванием */}
           <div className="flex items-stretch border-b border-tg-sep/60" role="tablist" aria-label="Валюта кошелька">
@@ -301,6 +341,7 @@ export function WalletCard({
             </div>
           )}
         </div>
+        )}
       </div>
     </section>
   )

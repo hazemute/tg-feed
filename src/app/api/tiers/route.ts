@@ -6,7 +6,7 @@ import { guardPublic } from '@/lib/guard'
 import { aiSearchAllowance, AI_SEARCH_DAILY_LIMIT, TIER_PRICES, tierExpiryFor, tierOfUser } from '@/lib/tiers'
 import { paymentMethods } from '@/lib/payments'
 import { legalInfo, yookassaCreatePayment, yookassaEnabled } from '@/lib/yookassa'
-import { payWithBalance } from '@/lib/wallet'
+import { payWithBalance, refundToBalance } from '@/lib/wallet'
 
 export const dynamic = 'force-dynamic'
 
@@ -102,15 +102,21 @@ export async function POST(request: Request) {
       if (!paid) {
         return err('На балансе не хватает — пополните кошелёк в профиле', 402)
       }
-      const u = await db.user.findUnique({ where: { id: g.uid }, select: { tierUntil: true } })
-      const until = tierExpiryFor(u?.tierUntil ?? null, period)
-      await db.user.update({ where: { id: g.uid }, data: { tier: plan, tierUntil: until } })
-      return NextResponse.json({
-        ok: true,
-        method: 'balance',
-        tier: plan,
-        tierUntil: until.toISOString(),
-      })
+      // v5.54: сбой после списания больше не «съедает» деньги — компенсирующий возврат
+      try {
+        const u = await db.user.findUnique({ where: { id: g.uid }, select: { tierUntil: true } })
+        const until = tierExpiryFor(u?.tierUntil ?? null, period)
+        await db.user.update({ where: { id: g.uid }, data: { tier: plan, tierUntil: until } })
+        return NextResponse.json({
+          ok: true,
+          method: 'balance',
+          tier: plan,
+          tierUntil: until.toISOString(),
+        })
+      } catch (e) {
+        await refundToBalance(g.uid, amountKop, `возврат: тариф не выдан (${plan}_${period})`).catch(() => {})
+        throw e
+      }
     }
 
     const payment = await db.pendingPayment.create({

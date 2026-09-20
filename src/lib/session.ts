@@ -27,18 +27,29 @@ export const INIT_DATA_MAX_AGE_SEC = 24 * 60 * 60
 // выполнялся синхронно на КАЖДОМ verifySession, то есть на каждом API-запросе
 let cachedSecret: string | null = null
 
-function getSecret(): string {
-  if (cachedSecret) return cachedSecret
+/**
+ * v5.54: детекция «публичного» секрета — без AUTH_SECRET, без BOT-токена и
+ * без CRON_SECRET фолбэк = sha256("tgfeed-session|") — КОНСТАНТА, известная
+ * всем: любой может подписать JWT от имени любого юзера. В проде такое
+ * состояние — fail-closed (исключение), в dev/песочнице — разрешено.
+ */
+function computeSecret(): string {
   const explicit = process.env.AUTH_SECRET?.trim()
-  if (explicit) {
-    cachedSecret = explicit
-    return cachedSecret
-  }
-  // Фолбэк: детерминированная производная от служебных секретов окружения.
+  if (explicit) return explicit
   const parts = [process.env.TELEGRAM_BOT_TOKEN ?? '', process.env.CRON_SECRET ?? '']
     .filter(Boolean)
     .join('|')
-  cachedSecret = crypto.createHash('sha256').update(`tgfeed-session|${parts}`).digest('hex')
+  if (!parts && process.env.NODE_ENV === 'production') {
+    throw new Error(
+      '[session] AUTH_SECRET/TELEGRAM_BOT_TOKEN/CRON_SECRET не заданы в production — сессии отключены (fail-closed)',
+    )
+  }
+  return crypto.createHash('sha256').update(`tgfeed-session|${parts}`).digest('hex')
+}
+
+function getSecret(): string {
+  if (cachedSecret) return cachedSecret
+  cachedSecret = computeSecret()
   return cachedSecret
 }
 

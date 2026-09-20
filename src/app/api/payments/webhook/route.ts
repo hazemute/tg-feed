@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { creditPendingPayment } from '@/lib/payments'
 import { redis } from '@/lib/redis'
+import { yookassaEnabled, yookassaGetPayment } from '@/lib/yookassa'
+import { timingSafeEqualStr } from '@/lib/server'
 
 export const dynamic = 'force-dynamic'
 
@@ -59,9 +61,16 @@ type YkNotification = {
 
 export async function POST(request: Request) {
   const secret = process.env.YOOKASSA_WEBHOOK_SECRET?.trim()
+  let trustBody = false
   if (secret) {
     const got = (request.headers.get('x-yookassa-webhook-secret') ?? '').trim()
-    if (got !== secret) return NextResponse.json({ ok: false }, { status: 401 })
+    if (!timingSafeEqualStr(got, secret)) return NextResponse.json({ ok: false }, { status: 401 })
+    trustBody = true
+  } else if (!yookassaEnabled()) {
+    // v5.54: FAIL-CLOSED — без секрета вебхука и без кред магазина телу верить
+    // нельзя (поддельная нотификация = бесплатное пополнение). Раньше при
+    // незаданном секрете вебхук принимал всё — дыра в деньги.
+    return NextResponse.json({ ok: false, error: 'webhook not configured' }, { status: 503 })
   }
 
   // Content-type: ЮKassa шлёт строго application/json; прочее — мусор/сканеры
@@ -154,10 +163,20 @@ export async function POST(request: Request) {
     }
 
     // payment.succeeded: проверяем сумму и факт оплаты
-    const paid = obj.paid === true && obj.status === 'succeeded'
-    const kopFromAmount = obj.amount?.value
+    let paid = obj.paid === true && obj.status === 'succeeded'
+    let kopFromAmount = obj.amount?.value
       ? Math.round(parseFloat(obj.amount.value) * 100)
       : 0
+    // v5.54: без секрета вебхука — перепроверяем платёж напрямую в API ЮKassa
+    // (тело нотификации могло быть подделано; API магазина — источник истины)
+    if (!trustBody && obj.id) {
+      const verified = await yookassaGetPayment(obj.id)
+      if (!verified || verified.status !== 'succeeded' || !verified.paid) {
+        return NextResponse.json({ ok: true, ignored: 'api verify failed' })
+      }
+      paid = true
+      kopFromAmount = verified.amountKop
+    }
     if (!paid || !Number.isFinite(kopFromAmount) || kopFromAmount <= 0) {
       return NextResponse.json({ ok: true, ignored: 'not paid' })
     }

@@ -3,6 +3,7 @@ import { botEnabled, isTelegramMember } from '@/lib/tg-bot'
 import { emitAppEvent } from '@/lib/events'
 import { sendBotNotification } from '@/lib/bot-notify'
 import { plural } from '@/lib/giveaway-tickets'
+import { invalidateBalance } from '@/lib/balance-cache'
 
 /**
  * ЗАДАНИЯ С НАГРАДОЙ (v5.51) — вкладка «Задания» вместо «Тренды».
@@ -104,41 +105,53 @@ export async function claimQuest(userId: string, questId: string): Promise<Claim
 
   // Членство подтверждено → атомарная выдача: уникальная пара quest+user
   // страхует от двойного тапа, баланс не уходит в минус (только increment).
-  const created = await db.questCompletion
-    .create({
-      data: {
-        questId,
-        userId,
-        status: 'done',
-        rewardSwp: quest.rewardSwp,
-        lastCheck: new Date(),
-      },
+  // v5.54: completion + increment + журнал — ОДНА транзакция: раньше сбой между
+  // create и increment терял награду навсегда (повторный claim отдавал 'already').
+  const balance = await db
+    .$transaction(async (tx) => {
+      const created = await tx.questCompletion
+        .create({
+          data: {
+            questId,
+            userId,
+            status: 'done',
+            rewardSwp: quest.rewardSwp,
+            lastCheck: new Date(),
+          },
+        })
+        .catch((e: { code?: string }) => {
+          if (e?.code === 'P2002') return null // параллельный тап успел первым
+          throw e
+        })
+      if (!created) return null
+      const updated = await tx.user.update({
+        where: { id: userId },
+        data: { swipes: { increment: quest.rewardSwp } },
+        select: { swipes: true },
+      })
+      await tx.balanceLog
+        .create({
+          data: {
+            userId,
+            kind: 'quest',
+            currency: 'swp',
+            amount: quest.rewardSwp,
+            note: `Задание: ${quest.title}`,
+          },
+        })
+        .catch(() => {})
+      return updated.swipes
     })
     .catch((e: { code?: string }) => {
-      if (e?.code === 'P2002') return null // параллельный тап успел первым
+      if (e?.code === 'P2002') return null
       throw e
     })
-  if (!created) return { status: 'already' }
+  if (balance === null) return { status: 'already' }
 
-  const updated = await db.user.update({
-    where: { id: userId },
-    data: { swipes: { increment: quest.rewardSwp } },
-    select: { swipes: true },
-  })
-  await db.balanceLog
-    .create({
-      data: {
-        userId,
-        kind: 'quest',
-        currency: 'swp',
-        amount: quest.rewardSwp,
-        note: `Задание: ${quest.title}`,
-      },
-    })
-    .catch(() => {})
+  await invalidateBalance(userId).catch(() => {})
 
-  notifyQuestReward(userId, quest.title, quest.rewardSwp, updated.swipes)
-  return { status: 'done', reward: quest.rewardSwp, balance: updated.swipes }
+  notifyQuestReward(userId, quest.title, quest.rewardSwp, balance)
+  return { status: 'done', reward: quest.rewardSwp, balance }
 }
 
 /* ------------------------- Уведомление о награде ------------------------- */
@@ -238,6 +251,8 @@ export async function reverifyQuestCompletions(budget = 10): Promise<ReverifyRes
       revoked++
 
       const penalty = row.rewardSwp * 2
+      // v5.54: полный штраф — условным декрементом. Раньше ветка «баланса не хватает»
+      // списывала ровно 1 свайп вместо остатка, а в журнал писала весь баланс.
       const full = await db.user
         .updateMany({
           where: { id: row.userId, swipes: { gte: penalty } },
@@ -246,32 +261,49 @@ export async function reverifyQuestCompletions(budget = 10): Promise<ReverifyRes
         .catch(() => ({ count: 0 }))
       let applied = penalty
       if (!full.count) {
-        // баланса не хватает на весь штраф — забираем всё, что есть
-        const partial = await db.user
-          .updateMany({
-            where: { id: row.userId, swipes: { gt: 0 } },
-            data: { swipes: { decrement: 1 } },
-          })
-          .catch(() => ({ count: 0 }))
-        const u = await db.user
+        // баланса не хватает на весь штраф — забираем фактический остаток:
+        // CAS-обнуление (WHERE swipes = остаток) с одним ретраем при гонке
+        const cur = await db.user
           .findUnique({ where: { id: row.userId }, select: { swipes: true } })
           .catch(() => null)
-        applied = partial.count ? (u?.swipes ?? 0) + 1 : 0
+        const rest = cur?.swipes ?? 0
+        applied = 0
+        if (rest > 0) {
+          const zeroed = await db.user
+            .updateMany({ where: { id: row.userId, swipes: rest }, data: { swipes: 0 } })
+            .catch(() => ({ count: 0 }))
+          if (zeroed.count) applied = rest
+          else {
+            const cur2 = await db.user
+              .findUnique({ where: { id: row.userId }, select: { swipes: true } })
+              .catch(() => null)
+            const rest2 = cur2?.swipes ?? 0
+            if (rest2 > 0) {
+              const z2 = await db.user
+                .updateMany({ where: { id: row.userId, swipes: rest2 }, data: { swipes: 0 } })
+                .catch(() => ({ count: 0 }))
+              if (z2.count) applied = rest2
+            }
+          }
+        }
+      }
+      if (applied > 0) {
+        await db.balanceLog
+          .create({
+            data: {
+              userId: row.userId,
+              kind: 'quest_revoke',
+              currency: 'swp',
+              amount: -applied,
+              note: `Аннулирование задания: ${row.quest.title}`,
+            },
+          })
+          .catch(() => {})
+        await invalidateBalance(row.userId).catch(() => {})
       }
       const u = await db.user
         .findUnique({ where: { id: row.userId }, select: { swipes: true } })
         .catch(() => null)
-      await db.balanceLog
-        .create({
-          data: {
-            userId: row.userId,
-            kind: 'quest_revoke',
-            currency: 'swp',
-            amount: -applied,
-            note: `Аннулирование задания: ${row.quest.title}`,
-          },
-        })
-        .catch(() => {})
       notifyQuestRevoke(row.userId, row.quest.title, applied, u?.swipes ?? 0)
     }),
   )
