@@ -48,8 +48,11 @@ import { bearerToken, verifySessionEdge } from '@/lib/session-edge'
  * Redis недоступен → лимиты пропускаются, флаг техработ считается off.
  */
 
-const url = process.env.UPSTASH_REDIS_REST_URL?.trim() ?? ''
-const token = process.env.UPSTASH_REDIS_REST_TOKEN?.trim() ?? ''
+// v5.52: поддержка имён переменных Vercel-интеграции Upstash (REDIS_KV_REST_API_*)
+// — как в src/lib/redis.ts, чтобы Edge-слой (анти-флуд/техработы/релиз) работал
+// и при Marketplace-подключении, а не только при ручных UPSTASH_*.
+const url = (process.env.UPSTASH_REDIS_REST_URL ?? process.env.REDIS_KV_REST_API_URL ?? '').trim()
+const token = (process.env.UPSTASH_REDIS_REST_TOKEN ?? process.env.REDIS_KV_REST_API_TOKEN ?? '').trim()
 const redis = url && token ? new Redis({ url, token }) : null
 
 const WINDOW_SEC = 60

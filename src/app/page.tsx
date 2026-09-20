@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import dynamic from 'next/dynamic'
 import { AnimatePresence, motion } from 'framer-motion'
-import { Send } from 'lucide-react'
+import { RotateCcw, Send, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, getSessionToken, prefetchIdle, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -75,14 +75,21 @@ export default function Home() {
    */
   const appOpen = !maintenance && !prerelease
   const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
-  // Сплэш живёт минимум 1.05с — влёт самолётика (0.9с) и подпись (0.35+0.5с)
-  // успевают доиграть, а старт ощущается заметно бодрее.
+  // Сплэш живёт минимум 0.7с (v5.52, было 1.05с): влёт самолётика виден, но
+  // лента начинается заметно раньше — каждые 100мс до первого кадра на счету.
   const [splashMinDone, setSplashMinDone] = useState(false)
   // Сайт без Telegram-сессии: вход только через бота (гостей с v5.20 больше нет)
   const [needLogin, setNeedLogin] = useState(false)
+  /*
+   * v5.52 ФИКС «БЕСКОНЕЧНОГО ПУСТОГО ЭКРАНА»: раньше сетевой сбой/таймаут
+   * POST /api/auth (20с) или падение API оставляли user=null и приложение
+   * НАВСЕГДА на сплэше — пользователь видел пустой экран без шанса повторить.
+   * Теперь ошибка входа показывает экран с кнопкой «Повторить».
+   */
+  const [authError, setAuthError] = useState(false)
 
   useEffect(() => {
-    const t = setTimeout(() => setSplashMinDone(true), 1050)
+    const t = setTimeout(() => setSplashMinDone(true), 700)
     return () => clearTimeout(t)
   }, [])
 
@@ -254,8 +261,11 @@ export default function Home() {
             !blocked && me.release?.released === false && me.release?.canBypass !== true
           setPrerelease(pre)
           if (!blocked && !pre) {
-            const cats = await api<{ items: CategoryDTO[] }>('/api/categories')
-            setCategories(cats.items)
+            // v5.52: категории НЕ тормозят первый кадр — грузятся параллельно с
+            // первой страницей ленты (чипы категорий подставятся, когда готовы)
+            void api<{ items: CategoryDTO[] }>('/api/categories')
+              .then((cats) => setCategories(cats.items))
+              .catch(() => {})
           }
           return true
         }
@@ -285,8 +295,9 @@ export default function Home() {
       const pre = !blocked && res.release?.released === false && res.release?.canBypass !== true
       setPrerelease(pre)
       if (blocked || pre) return true
-      const cats = await api<{ items: CategoryDTO[] }>('/api/categories')
-      setCategories(cats.items)
+      void api<{ items: CategoryDTO[] }>('/api/categories')
+        .then((cats) => setCategories(cats.items))
+        .catch(() => {})
       return true
     } catch (e) {
       // Не в Telegram (или бот-токен не настроен): предлагаем вход через бота
@@ -294,7 +305,7 @@ export default function Home() {
         setNeedLogin(true)
         return false
       }
-      toast.error('Ошибка входа. Обновите страницу.')
+      setAuthError(true)
       return false
     }
   }, [setUser, setCategories, setMaintenance, setPrerelease])
@@ -436,6 +447,9 @@ export default function Home() {
         </>
       )
     }
+    if (authReady && !user && authError) {
+      return <AuthErrorScreen onRetry={() => { setAuthError(false); setAuthReady(false); void authenticate().finally(() => setAuthReady(true)) }} />
+    }
     return <Splash />
   }
 
@@ -517,6 +531,38 @@ function GlobalLoginSheet() {
   const loginOpen = useApp((s) => s.loginOpen)
   const setLoginOpen = useApp((s) => s.setLoginOpen)
   return <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />
+}
+
+/**
+ * Экран ошибки входа (v5.52): сеть моргнула/API упал/таймаут — понятный экран
+ * с повтором вместо вечного пустого сплэша.
+ */
+function AuthErrorScreen({ onRetry }: { onRetry: () => void }) {
+  return (
+    <main className="flex min-h-dvh items-center justify-center bg-tg-bg px-6">
+      <div className="w-full max-w-sm rounded-3xl border border-tg-sep bg-tg-surface p-7 text-center shadow-xl">
+        <div
+          className="mx-auto flex size-16 items-center justify-center rounded-2xl bg-tg-like/15 text-tg-like"
+          aria-hidden
+        >
+          <WifiOff className="size-8" />
+        </div>
+        <h1 className="mt-4 text-xl font-bold text-tg-text">Не удалось загрузиться</h1>
+        <p className="mt-2 text-[14px] leading-relaxed text-tg-hint">
+          Похоже, пропало соединение. Проверьте интернет и попробуйте ещё раз — обычно это
+          занимает секунду.
+        </p>
+        <button
+          type="button"
+          onClick={onRetry}
+          className="mt-5 flex h-[52px] w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15.5px] font-bold text-white transition active:scale-[0.98]"
+        >
+          <RotateCcw className="size-5" aria-hidden />
+          Повторить
+        </button>
+      </div>
+    </main>
+  )
 }
 
 /**

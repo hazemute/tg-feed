@@ -22,7 +22,7 @@ function check(name: string, ok: boolean, extra = '') {
 }
 
 async function main() {
-  console.log('=== Perf/Bugfix E2E (v5.51.0) ===')
+  console.log('=== Perf/Bugfix E2E (v5.52.0) ===')
 
   // ---------- 1) ETag/304 на горячих эндпоинтах ----------
   for (const path of ['/api/channels', '/api/trending']) {
@@ -40,7 +40,7 @@ async function main() {
   // В песочнице CRON_SECRET отсутствует → cronAuthorized открыт → diag ВИДЕН.
   // На проде (секрет задан) без Bearer dbEnv/dbFinger отсутствуют.
   const h = (await (await fetch(`${BASE}/api/health`)).json()) as Record<string, unknown>
-  check('health: версия 5.51.0', h.version === '5.51.0')
+  check('health: версия 5.52.0', h.version === '5.52.0')
   check('health: db статус есть', typeof h.db === 'boolean')
 
   // ---------- 3) Fast lane / тик: поле stats в ответе ----------

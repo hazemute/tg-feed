@@ -114,16 +114,48 @@ function postFromRow(r: PageRow): PostWithChannel {
 }
 
 /*
- * Страница ленты одним запросом. На Postgres (прод) — сырой SQL с JOIN'ами
- * и подзапросом счётчика закладок (самый быстрый путь: 1 RTT до Supabase).
- * На SQLite (локальная песочница) синтаксис ::text[]/ANY недоступен —
- * тот же результат собирается Prisma-выборкой + двумя batch-запросами флагов.
+ * Страница ленты. v5.52 — ДВУХСЛОЙНАЯ выборка (главный ускоритель при тысячах
+ * юзеров): ТЯЖЁЛАЯ часть строки (пост + канал + категория + счётчик закладок)
+ * ОДИНАКОВА для всех — кэшируется в L1 процесса по postId (45с, кап 1500);
+ * личные флаги (liked/bookmarked) добираются лёгким батчем из 2 запросов по
+ * индексам только для id текущей страницы. Первый юзер греет кэш — остальные
+ * получают страницу ИЗ ПАМЯТИ с одним микро-батчем флагов (было: полная
+ * JOIN-выборка + коррелированный COUNT(*) на КАЖДОГО юзера на КАЖДУЮ страницу).
  */
-async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> {
-  if (ids.length === 0) return []
 
-  if (!IS_SQLITE) {
-    return db.$queryRaw<PageRow[]>`
+// --- L1 общих строк страницы (без личных флагов) ---
+type BaseRow = Omit<PageRow, 'liked' | 'bookmarked'>
+const baseRowCache = new Map<string, { row: BaseRow; exp: number }>()
+const BASE_ROW_TTL_MS = 45_000
+const BASE_ROW_MAX = 1_500
+
+function baseRowGet(id: string): BaseRow | null {
+  const hit = baseRowCache.get(id)
+  if (!hit) return null
+  if (hit.exp <= Date.now()) {
+    baseRowCache.delete(id)
+    return null
+  }
+  return hit.row
+}
+
+function baseRowPut(rows: BaseRow[]): void {
+  const now = Date.now()
+  for (const r of rows) {
+    if (baseRowCache.size >= BASE_ROW_MAX) {
+      for (const [k, e] of baseRowCache) if (e.exp <= now) baseRowCache.delete(k)
+      if (baseRowCache.size >= BASE_ROW_MAX) {
+        const first = baseRowCache.keys().next().value
+        if (first !== undefined) baseRowCache.delete(first)
+      }
+    }
+    baseRowCache.set(r.id, { row: r, exp: now + BASE_ROW_TTL_MS })
+  }
+}
+
+/** Общая (безличная) часть строки: Postgres — SQL без JOIN'ов на юзера */
+async function fetchBaseRowsPostgres(ids: string[]): Promise<BaseRow[]> {
+  return db.$queryRaw<BaseRow[]>`
             SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
                    p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
                    p."likesCount", p."commentsCount", p."publishedAt",
@@ -139,21 +171,18 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
                    owner."tier"     AS "c_ownerTier", owner."tierUntil" AS "c_ownerTierUntil",
                    cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
                    (SELECT COUNT(*) FROM "Bookmark" b WHERE b."postId" = p."id") AS "bookmarksCount",
-                   (l."userId" IS NOT NULL)  AS "liked",
-                   (bm."userId" IS NOT NULL) AS "bookmarked"
+                   false AS "liked",
+                   false AS "bookmarked"
             FROM "Post" p
             JOIN "Channel" c  ON c."id" = p."channelId"
             LEFT JOIN "Category" cat ON cat."id" = c."categoryId"
             LEFT JOIN "User" owner ON owner."id" = c."claimedById"
-            LEFT JOIN "Like" l     ON l."postId" = p."id" AND l."userId" = ${userId}
-            LEFT JOIN "Bookmark" bm ON bm."postId" = p."id" AND bm."userId" = ${userId}
             WHERE p."id" = ANY(${ids}::text[])`
-  }
+}
 
-  /* SQLite-путь (локальная разработка): Prisma include + флаги пользователя.
-   * v5.48: точный select вместо include — include тянул ВСЕ колонки Post
-   * (ttsAudio ~3.5МБ/пост, translations, aiSummary) и полный Channel впустую. */
-  const [posts, likes, bookmarks, bookmarkCounts] = await Promise.all([
+/** Общая часть строки: SQLite — Prisma-выборка (точный select, v5.48) */
+async function fetchBaseRowsSqlite(ids: string[]): Promise<BaseRow[]> {
+  const [posts, bookmarkCounts] = await Promise.all([
     db.post.findMany({
       where: { id: { in: ids } },
       select: {
@@ -195,60 +224,92 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
         },
       },
     }),
-    db.like.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
-    db.bookmark.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
     db.bookmark.groupBy({ by: ['postId'], where: { postId: { in: ids } }, _count: { _all: true } }),
   ])
-  const likeSet = new Set(likes.map((l) => l.postId))
-  const bmSet = new Set(bookmarks.map((b) => b.postId))
   const bmCount = new Map(bookmarkCounts.map((c) => [c.postId, c._count._all]))
+  return posts.map((p) => {
+    const c = p.channel
+    return {
+      id: p.id,
+      channelId: p.channelId,
+      text: p.text,
+      mediaUrl: p.mediaUrl,
+      mediaType: p.mediaType,
+      mediaMeta: p.mediaMeta,
+      gallery: p.gallery,
+      link: p.link,
+      viewsCount: p.viewsCount,
+      viewsTg: p.viewsTg,
+      reactionsTg: p.reactionsTg,
+      likesCount: p.likesCount,
+      commentsCount: p.commentsCount,
+      publishedAt: p.publishedAt,
+      c_id: c.id,
+      c_title: c.title,
+      c_username: c.username,
+      c_description: c.description,
+      c_avatarColor: c.avatarColor,
+      c_photoFileId: c.photoFileId,
+      c_avatarUrl: c.avatarUrl,
+      c_membersCount: c.membersCount,
+      c_subscribersCount: c.subscribersCount,
+      c_isPremium: c.isPremium,
+      c_verified: c.verified,
+      c_status: c.status,
+      c_teaserMode: c.teaserMode,
+      c_teaserLimit: c.teaserLimit,
+      c_ctaLabel: c.ctaLabel,
+      c_ctaUrl: c.ctaUrl,
+      c_ownerTier: c.claimedBy?.tier ?? null,
+      c_ownerTierUntil: c.claimedBy?.tierUntil ?? null,
+      cat_slug: c.category?.slug ?? null,
+      cat_title: c.category?.title ?? null,
+      bookmarksCount: bmCount.get(p.id) ?? 0,
+      liked: false,
+      bookmarked: false,
+    } as unknown as BaseRow
+  })
+}
 
-  const byId = new Map(posts.map((p) => [p.id, p]))
+/** Личные флаги страницы одним лёгким батчем (2 запроса по индексам, параллельно) */
+async function fetchUserFlags(
+  ids: string[],
+  userId: string,
+): Promise<{ liked: Set<string>; bookmarked: Set<string> }> {
+  if (ids.length === 0) return { liked: new Set(), bookmarked: new Set() }
+  const [likes, bookmarks] = await Promise.all([
+    db.like.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
+    db.bookmark.findMany({ where: { userId, postId: { in: ids } }, select: { postId: true } }),
+  ])
+  return { liked: new Set(likes.map((l) => l.postId)), bookmarked: new Set(bookmarks.map((b) => b.postId)) }
+}
+
+async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> {
+  if (ids.length === 0) return []
+
+  // Слой 1: общие строки из L1 (попадание — ноль SQL)
+  const base: BaseRow[] = []
+  const missing: string[] = []
+  for (const id of ids) {
+    const hit = baseRowGet(id)
+    if (hit) base.push(hit)
+    else missing.push(id)
+  }
+  // Слой 2: недостающие одним запросом (Postgres raw / SQLite Prisma)
+  if (missing.length > 0) {
+    const fetched = IS_SQLITE ? await fetchBaseRowsSqlite(missing) : await fetchBaseRowsPostgres(missing)
+    baseRowPut(fetched)
+    base.push(...fetched)
+  }
+  const byId = new Map(base.map((r) => [r.id, r]))
+
+  // Личные флаги — один лёгкий батч по id страницы
+  const flags = await fetchUserFlags(ids, userId)
+
   return ids
     .map((id) => byId.get(id))
-    .filter((p): p is NonNullable<typeof p> => Boolean(p))
-    .map((p) => {
-      const c = p.channel
-      return {
-        id: p.id,
-        channelId: p.channelId,
-        text: p.text,
-        mediaUrl: p.mediaUrl,
-        mediaType: p.mediaType,
-        mediaMeta: p.mediaMeta,
-        gallery: p.gallery,
-        link: p.link,
-        viewsCount: p.viewsCount,
-        viewsTg: p.viewsTg,
-        reactionsTg: p.reactionsTg,
-        likesCount: p.likesCount,
-        commentsCount: p.commentsCount,
-        publishedAt: p.publishedAt,
-        c_id: c.id,
-        c_title: c.title,
-        c_username: c.username,
-        c_description: c.description,
-        c_avatarColor: c.avatarColor,
-        c_photoFileId: c.photoFileId,
-        c_avatarUrl: c.avatarUrl,
-        c_membersCount: c.membersCount,
-        c_subscribersCount: c.subscribersCount,
-        c_isPremium: c.isPremium,
-        c_verified: c.verified,
-        c_status: c.status,
-        c_teaserMode: c.teaserMode,
-        c_teaserLimit: c.teaserLimit,
-        c_ctaLabel: c.ctaLabel,
-        c_ctaUrl: c.ctaUrl,
-        c_ownerTier: c.claimedBy?.tier ?? null,
-        c_ownerTierUntil: c.claimedBy?.tierUntil ?? null,
-        cat_slug: c.category?.slug ?? null,
-        cat_title: c.category?.title ?? null,
-        bookmarksCount: bmCount.get(p.id) ?? 0,
-        liked: likeSet.has(p.id),
-        bookmarked: bmSet.has(p.id),
-      } as unknown as PageRow
-    })
+    .filter((r): r is BaseRow => Boolean(r))
+    .map((r) => ({ ...r, liked: flags.liked.has(r.id), bookmarked: flags.bookmarked.has(r.id) }))
 }
 
 // Валидация query-параметров. userId из query игнорируется —

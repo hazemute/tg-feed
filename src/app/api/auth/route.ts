@@ -120,14 +120,13 @@ export async function POST(request: Request) {
     // ВАЖНО: при сбое Bot API не затираем прежний аватар (update ниже перезаписывает
     // photoUrl только если есть новое значение).
     //
-    // СКОРОСТЬ (v5.33, «данные телеграма долго грузятся»): раньше после валидации
-    // initData шла СТРОКА из трёх ожиданий — getUserProfilePhotos (Bot API,
-    // 0.3-1.5с) → upsert → getBotUsername → isMaintenanceOn. Теперь всё
-    // независимое выполняется ОДНИМ батчем параллельно: Bot API + upsert +
-    // maintenance идут одновременно, вход быстрее на 1-2 RTT.
+    // СКОРОСТЬ (v5.52 — «вход до секунды»): getUserPhotoFileId (Bot API, 0.3-2с)
+    // БОЛЬШЕ НЕ БЛОКИРУЕТ ОТВЕТ — аватар догоняет фоново (fire-and-forget update
+    // фото в БД). Вход = только upsert + настройки (1-2 RTT), аватарка подтянется
+    // на следующем кадре профиля/ленты. Бот-токен/429 больше не могут задерживать
+    // вход каждому открывшему миниапп.
     const tgId = Number(id.slice('tg_'.length))
-    const [fileId, botUsername, maintenanceActive, released, user] = await Promise.all([
-      Number.isInteger(tgId) && tgId > 0 ? getUserPhotoFileId(tgId) : Promise.resolve(null),
+    const [botUsername, maintenanceActive, released, user] = await Promise.all([
       getBotUsername(),
       isMaintenanceOn(),
       isReleased(),
@@ -144,14 +143,16 @@ export async function POST(request: Request) {
         create: { id, username, firstName, lastName, isGuest: false, isPremium, languageCode, categories: '[]' },
       }),
     ])
-    if (fileId) {
-      // Аватар догнали параллельно с апсертом: обновляем точечно, без второго
-      // полного апсерта (photoUrl перезаписываем только если Bot API ответил)
-      await db.user
-        .update({ where: { id }, data: { photoUrl: `tgfile:${fileId}` } })
+    if (Number.isInteger(tgId) && tgId > 0) {
+      void getUserPhotoFileId(tgId)
+        .then((fileId) => {
+          if (!fileId) return
+          photoUrl = `tgfile:${fileId}`
+          return db.user
+            .update({ where: { id }, data: { photoUrl: `tgfile:${fileId}` } })
+            .catch(() => {})
+        })
         .catch(() => {})
-      photoUrl = `tgfile:${fileId}`
-      user.photoUrl = photoUrl
     }
     // v5.46: юзер открыл Mini App → активируем его реферальные приглашения
     // (задание «пригласи друзей» у пригласивших) — fire-and-forget

@@ -30,27 +30,42 @@ export async function GET(request: Request) {
   try {
     const items = await cacheAside({
       key: await famKey('ct', 'all'),
-      ttlSec: 120,
-      memoryTtlMs: 15000,
+      // v5.52: TTL 120с → 300с — категории и «новое за сегодня» не требуют
+      // точности до секунды, а холодная пересборка стоит 2 RTT до дальнего
+      // Supabase; 5-минутная свежесть неощутима, экономия RTT огромная.
+      ttlSec: 300,
+      memoryTtlMs: 60_000,
       fetcher: async (): Promise<CategoryItem[]> => {
-        const cats = await db.category.findMany({
-          where: { slug: { not: 'other' } },
-          orderBy: { order: 'asc' },
-          include: { _count: { select: { channels: { where: { status: 'active' } } } } },
-        })
-
+        // v5.52: счётчик «новых постов за сегодня» = GROUP BY по индексу
+        // (publishedAt + канал), вместо выборки ВСЕХ постов дня в память
+        // (раньше: findMany со строками channelId — сотни строк × egress).
         const startOfDay = new Date()
         startOfDay.setHours(0, 0, 0, 0)
-
-        const todayPosts = await db.post.findMany({
-          where: { publishedAt: { gte: startOfDay }, channel: { status: 'active' } },
-          select: { channel: { select: { categoryId: true } } },
-        })
-
+        const [cats, todayRows] = await Promise.all([
+          db.category.findMany({
+            where: { slug: { not: 'other' } },
+            orderBy: { order: 'asc' },
+            include: { _count: { select: { channels: { where: { status: 'active' } } } } },
+          }),
+          db.post.groupBy({
+            by: ['channelId'],
+            where: { publishedAt: { gte: startOfDay }, channel: { status: 'active' } },
+            _count: { _all: true },
+          }),
+        ])
+        // channelId → категория одним лёгким запросом только по затронутым каналам
+        const channelIds = todayRows.map((r) => r.channelId)
         const todayByCategory = new Map<string, number>()
-        for (const p of todayPosts) {
-          const cid = p.channel.categoryId
-          todayByCategory.set(cid, (todayByCategory.get(cid) ?? 0) + 1)
+        if (channelIds.length > 0) {
+          const chans = await db.channel.findMany({
+            where: { id: { in: channelIds } },
+            select: { id: true, categoryId: true },
+          })
+          const catOf = new Map(chans.map((c) => [c.id, c.categoryId]))
+          for (const r of todayRows) {
+            const cid = catOf.get(r.channelId)
+            if (cid) todayByCategory.set(cid, (todayByCategory.get(cid) ?? 0) + r._count._all)
+          }
         }
 
         return cats.map((c) => ({
