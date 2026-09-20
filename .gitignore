@@ -65,3 +65,8 @@ local-deploy-secrets.env
 /upload/
 tmp/
 scripts/tmp/
+
+# миграционные скрипты с паролем БД — не пушить
+scripts/probe-*.ts
+scripts/run-migration.ts
+scripts/*.result.json
