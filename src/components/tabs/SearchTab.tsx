@@ -5,7 +5,7 @@ import { ChevronRight, History, Plus, Search, Trash2, TrendingUp, X, Check, Spar
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { api } from '@/lib/api'
+import { api, apiCached, invalidateApiCache } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { stripMarkdown } from '@/lib/markdown'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
@@ -71,10 +71,10 @@ export function SearchTab() {
     return [...channels].sort((a, b) => b.subscribersCount - a.subscribersCount).slice(0, 6)
   }, [channels])
 
-  // Тренды хэштегов: один запрос при монтировании вкладки
+  // Тренды хэштегов: кэшированный запрос (повторное открытие вкладки — мгновенно)
   useEffect(() => {
     let alive = true
-    api<{ items: { tag: string; clicks: number }[] }>('/api/hashtags/trending')
+    apiCached<{ items: { tag: string; clicks: number }[] }>('/api/hashtags/trending', 120_000)
       .then((r) => {
         if (alive) setTrending(r.items)
       })
@@ -170,11 +170,12 @@ export function SearchTab() {
     setRecent(clearSearchHistory())
   }
 
-  // Каталог каналов (один раз; фильтрация на клиенте — для кириллицы SQLite LIKE не подходит)
+  // Каталог каналов: кэшированный GET — вкладка «Поиск» открывается без ожидания
+  // (фильтрация на клиенте — для кириллицы SQLite LIKE не подходит)
   useEffect(() => {
     const qs = new URLSearchParams()
     if (user) qs.set('userId', user.id)
-    api<{ items: ChannelDTO[] }>(`/api/channels?${qs.toString()}`)
+    apiCached<{ items: ChannelDTO[] }>(`/api/channels?${qs.toString()}`, 90_000)
       .then((d) => setChannels(d.items))
       .catch(() => setChannels([]))
   }, [user?.id])
@@ -215,6 +216,8 @@ export function SearchTab() {
         method: 'POST',
         body: JSON.stringify({ userId: user.id, channelId: ch.id }),
       })
+      // Каталог в кэше устарел (флаг подписки) — при следующем открытии перезагрузим
+      invalidateApiCache('/api/channels')
       toast.success(next ? `Вы подписались на «${ch.title}»` : `Вы отписались от «${ch.title}»`)
     } catch {
       setChannels((prev) =>
@@ -310,10 +313,10 @@ export function SearchTab() {
               setAiChatOpen(true)
             }}
             aria-label="Спросить ИИ"
-            className="flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[15px] font-medium text-white transition active:scale-95"
+            className="flex h-10 shrink-0 items-center gap-1.5 rounded-[12px] border border-tg-link/35 bg-tg-link/10 px-4 text-[14.5px] font-semibold text-tg-link transition active:scale-95"
           >
-            <Sparkles className="h-4 w-4" />
-            Спросить ИИ
+            <Sparkles className="h-4 w-4" strokeWidth={2.2} />
+            ИИ-поиск
           </button>
         </div>
       </div>

@@ -731,58 +731,111 @@ function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | '
 /* ИИ-ассистент (Snap Pro)                                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Строгая рабочая карточка (v5.34): без градиентов и «игрушечности» —
+ * монохромная плитка, чёткая типографика, панель быстрых действий
+ * (пост / картинка / статистика) и строка ключевых цифр канала.
+ */
 function AiAssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
   const pro = tier === 'pro'
   const [chatOpen, setChatOpen] = useState(false)
+  // Seed-запрос: тап по быстрому действию открывает чат и сразу отправляет
+  const [seed, setSeed] = useState<string | null>(null)
 
-  return (
-    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
-      <SectionTitle icon={Bot}>ИИ-ассистент</SectionTitle>
-      {pro ? (
-        <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
-          {/* ОТДЕЛЬНЫЙ ИИ-ЧАТ (v5.21): ассистент живёт в собственной поверхности —
-              пузыри, markdown, статусы «думаю», инлайн-кнопки публикации/картинки */}
-          <div className="flex items-start gap-3">
-            <span
-              className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-violet-500 to-fuchsia-500 text-white shadow-md"
-              aria-hidden
-            >
-              <Bot className="h-5 w-5" />
-            </span>
-            <div className="min-w-0 flex-1">
-              <p className="text-[14.5px] font-semibold leading-snug text-tg-text">Ваш ИИ-контентщик</p>
-              <p className="mt-0.5 text-[13px] leading-snug text-tg-hint">
-                Пишет посты в вашем стиле, рисует картинки, смотрит статистику и публикует в канал — голосом тоже
-              </p>
-            </div>
-          </div>
-          <button
-            type="button"
-            data-noswipe
-            onClick={() => {
-              haptic('light')
-              setChatOpen(true)
-            }}
-            className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-violet-600 to-fuchsia-500 text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
-          >
-            <Sparkles className="h-4.5 w-4.5" />
-            Открыть чат с ИИ
-          </button>
+  const openWith = (s: string | null) => {
+    haptic('light')
+    setSeed(s)
+    setChatOpen(true)
+  }
 
-          <AiChat
-            kind="assistant"
-            open={chatOpen}
-            onClose={() => setChatOpen(false)}
-            channelId={channel.id}
-            channelTitle={channel.title}
-          />
-        </div>
-      ) : (
+  const QUICK_ACTIONS = [
+    { icon: FileText, label: 'Написать пост', query: 'Напиши пост для канала — выбери актуальную тему и свой стиль' },
+    { icon: Sparkles, label: 'Картинка', query: 'Нарисуй обложку к свежему посту канала' },
+    { icon: ArrowUpRight, label: 'Статистика', query: 'Разбери статистику канала: что улучшить?' },
+  ]
+
+  if (!pro) {
+    return (
+      <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
+        <SectionTitle icon={Bot}>ИИ-ассистент</SectionTitle>
         <LockedCard
           title="Автономный ИИ-контентщик"
           text="Придумывает посты в вашем стиле, рисует картинки и публикует в канал"
         />
-      )}
+      </motion.section>
+    )
+  }
+
+  return (
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
+      <SectionTitle icon={Bot}>ИИ-ассистент</SectionTitle>
+      <div className="rounded-2xl border border-tg-sep/60 bg-tg-surface/60 p-4">
+        <AiChat
+          kind="assistant"
+          open={chatOpen}
+          onClose={() => setChatOpen(false)}
+          channelId={channel.id}
+          channelTitle={channel.title}
+          seedQuery={seed}
+          onSeedConsumed={() => setSeed(null)}
+        />
+
+        {/* Шапка: монохромная плитка + суть */}
+        <div className="flex items-start gap-3">
+          <span
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-tg-link text-white"
+            aria-hidden
+          >
+            <Bot className="h-5 w-5" />
+          </span>
+          <div className="min-w-0 flex-1">
+            <p className="text-[14.5px] font-semibold leading-snug text-tg-text">ИИ-контентщик канала</p>
+            <p className="mt-0.5 text-[12.5px] leading-snug text-tg-hint">
+              Знает все цифры канала, пишет в вашем стиле, рисует и публикует
+            </p>
+          </div>
+        </div>
+
+        {/* Ключевые цифры — ассистент и карточка говорят одними данными */}
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {[
+            { label: 'Постов', value: formatCount(channel.stats.posts) },
+            { label: 'Просмотры 24ч', value: formatCount(channel.stats.views24h) },
+            { label: 'Лайки', value: formatCount(channel.stats.likes) },
+          ].map((s) => (
+            <div key={s.label} className="rounded-xl border border-tg-sep/50 bg-tg-bg px-2.5 py-2 text-center">
+              <p className="text-[15px] font-bold leading-none text-tg-text">{s.value}</p>
+              <p className="mt-1 text-[10.5px] font-medium uppercase tracking-wide text-tg-hint">{s.label}</p>
+            </div>
+          ))}
+        </div>
+
+        {/* Быстрые действия: строгая сетка, тап — чат открывается с готовым запросом */}
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          {QUICK_ACTIONS.map((a) => (
+            <button
+              key={a.label}
+              type="button"
+              data-noswipe
+              onClick={() => openWith(a.query)}
+              className="flex h-[52px] flex-col items-center justify-center gap-1 rounded-xl border border-tg-sep bg-tg-bg text-tg-text transition active:scale-95 active:bg-tg-surface2"
+            >
+              <a.icon className="h-4 w-4 text-tg-link" strokeWidth={2.1} />
+              <span className="text-[11px] font-medium leading-none">{a.label}</span>
+            </button>
+          ))}
+        </div>
+
+        <button
+          type="button"
+          data-noswipe
+          onClick={() => openWith(null)}
+          className="mt-2.5 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
+        >
+          <Bot className="h-4.5 w-4.5" />
+          Открыть чат с ассистентом
+        </button>
+      </div>
     </motion.section>
   )
 }

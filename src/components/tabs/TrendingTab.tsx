@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Check, Eye, Heart, Plus, TrendingUp } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
-import { api } from '@/lib/api'
+import { api, apiCached } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
 import { haptic } from '@/lib/tg'
@@ -25,7 +25,8 @@ export function TrendingTab() {
 
   useEffect(() => {
     let alive = true
-    api<TrendingResponse>('/api/trending')
+    // v5.34: клиентский кэш 45с — вкладка открывается мгновенно, префетч на простое греет заранее
+    apiCached<TrendingResponse>('/api/trending', 45_000)
       .then((r) => {
         if (alive) setData(r)
       })

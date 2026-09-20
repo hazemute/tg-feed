@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Send } from 'lucide-react'
 import { toast } from 'sonner'
-import { api, getSessionToken, setSessionToken } from '@/lib/api'
+import { api, getSessionToken, prefetchIdle, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import type { Lang } from '@/lib/i18n'
 import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
@@ -291,12 +291,20 @@ export default function Home() {
     return () => window.removeEventListener('tgfeed:maintenance', onMaintenance)
   }, [setMaintenance])
 
-  // Прогрев тяжёлых агрегатов ПОСЛЕ первого рендера ленты: к открытию вкладки
-  // «Тренды» серверный кэш уже тёплый — вкладка открывается мгновенно
+  // Прогрев ВСЕХ ключевых экранов ПОСЛЕ первого рендера ленты (v5.34): тренды,
+  // каталог каналов и трендовые хэштеги ложатся в клиентский кэш apiCached —
+  // вкладки «Тренды» и «Поиск» затем открываются МГНОВЕННО, без сетевого раунд-трипа
   useEffect(() => {
     if (!authReady || !user) return
     const t = window.setTimeout(() => {
-      void api<{ pulse?: unknown }>('/api/trending').catch(() => {})
+      prefetchIdle(
+        [
+          '/api/trending',
+          '/api/hashtags/trending',
+          `/api/channels${user.id ? `?userId=${encodeURIComponent(user.id)}` : ''}`,
+        ],
+        90_000,
+      )
     }, 2_500)
     return () => window.clearTimeout(t)
   }, [authReady, user])

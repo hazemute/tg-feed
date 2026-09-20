@@ -77,10 +77,10 @@ function saveHistory(kind: AiChatKind, channelId: string | undefined, msgs: AiMs
 
 const SUGGESTIONS: Record<AiChatKind, string[]> = {
   assistant: [
-    'Напиши пост про пользу утренних прогулок',
-    'Нарисуй обложку к посту о путешествиях',
+    'Напиши пост на актуальную тему',
+    'Разбери статистику канала: что улучшить?',
+    'Нарисуй обложку к посту',
     'Что сейчас в тренде ленты?',
-    'Покажи статистику моего канала',
   ],
   search: [
     'Что нового в ленте за сутки?',
@@ -118,6 +118,25 @@ function ThinkingBubble({ label }: { label: string | null }) {
 }
 
 /* ============================ Инлайн-кнопки (цвета Telegram) ============================ */
+
+/** Маленькая стрелка для строк-примеров (строгий маркер) */
+function ArrowUpRightIcon() {
+  return (
+    <svg
+      className="h-3.5 w-3.5 shrink-0 text-tg-hint"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      <path d="M7 17 17 7" />
+      <path d="M8 7h9v9" />
+    </svg>
+  )
+}
 
 function InlineButtons({
   msg,
@@ -489,8 +508,8 @@ export function AiChat({
             </button>
             <span
               className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white shadow-sm',
-                kind === 'assistant' ? 'bg-gradient-to-br from-violet-500 to-fuchsia-500' : 'bg-gradient-to-br from-sky-500 to-emerald-500',
+                'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm',
+                kind === 'assistant' ? 'bg-tg-link' : 'border border-tg-sep bg-tg-text',
               )}
               aria-hidden
             >
@@ -516,37 +535,47 @@ export function AiChat({
           {/* Лента сообщений */}
           <div ref={listRef} className="no-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
             {loaded && messages.length === 0 && !busy && (
-              <div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
-                <span
-                  className={cn(
-                    'flex h-16 w-16 items-center justify-center rounded-3xl text-white shadow-lg',
-                    kind === 'assistant' ? 'bg-gradient-to-br from-violet-500 to-fuchsia-500' : 'bg-gradient-to-br from-sky-500 to-emerald-500',
-                  )}
-                >
-                  <Bot className="h-8 w-8" aria-hidden />
-                </span>
-                <div>
-                  <p className="text-[16px] font-bold text-tg-text">
-                    {kind === 'assistant' ? 'Ваш ИИ-контентщик' : 'Спросите про ленту'}
-                  </p>
-                  <p className="mt-1 max-w-72 text-[13.5px] leading-snug text-tg-hint">
-                    {kind === 'assistant'
-                      ? 'Пишет посты в вашем стиле, рисует картинки, смотрит статистику и публикует в канал — просто попросите'
-                      : 'Отвечает по свежим постам ленты со ссылками на источники — без выдумок'}
-                  </p>
+              <div className="flex h-full flex-col justify-center gap-5 px-5 py-6">
+                {/* Строгий welcome-блок: монохром, чёткие строки, без градиентов */}
+                <div className="flex items-start gap-3">
+                  <span
+                    className={cn(
+                      'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white',
+                      kind === 'assistant' ? 'bg-tg-link' : 'border border-tg-sep bg-tg-text',
+                    )}
+                    aria-hidden
+                  >
+                    <Bot className="h-5.5 w-5.5" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[16px] font-bold leading-tight text-tg-text">
+                      {kind === 'assistant' ? 'ИИ-контентщик канала' : 'ИИ-поиск по ленте'}
+                    </p>
+                    <p className="mt-1 text-[13px] leading-snug text-tg-hint">
+                      {kind === 'assistant'
+                        ? 'Знает статистику канала, пишет посты в вашем стиле, рисует обложки и публикует — просто попросите'
+                        : 'Отвечает по свежим постам ленты со ссылками на источники — без выдумок'}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex max-w-sm flex-wrap justify-center gap-1.5">
-                  {SUGGESTIONS[kind].map((s) => (
-                    <button
-                      key={s}
-                      type="button"
-                      data-noswipe
-                      onClick={() => void send(s)}
-                      className="rounded-full border border-tg-sep bg-tg-surface px-3 py-1.5 text-[12.5px] font-medium text-tg-text transition active:scale-95 active:bg-tg-surface2"
-                    >
-                      {s}
-                    </button>
-                  ))}
+                <div>
+                  <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-tg-hint">
+                    {kind === 'assistant' ? 'Быстрый старт' : 'Примеры запросов'}
+                  </p>
+                  <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                    {SUGGESTIONS[kind].map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        data-noswipe
+                        onClick={() => void send(s)}
+                        className="flex min-h-11 items-center gap-2 rounded-xl border border-tg-sep bg-tg-surface/50 px-3.5 py-2.5 text-left text-[13px] font-medium text-tg-text transition active:scale-[0.98] active:bg-tg-surface2"
+                      >
+                        <ArrowUpRightIcon />
+                        <span className="min-w-0 flex-1">{s}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
             )}

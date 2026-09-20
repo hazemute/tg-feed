@@ -202,39 +202,113 @@ const readPost: ToolDef = {
 
 /* ============================ инструменты ассистента ============================ */
 
-/** Статистика канала ассистента */
+/**
+ * ПОЛНЫЙ СНАПШОТ КАНАЛА (v5.34): вся статистика привязанного канала одним
+ * Promise.all — посты, просмотры (24ч/всего), лайки, комментарии, закладки,
+ * подписчики, динамика за 7 дней, топ-5 постов, продвижения, настройки.
+ * Кладётся в системный промпт ассистента: модель ЗНАЕТ канал до первого
+ * вопроса и не обязана тратить вызов инструмента на базовые цифры.
+ */
+export async function channelStatsBlock(
+  channelId: string,
+  channelTitle: string,
+  ownerId: string | null,
+  withTopPosts = true,
+): Promise<string> {
+  const now = Date.now()
+  const since24h = new Date(now - 24 * 3_600_000)
+  const since7d = new Date(now - 7 * 24 * 3_600_000)
+
+  const [ch, postsTotal, agg, comments, bookmarks, subs, views24h, posts7d, likes7d, promo7d, lastPost, top] =
+    await Promise.all([
+      db.channel.findUnique({
+        where: { id: channelId },
+        select: { membersCount: true, subscribersCount: true },
+      }),
+      db.post.count({ where: { channelId } }),
+      db.post.aggregate({
+        where: { channelId },
+        _sum: { likesCount: true, viewsCount: true },
+        _avg: { likesCount: true, viewsCount: true },
+      }),
+      db.comment.count({ where: { post: { channelId } } }),
+      db.bookmark.count({ where: { post: { channelId } } }),
+      db.subscription.count({ where: { channelId, hidden: false } }),
+      // Инкогнито (Snap Plus/Pro): просмотры юзеров с активным платным тиром
+      // не видны в детальной статистике — фильтр совпадает с lib/tiers
+      db.postView.count({
+        where: {
+          post: { channelId },
+          createdAt: { gte: since24h },
+          user: { OR: [{ tier: 'free' }, { tierUntil: { lte: new Date() } }] },
+        },
+      }),
+      db.post.count({ where: { channelId, publishedAt: { gte: since7d } } }),
+      db.like.count({ where: { post: { channelId }, createdAt: { gte: since7d } } }),
+      db.post.count({ where: { channelId, promotedAt: { gte: since7d } } }),
+      db.post.findFirst({
+        where: { channelId },
+        orderBy: { publishedAt: 'desc' },
+        select: { publishedAt: true },
+      }),
+      withTopPosts
+        ? db.post.findMany({
+            where: { channelId },
+            orderBy: [{ likesCount: 'desc' }, { viewsCount: 'desc' }],
+            take: 5,
+            select: { text: true, likesCount: true, viewsCount: true, publishedAt: true },
+          })
+        : Promise.resolve([]),
+    ])
+
+  const lines = [
+    `Канал «${channelTitle}», полная статистика:`,
+    `- постов всего: ${postsTotal}`,
+    `- просмотры: всего ${agg._sum.viewsCount ?? 0} · за 24ч ${views24h} · среднее на пост ${Math.round(agg._avg.viewsCount ?? 0)}`,
+    `- лайки: всего ${agg._sum.likesCount ?? 0} · за 7 дней ${likes7d} · среднее на пост ${(agg._avg.likesCount ?? 0).toFixed(1)}`,
+    `- комментарии: ${comments} · закладки: ${bookmarks}`,
+    `- подписчики: Telegram ${ch?.membersCount ?? ch?.subscribersCount ?? '—'} · в приложении ${subs}`,
+    `- за 7 дней: новых постов ${posts7d}, продвижений ${promo7d}`,
+    lastPost
+      ? `- последний пост: ${lastPost.publishedAt.toISOString().slice(0, 16).replace('T', ' ')} UTC`
+      : '- постов ещё нет',
+  ]
+  if (top.length > 0) {
+    lines.push('- топ постов по лайкам:')
+    for (const p of top) {
+      const t = stripMarkdown(p.text).replace(/\s+/g, ' ').slice(0, 90)
+      lines.push(`  · [${p.publishedAt.toISOString().slice(0, 10)}, ${p.likesCount}♥, ${p.viewsCount}👁] ${t || 'медиа-пост'}`)
+    }
+  }
+  if (ownerId) {
+    const [acct, owner] = await Promise.all([
+      db.advertiserAccount.findUnique({ where: { userId: ownerId }, select: { balanceKop: true } }).catch(() => null),
+      db.user.findUnique({ where: { id: ownerId }, select: { tier: true, tierUntil: true } }).catch(() => null),
+    ])
+    if (acct) lines.push(`- рекламный баланс: ${(acct.balanceKop / 100).toFixed(2)} ₽`)
+    if (owner) {
+      const active = owner.tierUntil && owner.tierUntil.getTime() > Date.now()
+      lines.push(active ? `- тариф ${owner.tier} (до ${owner.tierUntil!.toISOString().slice(0, 10)})` : `- тариф: ${owner.tier}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+/** Статистика канала ассистента — «свежий срез» поверх снапшота в системном промпте */
 const getChannelStats: ToolDef = {
   name: 'get_channel_stats',
   label: 'Собираю статистику канала…',
   description:
-    'Статистика канала пользователя: посты, просмотры, лайки, подписчики, продвижения за неделю. ' +
-    'Вызывай, когда спрашивают про динамику/цифры канала или нужно оценить, о чём пишут чаще.',
+    'Свежая статистика канала: посты, просмотры, лайки, комментарии, закладки, подписчики, ' +
+    'динамика за 7 дней, топ-5 постов. Основные цифры уже есть в системном промпте — вызывай, ' +
+    'когда нужны САМЫЕ свежие данные или глубокий разбор (топ постов, вовлечённость).',
   parameters: { type: 'object', properties: {} },
   exec: async (_args, ctx) => {
     if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
-    const since7 = new Date(Date.now() - 7 * 24 * 3_600_000)
-    const [postsTotal, agg, subs, promo] = await Promise.all([
-      db.post.count({ where: { channelId: ctx.channelId } }),
-      db.post.aggregate({
-        where: { channelId: ctx.channelId },
-        _sum: { likesCount: true, viewsCount: true },
-        _avg: { likesCount: true },
-      }),
-      db.subscription.count({ where: { channelId: ctx.channelId, hidden: false } }),
-      db.post.count({ where: { channelId: ctx.channelId, promotedAt: { gte: since7 } } }),
-    ])
-    const ch = await db.channel.findUnique({
-      where: { id: ctx.channelId },
-      select: { membersCount: true, subscribersCount: true, title: true },
-    })
-    const data =
-      `Канал «${ch?.title ?? ''}»:\n` +
-      `- постов всего: ${postsTotal}\n` +
-      `- просмотров (локальные): ${agg._sum.viewsCount ?? 0}\n` +
-      `- лайков всего: ${agg._sum.likesCount ?? 0} (среднее на пост: ${(agg._avg.likesCount ?? 0).toFixed(1)})\n` +
-      `- подписчиков: ${ch?.membersCount ?? ch?.subscribersCount ?? subs}\n` +
-      `- продвижений за 7 дней: ${promo}/7`
-    return { ok: true, data }
+    const ch = await db.channel.findUnique({ where: { id: ctx.channelId }, select: { title: true, claimedById: true } })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+    const block = await channelStatsBlock(ctx.channelId, ch.title, ch.claimedById, true)
+    return { ok: true, data: block }
   },
 }
 
@@ -272,13 +346,16 @@ const generateImage: ToolDef = {
   name: 'generate_image',
   label: 'Рисую картинку…',
   description:
-    'Генерирует иллюстрацию к посту. Придумай ПОДРОБНЫЙ визуальный промпт на английском ' +
-    '(стиль, композиция, настроение, цвета; без текста и надписей на картинке). ' +
+    'Генерирует иллюстрацию к посту. Придумай ПОДРОБНЫЙ визуальный промпт НА АНГЛИЙСКОМ ' +
+    '(60–400 символов): конкретный сюжет и объект, окружение/фон, художественный стиль ' +
+    '(photo/illustration/3D/flat), освещение, цветовую палитру, ракурс/композицию, настроение. ' +
+    'БЕЗ текста, букв и надписей на картинке, без водяных знаков. ' +
+    'Промпт должен быть понятнее и богаче, чем сформулировал автор. ' +
     'Результат появится в чате картинкой. Используй, когда автор просит картинку/обложку/иллюстрацию.',
   parameters: {
     type: 'object',
     properties: {
-      prompt: { type: 'string', description: 'Английский визуальный промпт (40–400 символов)' },
+      prompt: { type: 'string', description: 'Подробный английский визуальный промпт (60–400 символов)' },
     },
     required: ['prompt'],
   },
@@ -286,8 +363,8 @@ const generateImage: ToolDef = {
     const prompt = str(args.prompt, 500)
     if (prompt.length < 10) return { ok: false, data: 'Ошибка: промпт слишком короткий.' }
     const { generatePublicImage } = await import('@/lib/ai-image')
-    // v5.33: картинка — только бесплатный pollinations (суть промпта уходит
-    // на английский той же бесплатной моделью); второй аргумент больше не нужен
+    // v5.34: промпт модели дополнительно раскрывается в детальную английскую
+    // визуальную сцену (enVisualPrompt) → бесплатный pollinations/flux
     const img = await generatePublicImage(prompt)
     if (!img.url) return { ok: false, data: 'Картинка не сгенерировалась — сервис недоступен. Продолжай без неё.' }
     return {
@@ -406,24 +483,42 @@ export function assistantSystemPrompt(ctx: {
   categoryTitle: string | null
   style: { tone: string; topics: string; style: string } | null
   weeklyPromo: { used: number; limit: number }
+  /** ПОЛНЫЙ снапшот канала (v5.34): вся статистика/настройки — модель знает канал сразу */
+  statsBlock: string | null
+  cta: { label: string | null; url: string | null }
+  teaserMode: string
+  /** Возраст канала в приложении */
+  createdAt: Date | null
 }): string {
   const now = new Date()
+  const age = ctx.createdAt
+    ? `в ленте с ${ctx.createdAt.toISOString().slice(0, 10)}`
+    : ''
   return [
     'Ты — личный ИИ-ассистент автора Telegram-канала внутри Telegram Mini App «Tg Swipe».',
     'Ты помогаешь придумывать посты, рисовать картинки к ним, смотреть статистику канала и публиковать готовые посты.',
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}). Автор: ${ctx.userName}, тариф: ${ctx.tier}.`,
-    `Канал автора: «${ctx.channelTitle}» (@${ctx.channelUsername})${ctx.categoryTitle ? `, категория: ${ctx.categoryTitle}` : ''}${ctx.channelDescription ? `. Описание: ${ctx.channelDescription.slice(0, 160)}` : ''}.`,
+    `Канал автора: «${ctx.channelTitle}» (@${ctx.channelUsername})${ctx.categoryTitle ? `, категория: ${ctx.categoryTitle}` : ''}${age ? `, ${age}` : ''}${ctx.channelDescription ? `. Описание: ${ctx.channelDescription.slice(0, 160)}` : ''}.`,
+    ctx.cta.label && ctx.cta.url
+      ? `CTA-кнопка в постах: «${ctx.cta.label}» → ${ctx.cta.url}.`
+      : 'CTA-кнопка в постах не настроена (можешь посоветовать, если уместно).',
+    `Режим тизеров постов: ${ctx.teaserMode === 'none' ? 'показ целиком' : ctx.teaserMode === 'cut' ? 'обрезка по лимиту' : 'блюр-заглушка'}.`,
     ctx.style
       ? `Стиль автора (проанализирован): тон — ${ctx.style.tone}; темы — ${ctx.style.topics}; манера — ${ctx.style.style}.`
       : 'Стиль автора ещё не проанализирован — при необходимости вызови analyze_channel_style.',
     `Продвижения в ленте на этой неделе: ${ctx.weeklyPromo.used}/${ctx.weeklyPromo.limit}.`,
     '',
+    ctx.statsBlock
+      ? `=== ДАННЫЕ КАНАЛА (уже собраны, вызывать get_channel_stats для базовых цифр НЕ нужно) ===\n${ctx.statsBlock}\n=== конец данных канала ===`
+      : 'Статистика канала сейчас недоступна — при вопросах про цифры вызови get_channel_stats.',
+    '',
     'КАК РАБОТАТЬ:',
     '1. Просьба «напиши пост…» → продумай текст в стиле автора и вызови create_post_draft (в text — готовый пост). Затем коротко скажи, что готово, и предложи доработки.',
-    '2. Просьба про картинку/обложку/иллюстрацию → вызови generate_image с подробным английским промптом.',
+    '2. Просьба про картинку/обложку/иллюстрацию → вызови generate_image с подробным английским промптом (сюжет, окружение, стиль, свет, палитра, композиция).',
     '3. Явная просьба «опубликуй» → если текст ещё не показан, покажи его в ответе и вызови publish_post.',
-    '4. Вопросы про цифры канала → get_channel_stats; «что сейчас в тренде» → get_trending.',
-    '5. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
-    '6. Markdown в ответах: **жирный**, списки, коротко. Без выдуманных фактов и цифр.',
+    '4. Вопросы про цифры → отвечай ИЗ данных канала выше; нужен самый свежий срез или топ постов → get_channel_stats; «что сейчас в тренде» → get_trending.',
+    '5. Дай совет по каналу, если автор просит «что улучшить» — опирайся на реальные цифры (вовлечённость, динамика 7 дней, топ посты).',
+    '6. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
+    '7. Markdown в ответах: **жирный**, списки, коротко. Без выдуманных фактов и цифр.',
   ].join('\n')
 }

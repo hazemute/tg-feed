@@ -46,6 +46,9 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   if (res.status === 401) {
     // Сессия протухла/невалидна — сбрасываем и просим page.tsx пере-авторизоваться
     setSessionToken(null)
+    // Кэш мог быть набран под старой сессией — мгновенно забываем всё
+    MEMO_CACHE.clear()
+    INFLIGHT.clear()
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
   }
 
@@ -60,6 +63,67 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(data.error || `HTTP ${res.status}`)
   }
   return res.json() as Promise<T>
+}
+
+/* ====================== МГНОВЕННЫЕ ВКЛАДКИ (v5.34) ====================== */
+
+/**
+ * Клиентский кэш GET-ответов в памяти вкладки + дедупликация одновременных
+ * запросов. Переключение вкладок («Поиск», «Тренды»…) отдаёт данные из кэша
+ * БЕЗ сетевого раунд-трипа — экраны рисуются мгновенно; префетч на простое
+ * (page.tsx) греет кэш заранее, к моменту первого тапа данные уже здесь.
+ * Кэш живёт только в памяти сессии — приватность не страдает, 401 всё стирает.
+ */
+type CacheEntry = { data: unknown; at: number }
+const MEMO_CACHE = new Map<string, CacheEntry>()
+const INFLIGHT = new Map<string, Promise<unknown>>()
+const MEMO_MAX = 60
+
+export function apiCached<T>(path: string, ttlMs = 60_000): Promise<T> {
+  const hit = MEMO_CACHE.get(path)
+  if (hit && Date.now() - hit.at < ttlMs) return Promise.resolve(hit.data as T)
+  const running = INFLIGHT.get(path)
+  if (running) return running as Promise<T>
+  const p = api<T>(path)
+    .then((data) => {
+      if (MEMO_CACHE.size >= MEMO_MAX) {
+        const first = MEMO_CACHE.keys().next().value
+        if (first !== undefined) MEMO_CACHE.delete(first)
+      }
+      MEMO_CACHE.set(path, { data, at: Date.now() })
+      return data
+    })
+    .finally(() => {
+      INFLIGHT.delete(path)
+    })
+  INFLIGHT.set(path, p)
+  return p
+}
+
+/** Сбросить кэш (например, после мутации, меняющей каталог/тренды) */
+export function invalidateApiCache(prefix?: string): void {
+  if (!prefix) {
+    MEMO_CACHE.clear()
+    return
+  }
+  for (const key of MEMO_CACHE.keys()) {
+    if (key.startsWith(prefix)) MEMO_CACHE.delete(key)
+  }
+}
+
+/**
+ * Тихий префетч списка GET-путей в простое браузера: грее apiCached-кэш,
+ * не мешая ленте (requestIdleCallback, фолбэк — setTimeout 1200мс).
+ */
+export function prefetchIdle(paths: string[], ttlMs = 60_000): void {
+  if (typeof window === 'undefined' || paths.length === 0) return
+  const run = () => {
+    for (const p of paths) void apiCached(p, ttlMs).catch(() => {})
+  }
+  const ric = (window as { requestIdleCallback?: (cb: () => void, opts?: { timeout: number }) => number })
+    .requestIdleCallback
+  if (typeof ric === 'function') ric(run, { timeout: 3_000 })
+  else window.setTimeout(run, 1_200)
 }
 
 /**

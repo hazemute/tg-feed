@@ -52,17 +52,25 @@ export async function verifyImageUrl(url: string): Promise<boolean> {
 /* ====================== СУТЬ ТЕКСТА → АНГЛИЙСКИЙ ПРОМПТ ====================== */
 
 /**
- * Перевести суть текста (любого языка) в короткий английский визуальный
- * промпт для pollinations. Единая бесплатная модель (glm-5.3-flash:free).
+ * Перевести суть текста (любого языка) в ПОДРОБНЫЙ английский визуальный
+ * промпт для pollinations (v5.34). Единая бесплатная модель (glm-5.3-flash:free).
+ *
+ * Принцип владельца: модель не просто переводит — она ПЕРЕСКАЗЫВАЕТ запрос
+ * понятнее, чем объяснил пользователь: конкретный сюжет, окружение, стиль,
+ * свет, палитра, композиция. Как попросил бы профессиональный арт-директор.
+ *
  * Мини-кэш в памяти процесса: повторная генерация того же текста (ретрай
  * публикации) не тратит вызов LLM.
  */
 const PROMPT_CACHE = new Map<string, string>()
 const PROMPT_CACHE_MAX = 200
 
+/** Качественные суффиксы для деградировавшего/короткого промпта */
+const QUALITY_TAGS = 'high detail, clean composition, professional quality'
+
 export async function enVisualPrompt(text: string): Promise<string> {
   const src = text.replace(/\s+/g, ' ').trim().slice(0, 1200)
-  if (src.length < 8) return 'clean minimal editorial illustration, high quality'
+  if (src.length < 8) return `clean minimal editorial illustration, soft lighting, ${QUALITY_TAGS}`
 
   const key = src.slice(0, 160)
   const hit = PROMPT_CACHE.get(key)
@@ -70,14 +78,31 @@ export async function enVisualPrompt(text: string): Promise<string> {
 
   try {
     const out = await chatSimple(
-      'You turn a text into a short ENGLISH image-generation prompt. ' +
-        'Describe the visual scene: subject, style, mood, colors, composition. ' +
-        'Plain English, 12-40 words, no quotes, no explanations, no text-on-image requests.',
+      [
+        'You are a professional art director writing prompts for an image-generation model (Flux).',
+        'The user gives you a post/topic in ANY language. Rewrite its ESSENCE as ONE detailed ENGLISH image prompt that is far clearer and richer than the source text.',
+        '',
+        'MANDATORY structure (fold into one flowing line, 45-90 words total):',
+        '1. SUBJECT — the concrete main scene/objects with specific details (what exactly is shown, what is happening);',
+        '2. SETTING — environment/background;',
+        '3. STYLE — pick the best fit: photorealistic / editorial illustration / 3D render / flat vector / cinematic photo;',
+        '4. LIGHTING — e.g. soft morning light, dramatic rim light, golden hour;',
+        '5. COLOR PALETTE — 2-4 named colors;',
+        '6. COMPOSITION/ANGLE — close-up / wide shot / top-down / rule of thirds;',
+        '7. MOOD in one word.',
+        '',
+        'HARD RULES: English only; NO text, letters, captions or watermarks in the image; no quotes; no explanations; no lists; output ONLY the prompt line.',
+      ].join('\n'),
       src,
-      { maxTokens: 90, timeoutMs: 15_000, temperature: 0.4 },
+      { maxTokens: 220, timeoutMs: 18_000, temperature: 0.55 },
     )
-    const prompt = out.replace(/^["'\s]+|["'\s]+$/g, '').slice(0, 380)
-    if (prompt.length >= 12) {
+    // Модель могла вернуть пару строк — берём содержимое, чистим разметку
+    const prompt = out
+      .replace(/^["'\s]+|["'\s]+$/g, '')
+      .replace(/^prompt\s*:\s*/i, '')
+      .replace(/\s*\n+\s*/g, ', ')
+      .slice(0, 420)
+    if (prompt.length >= 30) {
       if (PROMPT_CACHE.size >= PROMPT_CACHE_MAX) {
         const first = PROMPT_CACHE.keys().next().value
         if (first !== undefined) PROMPT_CACHE.delete(first)
@@ -88,8 +113,8 @@ export async function enVisualPrompt(text: string): Promise<string> {
   } catch {
     // LLM недоступен — фолбэк ниже
   }
-  // Фолбэк: сырой текст (pollinations поймёт и не-английский, плюс префикс стиля)
-  return `clean editorial illustration, high quality, about: ${src.slice(0, 220)}`
+  // Фолбэк: сырой текст (pollinations поймёт и не-английский) + стилевой каркас
+  return `editorial illustration about: ${src.slice(0, 220)}, soft lighting, harmonious colors, ${QUALITY_TAGS}`
 }
 
 export type ResolvedImage = {

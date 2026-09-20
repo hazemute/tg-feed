@@ -8,7 +8,7 @@ import { enVisualPrompt, pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-i
 import { botPublishToChannel } from '@/lib/tg-bot'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { stripMarkdown } from '@/lib/markdown'
-import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx } from '@/lib/ai-tools'
+import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx, channelStatsBlock } from '@/lib/ai-tools'
 import { sseStream } from '@/lib/sse'
 
 export const dynamic = 'force-dynamic'
@@ -173,17 +173,33 @@ export async function POST(request: Request) {
     /* ---------- Чат с инструментами (SSE) ---------- */
     if (d.action === 'chat') {
       registerStyleExecutor()
-      const user = await db.user.findUnique({
-        where: { id: g.uid },
-        select: { firstName: true, lastName: true, username: true },
-      })
+      // Категория канала + юзер + полный снапшот статистики — параллельно (v5.34:
+      // ассистент знает ВЕСЬ канал до первого вопроса — цифры, настройки, топ постов)
+      const [channelFull, user, statsBlock, weeklyUsed] = await Promise.all([
+        channel.categoryId
+          ? db.channel.findUnique({
+              where: { id: channel.id },
+              select: {
+                ctaLabel: true,
+                ctaUrl: true,
+                teaserMode: true,
+                createdAt: true,
+                category: { select: { title: true } },
+              },
+            })
+          : Promise.resolve(null),
+        db.user.findUnique({
+          where: { id: g.uid },
+          select: { firstName: true, lastName: true, username: true },
+        }),
+        channelStatsBlock(channel.id, channel.title, channel.claimedById).catch(() => null),
+        db.post.count({
+          where: { channelId: channel.id, promotedAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
+        }),
+      ])
       const userName =
         [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
         (user?.username ? `@${user.username}` : 'автор канала')
-
-      const weeklyUsed = await db.post.count({
-        where: { channelId: channel.id, promotedAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
-      })
 
       const sys = assistantSystemPrompt({
         userName,
@@ -191,9 +207,13 @@ export async function POST(request: Request) {
         channelTitle: channel.title,
         channelUsername: channel.username,
         channelDescription: channel.description,
-        categoryTitle: channel.categoryId ? null : null, // категория подтягивается в статистике
+        categoryTitle: channelFull?.category?.title ?? null,
         style: styleFresh(channel),
         weeklyPromo: { used: weeklyUsed, limit: 7 },
+        statsBlock,
+        cta: { label: channelFull?.ctaLabel ?? null, url: channelFull?.ctaUrl ?? null },
+        teaserMode: channelFull?.teaserMode ?? 'cut',
+        createdAt: channelFull?.createdAt ?? null,
       })
 
       const history: ChatMsg[] = [
