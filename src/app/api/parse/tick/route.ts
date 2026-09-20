@@ -4,6 +4,7 @@ import { cronAuthorized, guardIp } from '@/lib/guard'
 import { runParser, backfillCustomEmoji } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
 import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, cardBatchSize } from '@/lib/parse-scheduler'
+import { pruneAll } from '@/lib/retention'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -96,6 +97,10 @@ async function handle(request: Request) {
       }
     }
 
+    // Ретеншен лог-таблиц: троттлинг 19ч + Redis-лок — на каждом тике почти
+    // бесплатен (мгновенный skipped), раз в сутки реально подрезает журналы
+    const pruned = await pruneAll().catch(() => null)
+
     return NextResponse.json({
       ok: true,
       batch: batch.length,
@@ -105,6 +110,7 @@ async function handle(request: Request) {
       cards,
       notified,
       emojiBackfill,
+      pruned,
       ms: Date.now() - started,
     })
   } catch (e) {

@@ -149,6 +149,8 @@ const MAINT_PASS_SET = 'sys:maint_pass'
 const BANS_SET = 'sys:banned'
 let maintCache: { v: boolean; exp: number } | null = null
 const MAINT_MEM_TTL_MS = 15_000
+/** Явное 'off' кэшируем дольше: штатный режим = минимум GET-ов на Upstash */
+const MAINT_MEM_TTL_OFF_MS = 60_000
 
 async function maintenanceOn(): Promise<boolean> {
   if (!redis) return false
@@ -161,7 +163,7 @@ async function maintenanceOn(): Promise<boolean> {
   } catch {
     v = false
   }
-  maintCache = { v, exp: Date.now() + MAINT_MEM_TTL_MS }
+  maintCache = { v, exp: Date.now() + (v ? MAINT_MEM_TTL_MS : MAINT_MEM_TTL_OFF_MS) }
   return v
 }
 

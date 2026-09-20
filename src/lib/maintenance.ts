@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { redis } from '@/lib/redis'
+import { pruneAll } from '@/lib/retention'
 
 /**
  * Режим технических работ — УСТОЙЧИВЫЙ К ПЕРЕЗАПУСКАМ И ВЫМЫВАНИЮ REDIS.
@@ -30,8 +31,13 @@ export const MAINT_SETTING_KEY = 'maintenance'
 export const BANS_SET = 'sys:banned'
 
 const MEM_TTL_MS = 15_000
-const DB_MIRROR_TTL_MS = 30_000
+/** Явное 'off' из Redis можно кэшировать дольше — включение подхватится ≤60с */
+const MEM_TTL_OFF_MS = 60_000
+const DB_MIRROR_TTL_MS = 60_000
 const HEARTBEAT_MS = 30_000
+/** Эконом-режим heartbeat при выключенном флаге: раз в 10 минут */
+const IDLE_SYNC_MS = 10 * 60_000
+let lastIdleSyncAt = 0
 
 let memFlag: { v: boolean; exp: number } | null = null
 let dbMirrorCache: { v: boolean; exp: number } | null = null
@@ -86,7 +92,8 @@ export async function isMaintenanceOn(): Promise<boolean> {
 
   const explicit = await redisFlagValue()
   if (explicit !== null) {
-    memFlag = { v: explicit, exp: Date.now() + MEM_TTL_MS }
+    // 'on' проверяем часто (быстрая реакция), явное 'off' — редко (экономия команд)
+    memFlag = { v: explicit, exp: Date.now() + (explicit ? MEM_TTL_MS : MEM_TTL_OFF_MS) }
     return explicit
   }
 
@@ -294,9 +301,27 @@ function ensureHeartbeat(): void {
 }
 
 async function heartbeatTick(): Promise<void> {
+  // Ретеншен лог-таблиц (свой троттлинг 19ч + Redis-лок) — и в эконом-режиме
+  void pruneAll().catch(() => {})
   if (!redis) return // локально без Upstash зеркала нет — БД и так источник
   try {
     const on = await dbMirrorCached()
+    if (!on) {
+      // ЭКОНОМИЯ КОМАНД: флаг выключен (штатный режим) — раньше heartbeat
+      // делал 1-4 команды Redis каждые 30с на каждый инстанс (до сотен тысяч
+      // команд/день на Upstash). Теперь раз в 10 минут: восстанавливаем
+      // явный 'off' (после флаша ключа Edge ходил бы в БД на каждый запрос)
+      // и синхронизируем зеркало банов для Edge.
+      if (Date.now() - lastIdleSyncAt < IDLE_SYNC_MS) return
+      lastIdleSyncAt = Date.now()
+      try {
+        await redis.set(MAINT_KEY, 'off')
+      } catch {
+        /* повтор на следующем цикле */
+      }
+      await syncBansFromDb()
+      return
+    }
     const redisOn = await redisFlagValue()
     if (redisOn !== on) {
       try {
@@ -306,7 +331,7 @@ async function heartbeatTick(): Promise<void> {
         /* повтор на следующем тике */
       }
     }
-    if (on) await syncAllowSetFromDb()
+    await syncAllowSetFromDb()
     await syncBansFromDb()
   } catch {
     /* тихо */
