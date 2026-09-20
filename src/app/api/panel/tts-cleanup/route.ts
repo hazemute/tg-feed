@@ -100,6 +100,54 @@ export async function POST(request: Request) {
   const g = guardAdmin(request, { limit: 30, windowMs: 60_000, bucket: 'panel-tts-cleanup' })
   if (!g.ok) return g.res
 
+  // Доп. операции восстановления после переполнения квоты (доки Supabase
+  // «Disabling read-only mode»): alter-ro — постоянный выход из read-only для
+  // новых сессий; vacuum — физическое сжатие файла БД (иначе размер в квоте
+  // не падает и read-only вернётся); sizes — топ таблиц по размеру.
+  const op = new URL(request.url).searchParams.get('op')
+
+  if (op === 'alter-ro' || op === 'vacuum' || op === 'sizes') {
+    const cs = directConnectionString()
+    if (!cs) return NextResponse.json({ error: 'no DATABASE_URL/DIRECT_URL' }, { status: 500 })
+    const u = new URL(cs)
+    const client = new Client({
+      host: u.hostname,
+      port: Number(u.port || 5432),
+      user: decodeURIComponent(u.username),
+      password: decodeURIComponent(u.password),
+      database: u.pathname.replace(/^\//, '') || 'postgres',
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: 10_000,
+      statement_timeout: op === 'vacuum' ? 55_000 : 25_000,
+    })
+    try {
+      await client.connect()
+      await client.query('SET default_transaction_read_only = off')
+      if (op === 'alter-ro') {
+        const dbname = await client.query<{ db: string }>('SELECT current_database() AS db')
+        const name = dbname.rows[0]?.db ?? 'postgres'
+        await client.query(`alter database "${name}" set default_transaction_read_only = off`)
+        return NextResponse.json({ ok: true, op, altered_db: name, ...(await diagnostics()) })
+      }
+      if (op === 'vacuum') {
+        const r = await client.query('vacuum (full, analyze) "Post"')
+        return NextResponse.json({ ok: true, op, command: r.command, ...(await diagnostics()) })
+      }
+      const sizes = await client.query<{ tbl: string; size: string }>(
+        `select relname as tbl, pg_size_pretty(pg_total_relation_size(relid)) as size,
+                pg_total_relation_size(relid) as bytes
+         from pg_catalog.pg_statio_user_tables
+         order by pg_total_relation_size(relid) desc limit 10`,
+      )
+      return NextResponse.json({ ok: true, op, tables: sizes.rows, ...(await diagnostics()) })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e)
+      return NextResponse.json({ error: `op ${op} failed`, detail: msg.slice(0, 400), ...(await diagnostics()) }, { status: 500 })
+    } finally {
+      await client.end().catch(() => {})
+    }
+  }
+
   try {
     const res = await runRawCleanup()
     await logAdmin('tts-cleanup', 'posts.ttsAudio', { cleared: res.cleared, done: res.done })
