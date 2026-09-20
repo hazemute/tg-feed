@@ -27,6 +27,17 @@ export async function POST(request: Request) {
   const g = guardAdmin(request, { limit: 30, windowMs: 60_000, bucket: 'panel-tts-cleanup' })
   if (!g.ok) return g.res
 
+  /** Диагностика: read_only + размер БД (Supabase блокирует записи при переполнении 500MB) */
+  const diagnostics = async (): Promise<Record<string, unknown>> => {
+    try {
+      const ro = await db.$queryRaw<{ read_only: string }[]>`SHOW transaction_read_only`
+      const size = await db.$queryRaw<{ size: bigint | number }[]>`SELECT pg_database_size(current_database()) AS size`
+      return { read_only: ro[0]?.read_only, db_size_mb: Math.round(Number(size[0]?.size ?? 0) / 1048576) }
+    } catch (e) {
+      return { diag_error: e instanceof Error ? e.message.slice(0, 120) : String(e) }
+    }
+  }
+
   try {
     const t0 = Date.now()
     let cleared = 0
@@ -52,10 +63,13 @@ export async function POST(request: Request) {
 
     const done = lastBatch < BATCH
     await logAdmin('tts-cleanup', 'posts.ttsAudio', { cleared, done })
-    return NextResponse.json({ ok: true, cleared, done })
+    return NextResponse.json({ ok: true, cleared, done, ...(await diagnostics()) })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[panel/tts-cleanup]', msg)
-    return NextResponse.json({ error: 'cleanup failed', detail: msg.slice(0, 200) }, { status: 500 })
+    return NextResponse.json(
+      { error: 'cleanup failed', detail: msg.slice(0, 400), ...(await diagnostics()) },
+      { status: 500 },
+    )
   }
 }
