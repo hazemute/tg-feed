@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { guardAuth } from '@/lib/guard'
 import { proxiedMediaUrl } from '@/lib/media'
+import { jsonWithEtag } from '@/lib/etag'
 
 export const dynamic = 'force-dynamic'
 
@@ -44,7 +45,9 @@ export async function GET(request: Request) {
       orderBy: { createdAt: 'desc' },
     })
 
-    return NextResponse.json({
+    // v5.49: ETag/304 — при следующем заходе в миниапп подписки рендерятся из
+    // локального кэша мгновенно, сервер отдаёт пустой 304, если ничего не менялось
+    return jsonWithEtag(request, {
       items: subs.map((s) => ({
         channelId: s.channelId,
         hidden: s.hidden,

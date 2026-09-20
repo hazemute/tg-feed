@@ -5,6 +5,7 @@ import { guardPublic } from '@/lib/guard'
 import { CHANNEL_LIST_SELECT, POST_LIST_SELECT, channelDTOFromRow, postDTOFromRow } from '@/lib/dto'
 import { cacheAside, famKey } from '@/lib/redis'
 import { nsfwPostNotIn, getNsfwChannelIds } from '@/lib/moderation'
+import { jsonWithEtag } from '@/lib/etag'
 import type { ChannelDTO, PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -50,7 +51,8 @@ export async function GET(request: Request) {
     })
 
     // Персонализация поверх кэша: только флаги, данные остаются кэшированными
-    if (!uid) return NextResponse.json(core)
+    // v5.49: ETag/304 на гостевом пути тоже (самый частый трафик трендов)
+    if (!uid) return jsonWithEtag(request, core)
 
     const postIds = core.topPosts.map((p) => p.id)
     const channelIds = [
@@ -87,7 +89,8 @@ export async function GET(request: Request) {
       subscribed: subSet.has(c.id),
     }))
 
-    return NextResponse.json({ ...core, topPosts, topChannels })
+    // v5.49: ETag/304 — тренды рендерятся из локального кэша мгновенно
+    return jsonWithEtag(request, { ...core, topPosts, topChannels })
   } catch (e) {
     console.error('[trending]', e)
     return err('trending failed', 500)

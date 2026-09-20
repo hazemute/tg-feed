@@ -3,7 +3,7 @@ import { db } from '@/lib/db'
 import { cronAuthorized, guardIp } from '@/lib/guard'
 import { runParser, backfillCustomEmoji } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
-import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, cardBatchSize } from '@/lib/parse-scheduler'
+import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, refreshHotChannelStats, cardBatchSize } from '@/lib/parse-scheduler'
 import { pruneAll } from '@/lib/retention'
 import { checkDueGiveaways } from '@/lib/giveaways'
 
@@ -75,6 +75,17 @@ async function handle(request: Request) {
       console.error('[tick] notify failed', e)
     }
 
+    // v5.49: ЖИВАЯ статистика подписчиков (fast lane) — до 6 популярных каналов
+    // за тик обновляют membersCount через лёгкий getChatMemberCount. Идёт ДО
+    // карточек: подписчики важнее аватарок, а бюджет Bot API у fast lane свой
+    // (1 лёгкий вызов/канал; 429 останавливает обе партии через markBotBan)
+    let stats: { refreshed: number; skipped: boolean } = { refreshed: 0, skipped: true }
+    try {
+      stats = await refreshHotChannelStats()
+    } catch (e) {
+      console.error('[tick] stats failed', e)
+    }
+
     // карточки каналов (аватар + подписчики через Bot API) — ГАРАНТИРОВАННЫЙ
     // слот сразу после парсинга. Размер партии АДАПТИВНЫЙ (cardBatchSize):
     // после флуд-бана начинается с 2 каналов и растёт на +2 за спокойный тик
@@ -112,6 +123,7 @@ async function handle(request: Request) {
       added: result.newPosts.length,
       truncated: result.truncated ?? false,
       enriched,
+      stats,
       cards,
       notified,
       emojiBackfill,

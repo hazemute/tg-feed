@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { bumpCache } from '@/lib/redis'
 import { bgImageOf } from '@/lib/parse-engine'
-import { getChatCard } from '@/lib/tg-bot'
+import { getChatCard, botEnabled, botBanned, fetchLiveMembers } from '@/lib/tg-bot'
 import { IS_SQLITE } from '@/lib/server'
 
 /**
@@ -253,4 +253,68 @@ export async function refreshChannelCards(explicitLimit?: number): Promise<Cards
   await Promise.all(workers)
   if (!banned) cardRamp = Math.min(12, cardRamp + 2) // спокойный тик — темп растёт
   return { refreshed, scanned: rows.length }
+}
+
+// ----------------- ЖИВАЯ статистика каналов (fast lane, v5.49) -----------------
+
+/**
+ * БЫСТРАЯ СТАТИСТИКА (приказ владельца: «каналы, в которых есть бот, должны
+ * подтягивать статистику моментально»): каждый тик refreshing подписчиков
+ * небольшой ротационной партии ПОПУЛЯРНЫХ каналов (getChatMemberCount —
+ * лёгкий метод Bot API, 1 вызов на канал), минимальный возраст счётчика
+ * 30 минут. Каналы, где бот не участник (400/403), держатся в негативном
+ * кэше 2ч — Bot API не дёргается впустую. Любой 429 останавливает партию
+ * (глобальная пауза уже стоит в fetchLiveMembers/markBotBan).
+ *
+ * РАСХОД: ≤6 вызовов/тик (~60-120с) ≈ 3-6 вызовов/мин при лимите Bot API
+ * 30/с — незаметно; память — одна Map с негативным кэшем (кап 500 записей).
+ */
+const STATS_PER_TICK = 6
+const STATS_MIN_AGE_MS = 30 * 60_000
+const STATS_FAIL_TTL_MS = 2 * 3_600_000
+
+const statsFail = new Map<string, number>()
+
+export async function refreshHotChannelStats(): Promise<{ refreshed: number; skipped: boolean }> {
+  if (!botEnabled() || botBanned()) return { refreshed: 0, skipped: true }
+  const cutoff = new Date(Date.now() - STATS_MIN_AGE_MS)
+  let rows: Array<{ id: string; username: string }> = []
+  try {
+    rows = await db.channel.findMany({
+      where: {
+        status: 'active',
+        OR: [{ membersFetchedAt: null }, { membersFetchedAt: { lt: cutoff } }],
+      },
+      orderBy: { subscribersCount: 'desc' }, // популярные — первыми, они всегда «почти живые»
+      select: { id: true, username: true },
+      take: STATS_PER_TICK * 6, // запас под пропуск негативного кэша
+    })
+  } catch {
+    return { refreshed: 0, skipped: true }
+  }
+
+  if (statsFail.size > 500) statsFail.clear()
+
+  let refreshed = 0
+  for (const r of rows) {
+    if (refreshed >= STATS_PER_TICK) break
+    const failAt = statsFail.get(r.id)
+    if (failAt && failAt > Date.now()) continue
+    const res = await fetchLiveMembers(r.username)
+    if (res.rateLimited) break // флуд-бан — партию прекращаем, не наказываем Bot API
+    if (res.members != null) {
+      await db.channel
+        .update({
+          where: { id: r.id },
+          data: { membersCount: res.members, membersFetchedAt: new Date() },
+        })
+        .catch(() => {})
+      refreshed++
+    } else {
+      // бот не видит канал (не админ/приватен) — пауза 2ч на этот канал
+      statsFail.set(r.id, Date.now() + STATS_FAIL_TTL_MS)
+    }
+  }
+  if (refreshed > 0) await bumpCache(['ch']).catch(() => {})
+  return { refreshed, skipped: false }
 }

@@ -5,6 +5,7 @@ import { guardPublic } from '@/lib/guard'
 import { cacheAside, famKey } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import { proxiedMediaUrl } from '@/lib/media'
+import { jsonWithEtag } from '@/lib/etag'
 
 export const dynamic = 'force-dynamic'
 
@@ -58,7 +59,8 @@ export async function GET(request: Request) {
       items = items.map((c) => ({ ...c, subscribed: subSet.has(c.id) }))
     }
 
-    return NextResponse.json({ items })
+    // v5.49: ETag/304 — каталог каналов рендерится из локального кэша
+    return jsonWithEtag(request, { items })
   } catch (e) {
     console.error('[channels]', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

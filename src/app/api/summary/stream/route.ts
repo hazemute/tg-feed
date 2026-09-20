@@ -31,6 +31,7 @@ export async function POST(request: Request) {
   // v5.48: try/catch до SSE — сбой БД раньше давал сырую 500 без лога
   let postId = ''
   let text = ''
+  let aiSummary: string | null = null
   try {
     const parsed = bodySchema.safeParse(await readJson(request))
     if (!parsed.success) return err('postId required')
@@ -40,6 +41,7 @@ export async function POST(request: Request) {
     const post = await db.post.findUnique({ where: { id: postId }, select: { text: true, aiSummary: true } })
     if (!post) return err('post not found', 404)
     text = post.text.trim()
+    aiSummary = post.aiSummary
   } catch (e) {
     console.error('[summary/stream]', e)
     return err('summary failed', 500)
@@ -53,9 +55,9 @@ export async function POST(request: Request) {
     }
 
     // 2) Кэш Post.aiSummary — мгновенный показ
-    if (post.aiSummary) {
+    if (aiSummary) {
       try {
-        const cached = JSON.parse(post.aiSummary)
+        const cached = JSON.parse(aiSummary)
         if (Array.isArray(cached) && cached.length > 0) {
           send('cached', { items: cached, fallback: false })
           return

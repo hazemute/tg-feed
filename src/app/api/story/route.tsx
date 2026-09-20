@@ -303,14 +303,9 @@ function initialsOf(title: string): string {
     : words[0].slice(0, 2).toUpperCase()
 }
 
-export async function GET(request: Request) {
-  const g = guardPublic(request, { limit: 30, windowMs: 60_000, bucket: 'story' })
-  if (!g.ok) return g.res
-
-  const id = new URL(request.url).searchParams.get('id') ?? ''
-  if (!ID_RE.test(id)) return new Response('bad id', { status: 400 })
-
-  const post = await db.post.findUnique({
+/** Выборка поста для стори (вынесена для try/catch вокруг публичного GET) */
+function loadStoryPost(id: string) {
+  return db.post.findUnique({
     where: { id },
     select: {
       text: true,
@@ -327,6 +322,23 @@ export async function GET(request: Request) {
       },
     },
   })
+}
+
+export async function GET(request: Request) {
+  const g = guardPublic(request, { limit: 30, windowMs: 60_000, bucket: 'story' })
+  if (!g.ok) return g.res
+
+  const id = new URL(request.url).searchParams.get('id') ?? ''
+  if (!ID_RE.test(id)) return new Response('bad id', { status: 400 })
+
+  // v5.48: try/catch — сбой БД на публичном роуте раньше давал 500 без лога
+  let post: Awaited<ReturnType<typeof loadStoryPost>> = null
+  try {
+    post = await loadStoryPost(id)
+  } catch (e) {
+    console.error('[story]', e)
+    return new Response('story failed', { status: 500 })
+  }
   if (!post) return new Response('not found', { status: 404 })
 
   const ch = post.channel

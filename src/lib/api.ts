@@ -25,7 +25,7 @@ export function setSessionToken(token: string | null): void {
   }
 }
 
-/* ====================== ETAG / 304 (v5.35) ====================== */
+/* ====================== ETAG / 304 (v5.35, персистентность v5.49) ====================== */
 
 /**
  * Прозрачный ETag-кэш GET-запросов: обёртка помнит последний ответ и его
@@ -33,10 +33,25 @@ export function setSessionToken(token: string | null): void {
  * тело — НИ ОДИН вызывающий код не меняется. Поллинг ленты (раз в 45с) и
  * повторы перестают качать один и тот же JSON — минус десятки МБ трафика
  * на пользователя в сутки.
+ *
+ * ПЕРСИСТЕНТНОСТЬ (v5.49 — «миллисекундная загрузка»): кэш ПЕРЕЖИВАЕТ
+ * перезапуск миниаппа — записи хранятся в localStorage. При следующем
+ * заходе первый же запрос уходит с If-None-Match прошлой сессии: данные
+ * НЕ изменились → пустой 304 (~100 байт), экран рисуется из локальной
+ * копии мгновенно; изменились → полный 200 и обновление кэша. Сервер
+ * нагружается только валидацией, крупные данные ходят по сети один раз,
+ * пока не изменятся.
  */
 type EtagEntry = { etag: string; body: unknown }
 const ETAG_CACHE = new Map<string, EtagEntry>()
-const ETAG_MAX = 20
+const ETAG_MAX = 40
+
+/** Границы персистентного слоя: мелкие ответы, конечное число, TTL сутки */
+const ETAG_LS_KEY = 'tgfeed_etag_v1'
+const ETAG_PERSIST_MAX = 30 // записей
+const ETAG_PERSIST_MAX_BYTES = 80_000 // одна запись крупнее — не храним (страницы ленты)
+const ETAG_PERSIST_TOTAL_BYTES = 800_000 // общий бюджет ~0.8МБ из ~5МБ localStorage
+const ETAG_PERSIST_TTL_MS = 24 * 3_600_000
 
 function etagRemember(path: string, etag: string, body: unknown): void {
   if (ETAG_CACHE.size >= ETAG_MAX) {
@@ -44,7 +59,62 @@ function etagRemember(path: string, etag: string, body: unknown): void {
     if (first !== undefined) ETAG_CACHE.delete(first)
   }
   ETAG_CACHE.set(path, { etag, body })
+  scheduleEtagPersist()
 }
+
+let etagPersistTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Отложенная запись кэша в localStorage (не чаще раза в 1с, одним куском) */
+function scheduleEtagPersist(): void {
+  if (typeof window === 'undefined' || etagPersistTimer) return
+  etagPersistTimer = setTimeout(() => {
+    etagPersistTimer = null
+    try {
+      const now = Date.now()
+      const out: Record<string, { etag: string; body: unknown; at: number }> = {}
+      let size = 0
+      let count = 0
+      // свежие записи в конце Map — сохраняем с хвоста, пока не упрёмся в лимиты
+      for (const [path, entry] of [...ETAG_CACHE].reverse()) {
+        if (count >= ETAG_PERSIST_MAX) break
+        const rec = { etag: entry.etag, body: entry.body, at: now }
+        const json = JSON.stringify(rec)
+        if (json.length > ETAG_PERSIST_MAX_BYTES) continue
+        if (size + json.length > ETAG_PERSIST_TOTAL_BYTES) break
+        out[path] = rec
+        size += json.length
+        count++
+      }
+      localStorage.setItem(ETAG_LS_KEY, JSON.stringify(out))
+    } catch {
+      // приватный режим/переполнение — кэш просто не переживёт сессию
+    }
+  }, 1_000)
+}
+
+/** Загрузить ETag-кэш прошлой сессии в память (один раз при старте модуля) */
+function loadPersistedEtags(): void {
+  if (typeof window === 'undefined') return
+  try {
+    const raw = localStorage.getItem(ETAG_LS_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, { etag: string; body: unknown; at: number }>
+    const now = Date.now()
+    for (const [path, rec] of Object.entries(parsed)) {
+      if (!rec || typeof rec.etag !== 'string') continue
+      if (now - rec.at > ETAG_PERSIST_TTL_MS) continue // сутки — стухший кэш не валидируем
+      if (ETAG_CACHE.size >= ETAG_MAX) break
+      ETAG_CACHE.set(path, { etag: rec.etag, body: rec.body })
+    }
+  } catch {
+    try {
+      localStorage.removeItem(ETAG_LS_KEY)
+    } catch {
+      /* не критично */
+    }
+  }
+}
+loadPersistedEtags()
 
 function isEtaggable(init?: RequestInit): boolean {
   const method = (init?.method ?? 'GET').toUpperCase()
@@ -86,6 +156,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     MEMO_CACHE.clear()
     INFLIGHT.clear()
     ETAG_CACHE.clear()
+    try {
+      localStorage.removeItem(ETAG_LS_KEY)
+    } catch {
+      /* не критично */
+    }
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
   }
 

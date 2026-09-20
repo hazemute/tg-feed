@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { jsonWithEtag } from '@/lib/etag'
 import {
   AI_MTOK_IN_SWP,
   AI_MTOK_OUT_SWP,
@@ -54,7 +55,8 @@ export async function GET(request: Request) {
     if (!user) return err('Пользователь не найден', 404)
     // Write-through: свежий баланс → Redis (горячий путь edge-роута /api/wallet/balance)
     void cacheBalance(g.uid, { balanceKop: user.balanceKop, swipes: user.swipes })
-    return NextResponse.json({
+    // v5.49: ETag/304 — кошелёк рендерится из локального кэша мгновенно
+    return jsonWithEtag(request, {
       ok: true,
       balanceKop: user.balanceKop,
       swipes: user.swipes,

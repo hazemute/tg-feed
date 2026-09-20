@@ -371,6 +371,49 @@ export async function getChatMemberCount(username: string): Promise<number | nul
 }
 
 /**
+ * ЖИВАЯ статистика канала (v5.49): getChatMemberCount БЕЗ чтения кэша —
+ * для fast-lane обновления счётчиков подписчиков (тик планировщика).
+ * Успех обновляет общий кэш (память 1ч / Redis 24ч), 429 → глобальная
+ * пауза Bot API (markBotBan). Бот, не являющийся участником канала,
+ * получает 400/403 → members:null (вызывающий код держит свой негативный
+ * кэш, чтобы не долбить Bot API).
+ */
+export async function fetchLiveMembers(
+  username: string,
+): Promise<{ members: number | null; rateLimited: boolean }> {
+  const empty = { members: null, rateLimited: false }
+  if (!botEnabled()) return empty
+  const clean = username.replace(/^@/, '')
+  await hydrateBotBan()
+  if (botBanned()) return { members: null, rateLimited: true }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMemberCount`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: `@${clean}` }),
+      signal: AbortSignal.timeout(8000),
+    })
+    if (res.status === 429) {
+      const retry = Number(res.headers.get('retry-after') ?? '0')
+      void markBotBan(retry)
+      return { members: null, rateLimited: true }
+    }
+    if (!res.ok) return empty // 400/403 — бот не видит канал
+    const data = (await res.json().catch(() => null)) as { ok?: boolean; result?: number } | null
+    if (data?.ok && typeof data.result === 'number' && data.result >= 0) {
+      // свежее значение — сразу в общий кэш: UI-потребители getChatMemberCount
+      // тоже увидят актуальное число
+      await cacheSet(`tgmembers:${clean}`, String(data.result), 24 * 60 * 60).catch(() => {})
+      memSet(`mc:${clean}`, String(data.result), 60 * 60_000)
+      return { members: data.result, rateLimited: false }
+    }
+    return empty
+  } catch {
+    return empty
+  }
+}
+
+/**
  * Последнее фото профиля пользователя через Bot API (getUserProfilePhotos).
  * Возвращает file_id самого большого размера — вечный идентификатор файла
  * (в отличие от photo_url из initDataUnsafe, который живёт ~1 час).

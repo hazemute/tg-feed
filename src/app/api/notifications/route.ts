@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { getCachedNotifications, putCachedNotifications } from '@/lib/notif-cache'
+import { jsonWithEtag } from '@/lib/etag'
 import type { NotificationDTO, NotificationGroupDTO, NotificationPostDTO } from '@/lib/types'
 
 type NotificationsResponse = {
@@ -65,7 +66,9 @@ export async function GET(request: Request) {
   // L0-кэш 10с: бейдж опрашивается при каждом bump ленты — бёрсты поллинга
   // не должны умножать 3-5 SQL-запросов (см. src/lib/notif-cache.ts)
   const cached = getCachedNotifications<NotificationsResponse>(userId)
-  if (cached) return NextResponse.json(cached)
+  // v5.49: ETag/304 на ВСЕХ путях — поллинг каждые 20-45с при неизменных данных
+  // почти не стоит ни трафика (пустой 304), ни рендера
+  if (cached) return jsonWithEtag(request, cached)
 
   try {
     // v5.48: пользователь нужен первым (из него «since»), остальные выборки
@@ -116,7 +119,7 @@ export async function GET(request: Request) {
         unreadActivity,
       }
       putCachedNotifications(userId, empty)
-      return NextResponse.json(empty)
+      return jsonWithEtag(request, empty)
     }
 
     const posts = await db.post.findMany({
@@ -193,7 +196,7 @@ export async function GET(request: Request) {
       unreadActivity,
     }
     putCachedNotifications(userId, payload)
-    return NextResponse.json(payload)
+    return jsonWithEtag(request, payload)
   } catch (e) {
     console.error('[notifications]', e)
     return err('notifications failed', 500)
