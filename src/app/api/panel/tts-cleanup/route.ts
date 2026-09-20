@@ -106,7 +106,7 @@ export async function POST(request: Request) {
   // не падает и read-only вернётся); sizes — топ таблиц по размеру.
   const op = new URL(request.url).searchParams.get('op')
 
-  if (op === 'alter-ro' || op === 'vacuum' || op === 'sizes') {
+  if (op === 'alter-ro' || op === 'vacuum' || op === 'sizes' || op === 'disk') {
     const cs = directConnectionString()
     if (!cs) return NextResponse.json({ error: 'no DATABASE_URL/DIRECT_URL' }, { status: 500 })
     const u = new URL(cs)
@@ -118,11 +118,38 @@ export async function POST(request: Request) {
       database: u.pathname.replace(/^\//, '') || 'postgres',
       ssl: { rejectUnauthorized: false },
       connectionTimeoutMillis: 10_000,
-      statement_timeout: op === 'vacuum' ? 55_000 : 25_000,
+      statement_timeout: op === 'vacuum' || op === 'disk' ? 55_000 : 25_000,
     })
     try {
       await client.connect()
       await client.query('SET default_transaction_read_only = off')
+      if (op === 'disk') {
+        // CHECKPOINT переименовывает/удаляет отработанные WAL-сегменты — на
+        // забитом диске это часто единственный способ освободить место под
+        // VACUUM FULL (которому нужна копия таблицы).
+        const walBefore = await client
+          .query<{ bytes: string }>('select coalesce(sum(size),0)::text as bytes from pg_ls_waldir()')
+          .catch(() => ({ rows: [{ bytes: '-1' }] }))
+        const filesBefore = await client
+          .query<{ n: string }>('select count(*)::text as n from pg_ls_waldir()')
+          .catch(() => ({ rows: [{ n: '-1' }] }))
+        await client.query('checkpoint')
+        const walAfter = await client
+          .query<{ bytes: string }>('select coalesce(sum(size),0)::text as bytes from pg_ls_waldir()')
+          .catch(() => ({ rows: [{ bytes: '-1' }] }))
+        const filesAfter = await client
+          .query<{ n: string }>('select count(*)::text as n from pg_ls_waldir()')
+          .catch(() => ({ rows: [{ n: '-1' }] }))
+        return NextResponse.json({
+          ok: true,
+          op,
+          wal_before_mb: Math.round(Number(walBefore.rows[0]?.bytes ?? 0) / 1048576),
+          wal_files_before: filesBefore.rows[0]?.n,
+          wal_after_mb: Math.round(Number(walAfter.rows[0]?.bytes ?? 0) / 1048576),
+          wal_files_after: filesAfter.rows[0]?.n,
+          ...(await diagnostics()),
+        })
+      }
       if (op === 'alter-ro') {
         const dbname = await client.query<{ db: string }>('SELECT current_database() AS db')
         const name = dbname.rows[0]?.db ?? 'postgres'
