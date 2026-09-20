@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { setMaintenanceAllowed, setBanned } from '@/lib/maintenance'
-import { KOPECKS_PER_SWIPE } from '@/lib/money'
+import { invalidateBalance } from '@/lib/balance-cache'
 import { logAdmin } from '@/lib/admin-log'
 import { emitAppEvent } from '@/lib/events'
 import { sendBotNotification } from '@/lib/bot-notify'
@@ -93,7 +93,7 @@ export async function GET(request: Request) {
           tierUntil: true,
           badges: true,
           createdAt: true,
-          advertiser: { select: { balanceKop: true } },
+          swipes: true,
           _count: { select: { likes: true, subscriptions: true, bookmarks: true, views: true } },
         },
         orderBy:
@@ -122,7 +122,10 @@ export async function GET(request: Request) {
           tier: active ? tier : 'free',
           tierUntil: active && u.tierUntil ? u.tierUntil.toISOString() : null,
           badges: parseBadges(u.badges),
-          swipes: u.advertiser ? Math.floor(u.advertiser.balanceKop / KOPECKS_PER_SWIPE) : 0,
+          // v5.53: показываем НАСТОЯЩИЙ баланс кошелька (User.swipes).
+          // Раньше колонка показывала рекламный баланс AdvertiserAccount —
+          // из-за этого выданные панелью свайпы «не появлялись» в кошельке.
+          swipes: u.swipes,
           createdAt: u.createdAt.toISOString(),
           likes: u._count.likes,
           subscriptions: u._count.subscriptions,
@@ -189,24 +192,55 @@ export async function PATCH(request: Request) {
       if (!Number.isFinite(swipes) || swipes < 0 || swipes > 10_000_000) {
         return err('swipes must be 0..10000000')
       }
-      const balanceKop = swipes * KOPECKS_PER_SWIPE
-      // topupsTotalKop ≥ баланс: админ-грант считается «пополнением» — иначе
-      // стерилизация (purge_demo, удаляет балансы без единого пополнения)
-      // вычистила бы выданный панелью баланс при следующем деплое.
-      const existing = await db.advertiserAccount.findUnique({
-        where: { userId },
-        select: { topupsTotalKop: true },
+      // v5.53: панель правит НАСТОЯЩИЙ кошелёк (User.swipes — валюта, которую
+      // юзер видит в кошельке). Раньше значение уходило в рекламный баланс
+      // AdvertiserAccount — из-за этого выданные свайпы не отображались у юзера.
+      const before = await db.user.findUnique({
+        where: { id: userId },
+        select: { swipes: true },
       })
-      await db.advertiserAccount.upsert({
-        where: { userId },
-        create: { userId, balanceKop, topupsTotalKop: balanceKop },
-        update: {
-          balanceKop,
-          topupsTotalKop: Math.max(existing?.topupsTotalKop ?? 0, balanceKop),
-        },
+      if (!before) return err('user not found', 404)
+      const updated = await db.user.update({
+        where: { id: userId },
+        data: { swipes },
+        select: { swipes: true },
       })
-      await logAdmin('swipes', userId, { swipes })
-      return NextResponse.json({ ok: true, userId, swipes })
+      const delta = updated.swipes - before.swipes
+      if (delta !== 0) {
+        // Журнал кошелька — виден юзеру в истории операций
+        await db.balanceLog
+          .create({
+            data: {
+              userId,
+              kind: 'admin',
+              currency: 'swp',
+              amount: delta,
+              note:
+                delta > 0
+                  ? `Начислено администратором (баланс ${updated.swipes.toLocaleString('ru-RU')})`
+                  : `Баланс установлен администратором (${updated.swipes.toLocaleString('ru-RU')})`,
+            },
+          })
+          .catch(() => {})
+        // Уведомление в инбокс + ЛС бота (не критично для операции)
+        try {
+          const num = updated.swipes.toLocaleString('ru-RU')
+          const title =
+            delta > 0
+              ? `Вам начислено ${delta.toLocaleString('ru-RU')} свайпов`
+              : 'Баланс свайпов изменён администратором'
+          const body = `Новый баланс: ${num} свайпов. Удачного сёрфинга!`
+          await db.notification.create({ data: { userId, type: 'system', title, body } })
+          emitAppEvent('notif:new', { userId })
+          sendBotNotification({ userId, type: 'system', title, body })
+        } catch (ne) {
+          console.error('[panel/users swipes] notify failed', (ne as Error).message)
+        }
+      }
+      // Кэш баланса устарел: edge-роут отдаст { ok:false }, клиент доберёт из /api/wallet
+      await invalidateBalance(userId)
+      await logAdmin('swipes', userId, { swipes, delta })
+      return NextResponse.json({ ok: true, userId, swipes: updated.swipes })
     }
     if (action === 'premium') {
       const u = await db.user.findUnique({ where: { id: userId }, select: { isPremium: true } })

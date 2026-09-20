@@ -43,7 +43,6 @@ import { WalletCard } from '@/components/tabs/WalletCard'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
 import { AiChat } from '@/components/ai/AiChat'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
-import { SourcesCard } from '@/components/profile/SourcesCard'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 import { GiveawayCard } from '@/components/profile/GiveawayCard'
 
@@ -290,9 +289,6 @@ export function ProfileTab() {
           onTopUp={() => setTopUpOpen(true)}
         />
       )}
-
-      {/* v5.50: источники рекомендаций («В один клик») — пересылка постов боту */}
-      {!user.isGuest && <SourcesCard />}
 
       {/* v5.46: активный розыгрыш — билеты/задания/промокод (скрыт, если розыгрыша нет) */}
       <GiveawayCard />
