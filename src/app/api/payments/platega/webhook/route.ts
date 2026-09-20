@@ -31,7 +31,7 @@ export async function POST(request: Request) {
     } catch {
       /* пустое тело — попробуем по query ниже */
     }
-    if (!transactionId) transactionId = request.nextUrl.searchParams.get('id')?.trim() ?? ''
+    if (!transactionId) transactionId = new URL(request.url).searchParams.get('id')?.trim() ?? ''
     if (!transactionId) return NextResponse.json({ ok: false, reason: 'no-id' })
 
     // ИСТИНА — только из API: статус + наш payload (PendingPayment.id)

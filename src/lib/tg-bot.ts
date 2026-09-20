@@ -480,6 +480,56 @@ export async function isTelegramMember(
   }
 }
 
+/**
+ * Сколько АКТИВНЫХ бустов пользователь дал каналу (getUserChatBoosts).
+ * Используется заданием розыгрыша «отдай Premium-голос за канал»: бот должен
+ * быть АДМИНИСТРАТОРОМ канала, иначе Bot API вернёт ошибку.
+ * Возвращает null, если проверить нечем (бот не админ / нет токена / 429).
+ */
+export async function getUserChatBoosts(
+  username: string,
+  tgUserId: number,
+): Promise<number | null> {
+  if (!botEnabled()) return null
+  const clean = username.replace(/^@/, '')
+
+  // Кэш 5 минут (память): проверка дёргается кнопкой «Проверить буст»,
+  // повторные тапы не должны молотить Bot API
+  const mk = `gb:${clean}:${tgUserId}`
+  const local = memGet(mk)
+  if (local !== undefined) return local === 'none' ? null : Number(local)
+
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getUserChatBoosts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: `@${clean}`, user_id: tgUserId }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean
+      result?: { boosts?: Array<{ user?: { id?: number }; expiration_date?: number }> }
+      description?: string
+    } | null
+    if (!data?.ok) {
+      // «bot is not a member / not enough rights» — проверка недоступна
+      memSet(mk, 'none', 5 * 60_000)
+      return null
+    }
+    const now = Date.now()
+    const active = (data.result?.boosts ?? []).filter(
+      (b) =>
+        b.user?.id === tgUserId &&
+        typeof b.expiration_date === 'number' &&
+        b.expiration_date * 1000 > now,
+    ).length
+    memSet(mk, String(active), 5 * 60_000)
+    return active
+  } catch {
+    return null
+  }
+}
+
 // --- getFile: file_id → временный CDN-URL ---
 // Кэш: память 40мин → Redis 45мин (URL живёт ~1 час), общий для всех инстансов —
 // аватары не дёргают ни Bot API, ни Redis на каждый запрос.

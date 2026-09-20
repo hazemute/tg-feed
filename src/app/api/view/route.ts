@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { checkAndAwardAuto } from '@/lib/giveaway-tickets'
 
 export const dynamic = 'force-dynamic'
 
@@ -83,6 +84,12 @@ export async function POST(request: Request) {
          */
         { timeout: 15_000, maxWait: 8_000 },
       )
+    }
+
+    // v5.46: пролистанные посты = прогресс задания «активность» в розыгрышах
+    // (fire-and-forget: проверка активных розыгрышей + выдача билетов, не тормозит ответ)
+    if (added > 0 && !userId.startsWith('guest_')) {
+      void checkAndAwardAuto({ id: userId, tgId: Number(userId.slice(3)) || undefined })
     }
 
     return NextResponse.json({ ok: true, added })

@@ -92,6 +92,12 @@ interface GiveawayItem {
   winners: GiveawayWinner[]
   entriesCount: number
   createdAt: string
+  // v5.46 — билетная система (обогащённый ответ GET)
+  tasks?: Array<{ kind: string; enabled: boolean; tickets: number; swipeGoal?: number; referralGoal?: number; boostChannel?: string; label?: string }>
+  promoCode?: string | null
+  losersRewardSwipes?: number
+  hasPhoto?: boolean
+  ticketsSum?: number
 }
 
 interface GiveawaysResponse {
@@ -144,6 +150,24 @@ interface GiveawayActionResult {
 }
 
 /* ===================== API ===================== */
+
+/** v5.46: строка участника в панели */
+interface GiveawayEntryRow {
+  userId: string
+  name: string
+  username: string | null
+  tgId: string | null
+  ticketsCount: number
+  tasksDone: Array<{ task: string; tickets: number; at: string }>
+  winner: boolean
+  createdAt: string
+}
+
+async function fetchGiveawayEntries(id: string): Promise<{ giveaway: { title: string; status: string }; entries: GiveawayEntryRow[] }> {
+  return panelFetch<{ giveaway: { title: string; status: string }; entries: GiveawayEntryRow[] }>(
+    `/api/panel/giveaways?entries=${encodeURIComponent(id)}`,
+  )
+}
 
 async function fetchGiveaways(): Promise<GiveawaysResponse> {
   return panelFetch<GiveawaysResponse>('/api/panel/giveaways')
@@ -286,6 +310,7 @@ function GiveawayCard({
   onCancel,
   onFinalize,
   onDelete,
+  onParticipants,
 }: {
   item: GiveawayItem
   publishChannel: string
@@ -295,13 +320,15 @@ function GiveawayCard({
   onCancel: (item: GiveawayItem) => void
   onFinalize: (item: GiveawayItem) => void
   onDelete: (item: GiveawayItem) => void
+  onParticipants: (item: GiveawayItem) => void
 }) {
   const meta = STATUS_META[item.status]
   const postLink = item.chatId && item.messageId ? `https://t.me/${publishChannel}/${item.messageId}` : null
 
   // Кнопки действий зависят от статуса
-  const acts: CardAction[] =
-    item.status === 'draft'
+  const acts: CardAction[] = [
+    { label: 'Участники', icon: Users, tone: 'outline', run: () => onParticipants(item) },
+    ...((item.status === 'draft'
       ? [
           { label: 'Опубликовать', icon: Send, tone: 'green', run: () => onPublish(item) },
           { label: 'Изменить', icon: Pencil, tone: 'outline', run: () => onEdit(item) },
@@ -320,7 +347,8 @@ function GiveawayCard({
             ]
           : item.status === 'cancelled'
             ? [{ label: 'Удалить', icon: Trash2, tone: 'danger', run: () => onDelete(item) }]
-            : []
+            : []) as CardAction[]),
+  ]
 
   return (
     <div className="rounded-xl border border-slate-200 bg-white p-4">
@@ -337,10 +365,31 @@ function GiveawayCard({
         <span className="inline-flex items-center gap-1">
           <Users className="size-3.5" aria-hidden /> {fmtNum(item.entriesCount)} заявок
         </span>
+        {typeof item.ticketsSum === 'number' && item.ticketsSum > 0 && (
+          <span className="inline-flex items-center gap-1 font-medium text-amber-700">
+            🎫 {fmtNum(item.ticketsSum)} билетов всего
+          </span>
+        )}
         <span className="inline-flex items-center gap-1">
           <CalendarDays className="size-3.5" aria-hidden /> {fmtRange(item.startAt, item.endAt)}
         </span>
+        {item.hasPhoto && <span>🖼 с фото</span>}
+        {item.promoCode && <span className="font-mono text-[11px]">🔑 {item.promoCode}</span>}
+        {typeof item.losersRewardSwipes === 'number' && item.losersRewardSwipes > 0 && (
+          <span>💜 утешение: {fmtNum(item.losersRewardSwipes)} свайпов</span>
+        )}
       </div>
+
+      {/* Задания (билеты) */}
+      {item.tasks && item.tasks.some((t) => t.enabled) && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {item.tasks.filter((t) => t.enabled).map((t) => (
+            <span key={t.kind} className="rounded-full border border-sky-200 bg-sky-50 px-2 py-0.5 text-[11px] font-medium text-sky-700">
+              🎫 ×{t.tickets} · {t.kind === 'activity' ? `активность (${t.swipeGoal ?? '?'} свайпов)` : t.kind === 'promo' ? 'промокод' : t.kind === 'referral' ? `рефералы (${t.referralGoal ?? '?'})` : `буст @${t.boostChannel ?? 'SnapTeamDev'}`}
+            </span>
+          ))}
+        </div>
+      )}
 
       {/* Призы: «название × мест» */}
       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -436,6 +485,12 @@ export function GiveawaysTab({ tick, onSettled }: TabProps) {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
 
+  // v5.46: участники розыгрыша (модал с билетами)
+  const [pModal, setPModal] = useState<GiveawayItem | null>(null)
+  const [pEntries, setPEntries] = useState<GiveawayEntryRow[] | null>(null)
+  const [pLoading, setPLoading] = useState(false)
+  const [pError, setPError] = useState<string | null>(null)
+
   const load = async () => {
     try {
       const d = await fetchGiveaways()
@@ -451,6 +506,22 @@ export function GiveawaysTab({ tick, onSettled }: TabProps) {
       setLoading(false)
     } finally {
       onSettled()
+    }
+  }
+
+  // v5.46: открыть модал участников
+  const openParticipants = async (item: GiveawayItem) => {
+    setPModal(item)
+    setPEntries(null)
+    setPError(null)
+    setPLoading(true)
+    try {
+      const d = await fetchGiveawayEntries(item.id)
+      setPEntries(d.entries)
+    } catch (e) {
+      setPError(e instanceof PanelError ? e.message : 'Не удалось загрузить участников')
+    } finally {
+      setPLoading(false)
     }
   }
 
@@ -887,12 +958,104 @@ export function GiveawaysTab({ tick, onSettled }: TabProps) {
                   onCancel={cancel}
                   onFinalize={finalize}
                   onDelete={remove}
+                  onParticipants={openParticipants}
                 />
               ))}
             </div>
           ) : null}
         </CardContent>
       </Card>
+
+      {/* ===== v5.46: модал участников розыгрыша ===== */}
+      {pModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Участники: ${pModal.title}`}
+          onClick={() => setPModal(null)}
+        >
+          <div
+            className="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 border-b border-slate-200 px-5 py-4">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-semibold text-slate-900">Участники · {pModal.title}</p>
+                <p className="text-xs text-slate-500">
+                  {pEntries ? `${pEntries.length} заявок · сортировка по билетам` : 'Загрузка…'}
+                  {typeof pModal.losersRewardSwipes === 'number' && pModal.losersRewardSwipes > 0
+                    ? ` · утешение ${pModal.losersRewardSwipes} свайпов`
+                    : ''}
+                </p>
+              </div>
+              <Button variant="outline" size="sm" className={btnOutlineDark} onClick={() => setPModal(null)}>
+                <X aria-hidden /> Закрыть
+              </Button>
+            </div>
+
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+              {pLoading && (
+                <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
+                  <Loader2 className="size-4 animate-spin" aria-hidden /> Загружаю участников…
+                </div>
+              )}
+              {!pLoading && pError && (
+                <div className="py-10 text-center">
+                  <p className="text-sm text-red-600">{pError}</p>
+                  <Button variant="outline" size="sm" className={cn('mt-3', btnOutlineDark)} onClick={() => void openParticipants(pModal)}>
+                    <RefreshCw aria-hidden /> Повторить
+                  </Button>
+                </div>
+              )}
+              {!pLoading && !pError && pEntries && pEntries.length === 0 && (
+                <EmptyState icon={Users} title="Заявок пока нет" hint="Как только юзеры нажмут «Участвовать» или заработают первый билет — они появятся здесь" />
+              )}
+              {!pLoading && !pError && pEntries && pEntries.length > 0 && (
+                <ul className="divide-y divide-slate-100">
+                  {pEntries.map((row, i) => (
+                    <li key={row.userId} className="flex items-center gap-3 py-2.5">
+                      <span className="w-8 shrink-0 text-center text-xs font-semibold text-slate-400 tabular-nums">
+                        {i < 3 && row.winner ? ['🥇', '🥈', '🥉'][i] : i + 1}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="flex items-center gap-1.5 truncate text-sm font-medium text-slate-900">
+                          {row.name}
+                          {row.username && <span className="text-xs text-slate-400">@{row.username}</span>}
+                          {row.winner && (
+                            <Badge variant="outline" className="rounded-full border-emerald-200 bg-emerald-50 text-[10px] font-semibold text-emerald-700">
+                              победитель
+                            </Badge>
+                          )}
+                          {row.ticketsCount === 0 && (
+                            <Badge variant="outline" className="rounded-full text-[10px] text-slate-400">
+                              0 билетов — в выборе не участвует
+                            </Badge>
+                          )}
+                        </p>
+                        <p className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-slate-500">
+                          {row.tasksDone.length > 0 ? (
+                            row.tasksDone.map((td, j) => (
+                              <span key={j} className="rounded-full bg-amber-50 px-1.5 py-0.5 font-medium text-amber-700">
+                                🎫 +{td.tickets} за {td.task === 'activity' ? 'активность' : td.task === 'promo' ? 'промокод' : td.task === 'referral' ? 'рефералов' : td.task === 'boost' ? 'буст' : 'ручное'}
+                              </span>
+                            ))
+                          ) : (
+                            <span>заданий пока не выполнено</span>
+                          )}
+                        </p>
+                      </div>
+                      <span className="shrink-0 rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-800 tabular-nums">
+                        🎫 {row.ticketsCount}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </motion.div>
   )
 }

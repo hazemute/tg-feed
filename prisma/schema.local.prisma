@@ -176,6 +176,8 @@ model PostView {
   @@unique([userId, postId])
   // v5.44 (скорость): «пульс» трендов — count просмотров за 24ч
   @@index([createdAt])
+  // v5.46 (розыгрыши): прогресс задания «пролистай X свайпов»
+  @@index([userId, createdAt])
 }
 
 model Subscription {
@@ -543,11 +545,18 @@ model Giveaway {
   status      String    @default("draft") // draft | scheduled | active | finished | cancelled
   chatId      String? // канал публикации (напр. -100… или @username)
   messageId   Int? // пост с кнопкой (для realtime-обновления счётчика)
-  winners     String? // JSON: [{userId, name, tgId?, prizeIndex}] после финализации
+  winners     String? // JSON: [{userId, name, tgId?, prizeIndex, tickets?}] после финализации
   winnersMessageId Int? // пост с победителями
   createdAt   DateTime  @default(now())
 
+  // ---- v5.46: билетная система ----
+  tasks       String    @default("[]") // JSON задания: [{kind, enabled, tickets, swipeGoal?, referralGoal?, boostChannel?, label?}]
+  promoCode   String? // секретный промокод (задание promo)
+  losersRewardSwipes Int @default(0) // утешительные свайпы проигравшим (0 = выкл)
+  photoFileId String? // file_id фото поста розыгрыша (sendPhoto)
+
   entries     GiveawayEntry[]
+  tickets     GiveawayTicket[]
 
   @@index([status, endAt])
 }
@@ -562,6 +571,44 @@ model GiveawayEntry {
   firstName  String?
   createdAt  DateTime @default(now())
 
+  // ---- v5.46: билетная система ----
+  ticketsCount Int    @default(0) // баланс билетов = вес во взвешенном рандоме
+  tasksDone    String @default("[]") // JSON: [{task, tickets, at}]
+
+  tickets    GiveawayTicket[]
+
   @@unique([giveawayId, userId])
   @@index([giveawayId, createdAt])
+  @@index([giveawayId, ticketsCount])
+}
+
+// Аудит билетов: повторная выдача того же задания невозможна (unique)
+model GiveawayTicket {
+  id         String         @id @default(cuid())
+  giveawayId String
+  giveaway   Giveaway       @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
+  entryId    String?
+  entry      GiveawayEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  userId     String
+  task       String // activity | promo | referral | boost | manual
+  tickets    Int            @default(1)
+  note       String?
+  createdAt  DateTime       @default(now())
+
+  @@unique([giveawayId, userId, task])
+  @@index([userId, createdAt])
+}
+
+// Реферальные приглашения (глобальные): /start ref_<referrerTgId> в боте;
+// activatedAt — когда друг впервые открыл Mini App
+model GiveawayReferral {
+  id             String    @id @default(cuid())
+  referrerUserId String
+  invitedTgId    String
+  invitedUserId  String?
+  activatedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([referrerUserId, invitedTgId])
+  @@index([referrerUserId, activatedAt])
 }

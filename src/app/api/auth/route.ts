@@ -8,6 +8,7 @@ import { err, parseJsonArray, readJson } from '@/lib/server'
 import { guardAuth, guardIp } from '@/lib/guard'
 import { effectiveTier } from '@/lib/tiers'
 import { parseBadges } from '@/lib/badges'
+import { activateReferrals } from '@/lib/giveaway-tickets'
 import type { UserDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -152,6 +153,9 @@ export async function POST(request: Request) {
       photoUrl = `tgfile:${fileId}`
       user.photoUrl = photoUrl
     }
+    // v5.46: юзер открыл Mini App → активируем его реферальные приглашения
+    // (задание «пригласи друзей» у пригласивших) — fire-and-forget
+    void activateReferrals(user.id, tgId)
     const maintenance = {
       active: maintenanceActive,
       canBypass: adminUids().includes(user.id) || user.bypassMaintenance,

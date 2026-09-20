@@ -44,6 +44,7 @@ import { TopUpModal } from '@/components/tabs/TopUpModal'
 import { AiChat } from '@/components/ai/AiChat'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
+import { GiveawayCard } from '@/components/profile/GiveawayCard'
 
 
 /**
@@ -288,6 +289,9 @@ export function ProfileTab() {
           onTopUp={() => setTopUpOpen(true)}
         />
       )}
+
+      {/* v5.46: активный розыгрыш — билеты/задания/промокод (скрыт, если розыгрыша нет) */}
+      <GiveawayCard />
 
       {/* Мои категории */}
       <section className="pt-7">

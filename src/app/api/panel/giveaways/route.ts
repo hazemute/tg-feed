@@ -17,6 +17,7 @@ import {
   DEFAULT_GIVEAWAY_CHANNEL,
   type Prize,
 } from '@/lib/giveaways'
+import { parseTasks, parseTasksDone } from '@/lib/giveaway-tickets'
 import { stripTgEmoji } from '@/lib/tg-emoji'
 
 export const dynamic = 'force-dynamic'
@@ -83,9 +84,53 @@ export async function GET(request: Request) {
   const g = guardAdmin(request, { limit: 60, windowMs: 60_000 })
   if (!g.ok) return g.res
   try {
+    // ?entries=<giveawayId> — участники розыгрыша с билетами (v5.46)
+    const url = new URL(request.url)
+    const entriesOf = (url.searchParams.get('entries') ?? '').trim()
+    if (/^[a-z0-9]{10,40}$/i.test(entriesOf)) {
+      const gw = await db.giveaway.findUnique({
+        where: { id: entriesOf },
+        select: { id: true, title: true, status: true, winners: true, losersRewardSwipes: true },
+      })
+      if (!gw) return err('Розыгрыш не найден', 404)
+      const rows = await db.giveawayEntry.findMany({
+        where: { giveawayId: entriesOf },
+        orderBy: [{ ticketsCount: 'desc' }, { createdAt: 'asc' }],
+        take: 5000,
+      })
+      const userIds = [...new Set(rows.map((r) => r.userId))]
+      const users = await db.user.findMany({
+        where: { id: { in: userIds } },
+        select: { id: true, username: true, firstName: true, lastName: true },
+      })
+      const userById = new Map(users.map((u) => [u.id, u]))
+      const winnerIds = new Set(parseWinners(gw.winners).map((w) => w.userId))
+      return NextResponse.json({
+        giveaway: { id: gw.id, title: gw.title, status: gw.status, losersRewardSwipes: gw.losersRewardSwipes },
+        entries: rows.map((r) => ({
+          userId: r.userId,
+          name:
+            r.firstName ||
+            userById.get(r.userId)?.firstName ||
+            (r.username ? `@${r.username}` : 'участник'),
+          username: r.username ?? userById.get(r.userId)?.username ?? null,
+          tgId: r.tgId,
+          ticketsCount: r.ticketsCount,
+          tasksDone: parseTasksDone(r.tasksDone),
+          winner: winnerIds.has(r.userId),
+          createdAt: r.createdAt.toISOString(),
+        })),
+      })
+    }
+
     const rows = await db.giveaway.findMany({ orderBy: { createdAt: 'desc' }, take: 100 })
     const counts = await db.giveawayEntry.groupBy({ by: ['giveawayId'], _count: { _all: true } })
+    const ticketSums = await db.giveawayEntry.groupBy({
+      by: ['giveawayId'],
+      _sum: { ticketsCount: true },
+    })
     const countMap = new Map(counts.map((c) => [c.giveawayId, c._count._all]))
+    const ticketMap = new Map(ticketSums.map((t) => [t.giveawayId, t._sum.ticketsCount ?? 0]))
     const chanRow = await db.botSetting.findUnique({ where: { key: 'giveaway_channel' } })
     const items = rows.map((r) => ({
       id: r.id,
@@ -93,6 +138,10 @@ export async function GET(request: Request) {
       text: r.text,
       prizes: parsePrizes(r.prizes),
       channels: parseChannels(r.channels),
+      tasks: parseTasks(r.tasks),
+      promoCode: r.promoCode,
+      losersRewardSwipes: r.losersRewardSwipes,
+      hasPhoto: Boolean(r.photoFileId),
       buttonStyle: r.buttonStyle,
       buttonEmoji: r.buttonEmoji,
       buttonEmojiId: r.buttonEmojiId,
@@ -103,6 +152,7 @@ export async function GET(request: Request) {
       messageId: r.messageId,
       winners: parseWinners(r.winners),
       entriesCount: countMap.get(r.id) ?? 0,
+      ticketsSum: ticketMap.get(r.id) ?? 0,
       createdAt: r.createdAt.toISOString(),
     }))
     return NextResponse.json({

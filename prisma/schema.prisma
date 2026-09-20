@@ -192,6 +192,9 @@ model PostView {
   @@unique([userId, postId])
   // v5.44 (скорость): «пульс» трендов — count просмотров за 24ч (раньше полный скан)
   @@index([createdAt])
+  // v5.46 (розыгрыши): прогресс задания «пролистай X свайпов» — count просмотров
+  // пользователя с начала розыгрыша (count по (userId, createdAt) — индексный сик)
+  @@index([userId, createdAt])
 }
 
 model Subscription {
@@ -619,11 +622,21 @@ model Giveaway {
   status      String    @default("draft") // draft | scheduled | active | finished | cancelled
   chatId      String? // канал публикации (напр. -100… или @username)
   messageId   Int? // пост с кнопкой (для realtime-обновления счётчика)
-  winners     String? // JSON: [{userId, name, tgId?, prizeIndex}] после финализации
+  winners     String? // JSON: [{userId, name, tgId?, prizeIndex, tickets?}] после финализации
   winnersMessageId Int? // пост с победителями
   createdAt   DateTime  @default(now())
 
+  // ---- v5.46: БИЛЕТНАЯ СИСТЕМА ----
+  // Задания розыгрыша — JSON: [{kind:'activity'|'promo'|'referral'|'boost',
+  //   enabled, tickets, swipeGoal?, referralGoal?, boostChannel?, label?}]
+  tasks       String    @default("[]")
+  promoCode   String?   // секретный промокод (задание promo); сравнение case-insensitive
+  // Утешительные свайпы ПРОИГРАВШИМ участникам (ticketsCount>0, без победы): 0 = выключено
+  losersRewardSwipes Int @default(0)
+  photoFileId String?   // file_id фото поста розыгрыша (бот отправляет sendPhoto с caption)
+
   entries     GiveawayEntry[]
+  tickets     GiveawayTicket[]
 
   @@index([status, endAt])
 }
@@ -640,6 +653,46 @@ model GiveawayEntry {
   firstName  String?
   createdAt  DateTime @default(now())
 
+  // ---- v5.46: билетная система ----
+  ticketsCount Int    @default(0) // баланс билетов = вес во взвешенном рандоме
+  tasksDone    String @default("[]") // JSON: [{task, tickets, at}] — что выполнено (панель/миниапп)
+
+  tickets    GiveawayTicket[]
+
   @@unique([giveawayId, userId])
   @@index([giveawayId, createdAt])
+  @@index([giveawayId, ticketsCount])
+}
+
+// Аудит билетов: каждая выдача — одна строка; повторная выдача того же задания
+// невозможна (уникальность розыгрыш+юзер+задание на уровне БД)
+model GiveawayTicket {
+  id         String         @id @default(cuid())
+  giveawayId String
+  giveaway   Giveaway       @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
+  entryId    String?
+  entry      GiveawayEntry? @relation(fields: [entryId], references: [id], onDelete: SetNull)
+  userId     String
+  task       String // activity | promo | referral | boost | manual
+  tickets    Int            @default(1)
+  note       String? // промокод / детали (канал буста и т.п.)
+  createdAt  DateTime       @default(now())
+
+  @@unique([giveawayId, userId, task])
+  @@index([userId, createdAt])
+}
+
+// Реферальные приглашения (глобальные, вне конкретного розыгрыша): друг переходит
+// по t.me/<bot>?start=ref_<referrerTgId> — запись создаёт бот; activatedAt ставится,
+// когда друг впервые открыл Mini App (POST /api/auth)
+model GiveawayReferral {
+  id             String    @id @default(cuid())
+  referrerUserId String // tg_<uid> того, кто пригласил
+  invitedTgId    String // числовой id приглашённого
+  invitedUserId  String? // tg_<uid> после первого входа друга в миниапп
+  activatedAt    DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@unique([referrerUserId, invitedTgId])
+  @@index([referrerUserId, activatedAt])
 }

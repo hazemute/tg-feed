@@ -6,6 +6,15 @@ import { buildPlainKeyboard, type BotButton } from '@/lib/tg-buttons'
 import { fmtRub, SWP_PER_RUB } from '@/lib/wallet'
 import { tierExpiryFor } from '@/lib/tiers'
 import { cacheIncr, cacheExpire, cacheSet } from '@/lib/redis'
+import {
+  parseTasks,
+  pickWinnersWeighted,
+  plural,
+  taskTitle,
+  invalidateActiveCache,
+} from '@/lib/giveaway-tickets'
+import { sendBotNotification } from '@/lib/bot-notify'
+import { emitAppEvent } from '@/lib/events'
 
 /**
  * РОЗЫГРЫШИ (v5.40) — полноценная система конкурсов:
@@ -186,9 +195,12 @@ export function giveawayPostHtml(g: {
   prizes: string
   channels: string
   endAt: Date
+  tasks?: string
+  losersRewardSwipes?: number
 }): string {
   const prizes = parsePrizes(g.prizes)
   const channels = parseChannels(g.channels)
+  const tasks = parseTasks(g.tasks).filter((t) => t.enabled)
   const lines: string[] = []
   lines.push(`🎉 <b>${escTg(g.title)}</b>`)
   lines.push('')
@@ -206,13 +218,27 @@ export function giveawayPostHtml(g: {
   lines.push('🎁 <b>Призы:</b>')
   lines.push(prizesLabel(prizes) || '—')
   lines.push('')
+  if (tasks.length > 0) {
+    // v5.46: билетные задания — чем больше билетов, тем выше шанс
+    lines.push('🎫 <b>Как получить билеты (шанс = кол-во билетов):</b>')
+    for (const t of tasks) {
+      lines.push(`  • ${escTg(taskTitle(t))} — <b>+${t.tickets} ${plural(t.tickets, 'билет', 'билета', 'билетов')}</b>`)
+    }
+    lines.push('')
+    lines.push('📖 Задания выполняются в Mini App или в боте: /mygw')
+    lines.push('')
+  }
   if (channels.length > 0) {
     lines.push('✅ <b>Условие:</b> быть подписанным на ' + channels.map((c) => `@${escTg(c)}`).join(', '))
     lines.push('')
   }
+  if (g.losersRewardSwipes && g.losersRewardSwipes > 0) {
+    lines.push(`💜 Проигравшим участникам — утешительные <b>${g.losersRewardSwipes} свайпов</b> на баланс`)
+    lines.push('')
+  }
   lines.push(`⏰ <b>Итоги:</b> ${fmtEndAt(g.endAt)}`)
   const total = totalWinners(prizes)
-  if (total > 1) lines.push(`🏆 Победителей: <b>${total}</b> — выбор случайным генератором`)
+  if (total > 1) lines.push(`🏆 Победителей: <b>${total}</b> — честный взвешенный рандом`)
   return lines.join('\n')
 }
 
@@ -275,6 +301,8 @@ async function botChannelId(): Promise<string> {
 /**
  * Опубликовать пост розыгрыша от имени бота в канале. Возвращает chatId/messageId.
  * Бот должен быть админом канала с правом публикации (как и для ИИ-публикаций).
+ * v5.46: если есть photoFileId — пост уходит КАК ФОТО (sendPhoto с caption ≤ 1024),
+ * при отказе Telegram — фолбэк на текстовый пост.
  */
 export async function publishGiveawayPost(g: {
   id: string
@@ -286,23 +314,38 @@ export async function publishGiveawayPost(g: {
   buttonEmoji: string
   buttonEmojiId: string
   endAt: Date
+  tasks?: string
+  losersRewardSwipes?: number
+  photoFileId?: string | null
 }): Promise<{ ok: boolean; chatId?: string; messageId?: number; error?: string }> {
   if (botBanned()) return { ok: false, error: 'Bot API на паузе после 429' }
   const chat = await botChannelId()
-  const html = await premiumText(giveawayPostHtml(g))
+  const fullHtml = await premiumText(giveawayPostHtml(g))
   const rows = giveawayKeyboard(g, 0)
   const markup = keyboardMarkup(rows, await premiumMap())
-  const htmlSkip = stripTgEmoji(html)
+  const htmlSkip = stripTgEmoji(fullHtml)
 
-  // 1) с иконками и premium-текстом → 2) plain-текст, иконки → 3) всё plain
-  const attempts: Array<Record<string, unknown>> = [
-    { chat_id: chat, text: html, parse_mode: 'HTML', reply_markup: markup.icon },
-    { chat_id: chat, text: htmlSkip, parse_mode: 'HTML', reply_markup: markup.icon },
-    { chat_id: chat, text: htmlSkip, parse_mode: 'HTML', reply_markup: markup.plain },
-  ]
+  // caption у sendPhoto ограничен 1024 символами (против 4096 у текста)
+  const capFull = await premiumText(giveawayPostHtml(g).slice(0, 1000))
+  const capSkip = stripTgEmoji(capFull)
+
+  const photo = g.photoFileId?.trim()
+  // 1) фото с caption → 2) текст с иконками → 3) plain-текст, иконки → 4) всё plain
+  const attempts: Array<{ method: string; payload: Record<string, unknown> }> = photo
+    ? [
+        { method: 'sendPhoto', payload: { chat_id: chat, photo, caption: capFull, parse_mode: 'HTML', reply_markup: markup.icon } },
+        { method: 'sendPhoto', payload: { chat_id: chat, photo, caption: capSkip, parse_mode: 'HTML', reply_markup: markup.icon } },
+        { method: 'sendPhoto', payload: { chat_id: chat, photo, caption: capSkip, parse_mode: 'HTML', reply_markup: markup.plain } },
+        { method: 'sendMessage', payload: { chat_id: chat, text: htmlSkip, parse_mode: 'HTML', reply_markup: markup.plain } },
+      ]
+    : [
+        { method: 'sendMessage', payload: { chat_id: chat, text: fullHtml, parse_mode: 'HTML', reply_markup: markup.icon } },
+        { method: 'sendMessage', payload: { chat_id: chat, text: htmlSkip, parse_mode: 'HTML', reply_markup: markup.icon } },
+        { method: 'sendMessage', payload: { chat_id: chat, text: htmlSkip, parse_mode: 'HTML', reply_markup: markup.plain } },
+      ]
   let lastError = ''
-  for (const payload of attempts) {
-    const r = await tgCall<{ message_id?: number; chat?: TgChat }>('sendMessage', payload)
+  for (const a of attempts) {
+    const r = await tgCall<{ message_id?: number; chat?: TgChat }>(a.method, a.payload)
     if (r.ok && r.result) {
       return {
         ok: true,
@@ -516,13 +559,16 @@ export function winnersPostHtml(g: {
       const medal = medals[i] ?? `🎖`
       const prize = prizes[w.prizeIndex]
       const name = escTg(w.name || 'участник')
-      const link = w.tgId ? ` <a href="tg://user?id=${escTg(w.tgId)}">(${name})</a>` : ` (${name})`
+      // v5.46: сколько билетов у победителя (если билетная система была)
+      const tix = (w as GiveawayWinner & { tickets?: number }).tickets
+      const tixLabel = typeof tix === 'number' && tix > 0 ? ` · ${tix} ${plural(tix, 'билет', 'билета', 'билетов')}` : ''
+      const link = w.tgId ? `<a href="tg://user?id=${escTg(w.tgId)}">(${name}${tixLabel})</a>` : ` (${name}${tixLabel})`
       lines.push(`${medal} ${prize ? `<b>${escTg(prize.label)}</b> —${link}` : link}`)
     })
     lines.push('')
     lines.push(
-      `🎲 Из ${g.entriesCount} ${PLURAL(g.entriesCount, 'заявки', 'заявок', 'заявок')} — случайный выбор ` +
-        'криптогенератором. Призы уже на балансах победителей!',
+      `🎲 Из ${g.entriesCount} ${PLURAL(g.entriesCount, 'заявки', 'заявок', 'заявок')} — честный взвешенный рандом: ` +
+        'каждый билет = один бросок в генераторе. Призы уже на балансах победителей!',
     )
   }
   lines.push('')
@@ -531,7 +577,8 @@ export function winnersPostHtml(g: {
 }
 
 /**
- * Финализировать ОДИН розыгрыш: победители, призы, пост в канал.
+ * Финализировать ОДИН розыгрыш: взвешенный выбор по билетам, призы,
+ * утешительные свайпы проигравшим, пост в канал, ЛС победителям/проигравшим.
  * Идемпотентность — атомарный перевод статуса в finished (updateMany guard).
  */
 export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolean; error?: string; winners?: number }> {
@@ -542,7 +589,7 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
 
   const entries = await db.giveawayEntry.findMany({
     where: { giveawayId },
-    select: { userId: true, tgId: true, username: true, firstName: true },
+    select: { userId: true, tgId: true, username: true, firstName: true, ticketsCount: true },
   })
 
   // Погружаем имена из User (гость мог не иметь firstName в заявке)
@@ -551,28 +598,92 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
   const userById = new Map(users.map((u) => [u.id, u]))
 
   const prizes = parsePrizes(g.prizes)
-  const participants: GiveawayWinner[] = entries.map((e) => ({
-    userId: e.userId,
-    name: e.firstName || userById.get(e.userId)?.firstName || (e.username ? `@${e.username}` : 'участник'),
-    ...(e.tgId ? { tgId: e.tgId } : {}),
-    prizeIndex: 0,
-  }))
+  const nameOf = (e: (typeof entries)[number]) =>
+    e.firstName || userById.get(e.userId)?.firstName || (e.username ? `@${e.username}` : 'участник')
 
-  const winners = pickWinners(participants, prizes)
+  // v5.46: ЧЕСТНЫЙ ВЗВЕШЕННЫЙ РАНДОМ по билетам. В розыгрыше только те,
+  // кто заработал хотя бы один билет (ticketsCount > 0).
+  const seats = totalWinners(prizes)
+  const weighted = pickWinnersWeighted(
+    entries.map((e) => ({ userId: e.userId, tickets: e.ticketsCount })),
+    seats,
+  )
+  const hasTickets = entries.some((e) => e.ticketsCount > 0)
+  // Фолбэк для розыгрышей БЕЗ билетных заданий: равномерный shuffle по всем заявкам
+  const winnersIds = new Set(hasTickets ? weighted.map((w) => w.userId) : pickUniform(entries, seats))
+  const ticketsByUser = new Map(entries.map((e) => [e.userId, e.ticketsCount]))
+
+  const participants: GiveawayWinner[] = entries
+    .filter((e) => winnersIds.has(e.userId))
+    .map((e) => ({
+      userId: e.userId,
+      name: nameOf(e),
+      ...(e.tgId ? { tgId: e.tgId } : {}),
+      prizeIndex: 0,
+      ...(hasTickets ? { tickets: ticketsByUser.get(e.userId) ?? 0 } : {}),
+    }))
+  // Порядок мест: победители взвешенного выбора — по порядку выпадения; фолбэк — как вышел shuffle
+  if (hasTickets) {
+    let idx = 0
+    for (const w of weighted) {
+      if (idx >= participants.length) break
+      const p = participants.find((x) => x.userId === w.userId)
+      if (p) {
+        participants.splice(idx, 1)
+        participants.splice(idx, 0, p)
+        idx++
+      }
+    }
+  }
+  // распределение по призам: первый приз — первые места
+  let pidx = 0
+  for (let pi = 0; pi < prizes.length && pidx < participants.length; pi++) {
+    for (let k = 0; k < prizes[pi]!.winners && pidx < participants.length; k++) {
+      participants[pidx]!.prizeIndex = pi
+      pidx++
+    }
+  }
 
   // Начисление призов (до смены статуса — сбой начисления должен ретраиться)
-  for (const w of winners) {
+  for (const w of participants) {
     const prize = prizes[w.prizeIndex]
     if (prize) await creditPrize(w.userId, prize).catch((e) => console.error('[giveaway] creditPrize', e))
   }
 
-  const winnersJson = JSON.stringify(winners)
+  // v5.46: УТЕШИТЕЛЬНЫЕ СВАЙПЫ проигравшим участникам с билетами (ticketsCount > 0,
+  // без победы) + ЛС-уведомление. Призёры с ticketsCount = 0 (кликнули и ушли без
+  // единого билета) — не считаем участниками розыгрыша, ничего не начисляем.
+  const loserReward = g.losersRewardSwipes ?? 0
+  if (loserReward > 0) {
+    const losers = entries.filter((e) => e.ticketsCount > 0 && !winnersIds.has(e.userId))
+    if (losers.length > 0) {
+      await db.user.updateMany({
+        where: { id: { in: losers.map((l) => l.userId) } },
+        data: { swipes: { increment: loserReward } },
+      })
+      await db.balanceLog.createMany({
+        data: losers.map((l) => ({
+          userId: l.userId,
+          kind: 'admin',
+          currency: 'swp',
+          amount: loserReward,
+          note: `Утешительный приз — розыгрыш «${g.title}»`,
+        })),
+      }).catch(() => {})
+      for (const l of losers) {
+        // Инбокс + ЛС бота (очередь внутри sendBotNotification)
+        await notifyLoser(l.userId, g.title, loserReward).catch(() => {})
+      }
+    }
+  }
+
+  const winnersJson = JSON.stringify(participants)
 
   // Пост с победителями
   let winnersMessageId: number | null = null
   let chatId = g.chatId
   if (chatId && !botBanned()) {
-    const html = await premiumText(winnersPostHtml({ title: g.title, prizes: g.prizes, winnersJson, entriesCount: participants.length }))
+    const html = await premiumText(winnersPostHtml({ title: g.title, prizes: g.prizes, winnersJson, entriesCount: entries.length }))
     for (const text of [html, stripTgEmoji(html)]) {
       const r = await tgCall<{ message_id?: number }>('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML' })
       if (r.ok && r.result) {
@@ -589,13 +700,78 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
     data: { status: 'finished', winners: winnersJson, ...(winnersMessageId ? { winnersMessageId } : {}) },
   })
   if (upd.count === 0) return { ok: true, winners: parseWinners(g.winners).length }
+  invalidateActiveCache()
 
   // Спрятать кнопку участия в исходном посте (приём окончен)
   if (g.chatId && g.messageId && !botBanned()) {
     void tgCall('editMessageReplyMarkup', { chat_id: g.chatId, message_id: g.messageId, reply_markup: { inline_keyboard: [] } })
   }
 
-  return { ok: true, winners: winners.length }
+  // ЛС победителям (после смены статуса — чтобы не задвоить при ретрае финализации)
+  if (participants.length > 0) {
+    for (const w of participants) {
+      const prize = prizes[w.prizeIndex]
+      notifyWinner(w.userId, g.title, prize?.label ?? 'приз')
+    }
+  }
+
+  return { ok: true, winners: participants.length }
+}
+
+/** Равномерный фолбэк для розыгрышей без билетных заданий (Фишер–Йетс, randomInt) */
+function pickUniform(entries: Array<{ userId: string }>, seats: number): string[] {
+  const pool = [...entries]
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = randomInt(0, i + 1)
+    ;[pool[i], pool[j]] = [pool[j]!, pool[i]!]
+  }
+  return pool.slice(0, seats).map((p) => p.userId)
+}
+
+/** ЛС + инбокс победителю (fire-and-forget, не роняет финализацию) */
+async function notifyWinner(userId: string, title: string, prizeLabel: string): Promise<void> {
+  try {
+    await db.notification.create({
+      data: {
+        userId,
+        type: 'system',
+        title: '🏆 Ты победил в розыгрыше!',
+        body: `«${title}» — приз: ${prizeLabel}. Уже на твоём балансе!`.slice(0, 200),
+      },
+    }).catch(() => {})
+    emitAppEvent('notif:new', { userId })
+    sendBotNotification({
+      userId,
+      type: 'system',
+      title: '🏆 Ты победил в розыгрыше!',
+      body: `«${title}» — твой приз: ${prizeLabel}. Проверь баланс в приложении! 🎉`,
+    })
+  } catch (e) {
+    console.error('[giveaway] notifyWinner', e)
+  }
+}
+
+/** ЛС + инбокс с утешительными свайпами (fire-and-forget) */
+async function notifyLoser(userId: string, title: string, swipes: number): Promise<void> {
+  try {
+    await db.notification.create({
+      data: {
+        userId,
+        type: 'system',
+        title: '💜 Утешительный приз',
+        body: `Розыгрыш «${title}»: +${swipes} свайпов уже на твоём балансе. В этот раз не повезло — впереди новые розыгрыши!`.slice(0, 200),
+      },
+    }).catch(() => {})
+    emitAppEvent('notif:new', { userId })
+    sendBotNotification({
+      userId,
+      type: 'system',
+      title: '💜 Утешительный приз за участие',
+      body: `Розыгрыш «${title}»: +${swipes} свайпов уже на твоём балансе. Удача любит упорных — участвуй снова!`,
+    })
+  } catch (e) {
+    console.error('[giveaway] notifyLoser', e)
+  }
 }
 
 /**

@@ -103,6 +103,28 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "HashtagClick_createdAt_idx" ON "HashtagClick" ("createdAt" DESC)`,
     `CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification" ("userId", "readAt")`,
   ],
+  'v5.46': [
+    // v5.46: БИЛЕТНАЯ СИСТЕМА РОЗЫГРЫШЕЙ — задания (активность/промокод/рефералы/
+    // буст), вес участника = билеты, утешительные свайпы проигравшим, фото-пост.
+    `ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "tasks" text NOT NULL DEFAULT '[]'`,
+    `ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "promoCode" text`,
+    `ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "losersRewardSwipes" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "photoFileId" text`,
+    `ALTER TABLE "GiveawayEntry" ADD COLUMN IF NOT EXISTS "ticketsCount" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE "GiveawayEntry" ADD COLUMN IF NOT EXISTS "tasksDone" text NOT NULL DEFAULT '[]'`,
+    `CREATE INDEX IF NOT EXISTS "GiveawayEntry_giveawayId_ticketsCount_idx" ON "GiveawayEntry" ("giveawayId", "ticketsCount")`,
+    `CREATE TABLE IF NOT EXISTS "GiveawayTicket" ("id" text PRIMARY KEY, "giveawayId" text NOT NULL, "entryId" text, "userId" text NOT NULL, "task" text NOT NULL, "tickets" integer NOT NULL DEFAULT 1, "note" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "GiveawayTicket_giveawayId_userId_task_key" ON "GiveawayTicket" ("giveawayId", "userId", "task")`,
+    `CREATE INDEX IF NOT EXISTS "GiveawayTicket_userId_createdAt_idx" ON "GiveawayTicket" ("userId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "GiveawayTicket_giveawayId_idx" ON "GiveawayTicket" ("giveawayId")`,
+    `ALTER TABLE "GiveawayTicket" ADD CONSTRAINT "GiveawayTicket_giveawayId_fkey" FOREIGN KEY ("giveawayId") REFERENCES "Giveaway"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+    `ALTER TABLE "GiveawayTicket" ADD CONSTRAINT "GiveawayTicket_entryId_fkey" FOREIGN KEY ("entryId") REFERENCES "GiveawayEntry"("id") ON DELETE SET NULL ON UPDATE CASCADE`,
+    `CREATE TABLE IF NOT EXISTS "GiveawayReferral" ("id" text PRIMARY KEY, "referrerUserId" text NOT NULL, "invitedTgId" text NOT NULL, "invitedUserId" text, "activatedAt" timestamptz, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "GiveawayReferral_referrerUserId_invitedTgId_key" ON "GiveawayReferral" ("referrerUserId", "invitedTgId")`,
+    `CREATE INDEX IF NOT EXISTS "GiveawayReferral_referrerUserId_activatedAt_idx" ON "GiveawayReferral" ("referrerUserId", "activatedAt")`,
+    // Прогресс задания «пролистай X свайпов» — count просмотров с начала розыгрыша
+    `CREATE INDEX IF NOT EXISTS "PostView_userId_createdAt_idx" ON "PostView" ("userId", "createdAt")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -132,6 +154,10 @@ const CRITICAL: Array<[string, string | null]> = [
   ['BotSetting', null],
   ['Giveaway', null],
   ['GiveawayEntry', null],
+  ['GiveawayTicket', null],
+  ['GiveawayReferral', null],
+  ['Giveaway', 'tasks'],
+  ['GiveawayEntry', 'ticketsCount'],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -151,7 +177,9 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR
         (c.table_name = 'Notification' AND c.column_name = 'commentId') OR
-        (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry')
+        (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
+        (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
+        (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone'))
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()

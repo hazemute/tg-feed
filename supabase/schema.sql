@@ -433,3 +433,44 @@ CREATE INDEX IF NOT EXISTS "Like_createdAt_idx"           ON "Like" ("createdAt"
 CREATE INDEX IF NOT EXISTS "PostView_createdAt_idx"       ON "PostView" ("createdAt" DESC);
 CREATE INDEX IF NOT EXISTS "HashtagClick_createdAt_idx"   ON "HashtagClick" ("createdAt" DESC);
 CREATE INDEX IF NOT EXISTS "Notification_userId_readAt_idx" ON "Notification" ("userId", "readAt");
+
+-- v5.46: БИЛЕТНАЯ СИСТЕМА РОЗЫГРЫШЕЙ
+-- (см. ensure-schema.ts 'v5.46': auto-applied on boot; секция здесь — зеркальная копия)
+ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "tasks" text NOT NULL DEFAULT '[]';
+ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "promoCode" text;
+ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "losersRewardSwipes" integer NOT NULL DEFAULT 0;
+ALTER TABLE "Giveaway" ADD COLUMN IF NOT EXISTS "photoFileId" text;
+ALTER TABLE "GiveawayEntry" ADD COLUMN IF NOT EXISTS "ticketsCount" integer NOT NULL DEFAULT 0;
+ALTER TABLE "GiveawayEntry" ADD COLUMN IF NOT EXISTS "tasksDone" text NOT NULL DEFAULT '[]';
+CREATE INDEX IF NOT EXISTS "GiveawayEntry_giveawayId_ticketsCount_idx" ON "GiveawayEntry" ("giveawayId", "ticketsCount");
+
+CREATE TABLE IF NOT EXISTS "GiveawayTicket" (
+    "id"         text        NOT NULL,
+    "giveawayId" text        NOT NULL,
+    "entryId"    text,
+    "userId"     text        NOT NULL,
+    "task"       text        NOT NULL,
+    "tickets"    integer     NOT NULL DEFAULT 1,
+    "note"       text,
+    "createdAt"  timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "GiveawayTicket_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "GiveawayTicket_giveawayId_userId_task_key" ON "GiveawayTicket" ("giveawayId", "userId", "task");
+CREATE INDEX IF NOT EXISTS "GiveawayTicket_userId_createdAt_idx" ON "GiveawayTicket" ("userId", "createdAt");
+CREATE INDEX IF NOT EXISTS "GiveawayTicket_giveawayId_idx" ON "GiveawayTicket" ("giveawayId");
+ALTER TABLE "GiveawayTicket" ADD CONSTRAINT "GiveawayTicket_giveawayId_fkey" FOREIGN KEY ("giveawayId") REFERENCES "Giveaway"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+ALTER TABLE "GiveawayTicket" ADD CONSTRAINT "GiveawayTicket_entryId_fkey" FOREIGN KEY ("entryId") REFERENCES "GiveawayEntry"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+CREATE TABLE IF NOT EXISTS "GiveawayReferral" (
+    "id"             text        NOT NULL,
+    "referrerUserId" text        NOT NULL,
+    "invitedTgId"    text        NOT NULL,
+    "invitedUserId"  text,
+    "activatedAt"    timestamptz,
+    "createdAt"      timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT "GiveawayReferral_pkey" PRIMARY KEY ("id")
+);
+CREATE UNIQUE INDEX IF NOT EXISTS "GiveawayReferral_referrerUserId_invitedTgId_key" ON "GiveawayReferral" ("referrerUserId", "invitedTgId");
+CREATE INDEX IF NOT EXISTS "GiveawayReferral_referrerUserId_activatedAt_idx" ON "GiveawayReferral" ("referrerUserId", "activatedAt");
+
+CREATE INDEX IF NOT EXISTS "PostView_userId_createdAt_idx" ON "PostView" ("userId", "createdAt");

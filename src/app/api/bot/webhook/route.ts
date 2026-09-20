@@ -18,6 +18,16 @@ import {
 import { externalOrigin } from '@/lib/server'
 import { botBanned, markBotBan } from '@/lib/tg-bot'
 import { joinGiveaway, kickDueGiveaways, refreshGiveawayButton } from '@/lib/giveaways'
+import {
+  handleBoostCheck,
+  handleWizardCallback,
+  handleWizardPhoto,
+  handleWizardText,
+  sendJoinOnboarding,
+  sendMyGiveawayCard,
+  startGiveawayWizard,
+  tryRedeemPromoText,
+} from '@/lib/giveaway-wizard'
 
 export const dynamic = 'force-dynamic'
 
@@ -126,6 +136,8 @@ type TgUpdate = {
     entities?: TgEntity[]
     caption?: string
     caption_entities?: TgEntity[]
+    /** Фото (мастер розыгрышей — шаг «картинка поста») */
+    photo?: Array<{ file_id?: string; width?: number; height?: number }>
     successful_payment?: {
       currency?: string
       total_amount?: number
@@ -508,11 +520,15 @@ async function handleGiveawayJoin(
   if (r.ok) {
     await botCall('answerCallbackQuery', {
       callback_query_id: cbId,
-      text: r.already ? 'Вы уже в игре! 🎉' : '🎉 Вы в игре! Ваша заявка принята',
+      text: r.already ? 'Вы уже в игре! 🎉' : '🎉 Вы в игре! Заявка принята',
       show_alert: !r.already,
     })
     // Реалтайм-счётчик: кнопка «Участвовать (N)» обновляется у всех
     if (!r.already) void refreshGiveawayButton(giveawayId, r.count)
+    // v5.46: при первой заявке — ЛС-карточка заданий (как заработать билеты)
+    if (!r.already && chatId && from.id) {
+      void sendJoinOnboarding(chatId, giveawayId, `tg_${from.id}`).catch(() => {})
+    }
     return
   }
 
@@ -799,6 +815,47 @@ export async function POST(request: Request) {
       }
       return NextResponse.json({ ok: true })
     }
+    // v5.46: мастер розыгрыша (только владелец бота)
+    if (cq?.data?.startsWith('gww:')) {
+      const chatId = cq.message?.chat?.id
+      const reply = async (text?: string, alert?: boolean) => {
+        await botCall('answerCallbackQuery', {
+          callback_query_id: cq.id,
+          ...(text ? { text, show_alert: alert === true } : {}),
+        })
+      }
+      if (chatId) {
+        await handleWizardCallback(
+          chatId,
+          cq.from?.id ?? 0,
+          cq.from?.id === BOT_OWNER_TG_ID,
+          cq.data,
+          reply,
+        ).catch((e) => console.error('[bot/webhook] gww', e))
+      } else {
+        await reply()
+      }
+      return NextResponse.json({ ok: true })
+    }
+    // v5.46: «Проверить буст» — задание розыгрыша
+    if (cq?.data?.startsWith('gwb:')) {
+      const gid = cq.data.slice('gwb:'.length)
+      const chatId = cq.message?.chat?.id
+      const reply = async (text?: string, alert?: boolean) => {
+        await botCall('answerCallbackQuery', {
+          callback_query_id: cq.id,
+          ...(text ? { text, show_alert: alert === true } : {}),
+        })
+      }
+      if (/^[a-z0-9]{16,32}$/i.test(gid) && chatId) {
+        await handleBoostCheck(cq.id, gid, cq.from, chatId, reply).catch((e) =>
+          console.error('[bot/webhook] gwb', e),
+        )
+      } else {
+        await reply()
+      }
+      return NextResponse.json({ ok: true })
+    }
     if (cq?.data?.startsWith('lang:')) {
       const code = cq.data.slice('lang:'.length)
       if (code === 'ru' || code === 'en') {
@@ -843,7 +900,113 @@ export async function POST(request: Request) {
           return NextResponse.json({ ok: true })
         }
       }
+      // v5.46: реферальная ссылка — t.me/<bot>?start=ref_<referrerTgId>.
+      // Записываем приглашение; «друг успешен», когда откроет Mini App (auth).
+      if (param.startsWith('ref_')) {
+        const refTg = Number(param.slice('ref_'.length))
+        if (Number.isInteger(refTg) && refTg > 0 && msg.from?.id && msg.chat?.id) {
+          const { recordReferral } = await import('@/lib/giveaway-tickets')
+          const r = await recordReferral(refTg, msg.from.id)
+          if (r.ok && !r.already) {
+            const name = escapeHtml(nameOf(msg.from))
+            await botSendRich(
+              msg.chat.id,
+              [
+                `🤝 Привет, ${name}! Тебя пригласил друг в <b>Tg Swipe</b>.`,
+                '',
+                'Открой приложение — он получит билет в розыгрыше, а ты — доступ к умной ленте, розыгрышам и бонусам.',
+              ].join('\n'),
+              {
+                keyboard: [[
+                  { label: '📖 Открыть Tg Swipe', emoji: '🚀', url: TME_APP_URL, style: 'primary' },
+                ]],
+              },
+            )
+            // Пригласившему — радостная новость + досчёт задания referral
+            const refUserId = `tg_${refTg}`
+            const inviter = await db.user.findUnique({
+              where: { id: refUserId },
+              select: { id: true, username: true, firstName: true },
+            }).catch(() => null)
+            if (inviter) {
+              const { referralProgress, checkAndAwardAuto } = await import('@/lib/giveaway-tickets')
+              const invited = await referralProgress(refUserId).catch(() => 0)
+              await botSendRich(
+                refTg,
+                [
+                  `🎉 <b>${escapeHtml(nameOf(msg.from))}</b> присоединился по твоей ссылке!`,
+                  '',
+                  `🤝 Друзей в Mini App: <b>${invited}</b> — как только наберёшь нужное количество, билет за задание «рефералы» начислятся автоматически.`,
+                ].join('\n'),
+              ).catch(() => {})
+              void checkAndAwardAuto({
+                id: inviter.id,
+                username: inviter.username ?? undefined,
+                firstName: inviter.firstName ?? undefined,
+                tgId: refTg,
+              }).catch(() => {})
+            }
+          } else if (r.already) {
+            // Уже приглашён — тихо приветствуем
+            await botSendRich(msg.chat.id, [
+              `👋 Привет! Продолжай в <b>Tg Swipe</b>:`,
+              '',
+              '📖 Открыть приложение → кнопка ниже.',
+            ].join('\n'), {
+              keyboard: [[{ label: 'Открыть Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }]],
+            })
+          }
+          return NextResponse.json({ ok: true })
+        }
+      }
       await handleStart(msg.from, msg.chat?.id)
+    }
+
+    // ===== v5.46: РОЗЫГРЫШИ — команды, мастер, промокоды =====
+    const chatId = msg?.chat?.id
+    const fromId = msg?.from?.id ?? 0
+    const isBotAdmin = fromId === BOT_OWNER_TG_ID
+    if (msg?.text && chatId && /^\/newgw(@\w+)?$/i.test(msg.text)) {
+      await startGiveawayWizard(chatId, isBotAdmin)
+      return NextResponse.json({ ok: true })
+    }
+    if (msg?.text && chatId && /^\/mygw(@\w+)?$/i.test(msg.text)) {
+      if (fromId > 0) await sendMyGiveawayCard(chatId, `tg_${fromId}`)
+      return NextResponse.json({ ok: true })
+    }
+    // Мастер: фото (шаг «картинка поста»)
+    if (msg?.photo?.length && chatId) {
+      const absorbed = await handleWizardPhoto(chatId, msg.photo).catch(() => false)
+      if (absorbed) return NextResponse.json({ ok: true })
+    }
+    // Мастер: текстовые ответы (только владелец-админ в диалоге)
+    if (msg?.text && chatId && isBotAdmin) {
+      const absorbed = await handleWizardText(chatId, fromId, msg.text, isBotAdmin).catch((e) => {
+        console.error('[bot/webhook] wizard text', e)
+        return false
+      })
+      if (absorbed) {
+        // Захват эмодзи всё равно делаем (пусть копится библиотека)
+        if (msg.entities?.length || msg.caption_entities?.length) {
+          void handleCustomEmojiCapture(msg).catch(() => {})
+        }
+        return NextResponse.json({ ok: true })
+      }
+    }
+    // Промокод розыгрыша: юзер просто пишет код боту
+    if (msg?.text && chatId && fromId > 0 && !msg.text.startsWith('/')) {
+      const hit = await tryRedeemPromoText(
+        chatId,
+        `tg_${fromId}`,
+        msg.from?.username,
+        msg.from?.first_name,
+        fromId,
+        msg.text,
+      ).catch((e) => {
+        console.error('[bot/webhook] promo', e)
+        return false
+      })
+      if (hit) return NextResponse.json({ ok: true })
     }
     // Захват custom_emoji из любого сообщения (текст или подпись медиа)
     if (msg && (msg.entities?.length || msg.caption_entities?.length)) {
