@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { guardAdmin } from '@/lib/guard'
 import { logAdmin } from '@/lib/admin-log'
+import { Client } from 'pg'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -9,71 +10,93 @@ export const maxDuration = 60
 /**
  * POST /api/panel/tts-cleanup — уборка legacy TTS-блобов (батчами).
  *
- * До v5.35 озвучка хранилась base64-блобом в Post.ttsAudio (мегабайты на
- * пост) — раздувало БД Supabase и egress. /api/tts больше НЕ выбирает
- * ttsAudio, поэтому столбец безопасно обнулить: аудио регенерируется
- * по запросу (Edge MP3 ≈ 6 КБ/с).
+ * До v5.35 озвучка хранится base64-блобом в Post.ttsAudio (мегабайты на пост)
+ * — это раздувает БД Supabase и egress. /api/tts больше НЕ выбирает ttsAudio,
+ * поэтому столбец безопасно обнулить: аудио регенерируется по запросу.
  *
- * Один updateMany по всем строкам не влезает в 60с лимит функции (переписывание
- * мегабайтных TOAST-строк), поэтому чистим БАТЧАМИ с бюджетом ~20с на вызов:
- * эндпоинт идемпотентный — вызывайте повторно, пока { done: true }.
+ * Эндпоинт работает даже когда Supabase перевёл БД в READ-ONLY (25006,
+ * переполнение квоты 500MB): прямое соединение (мимо pgbouncer) + session-level
+ * `SET default_transaction_read_only = off` — официальный путь из док Supabase
+ * «Disabling read-only mode». Каждый UPDATE выполняется в своей autocommit-
+ * транзакции, которая после SET стартует read-write.
+ *
+ * Батчи по 8 строк с бюджетом ~20с на вызов: эндпоинт идемпотентный —
+ * вызывайте повторно, пока { done: true }. После чистки размер БД падает
+ * только после VACUUM FULL (запускается вручную в SQL Editor).
  *
  * Доступ: x-admin-key.
  */
 const BATCH = 8
 const BUDGET_MS = 20_000
 
+/** Диагностика: read_only + размер БД (через Prisma, чтение при read-only работает) */
+const diagnostics = async (): Promise<Record<string, unknown>> => {
+  try {
+    const ro = await db.$queryRaw<{ read_only: string }[]>`SHOW transaction_read_only`
+    const size = await db.$queryRaw<{ size: bigint | number }[]>`SELECT pg_database_size(current_database()) AS size`
+    const dbname = await db.$queryRaw<{ db: string }[]>`SELECT current_database() AS db`
+    return { read_only: ro[0]?.read_only, db_size_mb: Math.round(Number(size[0]?.size ?? 0) / 1048576), db_name: dbname[0]?.db }
+  } catch (e) {
+    return { diag_error: e instanceof Error ? e.message.slice(0, 120) : String(e) }
+  }
+}
+
+/**
+ * Прямой (не pooler) URL Supabase: session-level SET переживает только внутри
+ * одного физического соединения — через pgbouncer в transaction mode каждый
+ * запрос может уехать на другой серверный коннект.
+ */
+function directConnectionString(): string | null {
+  const direct = process.env.DIRECT_URL
+  if (direct) return direct
+  const raw = process.env.DATABASE_URL
+  if (!raw) return null
+  // aws-0-xx.pooler.supabase.com:6543 -> aws-0-xx.supabase.com:5432
+  return raw.replace('-pooler.', '.').replace(':6543', ':5432')
+}
+
+/** Чистка через raw pg: session SET + autocommit-батчи (без Prisma-обвязки) */
+async function runRawCleanup(): Promise<{ cleared: number; done: boolean; direct: boolean; ro_before?: string }> {
+  const cs = directConnectionString()
+  if (!cs) throw new Error('no DATABASE_URL/DIRECT_URL')
+  const client = new Client({
+    connectionString: cs,
+    ssl: { rejectUnauthorized: false },
+    connectionTimeoutMillis: 10_000,
+    statement_timeout: 25_000,
+  })
+  await client.connect()
+  try {
+    const roBefore = await client.query<{ transaction_read_only: string }>('SHOW transaction_read_only')
+    // Session-level SET в autocommit: влияет на ВСЕ следующие транзакции сессии.
+    await client.query('SET default_transaction_read_only = off')
+    const t0 = Date.now()
+    let cleared = 0
+    let last = 0
+    for (;;) {
+      const r = await client.query(
+        `update "Post" set "ttsAudio" = null, "ttsAt" = null
+         where "id" in (select "id" from "Post" where "ttsAudio" is not null limit $1)`,
+        [BATCH],
+      )
+      last = r.rowCount ?? 0
+      cleared += last
+      if (last === 0 || Date.now() - t0 > BUDGET_MS) break
+    }
+    return { cleared, done: last < BATCH, direct: true, ro_before: roBefore.rows[0]?.transaction_read_only }
+  } finally {
+    await client.end().catch(() => {})
+  }
+}
+
 export async function POST(request: Request) {
   const g = guardAdmin(request, { limit: 30, windowMs: 60_000, bucket: 'panel-tts-cleanup' })
   if (!g.ok) return g.res
 
-  /** Диагностика: read_only + размер БД (Supabase блокирует записи при переполнении 500MB) */
-  const diagnostics = async (): Promise<Record<string, unknown>> => {
-    try {
-      const ro = await db.$queryRaw<{ read_only: string }[]>`SHOW transaction_read_only`
-      const size = await db.$queryRaw<{ size: bigint | number }[]>`SELECT pg_database_size(current_database()) AS size`
-      const dbname = await db.$queryRaw<{ db: string }[]>`SELECT current_database() AS db`
-      return { read_only: ro[0]?.read_only, db_size_mb: Math.round(Number(size[0]?.size ?? 0) / 1048576), db_name: dbname[0]?.db }
-    } catch (e) {
-      return { diag_error: e instanceof Error ? e.message.slice(0, 120) : String(e) }
-    }
-  }
-
   try {
-    const t0 = Date.now()
-    let cleared = 0
-    let lastBatch = 0
-
-    for (;;) {
-      // Официальный обход Supabase read-only (25006) из док «Disabling read-only
-      // mode»: SET LOCAL transaction_read_only = off ВНУТРИ транзакции перед
-      // записью. select только id: проверка IS NOT NULL не тянет блоб из TOAST.
-      lastBatch = await db.$transaction(
-        async (tx) => {
-          await tx.$executeRawUnsafe('set local transaction_read_only = off')
-          const rows = await tx.post.findMany({
-            where: { ttsAudio: { not: null } },
-            select: { id: true },
-            take: BATCH,
-            orderBy: { id: 'asc' },
-          })
-          if (rows.length === 0) return 0
-          await tx.post.updateMany({
-            where: { id: { in: rows.map((r) => r.id) } },
-            data: { ttsAudio: null, ttsAt: null },
-          })
-          return rows.length
-        },
-        { timeout: 25_000, maxWait: 5_000 }, // мегабайтные TOAST-строки не влезают в дефолтные 5с Prisma
-      )
-      if (lastBatch === 0) break
-      cleared += lastBatch
-      if (Date.now() - t0 > BUDGET_MS) break
-    }
-
-    const done = lastBatch < BATCH
-    await logAdmin('tts-cleanup', 'posts.ttsAudio', { cleared, done })
-    return NextResponse.json({ ok: true, cleared, done, ...(await diagnostics()) })
+    const res = await runRawCleanup()
+    await logAdmin('tts-cleanup', 'posts.ttsAudio', { cleared: res.cleared, done: res.done })
+    return NextResponse.json({ ok: true, ...res, ...(await diagnostics()) })
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     console.error('[panel/tts-cleanup]', msg)
