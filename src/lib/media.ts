@@ -55,19 +55,23 @@ export function proxiedMediaUrl(url: string | null | undefined): string | null |
 }
 
 /**
- * Аватарка канала → URL для клиента (v5.56, единая точка для всех DTO).
+ * Аватарка канала → URL для клиента (v5.59, единая точка для всех DTO).
+ *
+ * ПРИОРИТЕТ ВЕЧНОГО ИСТОЧНИКА: photoFileId (Bot API) НЕ ПРОТУХЛИВАЕТ —
+ * отдаётся через /api/avatar/c_<id> (байты + ресайз 256px WebP, кэши
+ * L0/Redis/edge). Прямая ссылка cdn*.telesco.pe из og:image — ФОЛБЭК:
+ * Telegram ротирует эти ссылки (замер прода: трендовые медиа 404 через
+ * дни), поэтому аватарки по avatarUrl регулярно «слетали».
  *
  * ЛЕГАСИ-ФИЛЬТР: ссылки *.supabase.co мертвы (проект с бакетом аватарок
- * удалён — DNS NXDOMAIN глобально), считаем их отсутствующими → сразу
- * фолбэк на прокси Bot API (/api/avatar/c_<id>), пока парсер не обновит
- * Channel.avatarUrl на прямую ссылку cdn*.telesco.pe (og:image со страницы
- * t.me/s/<username>, качается каждым тиком).
+ * удалён — DNS NXDOMAIN глобально) — считаем их отсутствующими.
  */
 export function channelAvatarUrl(
   avatarUrl: string | null | undefined,
   photoFileId: string | null | undefined,
   channelId: string,
 ): string | null {
+  if (photoFileId) return `/api/avatar/c_${channelId}`
   const raw = avatarUrl && avatarUrl.includes('.supabase.co/') ? null : avatarUrl
-  return proxiedMediaUrl(raw) ?? (photoFileId ? `/api/avatar/c_${channelId}` : null)
+  return proxiedMediaUrl(raw) ?? null
 }

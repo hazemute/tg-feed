@@ -84,7 +84,7 @@ export type MediaItem = {
   link?: string // URL линк-превью
 }
 
-type ParsedPost = {
+export type ParsedPost = {
   tgKey: string
   text: string
   media: MediaItem | null // основное медиа
@@ -762,11 +762,29 @@ export async function runParser(
           const reactionsChanged = p.reactionsTg > 0 && old?.reactionsTg !== p.reactionsTg
           const textChanged =
             p.text.length > 0 && cleanPostText(p.text) !== old?.text // markdown-апгрейд/зачистка
-          // Бэкфилл медиа: старый парсер часто не доставал фото/галереи
+          /*
+           * v5.59 — САМОЛЕЧЕНИЕ ПРОТУХШИХ ССЫЛОК: telesco.pe-ссылки Telegram
+           * ротирует (замер прода: 100% трендовых медиа 404 через дни).
+           * Свежий скрап всегда с новыми ссылками — если primary/gallery URL
+           * ОТЛИЧАЮТСЯ от сохранённых, обновляем (раньше обновлялись только
+           * пустые медиа — старые посты умирали навсегда).
+           */
+          const oldGalleryUrls = (() => {
+            try {
+              return (JSON.parse(old?.gallery ?? '[]') as Array<{ url?: string }>)
+                .map((g) => g.url ?? '')
+                .join('|')
+            } catch {
+              return ''
+            }
+          })()
+          const freshGalleryUrls = p.gallery.map((g) => g.url ?? '').join('|')
           const mediaChanged =
             !!old &&
             ((p.media?.url && !old.mediaUrl) ||
-              (p.gallery.length > 0 && !old.gallery))
+              (p.gallery.length > 0 && !old.gallery) ||
+              (!!p.media?.url && !!old.mediaUrl && old.mediaUrl !== p.media.url) ||
+              (freshGalleryUrls !== '' && !!old.gallery && oldGalleryUrls !== freshGalleryUrls))
           if (viewsChanged || reactionsChanged || textChanged || mediaChanged) {
             await db.post
               .update({
@@ -857,6 +875,40 @@ export async function runParser(
     }
   }
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, targets.length) }, () => worker()))
+
+  /*
+   * v5.59 — ХИЛ-ПРОХОД: проба свежих постов ЧЕРЕЗ ПРОКСИ /api/media.
+   * Мёртвый URL прокси сам лечит (владеелец → embed → свежие байты → БД,
+   * см. lib/media-heal.ts) — проба одновременно и проверка, и лечение,
+   * и прогрев edge-кэша. Ограничено новейшими постами (их видят первыми).
+   * Fire-and-forget: тик парсера не ждёт.
+   */
+  void (async () => {
+    try {
+      const probe = await db.post.findMany({
+        where: { mediaUrl: { contains: 'telesco.pe' } },
+        select: { mediaUrl: true },
+        orderBy: { publishedAt: 'desc' },
+        take: 14,
+      })
+      await Promise.all(
+        probe.map(async ({ mediaUrl }) => {
+          if (!mediaUrl) return
+          try {
+            const res = await fetch(`${MEDIA_ORIGIN}/api/media?u=${encodeURIComponent(mediaUrl)}`, {
+              headers: { 'User-Agent': 'TgSwipeHeal/1.0' },
+              signal: AbortSignal.timeout(25_000),
+            })
+            if (!res.ok) await res.body?.cancel().catch(() => {})
+          } catch {
+            /* healed или нет — следующий тик повторит */
+          }
+        }),
+      )
+    } catch {
+      /* хил-проход не влияет на результат тика */
+    }
+  })()
 
   const result = { ok: true as const, results, newPosts, truncated, totalTargets: targets.length }
   emitAdminEvent('parse:done', { newPosts: newPosts.length, ms: Date.now() - startedAt })

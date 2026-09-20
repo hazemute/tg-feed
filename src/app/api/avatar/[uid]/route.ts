@@ -188,11 +188,65 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       const channel = await channelPhotoOf(channelId)
       if (!channel) return new NextResponse('not found', { status: 404 })
 
-      // Постоянная аватарка — 302 + долгий кэш (telesco.pe/telegram.org — прямые
-      // ссылки из og:image, v5.56).
+      /*
+       * v5.59 — ПРИОРИТЕТ ВЕЧНОГО ИСТОЧНИКА: photoFileId (Bot API) не протухает,
+       * а прямые ссылки telesco.pe из og:image Telegram ротирует (замер прода:
+       * трендовые медиа умирают через дни) → байты по file_id ПЕРВЫМИ,
+       * 302 на avatarUrl — только фолбэк (нет file_id / getFile не отдался).
+       *
+       * БАЙТЫ через три кэша (v5.58):
+       *  L0 память процесса (30 мин, кап 300 × ~5КБ) →
+       *  L1 Upstash Redis, base64 webp (7 дней) →
+       *  L2 edge Vercel (Vercel-CDN-Cache-Control, сутки + SWR неделя).
+       * Байты ресайзятся sharp'ом до 256px WebP (~5КБ вместо 160КБ jpeg),
+       * при сбое sharp — исходные байты.
+       */
+      const bytesViaFileId = async (fileId: string): Promise<NextResponse | null> => {
+        const sizeKey = `avb:${fileId}`
+        const memHit = avatarBytesMemGet(sizeKey)
+        if (memHit) return avatarBytesResponse(memHit)
+        try {
+          const b64 = await cacheGet<string>(sizeKey)
+          if (b64) {
+            const entry = { buf: Buffer.from(b64, 'base64'), type: 'image/webp' }
+            avatarBytesMemSet(sizeKey, entry)
+            return avatarBytesResponse(entry)
+          }
+        } catch {
+          /* Redis недоступен — идём в Telegram напрямую */
+        }
+
+        const url = await resolveTelegramFileUrl(fileId)
+        if (!url) return null
+        const img = await fetch(url, { signal: AbortSignal.timeout(10_000) })
+        if (!img.ok || !img.body) return null
+        const raw: Buffer<ArrayBufferLike> = Buffer.from(await img.arrayBuffer())
+        let buf = raw
+        let contentType = img.headers.get('content-type') ?? 'image/jpeg'
+        const resized = await resizeAvatarWebp(raw)
+        if (resized && resized.length > 0 && resized.length < raw.length) {
+          // отдаём webp только если он реально меньше исходника (иконки-миксы и пр.)
+          buf = resized
+          contentType = 'image/webp'
+        }
+        const entry = { buf, type: contentType }
+        avatarBytesMemSet(sizeKey, entry)
+        if (contentType === 'image/webp') {
+          void cacheSet(sizeKey, buf.toString('base64'), 7 * 24 * 3600).catch(() => {})
+        }
+        return avatarBytesResponse(entry)
+      }
+
+      if (channel.photoFileId) {
+        const viaBot = await bytesViaFileId(channel.photoFileId).catch(() => null)
+        if (viaBot) return viaBot
+        // getFile/файл не отдались — падаем в 302 на прямую ссылку ниже
+      }
+
+      // Фолбэк: прямая ссылка og:image (свежая после тика парсера).
       // ЛЕГАСИ (v5.56): ссылки *.supabase.co МЕРТВЫ (проект с бакетом удалён,
       // DNS NXDOMAIN) — раньше Storage доверялся по построению, теперь редирект
-      // на него = 307 в яму. Считаем отсутствующей → падаем в Bot API-байты.
+      // на него = 307 в яму. Считаем отсутствующей → 404 → инициалы.
       if (
         channel.avatarUrl &&
         !channel.avatarUrl.includes('.supabase.co/') &&
@@ -206,52 +260,7 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
           },
         })
       }
-      if (!channel.photoFileId) return new NextResponse('not found', { status: 404 })
-
-      /*
-       * v5.58 — БАЙТЫ АВАТАРКИ через три кэша (замер прода: 8 из 14 аватарок
-       * грузились 13.7-15с — Telegram троттлит датацентровые IP Vercel, а
-       * edge-кэш не работал из-за среза s-maxage):
-       *  L0 память процесса (30 мин, кап 300 × ~15КБ) →
-       *  L1 Upstash Redis, base64 webp (7 дней) →
-       *  L2 edge Vercel (Vercel-CDN-Cache-Control, сутки + SWR неделя).
-       * Байты ресайзятся sharp'ом до 256px WebP (~8-15КБ вместо 160КБ jpeg —
-       * в 10-20 раз меньше трафика на медленных линиях), при сбое sharp —
-       * исходные байты как раньше.
-       */
-      const sizeKey = `avb:${channel.photoFileId}`
-      const memHit = avatarBytesMemGet(sizeKey)
-      if (memHit) return avatarBytesResponse(memHit)
-      try {
-        const b64 = await cacheGet<string>(sizeKey)
-        if (b64) {
-          const entry = { buf: Buffer.from(b64, 'base64'), type: 'image/webp' }
-          avatarBytesMemSet(sizeKey, entry)
-          return avatarBytesResponse(entry)
-        }
-      } catch {
-        /* Redis недоступен — идём в Telegram напрямую */
-      }
-
-      const url = await resolveTelegramFileUrl(channel.photoFileId)
-      if (!url) return new NextResponse('not found', { status: 404 })
-      const img = await fetch(url, { signal: AbortSignal.timeout(10_000) })
-      if (!img.ok || !img.body) return new NextResponse('not found', { status: 404 })
-      const raw: Buffer<ArrayBufferLike> = Buffer.from(await img.arrayBuffer())
-      let buf = raw
-      let contentType = img.headers.get('content-type') ?? 'image/jpeg'
-      const resized = await resizeAvatarWebp(raw)
-      if (resized && resized.length > 0 && resized.length < raw.length) {
-        // отдаём webp только если он реально меньше исходника (иконки-миксы и пр.)
-        buf = resized
-        contentType = 'image/webp'
-      }
-      const entry = { buf, type: contentType }
-      avatarBytesMemSet(sizeKey, entry)
-      if (contentType === 'image/webp') {
-        void cacheSet(sizeKey, buf.toString('base64'), 7 * 24 * 3600).catch(() => {})
-      }
-      return avatarBytesResponse(entry)
+      return new NextResponse('not found', { status: 404 })
     }
 
     // --- пользователь tg_<id> ---

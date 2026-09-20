@@ -37,6 +37,21 @@ export function LazyImage({
 }) {
   const [active, setActive] = useState(Boolean(eager))
   const [loaded, setLoaded] = useState(false)
+  /*
+   * v5.59 — ОДИН ТИХИЙ РЕТРАЙ при ошибке: edge мог закэшировать 404 старой
+   * мёртвой ссылки ДО лечения (Cache-Control 30с/наследие). Cache-buster
+   * обходит edge — сервер в это время уже отдаёт свежие байты.
+   */
+  const [retrySrc, setRetrySrc] = useState<string | null>(null)
+  const retriedRef = useRef(false)
+  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    if (!retriedRef.current && src.includes('/api/media')) {
+      retriedRef.current = true
+      setRetrySrc(`${src}${src.includes('?') ? '&' : '?'}hbr=${Date.now()}`)
+      return
+    }
+    onError?.(e)
+  }
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -74,12 +89,12 @@ export function LazyImage({
       {active && (
          
         <img
-          src={src}
+          src={retrySrc ?? src}
           alt={alt}
           draggable={draggable}
           onClick={onClick}
           onLoad={() => setLoaded(true)}
-          onError={onError}
+          onError={handleImgError}
           className={cn(
             'absolute inset-0 h-full w-full transition-opacity duration-300',
             loaded ? 'opacity-100' : 'opacity-0',
