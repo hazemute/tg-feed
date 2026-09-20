@@ -3,9 +3,10 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
-import { aiSearchAllowance, AI_SEARCH_DAILY_LIMIT, TIER_PRICES, tierOfUser } from '@/lib/tiers'
+import { aiSearchAllowance, AI_SEARCH_DAILY_LIMIT, TIER_PRICES, tierExpiryFor, tierOfUser } from '@/lib/tiers'
 import { paymentMethods } from '@/lib/payments'
 import { legalInfo, yookassaCreatePayment, yookassaEnabled } from '@/lib/yookassa'
+import { payWithBalance } from '@/lib/wallet'
 
 export const dynamic = 'force-dynamic'
 
@@ -16,6 +17,8 @@ export const dynamic = 'force-dynamic'
  * доступные способы оплаты (UI экрана «Тарифы»).
  *
  * POST /api/tiers { plan, period, method? } — счёт на покупку/продление тира:
+ *  - method='balance' (v5.39): МГНОВЕННАЯ покупка с рублёвого кошелька, если
+ *    денег хватает — без карты и Stars («за баланс покупается всё в сервисе»);
  *  - method='stars' (по умолчанию): Telegram Stars XTR-инвойс → invoiceUrl;
  *  - method='card': ЮKassa embedded → confirmation_token для виджета НА САЙТЕ
  *    (без переадресаций — требование СБ ЮKassa).
@@ -26,7 +29,7 @@ export const dynamic = 'force-dynamic'
 const bodySchema = z.object({
   plan: z.enum(['plus', 'pro']),
   period: z.enum(['month', 'year']),
-  method: z.enum(['stars', 'card']).default('stars'),
+  method: z.enum(['balance', 'stars', 'card']).default('stars'),
 })
 
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
@@ -48,11 +51,16 @@ export async function GET(request: Request) {
     aiSearch = { used: 0, limit: AI_SEARCH_DAILY_LIMIT, remaining: AI_SEARCH_DAILY_LIMIT }
   }
 
-  // tierUntil нужен только владельцу сессии
+  // tierUntil нужен только владельцу сессии; кошелёк — для кнопки «С баланса»
   let tierUntil: string | null = null
+  let wallet: { balanceKop: number; swipes: number } | null = null
   if (g.uid) {
-    const u = await db.user.findUnique({ where: { id: g.uid }, select: { tierUntil: true } })
+    const u = await db.user.findUnique({
+      where: { id: g.uid },
+      select: { tierUntil: true, balanceKop: true, swipes: true },
+    })
     tierUntil = u?.tierUntil?.toISOString() ?? null
+    if (u) wallet = { balanceKop: u.balanceKop, swipes: u.swipes }
   }
 
   return NextResponse.json({
@@ -61,6 +69,8 @@ export async function GET(request: Request) {
     aiSearch,
     prices: TIER_PRICES,
     methods: paymentMethods(),
+    // Кошелёк (v5.39): UI показывает «С баланса», когда денег хватает
+    wallet,
     // Реквизиты исполнителя: документ «Реквизиты и контакты», оферта (СБ ЮKassa)
     legal: legalInfo(),
   })
@@ -80,6 +90,28 @@ export async function POST(request: Request) {
     const stars = period === 'month' ? price.monthStars : price.yearStars
     const amountKop = period === 'month' ? price.monthKop : price.yearKop
     const purpose = `${plan}_${period}` // plus_month | plus_year | pro_month | pro_year
+
+    /* С БАЛАНСА (v5.39): рублей хватает → тир активируется сразу, без счёта.
+     * Идентичный creditPendingPayment сценарий: срок продлевается от tierUntil. */
+    if (method === 'balance') {
+      const paid = await payWithBalance(
+        g.uid,
+        amountKop,
+        `тариф ${plan === 'pro' ? 'Snap Pro' : 'Snap Plus'} · ${period === 'month' ? 'месяц' : 'год'}`,
+      )
+      if (!paid) {
+        return err('На балансе не хватает — пополните кошелёк в профиле', 402)
+      }
+      const u = await db.user.findUnique({ where: { id: g.uid }, select: { tierUntil: true } })
+      const until = tierExpiryFor(u?.tierUntil ?? null, period)
+      await db.user.update({ where: { id: g.uid }, data: { tier: plan, tierUntil: until } })
+      return NextResponse.json({
+        ok: true,
+        method: 'balance',
+        tier: plan,
+        tierUntil: until.toISOString(),
+      })
+    }
 
     const payment = await db.pendingPayment.create({
       data: {

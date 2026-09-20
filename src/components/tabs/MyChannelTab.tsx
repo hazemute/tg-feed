@@ -239,7 +239,7 @@ export function MyChannelTab() {
                   promotion={promotion}
                   onReload={reload}
                 />
-                <AdsSection channel={channel!} advertiser={data.advertiser} onReload={reload} />
+                <AdsSection channel={channel!} onReload={reload} />
               </div>
             )}
           </motion.div>
@@ -1030,37 +1030,56 @@ function PromotionSection({
 
 function AdsSection({
   channel,
-  advertiser,
   onReload,
 }: {
   channel: MyChannelDTO
-  advertiser: MyChannelResponse['advertiser']
   onReload: () => void
 }) {
   const [topUpOpen, setTopUpOpen] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
+  // Баланс ОБЩЕГО кошелька (v5.39): edge-кэш Redis → фолбэк на /api/wallet (Node + БД)
+  const [bal, setBal] = useState<{ balanceKop: number; swipes: number } | null>(null)
   const active = channel.campaigns.filter((c) => c.status === 'active' || c.status === 'moderation' || c.status === 'paused')
   const finished = channel.campaigns.filter((c) => c.status === 'completed' || c.status === 'rejected' || c.status === 'canceled')
+
+  const loadBalance = useCallback(() => {
+    api<{ ok: boolean; cached?: boolean; balanceKop?: number; swipes?: number }>('/api/wallet/balance')
+      .then((r) => {
+        if (r.ok && typeof r.balanceKop === 'number') {
+          setBal({ balanceKop: r.balanceKop, swipes: r.swipes ?? 0 })
+          return null
+        }
+        return api<{ balanceKop: number; swipes: number }>('/api/wallet')
+      })
+      .then((fallback) => {
+        if (fallback) setBal({ balanceKop: fallback.balanceKop, swipes: fallback.swipes })
+      })
+      .catch(() => {})
+  }, [])
+
+  useEffect(() => {
+    loadBalance()
+  }, [loadBalance, onReload])
 
   return (
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
       <SectionTitle icon={Megaphone}>Реклама</SectionTitle>
       <div className="space-y-3">
-        {/* Баланс — в свайпах (1 свайп = 1 ₽) */}
+        {/* Баланс — ОБЩИЙ кошелёк (v5.39): рубли + свайпы; эскроу-счёт выведен из оборота */}
         <div className="flex items-center gap-4 rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-tg-star/15">
             <Wallet className="h-6 w-6 text-tg-star" />
           </span>
           <div className="min-w-0 flex-1">
-            <div className="text-[12px] font-semibold uppercase tracking-wide text-tg-hint">Эскроу-баланс</div>
+            <div className="text-[12px] font-semibold uppercase tracking-wide text-tg-hint">Кошелёк</div>
             <div className="text-[22px] font-bold leading-tight tabular-nums text-tg-text">
-              {formatSwipes(advertiser.balanceKop)}{' '}
-              <span className="text-[14px] font-semibold text-tg-hint">
-                {pluralSwipes(Math.round(advertiser.balanceKop / 100))}
+              {bal ? `${(bal.balanceKop / 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : '…'}
+              <span className="ml-2 text-[14px] font-semibold text-tg-hint">
+                {bal ? `${formatCount(bal.swipes)} ${pluralSwipes(bal.swipes)}` : ''}
               </span>
             </div>
             <div className="text-[11.5px] text-tg-hint">
-              1 свайп = 1 ₽ · потрачено {formatSwipes(advertiser.spentTotalKop)} · пополнено {formatSwipes(advertiser.topupsTotalKop)}
+              Бюджеты кампаний списываются с общего баланса · возврат остатка — в кошелёк
             </div>
           </div>
           <button
@@ -1106,8 +1125,8 @@ function AdsSection({
         </button>
       </div>
 
-      {/* Пополнение: на ПК — целая страница, в миниаппе — шторка; 3 способа оплаты */}
-      <TopUpModal open={topUpOpen} onClose={() => setTopUpOpen(false)} onReload={onReload} />
+      {/* Пополнение ОБЩЕГО кошелька: на ПК — целая страница, в миниаппе — шторка; 3 способа оплаты */}
+      <TopUpModal open={topUpOpen} onClose={() => { setTopUpOpen(false); loadBalance() }} onReload={() => { onReload(); loadBalance() }} />
       {/* Форма кампании */}
       <BottomSheet open={formOpen} onClose={() => setFormOpen(false)} title="Новая кампания">
         <CampaignForm channel={channel} onDone={() => { setFormOpen(false); onReload() }} />

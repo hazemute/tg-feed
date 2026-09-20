@@ -10,6 +10,7 @@ import {
   aiCanAfford,
   chargeAiUsage,
   swipesForUsage,
+  usageCollector,
   type AiUsage,
 } from '@/lib/wallet'
 import { cacheGet, cacheSet, shortHash } from '@/lib/redis'
@@ -161,23 +162,6 @@ async function buildAnswer(
   const finalIds = sourceIds.length > 0 ? sourceIds : scored.slice(0, 3).map((s) => s.p.id)
 
   return { answer, sourceIds: finalIds, usage: uc.acc.usage }
-}
-
-/** Копилка token-usage за цепочку вызовов (чат с инструментами делает несколько вызовов) */
-function usageCollector() {
-  const acc: { usage: AiUsage | null } = { usage: null }
-  return {
-    acc,
-    onUsage: (u: AiUsage) => {
-      if (!acc.usage) {
-        acc.usage = { promptTokens: u.promptTokens, completionTokens: u.completionTokens, model: u.model }
-      } else {
-        acc.usage.promptTokens += u.promptTokens
-        acc.usage.completionTokens += u.completionTokens
-        if (u.model) acc.usage.model = u.model
-      }
-    },
-  }
 }
 
 /** Единый 402 «не хватает свайпов» с тарифом по токенам */

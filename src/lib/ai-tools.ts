@@ -281,12 +281,15 @@ export async function channelStatsBlock(
     }
   }
   if (ownerId) {
-    const [acct, owner] = await Promise.all([
-      db.advertiserAccount.findUnique({ where: { userId: ownerId }, select: { balanceKop: true } }).catch(() => null),
-      db.user.findUnique({ where: { id: ownerId }, select: { tier: true, tierUntil: true } }).catch(() => null),
-    ])
-    if (acct) lines.push(`- рекламный баланс: ${(acct.balanceKop / 100).toFixed(2)} ₽`)
+    const owner = await db.user
+      .findUnique({
+        where: { id: ownerId },
+        select: { balanceKop: true, swipes: true, tier: true, tierUntil: true },
+      })
+      .catch(() => null)
     if (owner) {
+      // v5.39: кошелёк живёт на пользователе (эскроу рекламодателя — легаси)
+      lines.push(`- кошелёк: ${(owner.balanceKop / 100).toFixed(2)} ₽ · ${owner.swipes} свайпов`)
       const active = owner.tierUntil && owner.tierUntil.getTime() > Date.now()
       lines.push(active ? `- тариф ${owner.tier} (до ${owner.tierUntil!.toISOString().slice(0, 10)})` : `- тариф: ${owner.tier}`)
     }

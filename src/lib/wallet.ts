@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { invalidateBalance } from '@/lib/balance-cache'
 
 /**
  * КОШЕЛЁК (v5.38–v5.39) — единая двухвалютная система.
@@ -102,7 +103,7 @@ export async function spendSwipes(
   note?: string,
 ): Promise<boolean> {
   if (cost <= 0) return true
-  return db.$transaction(async (tx) => {
+  const ok = await db.$transaction(async (tx) => {
     const u = await tx.user.findUnique({
       where: { id: userId },
       select: { swipes: true, balanceKop: true },
@@ -140,6 +141,8 @@ export async function spendSwipes(
     await log(tx, userId, 'ai_spend', 'swp', -cost, note)
     return true
   })
+  if (ok) await invalidateBalance(userId) // кэш баланса устарел — edge увидит свежие данные после перечита
+  return ok
 }
 
 /** Конвертация свайпы → рубли: 100 свайпов = 1 ₽. Остаток (<100) остаётся свайпами. */
@@ -152,7 +155,7 @@ export async function convertSwpToRub(
   }
   const rubKop = Math.floor(swipes / SWP_PER_RUB) // целые рубли
   const spentSwipes = rubKop * SWP_PER_RUB
-  return db.$transaction(async (tx) => {
+  const res = await db.$transaction(async (tx) => {
     const updated = await tx.user.updateMany({
       where: { id: userId, swipes: { gte: spentSwipes } },
       data: { swipes: { decrement: spentSwipes }, balanceKop: { increment: rubKop } },
@@ -162,6 +165,8 @@ export async function convertSwpToRub(
     await log(tx, userId, 'convert', 'rub', rubKop, 'обмен из свайпов')
     return { ok: true, rubKop, spentSwipes }
   })
+  if (res.ok) await invalidateBalance(userId)
+  return res
 }
 
 /** Конвертация рубли → свайпы: 1 копейка = 1 свайп (100 свайпов = 1 ₽). */
@@ -172,7 +177,7 @@ export async function convertRubToSwp(
   if (!Number.isInteger(kop) || kop < 1) {
     return { ok: false, error: 'Минимум 0,01 ₽' }
   }
-  return db.$transaction(async (tx) => {
+  const res = await db.$transaction(async (tx) => {
     const updated = await tx.user.updateMany({
       where: { id: userId, balanceKop: { gte: kop } },
       data: { balanceKop: { decrement: kop }, swipes: { increment: kopToSwp(kop) } },
@@ -182,6 +187,8 @@ export async function convertRubToSwp(
     await log(tx, userId, 'convert', 'swp', kopToSwp(kop), 'обмен из рублей')
     return { ok: true, swipes: kopToSwp(kop) }
   })
+  if (res.ok) await invalidateBalance(userId)
+  return res
 }
 
 /**
@@ -194,7 +201,7 @@ export async function payWithBalance(
   note?: string,
 ): Promise<boolean> {
   if (amountKop <= 0) return true
-  return db.$transaction(async (tx) => {
+  const ok = await db.$transaction(async (tx) => {
     const updated = await tx.user.updateMany({
       where: { id: userId, balanceKop: { gte: amountKop } },
       data: { balanceKop: { decrement: amountKop } },
@@ -203,6 +210,8 @@ export async function payWithBalance(
     await log(tx, userId, 'purchase', 'rub', -amountKop, note)
     return true
   })
+  if (ok) await invalidateBalance(userId)
+  return ok
 }
 
 /** Журнал кошелька (новые сверху) */
@@ -213,6 +222,27 @@ export async function walletHistory(userId: string, take = 20) {
     take,
     select: { id: true, kind: true, currency: true, amount: true, note: true, createdAt: true },
   })
+}
+
+/**
+ * Копилка token-usage за цепочку вызовов (чат с инструментами делает несколько
+ * вызовов ИИ — суммируем prompt/completion токены всех шагов в один usage).
+ * Общая для ИИ-поиска и ИИ-ассистента.
+ */
+export function usageCollector() {
+  const acc: { usage: AiUsage | null } = { usage: null }
+  return {
+    acc,
+    onUsage: (u: AiUsage) => {
+      if (!acc.usage) {
+        acc.usage = { promptTokens: u.promptTokens, completionTokens: u.completionTokens, model: u.model }
+      } else {
+        acc.usage.promptTokens += u.promptTokens
+        acc.usage.completionTokens += u.completionTokens
+        if (u.model) acc.usage.model = u.model
+      }
+    },
+  }
 }
 
 /* ==================== ПЛАТНЫЕ ВЫЗОВЫ ИИ (v5.39) ==================== *

@@ -12,11 +12,14 @@ import {
   convertSwpToRub,
   walletHistory,
 } from '@/lib/wallet'
+import { cacheBalance } from '@/lib/balance-cache'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/wallet — кошелёк: рубли (balanceKop), свайпы, курс, тариф ИИ, журнал (20 последних).
+ *   Баланс дополнительно пишется в Redis-кэш (write-through) — его читает
+ *   edge-роут GET /api/wallet/balance без обращения к БД.
  * POST /api/wallet { action: 'swp2rub' | 'rub2swp', amount } — конвертация.
  *   • swp2rub: amount в свайпах (≥100) → рубли по курсу 100 свайпов = 1 ₽,
  *     остаток < 100 остаётся свайпами;
@@ -44,6 +47,8 @@ export async function GET(request: Request) {
       select: { balanceKop: true, swipes: true },
     })
     if (!user) return err('Пользователь не найден', 404)
+    // Write-through: свежий баланс → Redis (горячий путь edge-роута /api/wallet/balance)
+    void cacheBalance(g.uid, { balanceKop: user.balanceKop, swipes: user.swipes })
     const history = await walletHistory(g.uid, 20)
     return NextResponse.json({
       ok: true,
@@ -77,6 +82,7 @@ export async function POST(request: Request) {
       where: { id: g.uid },
       select: { balanceKop: true, swipes: true },
     })
+    if (user) void cacheBalance(g.uid, { balanceKop: user.balanceKop, swipes: user.swipes })
     return NextResponse.json({
       ok: true,
       balanceKop: user?.balanceKop ?? 0,

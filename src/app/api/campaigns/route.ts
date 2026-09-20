@@ -3,16 +3,20 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { invalidateBalance } from '@/lib/balance-cache'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * CPA-кампании пользователя («Мой канал» → Реклама).
  *
- * Модель эскроу: бюджет кампании заранее снимается с баланса рекламодателя
- * (пополнение — после оплаты переводом, зачисляет админ). Дальше кампания
- * крутится бесплатно для площадки: каждый уникальный переход списывает
- * стоимость клика из внесённого бюджета. Долгов нет по построению.
+ * МОДЕЛЬ (v5.39): бюджет кампании резервируется с ОБЩЕГО рублёвого кошелька
+ * (User.balanceKop) сразу при создании — проводка kind='ad_campaign' в
+ * BalanceLog. Дальше кампания крутится бесплатно для площадки: каждый
+ * уникальный переход списывает стоимость клика из внесённого бюджета.
+ * Отмена — возврат неизрасходованного остатка на кошелёк (kind='refund').
+ * Долгов нет по построению; эскроу-счёт рекламодателя (AdvertiserAccount)
+ * выведен из оборота — старые итоги читаются только как легаси-статистика.
  */
 
 const createSchema = z.object({
@@ -31,18 +35,24 @@ const patchSchema = z.object({
   action: z.enum(['pause', 'resume', 'cancel']),
 })
 
-/** GET — мои кампании + рекламный баланс */
+/** GET — мои кампании + баланс кошелька (легаси-итоги эскроу — только статистика) */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'campaigns' })
   if (!g.ok) return g.res
 
-  const [campaigns, account] = await Promise.all([
+  const [campaigns, user, account] = await Promise.all([
     db.adCampaign.findMany({
       where: { ownerId: g.uid },
       orderBy: { createdAt: 'desc' },
       take: 30,
     }),
-    db.advertiserAccount.findUnique({ where: { userId: g.uid } }),
+    db.user.findUnique({ where: { id: g.uid }, select: { balanceKop: true } }),
+    db.advertiserAccount
+      .findUnique({
+        where: { userId: g.uid },
+        select: { topupsTotalKop: true, spentTotalKop: true },
+      })
+      .catch(() => null),
   ])
 
   return NextResponse.json({
@@ -64,7 +74,8 @@ export async function GET(request: Request) {
       createdAt: c.createdAt.toISOString(),
     })),
     advertiser: {
-      balanceKop: account?.balanceKop ?? 0,
+      // v5.39: реальный баланс — рублёвый кошелёк пользователя
+      balanceKop: user?.balanceKop ?? 0,
       topupsTotalKop: account?.topupsTotalKop ?? 0,
       spentTotalKop: account?.spentTotalKop ?? 0,
     },
@@ -84,19 +95,28 @@ export async function POST(request: Request) {
       return err('Бюджет должен покрывать минимум 10 переходов')
     }
 
-    // атомарное резервирование: списываем бюджет только если он есть
-    await db.advertiserAccount.upsert({
-      where: { userId: g.uid },
-      create: { userId: g.uid },
-      update: {},
+    // атомарное резервирование с ОБЩЕГО кошелька: списываем бюджет только если он есть
+    const reserved = await db.$transaction(async (tx) => {
+      const updated = await tx.user.updateMany({
+        where: { id: g.uid, balanceKop: { gte: d.budgetKop } },
+        data: { balanceKop: { decrement: d.budgetKop } },
+      })
+      if (updated.count === 0) return false
+      await tx.balanceLog.create({
+        data: {
+          userId: g.uid,
+          kind: 'ad_campaign',
+          currency: 'rub',
+          amount: -d.budgetKop,
+          note: `бюджет кампании «${d.title.slice(0, 40)}»`,
+        },
+      })
+      return true
     })
-    const updated = await db.advertiserAccount.updateMany({
-      where: { userId: g.uid, balanceKop: { gte: d.budgetKop } },
-      data: { balanceKop: { decrement: d.budgetKop } },
-    })
-    if (updated.count === 0) {
-      return err('Недостаточно средств на балансе — сначала пополните рекламный счёт')
+    if (!reserved) {
+      return err('Недостаточно средств на балансе — пополните кошелёк в профиле', 402)
     }
+    await invalidateBalance(g.uid)
 
     try {
       const campaign = await db.adCampaign.create({
@@ -115,10 +135,22 @@ export async function POST(request: Request) {
       })
       return NextResponse.json({ ok: true, id: campaign.id })
     } catch {
-      // кампания не создалась — возвращаем зарезервированные деньги
-      await db.advertiserAccount
-        .update({ where: { userId: g.uid }, data: { balanceKop: { increment: d.budgetKop } } })
+      // кампания не создалась — возвращаем зарезервированные деньги в кошелёк
+      await db
+        .$transaction([
+          db.user.update({ where: { id: g.uid }, data: { balanceKop: { increment: d.budgetKop } } }),
+          db.balanceLog.create({
+            data: {
+              userId: g.uid,
+              kind: 'refund',
+              currency: 'rub',
+              amount: d.budgetKop,
+              note: 'возврат: кампания не создалась',
+            },
+          }),
+        ])
         .catch(() => {})
+      await invalidateBalance(g.uid)
       return err('Не удалось создать кампанию')
     }
   } catch (e) {
@@ -153,7 +185,7 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ ok: true, status: 'active' })
     }
 
-    // cancel: возврат остатка бюджета на баланс + завершение
+    // cancel: возврат остатка бюджета в кошелёк + завершение
     if (campaign.status === 'completed') return err('Кампания уже завершена')
     const refund = Math.max(0, campaign.budgetKop - campaign.spentKop)
     await db.$transaction([
@@ -163,13 +195,23 @@ export async function PATCH(request: Request) {
       }),
       ...(refund > 0
         ? [
-            db.advertiserAccount.update({
-              where: { userId: g.uid },
+            db.user.update({
+              where: { id: g.uid },
               data: { balanceKop: { increment: refund } },
+            }),
+            db.balanceLog.create({
+              data: {
+                userId: g.uid,
+                kind: 'refund',
+                currency: 'rub',
+                amount: refund,
+                note: `возврат остатка кампании «${campaign.title.slice(0, 40)}»`,
+              },
             }),
           ]
         : []),
     ])
+    await invalidateBalance(g.uid)
     return NextResponse.json({ ok: true, status: 'completed', refundKop: refund })
   } catch (e) {
     console.error('[campaigns:patch]', e)

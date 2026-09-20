@@ -4,6 +4,15 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { chatSimple, chatWithTools, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
+import {
+  AI_MTOK_IN_SWP,
+  AI_MTOK_OUT_SWP,
+  aiCanAfford,
+  chargeAiUsage,
+  estimateAiSwipes,
+  swipesForUsage,
+  usageCollector,
+} from '@/lib/wallet'
 import { enVisualPrompt, pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-image'
 import { botPublishToChannel } from '@/lib/tg-bot'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
@@ -79,7 +88,11 @@ function styleFresh(ch: { styleProfile: string | null; styleAt: Date | null }): 
 }
 
 /** Анализ стиля: 30 последних содержательных постов → цифровой слепок */
-async function analyzeStyle(channelId: string, username: string): Promise<StyleProfile> {
+async function analyzeStyle(
+  channelId: string,
+  username: string,
+  onUsage?: (u: { promptTokens: number; completionTokens: number; model?: string }) => void,
+): Promise<StyleProfile> {
   const posts = await db.post.findMany({
     where: { channelId, text: { not: '' } },
     orderBy: { publishedAt: 'desc' },
@@ -99,7 +112,7 @@ async function analyzeStyle(channelId: string, username: string): Promise<StyleP
       'манеру речи (сленг, эмодзи, длина постов, юмор/серьёзность). Ответь СТРОГО в формате:\n' +
       'TONE: <одной фразой>\nTOPICS: <через запятую, 3-6 тем>\nSTYLE: <2-3 фразы, как писать «как автор»>',
     digest,
-    { maxTokens: 300, timeoutMs: 30_000, temperature: 0.2 },
+    { maxTokens: 300, timeoutMs: 30_000, temperature: 0.2, onUsage },
   )
   const tone = raw.match(/TONE\s*:\s*(.+)/i)?.[1]?.trim() ?? 'нейтральный'
   const topics = raw.match(/TOPICS\s*:\s*(.+)/i)?.[1]?.trim() ?? 'тематика канала'
@@ -165,6 +178,29 @@ export async function POST(request: Request) {
         { error: 'pro_required', message: 'ИИ-ассистент доступен на тарифе Snap Pro' },
         { status: 402 },
       )
+    }
+
+    /* ТАРИФ (v5.39): свайпы за токены — проверяем ХУДШИЙ случай ДО генерации.
+     * Списание — после ответа по реальному usage OpenRouter (chargeAiUsage);
+     * публикация (publish) ИИ не вызывает и не тарифицируется. */
+    if (d.action !== 'publish') {
+      const est =
+        d.action === 'chat'
+          ? estimateAiSwipes(d.messages.reduce((a, m) => a + m.content.length, 0) + 1200, 4200)
+          : d.action === 'style'
+            ? estimateAiSwipes(9200, 320) // ~30 постов × 280 симв + промпт
+            : estimateAiSwipes(2800, 1100) // generate: система+стиль+тренды + пост
+      if (!(await aiCanAfford(g.uid, est))) {
+        return NextResponse.json(
+          {
+            error: 'not_enough_swipes',
+            message:
+              `Не хватает свайпов для ИИ-ассистента: тарификация по токенам (${AI_MTOK_IN_SWP} за 1 млн входных + ${AI_MTOK_OUT_SWP} за 1 млн выходных). ` +
+              'Пополните баланс — свайпы купятся автоматически (1 ₽ = 100 свайпов).',
+          },
+          { status: 402 },
+        )
+      }
     }
 
     // select вместо полной строки (egress: avatarHash/membersFetchedAt и пр.
@@ -242,15 +278,24 @@ export async function POST(request: Request) {
 
       return sseStream(async (send) => {
         let messages = history
+        // Тарификация: копим токены всей цепочки (модель + финальный вызов),
+        // списываем по факту после ответа — как в ИИ-поиске
+        const collector = usageCollector()
+        const settle = async () => {
+          await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент', 12)
+          if (collector.acc.usage) send('paid', { swipes: swipesForUsage(collector.acc.usage) })
+        }
         try {
           for (let i = 0; i < MAX_LOOP; i++) {
             const r = await chatWithTools(messages, schemasFor('assistant'), {
               maxTokens: 1400,
               timeoutMs: 60_000,
               temperature: 0.6,
+              onUsage: collector.onUsage,
             })
             if (r.toolCalls.length === 0) {
               // Финальный ответ
+              await settle()
               send('done', { reply: r.content || 'Готово!', ...meta, model: r.model })
               return
             }
@@ -301,11 +346,14 @@ export async function POST(request: Request) {
               },
             ],
             [],
-            { maxTokens: 900, timeoutMs: 45_000, temperature: 0.6 },
+            { maxTokens: 900, timeoutMs: 45_000, temperature: 0.6, onUsage: collector.onUsage },
           )
+          await settle()
           send('done', { reply: tail.content || 'Готово!', ...meta })
         } catch (e) {
           console.error('[ai/assistant chat]', e)
+          // Токены частично потрачены — тарифицируем и отдаём ошибку
+          await settle().catch(() => {})
           send('error', { message: openRouterErrorText(e) })
         }
       })
@@ -313,11 +361,13 @@ export async function POST(request: Request) {
 
     /* ---------- Анализ стиля ---------- */
     if (d.action === 'style') {
-      const profile = await analyzeStyle(channel.id, channel.username)
+      const collector = usageCollector()
+      const profile = await analyzeStyle(channel.id, channel.username, collector.onUsage)
       await db.channel.update({
         where: { id: channel.id },
         data: { styleProfile: JSON.stringify(profile), styleAt: new Date() },
       })
+      await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент (стиль)', 4)
       return NextResponse.json({ ok: true, profile })
     }
 
@@ -351,9 +401,14 @@ export async function POST(request: Request) {
         (trends ? `\nСвежие тренды ленты (можно опереться на одну тему):\n${trends}\n` : '') +
         promptLine
 
-      const text = await chatSimple(system, user, { maxTokens: 700, timeoutMs: 40_000, temperature: 0.75 })
+      const collector = usageCollector()
+      const text = await chatSimple(system, user, { maxTokens: 700, timeoutMs: 40_000, temperature: 0.75, onUsage: collector.onUsage })
       const clean = text.replace(/^["«»]+|["»]+$/g, '').trim()
-      if (clean.length < 30) return err('Нейросеть вернула пустой пост — попробуйте ещё раз', 502)
+      if (clean.length < 30) {
+        await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент (пост)', 8)
+        return err('Нейросеть вернула пустой пост — попробуйте ещё раз', 502)
+      }
+      await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент (пост)', 8)
 
       // v5.33: суть поста → английский визуальный промпт (бесплатная модель)
       // → бесплатный pollinations. И текст, и визуал — ноль рублей.

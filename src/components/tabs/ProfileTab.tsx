@@ -24,6 +24,7 @@ import {
   Eye,
   Heart,
   Sparkles,
+  Wallet,
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -869,6 +870,7 @@ export function ProfileTab() {
         zClass={customizerOpen ? 'z-[95]' : undefined}
         onClose={() => setTiersOpen(false)}
         onLoaded={setTiersData}
+        onWalletChanged={() => setWalletReload((v) => v + 1)}
       />
 
       {/* Оформление профиля: полная страница с вкладками Палитры/Фон/Рамка + кастомные цвета.
@@ -937,12 +939,15 @@ function TiersSheet({
   onClose,
   onLoaded,
   zClass,
+  onWalletChanged,
 }: {
   open: boolean
   onClose: () => void
   onLoaded: (d: TiersResponse) => void
   /** z-класс контейнера (нужен z-[95] при открытии поверх кастомайзера z-90) */
   zClass?: string
+  /** Покупка с баланса списала рубли — кошелёк в профиле надо перечитать */
+  onWalletChanged?: () => void
 }) {
   const [data, setData] = useState<TiersResponse | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1024,6 +1029,30 @@ function TiersSheet({
       }
     } catch (e) {
       toast.error((e as Error).message || 'Не удалось создать счёт')
+    } finally {
+      setBuying(null)
+    }
+  }
+
+  /** ОПЛАТА С БАЛАНСА (v5.39): рублей хватает → тир активируется мгновенно,
+   * без карты и Stars — «за баланс покупается всё в сервисе» */
+  const buyBalance = async (plan: 'plus' | 'pro') => {
+    if (buying) return
+    setBuying(plan)
+    haptic('light')
+    try {
+      const r = await api<{ ok: boolean; tier: string; tierUntil: string }>('/api/tiers', {
+        method: 'POST',
+        body: JSON.stringify({ plan, period: period[plan], method: 'balance' }),
+      })
+      haptic('success')
+      toast.success(
+        `Тариф активирован с баланса — до ${new Date(r.tierUntil).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}`,
+      )
+      refresh()
+      onWalletChanged?.()
+    } catch (e) {
+      toast.error((e as Error).message || 'Не удалось оплатить с баланса')
     } finally {
       setBuying(null)
     }
@@ -1160,6 +1189,23 @@ function TiersSheet({
                       </>
                     )}
                   </button>
+                  {/* С БАЛАНСА (v5.39): показываем, когда рублей на кошельке хватает */}
+                  {(data.wallet?.balanceKop ?? 0) >=
+                    (p === 'month' ? price.monthKop : price.yearKop) && (
+                    <button
+                      type="button"
+                      disabled={buying !== null}
+                      onClick={() => buyBalance(meta.plan)}
+                      className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-green text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
+                    >
+                      {buying === meta.plan ? (
+                        <Loader2 className="h-4.5 w-4.5 animate-spin" />
+                      ) : (
+                        <Wallet className="h-4.5 w-4.5" strokeWidth={1.8} />
+                      )}
+                      С баланса · активируется сразу
+                    </button>
+                  )}
                   {/* Карта: виджет ЮKassa на сайте — показываем, когда эквайринг подключён (methods.card) */}
                   {data.methods.card && (
                     <button
@@ -1178,8 +1224,8 @@ function TiersSheet({
           </div>
 
           <p className="mt-3 text-center text-[12px] leading-snug text-tg-hint">
-            Оплата: Telegram Stars или банковская карта (ЮKassa, форма открывается на сайте).
-            Подписка действует до конца оплаченного периода.
+            Оплата: с баланса кошелька (мгновенно), Telegram Stars или банковская карта
+            (ЮKassa, форма открывается на сайте). Подписка действует до конца оплаченного периода.
           </p>
         </>
       )}

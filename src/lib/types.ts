@@ -266,6 +266,8 @@ export type TiersResponse = {
     { monthKop: number; yearKop: number; monthStars: number; yearStars: number }
   >
   methods: { card: boolean; stars: boolean; ton: boolean }
+  /** Кошелёк сессии (v5.39): когда рублей хватает на тариф — показываем «С баланса» */
+  wallet?: { balanceKop: number; swipes: number } | null
   /** Реквизиты исполнителя для документов и требований СБ ЮKassa (env) */
   legal: { name: string; inn: string; email: string }
 }
