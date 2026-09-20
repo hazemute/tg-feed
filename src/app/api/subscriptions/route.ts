@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { guardAuth } from '@/lib/guard'
-import { proxiedMediaUrl } from '@/lib/media'
+import { channelAvatarUrl } from '@/lib/media'
 import { jsonWithEtag } from '@/lib/etag'
 
 export const dynamic = 'force-dynamic'
@@ -58,8 +58,8 @@ export async function GET(request: Request) {
           username: s.channel.username,
           description: s.channel.description?.replace(/\s+/g, ' ').trim() ?? null,
           avatarColor: s.channel.avatarColor,
-          // v5.33: Storage-аватарка через /api/media (CDN-кэш, экономия egress Supabase)
-          avatarUrl: proxiedMediaUrl(s.channel.avatarUrl) ?? (s.channel.photoFileId ? `/api/avatar/c_${s.channel.id}` : null),
+          // v5.56: единый хелпер — мёртвые supabase-ссылки → Bot API-фолбэк
+          avatarUrl: channelAvatarUrl(s.channel.avatarUrl, s.channel.photoFileId, s.channel.id),
           subscribersCount: s.channel.membersCount ?? s.channel.subscribersCount,
           isPremium: s.channel.isPremium,
           status: s.channel.status,

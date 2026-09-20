@@ -53,3 +53,21 @@ export function proxiedMediaUrl(url: string | null | undefined): string | null |
   if (!isTrustedMediaUrl(url)) return url
   return `/api/media?u=${encodeURIComponent(url)}`
 }
+
+/**
+ * Аватарка канала → URL для клиента (v5.56, единая точка для всех DTO).
+ *
+ * ЛЕГАСИ-ФИЛЬТР: ссылки *.supabase.co мертвы (проект с бакетом аватарок
+ * удалён — DNS NXDOMAIN глобально), считаем их отсутствующими → сразу
+ * фолбэк на прокси Bot API (/api/avatar/c_<id>), пока парсер не обновит
+ * Channel.avatarUrl на прямую ссылку cdn*.telesco.pe (og:image со страницы
+ * t.me/s/<username>, качается каждым тиком).
+ */
+export function channelAvatarUrl(
+  avatarUrl: string | null | undefined,
+  photoFileId: string | null | undefined,
+  channelId: string,
+): string | null {
+  const raw = avatarUrl && avatarUrl.includes('.supabase.co/') ? null : avatarUrl
+  return proxiedMediaUrl(raw) ?? (photoFileId ? `/api/avatar/c_${channelId}` : null)
+}

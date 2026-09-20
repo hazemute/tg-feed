@@ -1,6 +1,6 @@
 import type { Channel, Post, Prisma } from '@prisma/client'
 import type { ChannelDTO, MediaItemDTO, MediaKind, PostDTO } from '@/lib/types'
-import { proxiedMediaUrl } from '@/lib/media'
+import { channelAvatarUrl, proxiedMediaUrl } from '@/lib/media'
 import { animatedEmojiKinds } from '@/lib/emoji-registry'
 import { cleanPostText } from '@/lib/text-clean'
 import { effectiveTier, tierAtLeast } from '@/lib/tiers'
@@ -123,15 +123,9 @@ export function toChannelDTO(
     // течь в 2 строки (line-clamp), а не «в столб»
     description: c.description?.replace(/\s+/g, ' ').trim() ?? null,
     avatarColor: c.avatarColor,
-    // Аватарка: прямая ссылка Telegram CDN (парсер, og:image, v5.56) → прокси Bot API
-    // (file_id → getFile) → null (инициалы).
-    // ОБА ПУТЬ идут через /api/media|/api/avatar — наш домен, CDN-кэш 30 дней.
-    // ЛЕГАСИ (v5.56): ссылки *.supabase.co мертвы (проект с бакетом удалён,
-    // DNS NXDOMAIN) — считаем их отсутствующими, сразу уводим на Bot API-фолбэк,
-    // пока парсер не обновит ссылку на telesco.pe.
-    avatarUrl:
-      proxiedMediaUrl(c.avatarUrl && c.avatarUrl.includes('.supabase.co/') ? null : c.avatarUrl) ??
-      (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+    // Аватарка: единый хелпер (v5.56) — мёртвые supabase-ссылки → Bot API-фолбэк,
+    // прямые ссылки Telegram CDN (telesco.pe) → /api/media
+    avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
     // Реальное число подписчиков из Telegram (getChatMemberCount);
     // для каналов, где Bot API недоступен, — оценка из каталога
     subscribersCount: c.membersCount ?? c.subscribersCount,

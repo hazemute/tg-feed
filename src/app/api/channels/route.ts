@@ -4,7 +4,7 @@ import { db } from '@/lib/db'
 import { guardPublic } from '@/lib/guard'
 import { cacheAside, famKey } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
-import { proxiedMediaUrl } from '@/lib/media'
+import { channelAvatarUrl } from '@/lib/media'
 import { jsonWithEtag } from '@/lib/etag'
 
 export const dynamic = 'force-dynamic'
@@ -108,8 +108,9 @@ async function loadChannels(category: string, q: string) {
     username: c.username,
     description: c.description?.replace(/\s+/g, ' ').trim() ?? null,
     avatarColor: c.avatarColor,
-    // v5.33: Storage-аватарка через /api/media — Vercel CDN кэширует, Supabase молчит
-    avatarUrl: proxiedMediaUrl(c.avatarUrl) ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+    // v5.56: единый хелпер — мёртвые supabase-ссылки → Bot API-фолбэк,
+    // прямые ссылки Telegram CDN → /api/media (Vercel CDN кэширует)
+    avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
     subscribersCount: c.membersCount ?? c.subscribersCount,
     isPremium: c.isPremium,
     status: c.status,
