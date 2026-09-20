@@ -28,6 +28,14 @@ import {
   startGiveawayWizard,
   tryRedeemPromoText,
 } from '@/lib/giveaway-wizard'
+import {
+  awardForwardTickets,
+  collectForwardedSource,
+  extractForwardChannel,
+  kickSourceParse,
+  FORWARD_SOURCE_CAP,
+} from '@/lib/source-profile'
+import { FORWARD_SOURCES_GOAL } from '@/lib/giveaway-tickets'
 
 export const dynamic = 'force-dynamic'
 
@@ -138,6 +146,15 @@ type TgUpdate = {
     caption_entities?: TgEntity[]
     /** Фото (мастер розыгрышей — шаг «картинка поста») */
     photo?: Array<{ file_id?: string; width?: number; height?: number }>
+    /** v5.50: источники рекомендаций — пересылка постов из любимых каналов.
+     *  forward_origin — современный формат (Bot API 7.0+), forward_from_chat —
+     *  легаси. Обрабатываются ТОЛЬКО пересылки ИЗ КАНАЛОВ (type='channel'). */
+    forward_origin?: {
+      type?: string
+      chat?: { id?: number; title?: string; username?: string }
+    }
+    forward_from_chat?: { id?: number; title?: string; username?: string }
+    forward_from?: { id?: number; is_bot?: boolean }
     successful_payment?: {
       currency?: string
       total_amount?: number
@@ -214,6 +231,111 @@ const SITE_URL = 'https://tg-swipe.vercel.app'
 const TME_APP_URL = 'https://t.me/tgswipe_bot/tgswipe'
 
 /* ------------------------------ Обработчики ------------------------------ */
+
+/**
+ * v5.50 «В ОДИН КЛИК»: юзер пересылает боту посты из своих любимых каналов —
+ * бот мгновенно считывает каналы из пересылаемых сообщений, складывает их
+ * в профиль источников и на 5-м уникальном выдаёт билет в розыгрыш.
+ * Профиль — сильнейший сигнал персональной ленты + очередь парсинга.
+ *
+ * Возвращает true, если апдейт — пересылка поста из канала (обработан,
+ * дальше не идём: текст пересланного поста — контент, а НЕ промокод/команда).
+ */
+async function handleForwardSources(
+  msg: NonNullable<NonNullable<TgUpdate['message']>>,
+  from: TgFrom,
+  chatId: number,
+): Promise<boolean> {
+  // Только приватный чат «юзер ↔ бот»: в группах бот молчит
+  if (msg.chat?.id !== from.id) return false
+  const ch = extractForwardChannel(msg)
+  if (!ch) return false // пересылка от юзера/бота — не наш сценарий
+
+  const userId = `tg_${from.id}`
+  const res = await collectForwardedSource(userId, ch)
+
+  if (res.atCap) {
+    await botSendRich(
+      chatId,
+      `📬 Профиль источников полон (${FORWARD_SOURCE_CAP} каналов). Это более чем достаточно для точных рекомендаций!`,
+    )
+    return true
+  }
+
+  // Канал записан → приоритетный парс: свежие посты любимого источника — в ленту
+  if (res.added) kickSourceParse(ch)
+
+  if (!res.added) {
+    // Дубликат: короткое подтверждение без разбора подробностей
+    await botSendRich(
+      chatId,
+      `📬 «${escapeHtml(ch.title)}» уже в твоём профиле источников — всего ${res.total}.`,
+    )
+    return true
+  }
+
+  const title = escapeHtml(ch.title)
+  if (res.crossedGoal) {
+    // Порог 5 каналов: билет во все активные розыгрыши
+    const awards = await awardForwardTickets({
+      userId,
+      tgId: from.id,
+      username: from.username,
+      firstName: from.first_name,
+    })
+    if (awards.awardedGiveaways.length > 0) {
+      await botSendRich(
+        chatId,
+        [
+          `📬 <b>Готово!</b> Пять каналов собраны — билет в розыгрыш твой 🎟`,
+          '',
+          `Розыгрыш «${escapeHtml(awards.awardedGiveaways[0])}» теперь учитывает твой шанс на победу.`,
+          '',
+          '✨ Лента уже подстроилась под твои любимые каналы — свежие посты оттуда будут появляться чаще.',
+        ].join('\n'),
+        {
+          keyboard: [[
+            { label: 'Смотреть ленту', emoji: '📖', url: TME_APP_URL, style: 'primary' },
+          ]],
+        },
+      )
+    } else {
+      await botSendRich(
+        chatId,
+        [
+          `📬 <b>Готово!</b> ${FORWARD_SOURCES_GOAL} каналов записаны в твой профиль источников.`,
+          '',
+          '✨ Лента уже подстроилась под твои любимые каналы — свежие посты оттуда будут появляться чаще.',
+          '🎟 Активного розыгрыша сейчас нет — билет начислим в следующем, как только он стартует.',
+        ].join('\n'),
+        {
+          keyboard: [[
+            { label: 'Смотреть ленту', emoji: '📖', url: TME_APP_URL, style: 'primary' },
+          ]],
+        },
+      )
+    }
+    return true
+  }
+
+  if (res.total < FORWARD_SOURCES_GOAL) {
+    const left = FORWARD_SOURCES_GOAL - res.total
+    await botSendRich(
+      chatId,
+      [
+        `📬 «${title}» — принято! <b>${res.total}/${FORWARD_SOURCES_GOAL}</b>`,
+        '',
+        `Перешли ещё посты из ${left} ${left === 1 ? 'канала' : 'каналов'}, где ты сидишь каждый день — и получишь билет в розыгрыш 🎟`,
+      ].join('\n'),
+    )
+  } else {
+    await botSendRich(
+      chatId,
+      `📬 «${title}» добавлен в профиль источников (${res.total}). Лента станет ещё точнее ✨`,
+    )
+  }
+  return true
+}
 
 /** /start login_<token> — прислать сообщение с кнопкой «Войти» */
 async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?: number) {
@@ -966,6 +1088,26 @@ export async function POST(request: Request) {
     const chatId = msg?.chat?.id
     const fromId = msg?.from?.id ?? 0
     const isBotAdmin = fromId === BOT_OWNER_TG_ID
+    // ===== v5.50: ИСТОЧНИКИ РЕКОМЕНДАЦИЙ («В один клик») =====
+    // ЛОВИМ ДО мастера/промокода: текст пересланного поста — это контент,
+    // а не команда или промокод. Пересылки юзера (не канала) проходят дальше.
+    if (
+      msg &&
+      chatId &&
+      fromId > 0 &&
+      (msg.forward_origin || msg.forward_from_chat || msg.forward_from)
+    ) {
+      const absorbed = await handleForwardSources(msg, msg.from!, chatId).catch((e) => {
+        console.error('[bot/webhook] forward-sources', e)
+        return false
+      })
+      if (absorbed) {
+        if (msg.entities?.length || msg.caption_entities?.length) {
+          void handleCustomEmojiCapture(msg).catch(() => {})
+        }
+        return NextResponse.json({ ok: true })
+      }
+    }
     if (msg?.text && chatId && /^\/newgw(@\w+)?$/i.test(msg.text)) {
       await startGiveawayWizard(chatId, isBotAdmin)
       return NextResponse.json({ ok: true })

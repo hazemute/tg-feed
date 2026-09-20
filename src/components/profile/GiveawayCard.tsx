@@ -19,7 +19,7 @@ import { haptic } from '@/lib/tg'
  */
 
 type GiveawayTaskDTO = {
-  kind: 'activity' | 'promo' | 'referral' | 'boost'
+  kind: 'activity' | 'promo' | 'referral' | 'boost' | 'forward'
   tickets: number
   title: string
   swipeGoal: number | null
@@ -27,6 +27,9 @@ type GiveawayTaskDTO = {
   boostChannel: string | null
   done: boolean
 }
+
+/** v5.50: профиль источников «В один клик» (приходит всегда, даже без розыгрыша) */
+type SourcesDTO = { count: number; goal: number; channels: string[] }
 
 type GiveawayStatus = {
   giveaway: {
@@ -39,6 +42,17 @@ type GiveawayStatus = {
   entry: { ticketsCount: number; tasksDone: Array<{ task: string; tickets: number; at: string }> } | null
   progress: Record<string, number>
   referralLink: string | null
+  sources?: SourcesDTO
+  botUsername?: string | null
+}
+
+/** Иконки заданий — зеркально с серверной TASK_ICON (giveaway-tickets.ts) */
+const TASK_ICON: Record<GiveawayTaskDTO['kind'], string> = {
+  activity: '📱',
+  promo: '🔑',
+  referral: '🤝',
+  boost: '🚀',
+  forward: '📬',
 }
 
 export function GiveawayCard() {
@@ -170,9 +184,21 @@ export function GiveawayCard() {
                   ? data.progress.activity
                   : t.kind === 'referral' && t.referralGoal
                     ? data.progress.referral
-                    : null
-              const goal = t.swipeGoal ?? t.referralGoal ?? null
+                    : t.kind === 'forward' && data.sources
+                      ? Math.min(data.sources.count, data.sources.goal)
+                      : null
+              const goal =
+                t.kind === 'forward' && data.sources
+                  ? data.sources.goal
+                  : (t.swipeGoal ?? t.referralGoal ?? null)
               const pct = progress != null && goal ? Math.min(100, Math.round((progress / goal) * 100)) : null
+              const openBot =
+                t.kind === 'forward' && !t.done && data.botUsername
+                  ? () => {
+                      haptic('light')
+                      window.open(`https://t.me/${data.botUsername}`, '_blank', 'noopener')
+                    }
+                  : undefined
               return (
                 <li key={t.kind} className="rounded-xl bg-white/70 px-3 py-2 dark:bg-white/5">
                   <div className="flex items-center gap-2">
@@ -185,7 +211,10 @@ export function GiveawayCard() {
                     >
                       {t.done ? '✓' : ''}
                     </span>
-                    <p className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-tg-text">{t.title}</p>
+                    <p className="min-w-0 flex-1 truncate text-[13.5px] font-medium text-tg-text">
+                      <span className="mr-1" aria-hidden>{TASK_ICON[t.kind]}</span>
+                      {t.title}
+                    </p>
                     <span className="shrink-0 text-[12px] font-bold text-amber-700 tabular-nums dark:text-amber-300">
                       +{t.tickets} 🎫
                     </span>
@@ -199,6 +228,15 @@ export function GiveawayCard() {
                         {Math.min(progress ?? 0, goal ?? 0)}/{goal}
                       </span>
                     </div>
+                  )}
+                  {openBot && (
+                    <button
+                      type="button"
+                      onClick={openBot}
+                      className="mt-1.5 ml-7 flex h-8 items-center gap-1.5 rounded-lg bg-amber-500/10 px-3 text-[12.5px] font-semibold text-amber-700 transition active:scale-95 dark:bg-amber-500/15 dark:text-amber-300"
+                    >
+                      📨 Открыть чат с ботом и переслать
+                    </button>
                   )}
                 </li>
               )

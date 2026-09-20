@@ -17,6 +17,9 @@ import {
   taskTitle,
 } from '@/lib/giveaway-tickets'
 import { parsePrizes } from '@/lib/giveaways'
+import { userSourcesSummary } from '@/lib/source-profile'
+import { FORWARD_SOURCES_GOAL } from '@/lib/giveaway-tickets'
+import { getBotUsername } from '@/lib/tg-bot'
 
 export const dynamic = 'force-dynamic'
 
@@ -26,7 +29,9 @@ export const dynamic = 'force-dynamic'
  * GET  /api/giveaway
  *   → активный розыгрыш (последний по endAt) + статус текущего пользователя:
  *     билеты, выполненные задания, живой прогресс (activity/referral),
- *     реферальная ссылка. {giveaway:null} — активного нет.
+ *     реферальная ссылка, профиль источников (v5.50 «В один клик» —
+ *     пересылка постов из 5 любимых каналов) и юзернейм бота для кнопки
+ *     пересылки. {giveaway:null} — активного нет (sources всё равно приходят).
  *
  * POST /api/giveaway { action }
  *   • {action:'promo', giveawayId, code} — ввести секретный промокод;
@@ -64,9 +69,25 @@ export async function GET(request: Request) {
 
     const gws = await activeGiveaways()
     const current = [...gws].sort((a, b) => b.endAt.getTime() - a.endAt.getTime())[0]
-    if (!current) return NextResponse.json({ giveaway: null })
+    if (!current) {
+      // Розыгрыша нет, но профиль источников живёт всегда — фронт показывает
+      // карточку «Перешли посты из 5 любимых каналов» без секции билетов
+      const [sources, botUsername] = await Promise.all([
+        userSourcesSummary(uid).catch(() => ({ count: 0, goal: FORWARD_SOURCES_GOAL, channels: [] })),
+        getBotUsername().catch(() => null),
+      ])
+      return NextResponse.json({ giveaway: null, sources, botUsername })
+    }
 
     const tasks = parseTasks(current.tasks)
+
+    // v5.50: задание «источники» — системное (awardTicket не требует его в
+    // конфиге), поэтому в UI показываем всегда, даже если организатор не
+    // добавлял его в настройки розыгрыша
+    const hasForwardInConfig = tasks.some((t) => t.kind === 'forward')
+    if (!hasForwardInConfig) {
+      tasks.push({ kind: 'forward', enabled: true, tickets: 1 })
+    }
     const entry = await db.giveawayEntry.findUnique({
       where: { giveawayId_userId: { giveawayId: current.id, userId: uid } },
       select: { ticketsCount: true, tasksDone: true, createdAt: true },
@@ -89,6 +110,12 @@ export async function GET(request: Request) {
 
     const tgId = Number(uid.slice(3))
     const referralLink = Number.isInteger(tgId) && tgId > 0 ? await referralLinkFor(tgId) : null
+
+    // v5.50: профиль источников «В один клик» + юзернейм бота для deep-link
+    const [sources, botUsername] = await Promise.all([
+      userSourcesSummary(uid).catch(() => ({ count: 0, goal: FORWARD_SOURCES_GOAL, channels: [] })),
+      getBotUsername().catch(() => null),
+    ])
 
     const meta = await db.giveaway.findUnique({
       where: { id: current.id },
@@ -122,6 +149,9 @@ export async function GET(request: Request) {
         : null,
       progress,
       referralLink,
+      // v5.50: механика «В один клик» — профиль источников юзера
+      sources,
+      botUsername,
     })
   } catch (e) {
     console.error('[giveaway GET]', e)

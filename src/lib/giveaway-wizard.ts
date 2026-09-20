@@ -270,6 +270,7 @@ async function ask(chatId: number, st: WizardState): Promise<void> {
             taskToggleRow(st, 'promo', '🔑 Промокод'),
             taskToggleRow(st, 'referral', '🤝 Рефералы'),
             taskToggleRow(st, 'boost', '🚀 Буст канала'),
+            taskToggleRow(st, 'forward', '📬 Посты из любимых каналов'),
             [{ label: 'Дальше →', emoji: '➡️', callback_data: 'gww:next', style: 'success' }],
           ],
         },
@@ -320,6 +321,10 @@ async function ask(chatId: number, st: WizardState): Promise<void> {
             { label: '10', callback_data: 'gww:rg:10' },
           ]],
         })
+      } else if (kind === 'forward') {
+        // У задания «источники» нет параметров (порог 5 каналов фиксирован) —
+        // сразу к следующему заданию
+        await finishTaskParam(chatId, st)
       } else {
         await botSendRich(chatId, '🚀 За буст какого канала даём билет? Пришли @юзернейм или выбери наш:', {
           keyboard: [[{ label: `@${DEFAULT_BOOST_CHANNEL}`, callback_data: 'gww:bc:def', style: 'primary' }]],
@@ -396,6 +401,10 @@ function taskOf(st: WizardState, kind: GiveawayTaskKind): GiveawayTask {
       return { kind, enabled: true, tickets: 1, referralGoal: DEFAULT_REFERRAL_GOAL }
     case 'boost':
       return { kind, enabled: true, tickets: 1, boostChannel: DEFAULT_BOOST_CHANNEL }
+    case 'forward':
+      // v5.50: системное задание «источники рекомендаций» — порог фиксирован (5
+      // каналов), организатор настраивает только количество билетов
+      return { kind, enabled: true, tickets: 1 }
   }
 }
 
@@ -808,7 +817,7 @@ export async function handleWizardCallback(
     case 't': {
       // toggle задания
       const kind = (arg1 ?? '') as GiveawayTaskKind
-      if (!['activity', 'promo', 'referral', 'boost'].includes(kind)) {
+      if (!['activity', 'promo', 'referral', 'boost', 'forward'].includes(kind)) {
         await reply('Неизвестное задание', true)
         return true
       }
@@ -933,6 +942,11 @@ async function acceptTaskTickets(
 ): Promise<void> {
   const t = st.tasks.find((x) => x.kind === kind)
   if (t) t.tickets = n
+  if (kind === 'forward') {
+    // у задания «источники» нет параметров — сразу дальше по очереди
+    await finishTaskParam(chatId, st, reply)
+    return
+  }
   st.step = 'task_param'
   await saveWizard(chatId, st)
   if (reply) await reply()

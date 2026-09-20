@@ -151,6 +151,15 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "AdCampaign_ownerId_idx" ON "AdCampaign" ("ownerId")`,
     `CREATE INDEX IF NOT EXISTS "Post_pending_media_idx" ON "Post" ("publishedAt" DESC) WHERE "embedTried" = false AND "mediaUrl" IS NULL`,
   ],
+  'v5.50': [
+    // v5.50: ИСТОЧНИКИ РЕКОМЕНДАЦИЙ («В один клик») — юзер пересылает боту посты
+    // из 5 любимых каналов, бот извлекает каналы из forward_origin и складывает
+    // профиль. Профиль = сильнейший сигнал персональной ленты + очередь парсинга.
+    `CREATE TABLE IF NOT EXISTS "UserSource" ("id" text PRIMARY KEY, "userId" text NOT NULL, "tgId" text NOT NULL, "title" text NOT NULL DEFAULT '', "username" text, "channelId" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "UserSource_userId_tgId_key" ON "UserSource" ("userId", "tgId")`,
+    `CREATE INDEX IF NOT EXISTS "UserSource_userId_createdAt_idx" ON "UserSource" ("userId", "createdAt" DESC)`,
+    `CREATE INDEX IF NOT EXISTS "UserSource_channelId_idx" ON "UserSource" ("channelId")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -184,6 +193,7 @@ const CRITICAL: Array<[string, string | null]> = [
   ['GiveawayReferral', null],
   ['Giveaway', 'tasks'],
   ['GiveawayEntry', 'ticketsCount'],
+  ['UserSource', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }

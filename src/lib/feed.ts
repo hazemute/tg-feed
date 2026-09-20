@@ -318,8 +318,9 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   let bookmarks: Array<{ createdAt: Date; post: { channelId: string; channel: { categoryId: string | null } } }>
   let subs: Array<{ channelId: string; notInterestedAt: Date | null }>
   let mutes: Array<{ channelId: string }>
+  let sources: Array<{ channelId: string | null; username: string | null; tgId: string }>
   try {
-    ;[views, likes, bookmarks, subs, mutes] = await db.$transaction([
+    ;[views, likes, bookmarks, subs, mutes, sources] = await db.$transaction([
       db.postView.findMany({
         where: { userId },
         select: {
@@ -359,6 +360,15 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
         where: { userId },
         select: { channelId: true },
       }),
+      // v5.50: ИСТОЧНИКИ РЕКОМЕНДАЦИЙ («В один клик») — каналы, которые юзер
+      // переслал боту как «читаю каждый день». Сильнейший декларативный сигнал:
+      // важнее просмотров (шум) и лайков (импульс) — это осознанный список.
+      db.userSource.findMany({
+        where: { userId },
+        select: { channelId: true, username: true, tgId: true },
+        orderBy: { createdAt: 'desc' },
+        take: 80,
+      }),
     ])
   } catch {
     /*
@@ -386,6 +396,80 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     if (ch) affinity.channels.set(ch, (affinity.channels.get(ch) ?? 0) + w)
     const cat = row.post?.channel?.categoryId
     if (cat) affinity.categories.set(cat, (affinity.categories.get(cat) ?? 0) + w)
+  }
+
+  /* ---------------- v5.50: источник = «читаю каждый день» ----------------
+   * Вес одного источника равен ~4 лайкам: юзер РУКАМИ подтвердил ежедневное
+   * чтение. Ищем каналы каталога по связке channelId (ставится ботом при
+   * разборе форварда); для старых записей без связки — один ремонтный
+   * запрос по username/tgId с ленивым проставлением channelId. */
+  const SOURCE_AFFINITY = 12
+  const SOURCE_CATEGORY_WEIGHT = 6
+  const resolved = sources
+    .map((s) => s.channelId)
+    .filter((id): id is string => !!id)
+  const unresolved = sources.filter((s) => !s.channelId && (s.username || s.tgId))
+  if (unresolved.length > 0) {
+    try {
+      const candidates = await db.channel.findMany({
+        where: {
+          OR: [
+            { username: { in: unresolved.map((u) => u.username!).filter(Boolean) } },
+            { tgId: { in: unresolved.map((u) => u.tgId) } },
+          ],
+        },
+        select: { id: true, categoryId: true, username: true, tgId: true },
+        take: 80,
+      })
+      const byKey = new Map<string, (typeof candidates)[number]>()
+      for (const c of candidates) {
+        if (c.username) byKey.set(`@${c.username.toLowerCase()}`, c)
+        byKey.set(`#${c.tgId}`, c)
+      }
+      for (const u of unresolved) {
+        const hit = (u.username && byKey.get(`@${u.username.toLowerCase()}`)) || byKey.get(`#${u.tgId}`)
+        if (hit) {
+          resolved.push(hit.id)
+          // ленивый ремонт связки: следующий вызов будет уже без поиска
+          void db.userSource
+            .updateMany({
+              where: { userId, tgId: u.tgId, channelId: null },
+              data: { channelId: hit.id },
+            })
+            .catch(() => {})
+          if (hit.categoryId) {
+            affinity.categories.set(
+              hit.categoryId,
+              (affinity.categories.get(hit.categoryId) ?? 0) + SOURCE_CATEGORY_WEIGHT,
+            )
+          }
+        }
+      }
+    } catch {
+      // ремонт не удался — работаем по тому, что связано напрямую
+    }
+  }
+  for (const cid of resolved) {
+    affinity.channels.set(cid, (affinity.channels.get(cid) ?? 0) + SOURCE_AFFINITY)
+  }
+  // Категории связанных источников — тоже сигнал (для НЕ известных нам каналов юзера)
+  if (resolved.length > 0) {
+    try {
+      const srcCats = await db.channel.findMany({
+        where: { id: { in: resolved.slice(0, 60) } },
+        select: { categoryId: true },
+      })
+      for (const c of srcCats) {
+        if (c.categoryId) {
+          affinity.categories.set(
+            c.categoryId,
+            (affinity.categories.get(c.categoryId) ?? 0) + SOURCE_CATEGORY_WEIGHT,
+          )
+        }
+      }
+    } catch {
+      // без категорий источников лента всё равно работает по каналам
+    }
   }
   /* Рецент-веса (v5.27 — «алгоритмы не правильные»): сигнал интереса гаснет со
    * временем (полураспад ~3 недели, exp(-возраст/21д)). Вчерашний просмотр
@@ -427,4 +511,12 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   }
   affinityCache.set(userId, { data, exp: Date.now() + AFFINITY_TTL_MS })
   return data
+}
+
+/**
+ * Сброс персональных сигналов юзера (v5.50): бот добавил источник — чтобы
+ * лента перестроилась НЕ дожидаясь TTL кэша (15с), вебхук дёргает это сразу.
+ */
+export function invalidatePersonalSignals(userId: string): void {
+  affinityCache.delete(userId)
 }

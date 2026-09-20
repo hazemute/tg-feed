@@ -707,3 +707,22 @@ model GiveawayReferral {
   @@index([referrerUserId, activatedAt])
   @@index([invitedTgId, activatedAt]) // v5.48: activateReferrals ищет неактивированные приглашения на КАЖДЫЙ вход
 }
+
+// Источники рекомендаций (v5.50): механика «В один клик» — юзер пересылает боту
+// по одному свежему посту из 5 любимых каналов, бот извлекает каналы из
+// forward_origin и складывает их в профиль юзера. Профиль = сильнейший сигнал
+// персональной ленты (аффинити канала/категории) и очередь парсинга: канал из
+// каталога приоритетно обновляется, новый — создаётся на модерации.
+model UserSource {
+  id        String   @id @default(cuid())
+  userId    String   // User.id ("tg_<uid>")
+  tgId      String   // Telegram chat id канала строкой (forward_origin.chat.id)
+  title     String   @default("") // название канала на момент пересылки
+  username  String?  // без @ — публичный канал (приватные парсить нечем)
+  channelId String?  // связка с каталогом: Channel найден или создан при разборе
+  createdAt DateTime @default(now())
+
+  @@unique([userId, tgId])
+  @@index([userId, createdAt])
+  @@index([channelId])
+}

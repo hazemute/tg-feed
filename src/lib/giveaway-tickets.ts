@@ -26,7 +26,7 @@ import { getBotUsername } from '@/lib/tg-bot'
  * двойной клик/гонка воркеров не даст второй билет за то же задание.
  */
 
-export type GiveawayTaskKind = 'activity' | 'promo' | 'referral' | 'boost'
+export type GiveawayTaskKind = 'activity' | 'promo' | 'referral' | 'boost' | 'forward'
 export type AwardTask = GiveawayTaskKind | 'manual'
 
 export type GiveawayTask = {
@@ -60,7 +60,7 @@ export function parseTasks(json: string | null | undefined): GiveawayTask[] {
       (t): t is GiveawayTask =>
         !!t && typeof t === 'object' &&
         typeof (t as GiveawayTask).kind === 'string' &&
-        ['activity', 'promo', 'referral', 'boost'].includes((t as GiveawayTask).kind),
+        ['activity', 'promo', 'referral', 'boost', 'forward'].includes((t as GiveawayTask).kind),
     )
   } catch {
     return []
@@ -111,8 +111,13 @@ export function taskTitle(t: GiveawayTask): string {
       return `Пригласи ${t.referralGoal ?? DEFAULT_REFERRAL_GOAL} ${plural(t.referralGoal ?? DEFAULT_REFERRAL_GOAL, 'друга', 'друзей', 'друзей')} по своей ссылке`
     case 'boost':
       return `Отдай буст каналу @${t.boostChannel || DEFAULT_BOOST_CHANNEL}`
+    case 'forward':
+      return `Перешли боту по одному посту из ${FORWARD_SOURCES_GOAL} любимых каналов`
   }
 }
+
+/** Сколько уникальных каналов нужно переслать боту для билета (механика «В один клик») */
+export const FORWARD_SOURCES_GOAL = 5
 
 export function plural(n: number, one: string, few: string, many: string): string {
   const m10 = n % 10
@@ -127,6 +132,7 @@ const TASK_ICON: Record<GiveawayTaskKind, string> = {
   promo: '🔑',
   referral: '🤝',
   boost: '🚀',
+  forward: '📬',
 }
 
 /* ------------------------------ активные ------------------------------ */
@@ -204,12 +210,19 @@ export async function awardTicket(opts: {
     return { ok: false, awarded: false, reason: 'ended' }
   }
 
-  // Количество билетов: из конфига задания (для manual — как передали)
+  // Количество билетов: из конфига задания (для manual — как передали).
+  // 'forward' — СИСТЕМНОЕ задание (механика «В один клик», v5.50): работает
+  // даже если организатор не добавил его в конфиг розыгрыша (профиль источников
+  // улучшает рекомендации всему сервису — награда не зависит от настроек),
+  // но если в конфиге задано — берём оттуда.
   let tickets = Math.max(1, Math.round(opts.tickets ?? 1))
-  if (opts.task !== 'manual') {
+  if (opts.task !== 'manual' && opts.task !== 'forward') {
     const cfg = parseTasks(g.tasks).find((t) => t.kind === opts.task && t.enabled)
     if (!cfg) return { ok: false, awarded: false, reason: 'task_disabled' }
     tickets = Math.max(1, Math.round(cfg.tickets || 1))
+  } else if (opts.task === 'forward') {
+    const cfg = parseTasks(g.tasks).find((t) => t.kind === 'forward' && t.enabled)
+    if (cfg) tickets = Math.max(1, Math.round(cfg.tickets || 1))
   }
 
   // Участник: создаём при отсутствии (гонка даблклика гасится unique)
@@ -283,14 +296,26 @@ function notifyTicket(
       const title =
         task === 'manual'
           ? `🎁 Организатор начислил ${tickets} ${ticketWord}!`
-          : `🎫 +${tickets} ${ticketWord} в розыгрыше!`
+          : task === 'forward'
+            ? `📬 Каналы собраны — +${tickets} ${ticketWord}!`
+            : `🎫 +${tickets} ${ticketWord} в розыгрыше!`
       const body =
         task === 'manual'
           ? `Розыгрыш «${giveawayTitle}»: билеты начислены организатором.`
-          : `Розыгрыш «${giveawayTitle}»: задание выполнено. Чем больше билетов — тем выше шанс победы!`
-      await db.notification.create({
-        data: { userId, type: 'system', title, body: body.slice(0, 200) },
-      })
+          : task === 'forward'
+            ? `Розыгрыш «${giveawayTitle}»: любимые каналы в профиле — лента станет точнее. Чем больше билетов — тем выше шанс победы!`
+            : `Розыгрыш «${giveawayTitle}»: задание выполнено. Чем больше билетов — тем выше шанс победы!`
+      await db.notification
+        .create({
+          data: { userId, type: 'system', title, body: body.slice(0, 200) },
+        })
+        .catch((e: { code?: string }) => {
+          // v5.50: билет может быть начислен юзеру, который ещё НЕ открывал
+          // Mini App (пересылки/рефералы из бота) — строки User нет, FK
+          // Notification.userId роняет P2003. Инбокс-запись пропускаем:
+          // ЛС бота и SSE всё равно уходят ниже. Прочие ошибки — логируем.
+          if (e?.code !== 'P2003') console.error('[giveaway-tickets] notify inbox', e)
+        })
       emitAppEvent('notif:new', { userId })
       sendBotNotification({
         userId,
