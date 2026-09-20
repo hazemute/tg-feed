@@ -321,12 +321,17 @@ export function AiChat({
       setStatus(null)
       setStreamText(null)
 
+      // v5.55: копим дельты в локальную переменную — если соединение оборвётся
+      // до done/error, частичный ответ сохраняется в историю, а не выбрасывается
+      let acc = ''
+      let settled = false
       const onEvent = (type: string, data: Record<string, unknown>) => {
         if (type === 'status') {
           setStatus((data.label as string) ?? null)
         } else if (type === 'delta') {
           // v5.40: realtime-стриминг токенов — печатаем ответ по мере генерации
           setStatus(null)
+          acc += (data.text as string) ?? ''
           setStreamText((prev) => (prev ?? '') + ((data.text as string) ?? ''))
         } else if (type === 'paid') {
           // v5.39: тарификация по токенам — сервер вернул фактическую списанную сумму
@@ -338,6 +343,7 @@ export function AiChat({
             useApp.getState().patchBalance({ swipes: Math.max(0, (cur?.swipes ?? 0) - sw) })
           }
         } else if (type === 'done') {
+          settled = true
           const stepsRaw = (data.steps as Array<{ label: string; ok: boolean }> | undefined) ?? []
           const botMsg: AiMsg = {
             id: uid(),
@@ -358,6 +364,7 @@ export function AiChat({
           setStreamText(null)
           haptic(botMsg.text ? 'success' : 'error')
         } else if (type === 'error') {
+          settled = true
           const errMsg: AiMsg = {
             id: uid(),
             role: 'assistant',
@@ -435,7 +442,16 @@ export function AiChat({
             onEvent(type, payload)
           }
         }
-        // Поток закончился без done/error — снять busy
+        // v5.55: поток кончился без done/error — соединение оборвалось.
+        // Раньше частичный ответ молча выбрасывался (обрез чата); теперь
+        // сохраняем накопленное с пометкой failed + тост вместо тишины
+        if (!settled && acc.trim().length > 0) {
+          persist([
+            ...history,
+            { id: uid(), role: 'assistant', text: acc, at: new Date().toISOString(), failed: true },
+          ])
+          toast.error('Ответ получен не полностью — соединение оборвалось')
+        }
         setBusy(false)
         setStatus(null)
         setStreamText(null)
