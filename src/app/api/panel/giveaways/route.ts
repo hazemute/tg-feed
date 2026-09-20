@@ -18,6 +18,7 @@ import {
   type Prize,
 } from '@/lib/giveaways'
 import { parseTasks, parseTasksDone } from '@/lib/giveaway-tickets'
+import { invalidateAiKnowledge } from '@/lib/ai-knowledge'
 import { stripTgEmoji } from '@/lib/tg-emoji'
 
 export const dynamic = 'force-dynamic'
@@ -201,6 +202,7 @@ export async function POST(request: Request) {
           data: { ...data, status: 'draft' },
         })
         await logAdmin('ops', 'giveaway:create', { id: created.id, title: d.title }).catch(() => {})
+        invalidateAiKnowledge()
         return NextResponse.json({ ok: true, id: created.id })
       }
       const target = await db.giveaway.findUnique({ where: { id: d.id }, select: { status: true } })
@@ -210,6 +212,7 @@ export async function POST(request: Request) {
       }
       await db.giveaway.update({ where: { id: d.id }, data })
       await logAdmin('ops', 'giveaway:update', { id: d.id, title: d.title }).catch(() => {})
+      invalidateAiKnowledge()
       return NextResponse.json({ ok: true, id: d.id })
     }
 
@@ -243,6 +246,7 @@ export async function POST(request: Request) {
         data: { status: 'active', chatId: r.chatId, messageId: r.messageId },
       })
       await logAdmin('ops', 'giveaway:publish', { id: gw.id, messageId: r.messageId }).catch(() => {})
+      invalidateAiKnowledge()
       return NextResponse.json({ ok: true, published: true, messageId: r.messageId })
     }
 
@@ -252,6 +256,7 @@ export async function POST(request: Request) {
       if (gw.status === 'active') return err('Сначала отмените активный розыгрыш')
       await db.giveaway.delete({ where: { id: d.id } })
       await logAdmin('ops', 'giveaway:delete', { id: d.id }).catch(() => {})
+      invalidateAiKnowledge()
       return NextResponse.json({ ok: true })
     }
 
@@ -261,6 +266,7 @@ export async function POST(request: Request) {
       if (gw.status === 'finished') return err('Розыгрыш уже завершён')
       await db.giveaway.update({ where: { id: d.id }, data: { status: 'cancelled' } })
       await logAdmin('ops', 'giveaway:cancel', { id: d.id }).catch(() => {})
+      invalidateAiKnowledge()
       return NextResponse.json({ ok: true })
     }
 
@@ -271,6 +277,7 @@ export async function POST(request: Request) {
       const r = await finalizeGiveaway(d.id)
       if (!r.ok) return err(r.error ?? 'Не удалось завершить')
       await logAdmin('ops', 'giveaway:finalize', { id: d.id, winners: r.winners }).catch(() => {})
+      invalidateAiKnowledge()
       return NextResponse.json({ ok: true, winners: r.winners })
     }
 

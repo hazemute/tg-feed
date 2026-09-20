@@ -1053,6 +1053,9 @@ async function publishWizardGiveaway(st: WizardState): Promise<PublishResult> {
     })
     const { invalidateActiveCache } = await import('@/lib/giveaway-tickets')
     invalidateActiveCache()
+    // v5.47: база знаний ИИ должна сразу узнать о новом розыгрыше
+    const { invalidateAiKnowledge } = await import('@/lib/ai-knowledge')
+    invalidateAiKnowledge()
     return { ok: true }
   }
   // публикация не прошла — планировщик ретраит (checkDueGiveaways), юзеру warn

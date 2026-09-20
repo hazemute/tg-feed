@@ -19,6 +19,7 @@ import { botPublishToChannel } from '@/lib/tg-bot'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { stripMarkdown } from '@/lib/markdown'
 import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx, channelStatsBlock } from '@/lib/ai-tools'
+import { knowledgeBlock } from '@/lib/ai-knowledge'
 import { sseStream } from '@/lib/sse'
 
 export const dynamic = 'force-dynamic'
@@ -227,7 +228,7 @@ export async function POST(request: Request) {
       registerStyleExecutor()
       // Категория канала + юзер + полный снапшот статистики — параллельно (v5.34:
       // ассистент знает ВЕСЬ канал до первого вопроса — цифры, настройки, топ постов)
-      const [channelFull, user, statsBlock, weeklyUsed] = await Promise.all([
+      const [channelFull, user, statsBlock, weeklyUsed, knowledge] = await Promise.all([
         channel.categoryId
           ? db.channel.findUnique({
               where: { id: channel.id },
@@ -248,6 +249,9 @@ export async function POST(request: Request) {
         db.post.count({
           where: { channelId: channel.id, promotedAt: { gte: new Date(Date.now() - 7 * 24 * 3600 * 1000) } },
         }),
+        // v5.47: живая база знаний сервиса — ассистент знает ВСЁ приложение,
+        // а не только свой канал (тарифы, свайпы, розыгрыши, лимиты)
+        knowledgeBlock('full').catch(() => undefined),
       ])
       const userName =
         [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
@@ -266,6 +270,7 @@ export async function POST(request: Request) {
         cta: { label: channelFull?.ctaLabel ?? null, url: channelFull?.ctaUrl ?? null },
         teaserMode: channelFull?.teaserMode ?? 'cut',
         createdAt: channelFull?.createdAt ?? null,
+        knowledge,
       })
 
       const history: ChatMsg[] = [

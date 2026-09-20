@@ -22,6 +22,7 @@ import { aiPremiumEmojiText } from '@/lib/ai-emoji'
 import { aiSearchAllowance } from '@/lib/tiers'
 import { POST_LIST_SELECT, postDTOFromRow } from '@/lib/dto'
 import { schemasFor, toolBy, type ToolExecResult, searchSystemPrompt, type ToolCtx } from '@/lib/ai-tools'
+import { knowledgeBlock } from '@/lib/ai-knowledge'
 import { sseStream } from '@/lib/sse'
 
 export const dynamic = 'force-dynamic'
@@ -228,7 +229,10 @@ export async function POST(request: Request) {
         [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
         (user?.username ? `@${user.username}` : 'читатель')
 
-      const sys = searchSystemPrompt({ userName, tier: allowance.tier })
+      // v5.47: живая база знаний сервиса (тарифы/курс/розыгрыши/статистика)
+      // — поиск отвечает и на вопросы о самом Tg Swipe
+      const knowledge = await knowledgeBlock('compact').catch(() => undefined)
+      const sys = searchSystemPrompt({ userName, tier: allowance.tier, knowledge })
       const history: ChatMsg[] = [
         { role: 'system', content: sys },
         ...d.messages.map((m) => ({ role: m.role, content: m.content }) as ChatMsg),

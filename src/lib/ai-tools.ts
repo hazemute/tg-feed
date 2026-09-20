@@ -1,7 +1,9 @@
 import { db } from '@/lib/db'
 import { stripMarkdown } from '@/lib/markdown'
 import { looksLikeGarbage } from '@/lib/text-clean'
+import { getNsfwChannelIds } from '@/lib/moderation'
 import type { ToolSchema } from '@/lib/openrouter'
+import { getAiKnowledge } from '@/lib/ai-knowledge'
 
 /**
  * ИНСТРУМЕНТЫ ИИ (v5.21): нейросеть сама решает, когда и какой инструмент
@@ -435,8 +437,79 @@ const analyzeStyleTool: ToolDef = {
 
 /* ============================ реестры ============================ */
 
-const SEARCH_TOOLS: ToolDef[] = [getTrending, searchPosts, readPost]
-const ASSISTANT_TOOLS: ToolDef[] = [getTrending, getChannelStats, createPostDraft, generateImage, publishPost, analyzeStyleTool]
+/** Живые факты сервиса из базы знаний (кэш 45с — вызов почти бесплатный) */
+const getServiceFacts: ToolDef = {
+  name: 'get_service_facts',
+  label: 'Проверяю факты о сервисе…',
+  description:
+    'Актуальные факты о сервисе Tg Swipe: сколько активных каналов/постов за 24ч/пользователей, ' +
+    'активные розыгрыши (призы, дедлайн, участники), версия приложения. ' +
+    'Используй для вопросов «сколько у вас…», «какие сейчас розыгрыши», «что за сервис». ' +
+    'Основные факты уже есть в системном промпте — вызывай, когда нужен САМЫЙ свежий срез.',
+  parameters: { type: 'object', properties: {} },
+  exec: async () => {
+    const kb = await getAiKnowledge().catch(() => null)
+    if (!kb) return { ok: false, data: 'Факты сервиса временно недоступны.' }
+    return { ok: true, data: kb.live || 'Статистика пуста.' }
+  },
+}
+
+/** Поиск по каталогу каналов (не по постам!) */
+const searchChannels: ToolDef = {
+  name: 'search_channels',
+  label: 'Ищу по каналам…',
+  description:
+    'Поиск по КАТАЛОГУ каналов ленты (не по постам): название, @юзернейм, описание. ' +
+    'Возвращает до 8 каналов: название, @username, категория, подписчики в приложении, описание. ' +
+    'Используй, когда пользователь ищет каналы по теме («найди каналы про кино»), а не конкретный пост.',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Поисковая фраза: ключевые слова (2–4).' },
+    },
+    required: ['query'],
+  },
+  exec: async (args) => {
+    const q = str(args.query, 120)
+    if (!q) return { ok: false, data: 'Ошибка: пустой запрос.' }
+    const words = q.toLowerCase().split(/\s+/).filter((w) => w.length >= 3).slice(0, 4)
+    if (words.length === 0) return { ok: true, data: 'Слишком короткий запрос — уточни ключевые слова.' }
+    const rows = await db.channel.findMany({
+      where: { status: 'active', id: { notIn: await getNsfwChannelIds() } },
+      orderBy: { subscribersCount: 'desc' },
+      take: 500,
+      select: {
+        title: true,
+        username: true,
+        description: true,
+        subscribersCount: true,
+        category: { select: { title: true } },
+      },
+    })
+    const hits = rows.filter((c) => {
+      const hay = `${c.title} ${c.username} ${c.description ?? ''} ${c.category?.title ?? ''}`.toLowerCase()
+      return words.every((w) => hay.includes(w))
+    })
+    const partial = hits.length === 0
+      ? rows.filter((c) => {
+          const hay = `${c.title} ${c.username} ${c.description ?? ''} ${c.category?.title ?? ''}`.toLowerCase()
+          return words.some((w) => hay.includes(w))
+        })
+      : []
+    const picked = (hits.length > 0 ? hits : partial).slice(0, 8)
+    if (picked.length === 0) return { ok: true, data: 'Каналов по этой теме не нашлось. Попробуй другие слова.' }
+    const data = picked
+      .map(
+        (c, i) =>
+          `${i + 1}. ${c.title} (@${c.username})${c.category ? `, ${c.category.title}` : ''}, ${c.subscribersCount} подписчиков — ${(c.description ?? '').replace(/\s+/g, ' ').slice(0, 140) || 'без описания'}`,
+      )
+      .join('\n')
+    return { ok: true, data }
+  },
+}
+
+const SEARCH_TOOLS: ToolDef[] = [getTrending, searchPosts, readPost, searchChannels, getServiceFacts]
+const ASSISTANT_TOOLS: ToolDef[] = [getTrending, getChannelStats, createPostDraft, generateImage, publishPost, analyzeStyleTool, getServiceFacts]
 
 export function toolsFor(kind: ToolCtx['kind']): ToolDef[] {
   return kind === 'assistant' ? ASSISTANT_TOOLS : SEARCH_TOOLS
@@ -461,20 +534,25 @@ const WEEKDAYS_RU = ['воскресенье', 'понедельник', 'вто
 export function searchSystemPrompt(ctx: {
   userName: string
   tier: string
+  /** Живые факты сервиса (v5.47): тарифы, курс, розыгрыши, статистика */
+  knowledge?: string
 }): string {
   const now = new Date()
   return [
     'Ты — Snap Search — умный поиск внутри Telegram Mini App «Tg Swipe» — умная лента Telegram-каналов.',
-    'Ты помогаешь читателю находить посты и понимать, что происходит в ленте.',
+    'Ты помогаешь читателю находить посты и каналы, понимать, что происходит в ленте, и отвечать на вопросы о сервисе.',
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}), ${now.toISOString().slice(11, 16)} UTC. Пользователь: ${ctx.userName}, тариф: ${ctx.tier}.`,
+    ctx.knowledge ?? '',
     '',
     'КАК РАБОТАТЬ:',
     '1. Для ЛЮБОГО вопроса о содержании постов сначала вызывай search_posts (вопрос → ключевые слова). Затем при необходимости read_post для деталей.',
-    '2. Отвечай ТОЛЬКО по найденным постам — не выдумывай факты. Если постов нет — честно скажи и предложи другую формулировку.',
-    '3. Формат ответа (как в ChatGPT): markdown, 2-8 строк по делу — заголовки ### только при уместности, **жирный** для ключевых мыслей, списки «- », при сравнениях — таблицы. В конце перечисли источники строкой «Источники: @username, @username».',
-    '4. Общие вопросы («как дела», «что ты умеешь») отвечай без инструментов, коротко и дружелюбно.',
-    '5. Язык ответа = язык вопроса (по умолчанию русский).',
-  ].join('\n')
+    '2. Поиск КАНАЛОВ по теме («найди каналы про…», «какие есть каналы о…») → search_channels.',
+    '3. Вопросы о САМОМ СЕРВИСЕ (тарифы, свайпы, розыгрыши, «сколько у вас каналов») → отвечай из фактов о сервисе в системном промпте; нужен свежий срез → get_service_facts.',
+    '4. Отвечай ТОЛЬКО по найденным постам/фактам — не выдумывай. Если постов нет — честно скажи и предложи другую формулировку.',
+    '5. Формат ответа (как в ChatGPT): markdown, 2-8 строк по делу — заголовки ### только при уместности, **жирный** для ключевых мыслей, списки «- », при сравнениях — таблицы. В конце перечисли источники строкой «Источники: @username, @username» (для вопросов о сервисе источники не нужны).',
+    '6. Общие вопросы («как дела», «что ты умеешь») отвечай без инструментов, коротко и дружелюбно.',
+    '7. Язык ответа = язык вопроса (по умолчанию русский).',
+  ].filter(Boolean).join('\n')
 }
 
 export function assistantSystemPrompt(ctx: {
@@ -492,6 +570,8 @@ export function assistantSystemPrompt(ctx: {
   teaserMode: string
   /** Возраст канала в приложении */
   createdAt: Date | null
+  /** Живые факты сервиса (v5.47): тарифы, курс, розыгрыши — ассистент знает весь сервис */
+  knowledge?: string
 }): string {
   const now = new Date()
   const age = ctx.createdAt
@@ -510,6 +590,7 @@ export function assistantSystemPrompt(ctx: {
       ? `Стиль автора (проанализирован): тон — ${ctx.style.tone}; темы — ${ctx.style.topics}; манера — ${ctx.style.style}.`
       : 'Стиль автора ещё не проанализирован — при необходимости вызови analyze_channel_style.',
     `Продвижения в ленте на этой неделе: ${ctx.weeklyPromo.used}/${ctx.weeklyPromo.limit}.`,
+    ctx.knowledge ?? '',
     '',
     ctx.statsBlock
       ? `=== ДАННЫЕ КАНАЛА (уже собраны, вызывать get_channel_stats для базовых цифр НЕ нужно) ===\n${ctx.statsBlock}\n=== конец данных канала ===`
@@ -521,7 +602,8 @@ export function assistantSystemPrompt(ctx: {
     '3. Явная просьба «опубликуй» → если текст ещё не показан, покажи его в ответе и вызови publish_post.',
     '4. Вопросы про цифры → отвечай ИЗ данных канала выше; нужен самый свежий срез или топ постов → get_channel_stats; «что сейчас в тренде» → get_trending.',
     '5. Дай совет по каналу, если автор просит «что улучшить» — опирайся на реальные цифры (вовлечённость, динамика 7 дней, топ посты).',
-    '6. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
-    '7. Формат ответов КАК В CHATGPT: markdown с заголовками ##/### при уместности, **жирный**, списки «- », нумерованные шаги, таблицы для сравнений, ```блоки кода``` для кода. Уместно используй эмодзи (🎉🔥✨⚡💡) — они отображаются премиум-анимациями. Без выдуманных фактов и цифр.',
+    '6. Вопросы о СЕРВИСЕ (тарифы, свайпы, розыгрыши, лимиты, возможности приложения) → отвечай из базы знаний в системном промпте; самый свежий срез → get_service_facts.',
+    '7. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
+    '8. Формат ответов КАК В CHATGPT: markdown с заголовками ##/### при уместности, **жирный**, списки «- », нумерованные шаги, таблицы для сравнений, ```блоки кода``` для кода. Уместно используй эмодзи (🎉🔥✨⚡💡) — они отображаются премиум-анимациями. Без выдуманных фактов и цифр.',
   ].join('\n')
 }
