@@ -14,6 +14,24 @@
 
 const GTX_URL = 'https://translate.googleapis.com/translate_a/single'
 
+/* Негативный кэш (v5.56): Google блокирует датацентровые IP (429 «Sorry…»).
+ * Пока gtx мёртв — НЕ дёргаем его 10 минут: каждый холодный перевод раньше
+ * платил лишние сотни мс (а при таймаутах — секунды) на заведомо отказанный
+ * запрос перед LLM-фолбэком. */
+const GTX_FAIL_MS = 10 * 60_000
+
+function gtxFailStore(): { __gtxFailUntil?: number } {
+  return globalThis as unknown as { __gtxFailUntil?: number }
+}
+
+function gtxRecentlyFailed(): boolean {
+  return Date.now() < (gtxFailStore().__gtxFailUntil ?? 0)
+}
+
+function markGtxFail(): void {
+  gtxFailStore().__gtxFailUntil = Date.now() + GTX_FAIL_MS
+}
+
 /** Один кусок → перевод. null при любой ошибке (тихо, вызывающий уходит в фолбэк) */
 async function gtxChunk(text: string, lang: string, signalMs: number): Promise<string | null> {
   try {
@@ -35,7 +53,10 @@ async function gtxChunk(text: string, lang: string, signalMs: number): Promise<s
       signal: AbortSignal.timeout(signalMs),
       cache: 'no-store',
     })
-    if (!res.ok) return null
+    if (!res.ok) {
+      if (res.status === 429 || res.status === 403) markGtxFail() // блокировка датацентрового IP
+      return null
+    }
     const data = (await res.json()) as unknown
     // Форма ответа: [ [ [перевод, оригинал, ...], ... ], ... ]
     if (!Array.isArray(data) || !Array.isArray(data[0])) return null
@@ -79,13 +100,18 @@ function chunkText(text: string, maxLen: number): string[] {
   return chunks
 }
 
-/** Перевод всего текста через gtx. null — не получилось (вызывающий фолбэчится на LLM) */
+/** Перевод всего текста через gtx. null — не получилось (вызывающий фолбэчится на LLM).
+ *  v5.56: при недавнем отказе (429/сеть) сразу null — мёртвый провайдер не тормозит. */
 export async function gtxTranslate(text: string, lang: string): Promise<string | null> {
+  if (gtxRecentlyFailed()) return null
   const chunks = chunkText(text, 1400)
   const parts: string[] = []
   for (const chunk of chunks) {
-    const out = await gtxChunk(chunk, lang, 9000)
-    if (out === null) return null
+    const out = await gtxChunk(chunk, lang, 6_000)
+    if (out === null) {
+      markGtxFail()
+      return null
+    }
     parts.push(out)
   }
   return parts.join(' ').replace(/\s+\n/g, '\n').trim() || null

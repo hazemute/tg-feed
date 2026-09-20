@@ -123,12 +123,15 @@ export function toChannelDTO(
     // течь в 2 строки (line-clamp), а не «в столб»
     description: c.description?.replace(/\s+/g, ' ').trim() ?? null,
     avatarColor: c.avatarColor,
-    // Аватарка: постоянная ссылка из Storage (парсер, og:image) → прокси Bot API
+    // Аватарка: прямая ссылка Telegram CDN (парсер, og:image, v5.56) → прокси Bot API
     // (file_id → getFile) → null (инициалы).
-    // ЭКОНОМИКА (v5.33): Storage-ссылка заворачивается в /api/media — Vercel CDN
-    // кэширует её на 30 дней, Supabase больше не отдаёт байты каждому браузеру.
+    // ОБА ПУТЬ идут через /api/media|/api/avatar — наш домен, CDN-кэш 30 дней.
+    // ЛЕГАСИ (v5.56): ссылки *.supabase.co мертвы (проект с бакетом удалён,
+    // DNS NXDOMAIN) — считаем их отсутствующими, сразу уводим на Bot API-фолбэк,
+    // пока парсер не обновит ссылку на telesco.pe.
     avatarUrl:
-      proxiedMediaUrl(c.avatarUrl) ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+      proxiedMediaUrl(c.avatarUrl && c.avatarUrl.includes('.supabase.co/') ? null : c.avatarUrl) ??
+      (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
     // Реальное число подписчиков из Telegram (getChatMemberCount);
     // для каналов, где Bot API недоступен, — оценка из каталога
     subscribersCount: c.membersCount ?? c.subscribersCount,

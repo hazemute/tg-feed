@@ -1,6 +1,6 @@
 import { db } from '@/lib/db'
 import { gtxTranslate } from '@/lib/translate'
-import { chatSimple, chatStream } from '@/lib/openrouter'
+import { chatSimple, chatStream, chatStreamRace } from '@/lib/openrouter'
 
 /**
  * AI-помощники ленты: перевод постов и краткое содержание.
@@ -51,13 +51,15 @@ const TRANSLATE_PROMPT = (langName: string) =>
   '[текст](ссылка), #хэштеги (хэштеги не переводи). Переносы строк сохрани. ' +
   'Ответь ТОЛЬКО переводом, без пояснений и кавычек вокруг.'
 
-/** Перевод текста поста на язык (без кэша — кэшем управляет вызывающий код) */
+/** Перевод текста поста на язык (без кэша — кэшем управляет вызывающий код).
+ *  v5.56: ГОНКА моделей (3 параллельно, выигрывает самая быстрая) — первый
+ *  токен/ответ за 1-3с вместо 5-15с последовательного перебора цепочки. */
 export async function translateText(text: string, lang: string): Promise<string> {
   const langName = LANG_NAMES[lang] ?? lang
-  const completion = await chatSimple(
+  const completion = await chatStreamRace(
     TRANSLATE_PROMPT(langName),
     text.slice(0, MAX_TEXT),
-    { maxTokens: 2300, timeoutMs: 40_000 },
+    { maxTokens: 2300, timeoutMs: 40_000, temperature: 0.2 },
   )
   const translated = completion.replace(/^["«»"]+|["«»"]+$/g, '').trim()
   if (translated.length < 4 || translated === text) {
@@ -144,9 +146,10 @@ export async function streamTranslate(
   onDelta: (chunk: string) => void,
 ): Promise<string> {
   const langName = LANG_NAMES[lang] ?? lang
-  const raw = await chatStream(TRANSLATE_PROMPT(langName), text.slice(0, MAX_TEXT), {
+  const raw = await chatStreamRace(TRANSLATE_PROMPT(langName), text.slice(0, MAX_TEXT), {
     maxTokens: 2300,
     timeoutMs: 55_000,
+    temperature: 0.2,
     onDelta,
   })
   const translated = raw.replace(/^["«»"]+|["«»"]+$/g, '').trim()
