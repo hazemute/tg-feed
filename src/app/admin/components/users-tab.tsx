@@ -596,7 +596,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                       <Gem className="size-3.5" aria-hidden /> {p === 'pro' ? 'Snap Pro' : 'Snap Plus'}
                     </span>
                     <span className="mt-0.5 block text-[11px] text-slate-500">
-                      {p === 'pro' ? 'ИИ-контентщик, продвижение' : 'Безлимит ИИ-поиск, инкогнито'}
+                      {p === 'pro' ? 'Snap Ассистент, продвижение' : 'Безлимит Snap Search, инкогнито'}
                     </span>
                   </button>
                 ))}

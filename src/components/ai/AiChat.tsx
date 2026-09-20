@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, Bot, Check, Loader2, Rocket, Send, Sparkles, Trash2, User } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Bot, Check, Loader2, Rocket, Send, Sparkles, Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
@@ -90,28 +90,35 @@ const SUGGESTIONS: Record<AiChatKind, string[]> = {
   ],
 }
 
+/**
+ * v5.40: нормализация ChatGPT-маркдауна под наш RichText.
+ * Модели пишут курсив одиночными *звёздочками* и _подчёркиваниями —
+ * markdown-lite их не знает. Конвертируем в __парные__ только внутри строки
+ * (буллеты «* пункт» и жирный ** не трогаем), одиночный _ — только слово-обёртка.
+ */
+export function aiNormalize(text: string): string {
+  return text
+    .replace(/(^|[^*\w])\*(?!\s)([^*\n]+?)\*(?![*\w])/g, '$1__$2__')
+    .replace(/(^|[\s(>«"'])_([^_\n]+)_(?=[\s).,!?;:»"'<]|$)/g, '$1__$2__')
+}
+
 /* ============================ Typing-индикатор ============================ */
 
 function ThinkingBubble({ label }: { label: string | null }) {
   return (
     <div className="flex items-end gap-1.5">
-      <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-tg-link text-white shadow-sm" aria-hidden>
-        <Bot className="h-4 w-4" />
-      </span>
-      <div className="flex flex-col gap-1">
-        <div className="flex items-center gap-2 rounded-2xl rounded-bl-md bg-tg-surface px-3.5 py-2.5 shadow-sm">
-          <span className="flex gap-1" aria-hidden>
-            {[0, 1, 2].map((i) => (
-              <motion.span
-                key={i}
-                className="h-1.5 w-1.5 rounded-full bg-tg-hint"
-                animate={{ opacity: [0.35, 1, 0.35], y: [0, -2, 0] }}
-                transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.18 }}
-              />
-            ))}
-          </span>
-          <span className="text-[12.5px] font-medium text-tg-hint">{label ?? 'Думаю…'}</span>
-        </div>
+      <div className="flex items-center gap-2 rounded-2xl bg-tg-surface px-3.5 py-2.5 shadow-sm">
+        <span className="flex gap-1" aria-hidden>
+          {[0, 1, 2].map((i) => (
+            <motion.span
+              key={i}
+              className="h-1.5 w-1.5 rounded-full bg-tg-hint"
+              animate={{ opacity: [0.35, 1, 0.35], y: [0, -2, 0] }}
+              transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.18 }}
+            />
+          ))}
+        </span>
+        <span className="text-[12.5px] font-medium text-tg-hint">{label ?? 'Думаю…'}</span>
       </div>
     </div>
   )
@@ -268,6 +275,7 @@ export function AiChat({
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState<string | null>(null)
+  const [streamText, setStreamText] = useState<string | null>(null) // v5.40: realtime-печать
   const [publishing, setPublishing] = useState(false)
   const [loaded, setLoaded] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
@@ -311,10 +319,15 @@ export function AiChat({
       persist(history)
       setBusy(true)
       setStatus(null)
+      setStreamText(null)
 
       const onEvent = (type: string, data: Record<string, unknown>) => {
         if (type === 'status') {
           setStatus((data.label as string) ?? null)
+        } else if (type === 'delta') {
+          // v5.40: realtime-стриминг токенов — печатаем ответ по мере генерации
+          setStatus(null)
+          setStreamText((prev) => (prev ?? '') + ((data.text as string) ?? ''))
         } else if (type === 'paid') {
           // v5.39: тарификация по токенам — сервер вернул фактическую списанную сумму
           const sw = Number(data.swipes ?? 0)
@@ -337,6 +350,7 @@ export function AiChat({
           persist([...history, botMsg])
           setBusy(false)
           setStatus(null)
+          setStreamText(null)
           haptic(botMsg.text ? 'success' : 'error')
         } else if (type === 'error') {
           const errMsg: AiMsg = {
@@ -349,6 +363,7 @@ export function AiChat({
           persist([...history, errMsg])
           setBusy(false)
           setStatus(null)
+          setStreamText(null)
           haptic('error')
         }
       }
@@ -418,9 +433,11 @@ export function AiChat({
         // Поток закончился без done/error — снять busy
         setBusy(false)
         setStatus(null)
+        setStreamText(null)
       } catch (e) {
         setBusy(false)
         setStatus(null)
+        setStreamText(null)
         const msg = (e as Error).message || 'Нейросеть не ответила'
         if (/войдите/i.test(msg)) openAuthGate('ai')
         else {
@@ -482,8 +499,18 @@ export function AiChat({
 
   if (typeof document === 'undefined') return null
 
-  const title = kind === 'assistant' ? 'ИИ-ассистент канала' : 'ИИ-поиск'
-  const subtitle = kind === 'assistant' ? `«${channelTitle ?? ''}» · пишет, рисует, публикует` : 'Отвечает по постам ленты'
+  const title =
+    kind === 'assistant'
+      ? lang === 'en'
+        ? 'Snap Assistant'
+        : 'Snap Ассистент'
+      : 'Snap Search'
+  const subtitle =
+    kind === 'assistant'
+      ? `«${channelTitle ?? ''}» · пишет, рисует, публикует`
+      : lang === 'en'
+        ? 'Answers from feed posts with sources'
+        : 'Отвечает по постам ленты'
 
   return createPortal(
     <AnimatePresence>
@@ -553,7 +580,11 @@ export function AiChat({
                   </span>
                   <div className="min-w-0">
                     <p className="text-[16px] font-bold leading-tight text-tg-text">
-                      {kind === 'assistant' ? 'ИИ-контентщик канала' : 'ИИ-поиск по ленте'}
+                      {kind === 'assistant'
+                        ? lang === 'en'
+                          ? 'Your channel’s AI co-writer'
+                          : 'ИИ-контентщик канала'
+                        : 'Snap Search'}
                     </p>
                     <p className="mt-1 text-[13px] leading-snug text-tg-hint">
                       {kind === 'assistant'
@@ -592,15 +623,7 @@ export function AiChat({
                 transition={{ duration: 0.18 }}
                 className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}
               >
-                {m.role === 'assistant' && (
-                  <span
-                    className="mr-1.5 mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-tg-link text-white shadow-sm"
-                    aria-hidden
-                  >
-                    <Bot className="h-4 w-4" />
-                  </span>
-                )}
-                <div className={cn('max-w-[86%] min-w-0', m.role === 'user' && 'max-w-[80%]')}>
+                <div className={cn('max-w-[88%] min-w-0', m.role === 'user' && 'max-w-[80%]')}>
                   {/* Этапы инструментов (мелкие чипы над ответом) */}
                   {m.steps && m.steps.length > 0 && m.role === 'assistant' && (
                     <div className="mb-1 flex flex-wrap gap-1">
@@ -618,18 +641,22 @@ export function AiChat({
                       ))}
                     </div>
                   )}
+                  {/* v5.40: у ИИ — чистый текст без пузыря и аватарки (как ChatGPT),
+                      пузырь остаётся только у пользователя */}
                   <div
                     className={cn(
-                      'rounded-2xl px-3.5 py-2.5 shadow-sm',
                       m.role === 'user'
-                        ? 'rounded-br-md bg-tg-link text-white'
+                        ? 'rounded-2xl rounded-br-md px-3.5 py-2.5 shadow-sm bg-tg-link text-white'
                         : m.failed
-                          ? 'rounded-bl-md bg-destructive/10 text-destructive'
-                          : 'rounded-bl-md bg-tg-surface text-tg-text',
+                          ? 'rounded-2xl px-3.5 py-2.5 text-destructive'
+                          : '',
                     )}
                   >
                     {m.role === 'assistant' ? (
-                      <RichText text={m.text} className="text-[14.5px] leading-relaxed [&_a]:text-tg-link" />
+                      <RichText
+                        text={aiNormalize(m.text)}
+                        className="text-[14.5px] leading-relaxed [&_a]:text-tg-link"
+                      />
                     ) : (
                       <span className="whitespace-pre-wrap break-words text-[14.5px] leading-relaxed">{m.text}</span>
                     )}
@@ -679,15 +706,22 @@ export function AiChat({
                     {timeAgo(m.at, lang)}
                   </span>
                 </div>
-                {m.role === 'user' && (
-                  <span className="ml-1.5 mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint" aria-hidden>
-                    <User className="h-4 w-4" />
-                  </span>
-                )}
               </motion.div>
             ))}
 
-            {busy && <ThinkingBubble label={status} />}
+            {/* v5.40: realtime-стриминг — ответ печатается на глазах, чистым текстом без пузыря */}
+            {streamText !== null && streamText.length > 0 && (
+              <div className="flex justify-start">
+                <div className="max-w-[88%] min-w-0">
+                  <RichText
+                    text={aiNormalize(streamText)}
+                    className="text-[14.5px] leading-relaxed text-tg-text [&_a]:text-tg-link"
+                  />
+                </div>
+              </div>
+            )}
+
+            {busy && streamText === null && <ThinkingBubble label={status} />}
           </div>
 
           {/* Ввод: слитая капсула + микрофон/отправка */}

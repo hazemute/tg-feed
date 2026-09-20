@@ -5,6 +5,7 @@ import { motion } from 'framer-motion'
 import {
   Bot,
   Gem,
+  Gift,
   BadgeCheck,
   Headset,
   History,
@@ -45,6 +46,7 @@ import { AuditTab } from './components/audit-tab'
 import { BadgesTab } from './components/badges-tab'
 import { ChannelsTab } from './components/channels-tab'
 import { FinanceTab } from './components/finance-tab'
+import { GiveawaysTab } from './components/giveaways-tab'
 import { LoginScreen } from './components/login-screen'
 import { ModerationTab } from './components/moderation-tab'
 import { OverviewTab } from './components/overview-tab'
@@ -69,6 +71,7 @@ type TabKey =
   | 'support'
   | 'feedback'
   | 'ads'
+  | 'giveaways'
   | 'system'
   | 'tools'
 
@@ -317,6 +320,7 @@ export default function AdminPage() {
       badgeTone: 'amber',
     },
     { key: 'ads', label: 'Реклама', icon: Megaphone },
+    { key: 'giveaways', label: 'Розыгрыши', icon: Gift },
     {
       key: 'system',
       label: 'Система',
@@ -352,6 +356,8 @@ export default function AdminPage() {
         return <SupportTab tick={tick} onSettled={handleSettled} kind="feedback" />
       case 'ads':
         return <AdsTab tick={tick} onSettled={handleSettled} />
+      case 'giveaways':
+        return <GiveawaysTab tick={tick} onSettled={handleSettled} />
       case 'system':
         return <SystemTab tick={tick} onSettled={handleSettled} onMaintenance={handleMaintenance} />
       case 'tools':

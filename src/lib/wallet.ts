@@ -8,14 +8,16 @@ import { invalidateBalance } from '@/lib/balance-cache'
  *    Покупается ВСЁ: свайпы для нейросетей, тарифы Snap, рекламные кампании.
  *  • Свайпы — swipes. Валюта нейросетей (как кредиты в ChatGPT):
  *    списываются за запросы к ИИ ПО ТОКЕНАМ (v5.39), конвертируются в рубли.
+ *    ЦЕНЫ ПО ТОКЕНАМ (v5.40): с курсом 500 свайпов/₽ те же AI_MTOK_*_SWP
+ *    дают владельцу ×5 выручку в рублях за те же токены.
  *
- * КУРС: 100 свайпов = 1 ₽ (1 копейка = 1 свайп — конвертация без потерь).
+ * КУРС (v5.40): 500 свайпов = 1 ₽ (1 свайп = 0,2 копейки).
  *
  * Все операции атомарны (транзакции), ведутся в BalanceLog (журнал кошелька).
  * Инвариант: balanceKop ≥ 0, swipes ≥ 0 — условные декременты не дают уйти в минус.
  */
 
-export const SWP_PER_RUB = 100
+export const SWP_PER_RUB = 500
 /** Минимум свайпов для конвертации в рубли */
 export const SWP_CONVERT_MIN = SWP_PER_RUB
 
@@ -58,7 +60,7 @@ export function estimateAiSwipes(inputChars: number, maxTokens: number): number 
 export type Wallet = { balanceKop: number; swipes: number }
 
 export function swpToKop(swipes: number): number {
-  return Math.round(swipes / SWP_PER_RUB)
+  return Math.ceil(swipes / SWP_PER_RUB) // 500 свайпов = 1 ₽; дробных копеек нет — округляем вверх
 }
 export function kopToSwp(kop: number): number {
   return Math.round(kop) * SWP_PER_RUB
@@ -93,7 +95,7 @@ async function log(
 
 /**
  * Списать свайпы. Если их не хватает — ДОКУПИТЬ недостающее с рублёвого баланса
- * (1 копейка = 1 свайп, докупаем с запасом ≥100 свайпов, если хватает денег):
+ * (докупаем с запасом, кратным 500 свайпов, если хватает денег):
  * так «за рубли можно пользоваться всем сервисом, не оплачивая картой на месте».
  * Возвращает false, если и рублей не хватает.
  */
@@ -119,20 +121,24 @@ export async function spendSwipes(
       return true
     }
 
-    // Не хватает свайпов — докупаем с рублёвого баланса
+    // Не хватает свайпов — докупаем с рублёвого баланса по курсу SWP_PER_RUB
     const deficit = cost - u.swipes
-    // Пакет докупки: кратен 100, но не меньше дефицита; если денег впритык — берём ровно дефицит
+    // Пакет докупки: кратен 500, но не меньше дефицита; если денег впритык — берём ровно дефицит
     const buy = Math.max(
       deficit,
       Math.ceil(deficit / SWP_PER_RUB) * SWP_PER_RUB,
-    ) // ≥ deficit, обычно круглыми сотнями
-    const affordable = u.balanceKop >= buy ? buy : u.balanceKop >= deficit ? deficit : 0
-    if (affordable <= 0) return false
+    ) // ≥ deficit, обычно круглыми пятисотками
+    const buyKop = swpToKop(buy) // стоимость пакета в копейках (500 свайпов = 1 ₽)
+    const deficitKop = swpToKop(deficit)
+    const affordable = u.balanceKop >= buyKop ? buy : u.balanceKop >= deficitKop ? deficit : 0
+    const payKop = swpToKop(affordable)
+    if (affordable <= 0 || u.balanceKop < payKop) return false
 
     await tx.user.update({
       where: { id: userId },
-      data: { balanceKop: { decrement: affordable }, swipes: { increment: affordable } },
+      data: { balanceKop: { decrement: payKop }, swipes: { increment: affordable } },
     })
+    await log(tx, userId, 'convert', 'rub', -payKop, 'авто-покупка свайпов с баланса')
     await log(tx, userId, 'convert', 'swp', affordable, 'авто-покупка свайпов с баланса')
     await tx.user.update({
       where: { id: userId },
@@ -145,7 +151,7 @@ export async function spendSwipes(
   return ok
 }
 
-/** Конвертация свайпы → рубли: 100 свайпов = 1 ₽. Остаток (<100) остаётся свайпами. */
+/** Конвертация свайпы → рубли: 500 свайпов = 1 ₽. Остаток (<500) остаётся свайпами. */
 export async function convertSwpToRub(
   userId: string,
   swipes: number,
@@ -169,7 +175,7 @@ export async function convertSwpToRub(
   return res
 }
 
-/** Конвертация рубли → свайпы: 1 копейка = 1 свайп (100 свайпов = 1 ₽). */
+/** Конвертация рубли → свайпы: 1 копейка = 5 свайпов (500 свайпов = 1 ₽). */
 export async function convertRubToSwp(
   userId: string,
   kop: number,
@@ -262,7 +268,7 @@ export async function aiCanAfford(userId: string, estSwipes: number): Promise<bo
     select: { swipes: true, balanceKop: true },
   })
   if (!u) return false
-  return u.swipes + u.balanceKop >= estSwipes // 1 копейка = 1 свайп
+  return u.swipes + u.balanceKop * SWP_PER_RUB >= estSwipes // 1 копейка = 500 свайпов
 }
 
 /**

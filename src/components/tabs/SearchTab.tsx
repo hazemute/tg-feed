@@ -61,7 +61,7 @@ export function SearchTab() {
   // Тренды «Сейчас обсуждают» (топ-8 хэштегов: клики за 72ч + фолбэк из постов)
   const [trending, setTrending] = useState<{ tag: string; clicks: number }[] | null>(null)
 
-  // ОТДЕЛЬНЫЙ ЧАТ ИИ-поиска (v5.21): открыт/закрыт + seed-запрос для автоотправки
+  // ОТДЕЛЬНЫЙ ЧАТ Snap Search (v5.21): открыт/закрыт + seed-запрос для автоотправки
   const [aiChatOpen, setAiChatOpen] = useState(false)
   const [aiSeed, setAiSeed] = useState<string | null>(null)
   // Защита от двойного тапа по «Подписаться»: пока запрос в полёте, повторные
@@ -281,7 +281,7 @@ export function SearchTab() {
           )}
         </form>
 
-        {/* Чипы-фильтры + пилюля ИИ-поиска (на узких экранах переносится ниже чипов) */}
+        {/* Чипы-фильтры + пилюля Snap Search (на узких экранах переносится ниже чипов) */}
         <div className="mt-4 flex flex-wrap items-center gap-2.5">
           <div className="flex gap-2.5" role="tablist" aria-label="Тип поиска">
             {FILTERS.map((f) => {
@@ -310,15 +310,15 @@ export function SearchTab() {
             type="button"
             onClick={() => {
               haptic('light')
-              inputRef.current?.blur() // прячем клавиатуру — смотрим чат ИИ
+              inputRef.current?.blur() // прячем клавиатуру — смотрим чат Snap Search
               setAiSeed(query.length >= 3 ? query : null) // с текущим запросом — автоотправка
               setAiChatOpen(true)
             }}
-            aria-label="Спросить ИИ"
+            aria-label="Snap Search"
             className="flex h-10 shrink-0 items-center gap-1.5 rounded-[12px] border border-tg-link/35 bg-tg-link/10 px-4 text-[14.5px] font-semibold text-tg-link transition active:scale-95"
           >
             <Sparkles className="h-4 w-4" strokeWidth={2.2} />
-            ИИ-поиск
+            Snap Search
           </button>
         </div>
       </div>
@@ -461,8 +461,8 @@ export function SearchTab() {
 
       {filter === 'posts' && (
         <section className="mt-2 pb-6" aria-label="Посты">
-          {/* Умный ИИ-поиск: скелетон / ответ с источниками / лимит / ошибка — НАД обычной выдачей */}
-          {/* ОТДЕЛЬНЫЙ ЧАТ ИИ-поиска (v5.21): кнопка «Спросить ИИ» выше открывает
+          {/* Snap Search: скелетон / ответ с источниками / лимит / ошибка — НАД обычной выдачей */}
+          {/* ОТДЕЛЬНЫЙ ЧАТ Snap Search (v5.21): кнопка «Спросить ИИ» выше открывает
               полноэкранный чат с инструментами, markdown и источниками — inline-блок больше не нужен */}
 
           {query.length < 2 ? (
@@ -507,7 +507,7 @@ export function SearchTab() {
       )}
       </div>
 
-      {/* ОТДЕЛЬНЫЙ ЧАТ ИИ-поиска (v5.21): полноэкранный, с инструментами/markdown/источниками */}
+      {/* ОТДЕЛЬНЫЙ ЧАТ Snap Search (v5.21): полноэкранный, с инструментами/markdown/источниками */}
       <AiChat
         kind="search"
         open={aiChatOpen}

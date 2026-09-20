@@ -17,7 +17,8 @@ import { cacheGet, cacheSet, shortHash } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import { looksLikeGarbage } from '@/lib/text-clean'
 import { stripMarkdown } from '@/lib/markdown'
-import { chatSimple, chatWithTools, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
+import { chatSimple, chatWithTools, chatWithToolsStream, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
+import { aiPremiumEmojiText } from '@/lib/ai-emoji'
 import { aiSearchAllowance } from '@/lib/tiers'
 import { POST_LIST_SELECT, postDTOFromRow } from '@/lib/dto'
 import { schemasFor, toolBy, type ToolExecResult, searchSystemPrompt, type ToolCtx } from '@/lib/ai-tools'
@@ -172,7 +173,7 @@ function notEnoughSwipes(tier: string) {
       message:
         `Не хватает свайпов. ИИ тарифицируется по токенам: ${AI_MTOK_IN_SWP} свайпов за 1 млн входных ` +
         `+ ${AI_MTOK_OUT_SWP} за 1 млн выходных (обычный запрос ≈ 2–10 свайпов). ` +
-        'Пополните баланс — свайпы купятся автоматически (1 ₽ = 100 свайпов).',
+        'Пополните баланс — свайпы купятся автоматически (1 ₽ = 500 свайпов).',
       tier,
     },
     { status: 402 },
@@ -200,7 +201,7 @@ export async function POST(request: Request) {
     if (!parsed.success) return err('Опишите вопрос — от 3 символов')
     const d = parsed.data
 
-    if (!openRouterEnabled()) return err('ИИ-поиск временно недоступен', 503)
+    if (!openRouterEnabled()) return err('Snap Search временно недоступен', 503)
 
     /* ================= РЕЖИМ ЧАТА (SSE, инструменты) ================= */
     if (d.action === 'chat') {
@@ -243,23 +244,26 @@ export async function POST(request: Request) {
         // Списать по факту после цепочки (best-effort: ответ уже отдан)
         const settle = async () => {
           if (!paid) return
-          await chargeAiUsage(uid, collector.acc.usage, 'ИИ-поиск (чат)', est)
+          await chargeAiUsage(uid, collector.acc.usage, 'Snap Search (чат)', est)
           if (collector.acc.usage) {
             send('paid', { swipes: swipesForUsage(collector.acc.usage) })
           }
         }
         try {
           for (let i = 0; i < MAX_LOOP; i++) {
-            const r = await chatWithTools(messages, schemasFor('search'), {
+            // v5.40: стриминг токенов — финальный ответ печатается в чате в реальном времени
+            const r = await chatWithToolsStream(messages, schemasFor('search'), {
               maxTokens: 1000,
               timeoutMs: 60_000,
               temperature: 0.3,
               onUsage: collector.onUsage,
+              onDelta: (chunk) => send('delta', { text: chunk }),
             })
             if (r.toolCalls.length === 0) {
+              const reply = await aiPremiumEmojiText(r.content || 'Не нашёл — переформулируйте вопрос.')
               const sources = await sourcesDTO(sourceIds.slice(0, 6))
               await settle()
-              send('done', { reply: r.content || 'Не нашёл — переформулируйте вопрос.', ...meta, sources })
+              send('done', { reply, ...meta, sources })
               return
             }
             messages = [...messages, { role: 'assistant', content: r.content || '', toolCalls: r.toolCalls }]
@@ -294,9 +298,10 @@ export async function POST(request: Request) {
             [],
             { maxTokens: 800, timeoutMs: 45_000, temperature: 0.3, onUsage: collector.onUsage },
           )
+          const reply = await aiPremiumEmojiText(tail.content || 'Не нашёл — переформулируйте вопрос.')
           const sources = await sourcesDTO(sourceIds.slice(0, 6))
           await settle()
-          send('done', { reply: tail.content || 'Не нашёл — переформулируйте вопрос.', ...meta, sources })
+          send('done', { reply, ...meta, sources })
         } catch (e) {
           console.error('[ai/search chat]', e)
           // Токены уже потрачены на частичную цепочку — тарифицируем тоже
@@ -316,7 +321,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           error: 'ai_search_limit',
-          message: 'Лимит ИИ-поиска на сегодня исчерпан (3 в день)',
+          message: 'Лимит Snap Search на сегодня исчерпан (3 в день)',
           tier: allowance.tier,
         },
         { status: 402 },
@@ -337,7 +342,7 @@ export async function POST(request: Request) {
       const collector = usageCollector()
       payload = await buildAnswer(q, category, collector.onUsage)
       fromCache = false
-      if (paid && g.uid) await chargeAiUsage(g.uid, payload.usage ?? null, 'ИИ-поиск', est)
+      if (paid && g.uid) await chargeAiUsage(g.uid, payload.usage ?? null, 'Snap Search', est)
       await cacheSet(cacheKey, payload, 600).catch(() => {})
       if (g.uid) {
         await db.aiSearchLog.create({ data: { userId: g.uid, query: q.slice(0, 300) } }).catch(() => {})

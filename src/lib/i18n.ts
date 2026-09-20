@@ -38,6 +38,9 @@ const DICT = {
   'profile.infoSheetSub': ['О приложении, соглашения и версия', 'About, agreements and version'],
   'profile.fbSheet': ['Обратная связь', 'Feedback'],
   'profile.fbSheetSub': ['Помогите сделать приложение лучше', 'Help make the app better'],
+  /* Snap Ассистент (v5.40): из карточки «Мой канал» — в строки профиля */
+  'profile.assistantRow': ['Snap Ассистент', 'Snap Assistant'],
+  'profile.assistantHint': ['ИИ-контентщик канала', 'channel AI co-writer'],
   /* Вкладки кабинета «Мой канал» (вместо бесконечной простыни) */
   'mc.tabStats': ['Аналитика', 'Analytics'],
   'mc.tabDisplay': ['Показ', 'Feed display'],

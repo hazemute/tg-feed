@@ -6,7 +6,7 @@
  *
  *  • Рубли — balanceKop: пополняются картой/Stars/TON, покупают ВСЁ в сервисе.
  *  • Свайпы — валюта нейросетей: списываются за запросы к ИИ ПО ТОКЕНАМ
- *    (реальный usage OpenRouter, см. lib/wallet.ts); 100 свайпов = 1 ₽,
+ *    (реальный usage OpenRouter, см. lib/wallet.ts); 500 свайпов = 1 ₽,
  *    конвертация в обе стороны без потерь (1 копейка = 1 свайп).
  *
  * Данные — GET /api/wallet, конвертация — POST /api/wallet.
@@ -139,7 +139,7 @@ export function WalletCard({
     <section className="pt-7" aria-label="Кошелёк">
       <div className="flex items-center justify-between px-4">
         <h2 className="text-[19px] font-bold text-tg-text">Кошелёк</h2>
-        <span className="text-[12.5px] font-medium text-tg-hint">100 свайпов = 1 ₽</span>
+        <span className="text-[12.5px] font-medium text-tg-hint">500 свайпов = 1 ₽</span>
       </div>
 
       <div className="px-4 pt-3">

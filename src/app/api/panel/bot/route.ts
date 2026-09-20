@@ -200,7 +200,7 @@ export async function POST(request: Request) {
         keyboard: [
           [
             { label: 'Открыть Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' },
-            { label: 'Наш канал', emoji: '✨', url: 'https://t.me/SnapTeamDev' },
+            { label: 'Наш канал', emoji: '✨', url: 'https://t.me/SnapTeamDev', style: 'primary' },
           ],
         ] satisfies BotButton[][],
       })
@@ -256,7 +256,7 @@ export async function POST(request: Request) {
         ].join('\n'),
         {
           keyboard: [
-            [{ label: 'Подписаться на Telegram', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
+            [{ label: 'Подписаться на Telegram', emoji: '✨', url: 'https://t.me/SnapTeamDev', style: 'success' }],
             [{ label: 'Открыть Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
           ] satisfies BotButton[][],
         },

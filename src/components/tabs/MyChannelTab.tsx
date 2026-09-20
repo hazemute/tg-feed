@@ -6,6 +6,7 @@ import {
   ArrowUpRight,
   Bot,
   Check,
+  ChevronRight,
   Copy,
   Eye,
   EyeOff,
@@ -227,7 +228,7 @@ export function MyChannelTab() {
                     with the same key» при каждом открытии вкладки) */}
                 <DisplaySection key={`display-${channel!.id}`} channel={channel!} onSaved={load} />
                 <CtaSection key={`cta-${channel!.id}`} channel={channel!} tier={tier} />
-                <AiAssistantSection key={`ai-${channel!.id}`} channel={channel!} tier={tier} />
+                <AssistantRow key={`ai-${channel!.id}`} channel={channel!} tier={tier} />
               </div>
             )}
             {tab === 'ads' && (
@@ -766,48 +767,65 @@ function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | '
 }
 
 /* ------------------------------------------------------------------ */
-/* ИИ-ассистент (Snap Pro)                                             */
+/* Snap Ассистент (Snap Pro) — компактная строка (v5.40)               */
 /* ------------------------------------------------------------------ */
 
 /**
- * Строгая рабочая карточка (v5.34): без градиентов и «игрушечности» —
- * монохромная плитка, чёткая типографика, панель быстрых действий
- * (пост / картинка / статистика) и строка ключевых цифр канала.
+ * v5.40 по приказу владельца: огромная карточка ИИ-ассистента УБРАНА —
+ * та же функция переехала в профиль (строка «Snap Ассистент»), а здесь
+ * осталась компактная строка в ряд с остальными кнопками кабинета.
+ * Без Pro: строка открывает шит тарифов (флаг sessionStorage, как у CTA).
  */
-function AiAssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
+function AssistantRow({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
   const pro = tier === 'pro'
   const [chatOpen, setChatOpen] = useState(false)
-  // Seed-запрос: тап по быстрому действию открывает чат и сразу отправляет
   const [seed, setSeed] = useState<string | null>(null)
 
-  const openWith = (s: string | null) => {
+  const open = () => {
     haptic('light')
-    setSeed(s)
+    if (!pro) {
+      // Паттерн кабинета: флаг в sessionStorage → шит тарифов в профиле
+      try {
+        sessionStorage.setItem('tgfeed_open_tiers', '1')
+      } catch {
+        /* приватный режим */
+      }
+      window.dispatchEvent(new Event('tgfeed:open-tiers'))
+      return
+    }
     setChatOpen(true)
-  }
-
-  const QUICK_ACTIONS = [
-    { icon: FileText, label: 'Написать пост', query: 'Напиши пост для канала — выбери актуальную тему и свой стиль' },
-    { icon: Sparkles, label: 'Картинка', query: 'Нарисуй обложку к свежему посту канала' },
-    { icon: ArrowUpRight, label: 'Статистика', query: 'Разбери статистику канала: что улучшить?' },
-  ]
-
-  if (!pro) {
-    return (
-      <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
-        <SectionTitle icon={Bot}>ИИ-ассистент</SectionTitle>
-        <LockedCard
-          title="Автономный ИИ-контентщик"
-          text="Придумывает посты в вашем стиле, рисует картинки и публикует в канал"
-        />
-      </motion.section>
-    )
   }
 
   return (
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
-      <SectionTitle icon={Bot}>ИИ-ассистент</SectionTitle>
-      <div className="rounded-2xl border border-tg-sep/60 bg-tg-surface/60 p-4">
+      <button
+        type="button"
+        data-noswipe
+        onClick={open}
+        aria-label="Открыть Snap Ассистента"
+        className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface/60 px-4 py-3.5 text-left transition active:scale-[0.99] active:bg-tg-surface2"
+      >
+        <span
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-tg-link text-white"
+          aria-hidden
+        >
+          <Bot className="h-5 w-5" />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center gap-1.5">
+            <span className="truncate text-[15px] font-semibold text-tg-text">Snap Ассистент</span>
+            {!pro && <Sparkles className="h-3.5 w-3.5 shrink-0 text-tg-star" aria-hidden />}
+          </span>
+          <span className="mt-0.5 block truncate text-[12.5px] text-tg-hint">
+            {pro
+              ? 'Пишет в вашем стиле, рисует обложки, публикует в канал'
+              : 'Доступен на тарифе Snap Pro — посты, картинки, статистика'}
+          </span>
+        </span>
+        <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+      </button>
+
+      {pro && (
         <AiChat
           kind="assistant"
           open={chatOpen}
@@ -817,63 +835,7 @@ function AiAssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'f
           seedQuery={seed}
           onSeedConsumed={() => setSeed(null)}
         />
-
-        {/* Шапка: монохромная плитка + суть */}
-        <div className="flex items-start gap-3">
-          <span
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-tg-link text-white"
-            aria-hidden
-          >
-            <Bot className="h-5 w-5" />
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="text-[14.5px] font-semibold leading-snug text-tg-text">ИИ-контентщик канала</p>
-            <p className="mt-0.5 text-[12.5px] leading-snug text-tg-hint">
-              Знает все цифры канала, пишет в вашем стиле, рисует и публикует
-            </p>
-          </div>
-        </div>
-
-        {/* Ключевые цифры — ассистент и карточка говорят одними данными */}
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          {[
-            { label: 'Постов', value: formatCount(channel.stats.posts) },
-            { label: 'Просмотры 24ч', value: formatCount(channel.stats.views24h) },
-            { label: 'Лайки', value: formatCount(channel.stats.likes) },
-          ].map((s) => (
-            <div key={s.label} className="rounded-xl border border-tg-sep/50 bg-tg-bg px-2.5 py-2 text-center">
-              <p className="text-[15px] font-bold leading-none text-tg-text">{s.value}</p>
-              <p className="mt-1 text-[10.5px] font-medium uppercase tracking-wide text-tg-hint">{s.label}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Быстрые действия: строгая сетка, тап — чат открывается с готовым запросом */}
-        <div className="mt-3 grid grid-cols-3 gap-2">
-          {QUICK_ACTIONS.map((a) => (
-            <button
-              key={a.label}
-              type="button"
-              data-noswipe
-              onClick={() => openWith(a.query)}
-              className="flex h-[52px] flex-col items-center justify-center gap-1 rounded-xl border border-tg-sep bg-tg-bg text-tg-text transition active:scale-95 active:bg-tg-surface2"
-            >
-              <a.icon className="h-4 w-4 text-tg-link" strokeWidth={2.1} />
-              <span className="text-[11px] font-medium leading-none">{a.label}</span>
-            </button>
-          ))}
-        </div>
-
-        <button
-          type="button"
-          data-noswipe
-          onClick={() => openWith(null)}
-          className="mt-2.5 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
-        >
-          <Bot className="h-4.5 w-4.5" />
-          Открыть чат с ассистентом
-        </button>
-      </div>
+      )}
     </motion.section>
   )
 }

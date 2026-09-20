@@ -21,7 +21,7 @@ export const dynamic = 'force-dynamic'
  *   Баланс дополнительно пишется в Redis-кэш (write-through) — его читает
  *   edge-роут GET /api/wallet/balance без обращения к БД.
  * POST /api/wallet { action: 'swp2rub' | 'rub2swp', amount } — конвертация.
- *   • swp2rub: amount в свайпах (≥100) → рубли по курсу 100 свайпов = 1 ₽,
+ *   • swp2rub: amount в свайпах (≥500) → рубли по курсу 500 свайпов = 1 ₽,
  *     остаток < 100 остаётся свайпами;
  *   • rub2swp: amount в КОПЕЙКАХ (1 копейка = 1 свайп) → свайпы.
  */

@@ -589,6 +589,196 @@ export async function chatWithTools(
   throw lastError instanceof Error ? lastError : new Error('OpenRouter недоступен')
 }
 
+/* ==================== СТРИМИНГОВЫЙ TOOL-CALLING (v5.40) ==================== *
+ *  Тот же протокол, что chatWithTools, но с stream:true: дельты текста
+ *  уезжают наверх через onDelta сразу (realtime-печать в чате ИИ), дельты
+ *  tool_calls аккумулируются по index и в конце склеиваются в ToolCall[].
+ *  Если модель не умеет tools (400/404/422) — фолбэк на текстовый JSON-протокол
+ *  без стрима. Если ни одна модель не дала токен — бросаем.
+ */
+export async function chatWithToolsStream(
+  messages: ChatMsg[],
+  tools: ToolSchema[],
+  opts?: {
+    maxTokens?: number
+    timeoutMs?: number
+    temperature?: number
+    models?: string[]
+    /** Сколько ждать первого токена до переключения модели */
+    firstTokenMs?: number
+    /** Реальный token-usage успешного вызова (для тарификации в свайпах) */
+    onUsage?: (u: AiUsage) => void
+    /** Дельта финального текста (realtime-стриминг в миниапп) */
+    onDelta?: (chunk: string) => void
+  },
+): Promise<{ content: string; toolCalls: ToolCall[]; model?: string }> {
+  const key = process.env.OPENROUTER_API_KEY
+  if (!key) throw new Error('OPENROUTER_API_KEY не задан')
+  const maxTokens = opts?.maxTokens ?? 1200
+  const timeoutMs = opts?.timeoutMs ?? 60_000
+  const temperature = opts?.temperature ?? 0.5
+  const chain = opts?.models?.length ? opts.models : TOOL_MODELS
+  const firstTokenMs = opts?.firstTokenMs ?? 12_000
+  kickModelDiscovery()
+
+  // Провайдерам без role:'tool' — совместимая история (как в chatWithTools.encode)
+  const wire = messages.map((m) => {
+    if (m.role === 'assistant' && m.toolCalls?.length) {
+      return {
+        role: 'assistant' as const,
+        content: m.content || '',
+        tool_calls: m.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function',
+          function: { name: tc.name, arguments: tc.args },
+        })),
+      }
+    }
+    if (m.role === 'tool') {
+      return { role: 'tool' as const, tool_call_id: m.toolCallId ?? '', content: m.content }
+    }
+    return { role: m.role, content: m.content }
+  })
+
+  let lastError: unknown = null
+  for (const model of chain) {
+    let content = ''
+    let sawAnyToken = false
+    try {
+      const res = await postWith429Retry(
+        {
+          model,
+          max_tokens: maxTokens,
+          temperature,
+          stream: true,
+          messages: wire,
+          tools,
+          tool_choice: 'auto',
+        },
+        timeoutMs,
+      )
+      if (!res.ok || !res.body) {
+        // Модель не умеет tools — фолбэк на текстовый JSON-протокол (не стримим:
+        // JSON-блок юзеру показывать нельзя), дальше по цепочке не идём
+        if (res.status === 400 || res.status === 404 || res.status === 422) {
+          const plain = await chatWithTools(messages, tools, {
+            maxTokens,
+            timeoutMs,
+            temperature,
+            models: [model],
+            onUsage: opts?.onUsage,
+          })
+          if (plain.content) {
+            opts?.onDelta?.(plain.content)
+            return plain
+          }
+        }
+        lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
+        continue
+      }
+
+      const reader = res.body.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let firstTokenTimer: ReturnType<typeof setTimeout> | null = null
+      const dropFirstTokenTimer = () => {
+        if (firstTokenTimer) {
+          clearTimeout(firstTokenTimer)
+          firstTokenTimer = null
+        }
+      }
+      firstTokenTimer = setTimeout(() => reader.cancel().catch(() => {}), firstTokenMs)
+
+      // tool_calls по частям: index → { id, name, args }
+      const tcAcc = new Map<number, { id: string; name: string; args: string }>()
+
+      try {
+        for (;;) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
+          buffer = lines.pop() ?? ''
+          for (const line of lines) {
+            const trimmed = line.trim()
+            if (!trimmed || trimmed.startsWith(':')) continue
+            if (!trimmed.startsWith('data:')) continue
+            const payload = trimmed.slice(5).trim()
+            if (payload === '[DONE]') continue
+            try {
+              const json = JSON.parse(payload) as {
+                choices?: Array<{
+                  delta?: {
+                    content?: string
+                    tool_calls?: Array<{
+                      index?: number
+                      id?: string
+                      function?: { name?: string; arguments?: string }
+                    }>
+                  }
+                }>
+                usage?: ApiUsage
+                error?: { message?: string }
+              }
+              if (json.error?.message) throw new Error(json.error.message)
+              const u = usageOf(json.usage, model)
+              if (u) opts?.onUsage?.(u)
+              const delta = json.choices?.[0]?.delta
+              const piece = delta?.content ?? ''
+              if (piece) {
+                sawAnyToken = true
+                dropFirstTokenTimer()
+                content += piece
+                opts?.onDelta?.(piece)
+              }
+              for (const tc of delta?.tool_calls ?? []) {
+                sawAnyToken = true
+                dropFirstTokenTimer()
+                const idx = tc.index ?? 0
+                const cur = tcAcc.get(idx) ?? { id: '', name: '', args: '' }
+                if (tc.id) cur.id = tc.id
+                if (tc.function?.name) cur.name = tc.function.name
+                if (tc.function?.arguments) cur.args += tc.function.arguments
+                tcAcc.set(idx, cur)
+              }
+            } catch (e) {
+              if (e instanceof Error && e.message && !/JSON/i.test(e.message)) throw e
+            }
+          }
+        }
+      } finally {
+        dropFirstTokenTimer()
+        reader.cancel().catch(() => {})
+      }
+
+      const toolCalls: ToolCall[] = [...tcAcc.values()]
+        .filter((tc) => tc.name)
+        .map((tc, i) => ({
+          id: tc.id || `call_${i}`,
+          name: tc.name,
+          args: tc.args || '{}',
+        }))
+      if (toolCalls.length > 0) {
+        return { content: content.trim(), toolCalls, model }
+      }
+      if (content.trim().length > 0) {
+        // Текст без tools — некоторые модели отвечают JSON-блоком даже со stream
+        const parsed = parseToolJsonBlock(content)
+        if (parsed) return { content: parsed.rest, toolCalls: [parsed.call], model }
+        return { content: content.trim(), toolCalls: [], model }
+      }
+      lastError = new Error(`OpenRouter ${model}: пустой поток`)
+    } catch (e) {
+      lastError = e
+      // Поток умер с содержательным куском — отдаём как есть (лучше, чем ничего)
+      if (sawAnyToken && content.trim().length >= 40) {
+        return { content: content.trim(), toolCalls: [], model }
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('OpenRouter недоступен')
+}
+
 /* ============================ ГЕНЕРАЦИЯ КАРТИНОК ============================ *
  *  v5.33: только бесплатный pollinations.ai (flux) — платные image-модели
  *  OpenRouter удалены (ноль рублей, см. src/lib/ai-image.ts).

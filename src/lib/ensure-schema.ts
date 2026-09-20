@@ -73,6 +73,16 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "BalanceLog_userId_createdAt_idx" ON "BalanceLog" ("userId", "createdAt")`,
     `ALTER TABLE "BalanceLog" ADD CONSTRAINT "BalanceLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
   ],
+  'v5.40': [
+    // v5.40: система розыгрышей — пост с кнопкой «Участвовать (N)», автопроверка
+    // подписок, финализация с победителями (призы = свайпы/рубли/тариф/кастом)
+    `CREATE TABLE IF NOT EXISTS "Giveaway" ("id" text PRIMARY KEY, "title" text NOT NULL, "text" text NOT NULL DEFAULT '', "prizes" text NOT NULL DEFAULT '[]', "channels" text NOT NULL DEFAULT '[]', "buttonStyle" text NOT NULL DEFAULT 'primary', "buttonEmoji" text NOT NULL DEFAULT '🎉', "buttonEmojiId" text NOT NULL DEFAULT '', "startAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "endAt" timestamptz NOT NULL, "status" text NOT NULL DEFAULT 'draft', "chatId" text, "messageId" integer, "winners" text, "winnersMessageId" integer, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "Giveaway_status_endAt_idx" ON "Giveaway" ("status", "endAt")`,
+    `CREATE TABLE IF NOT EXISTS "GiveawayEntry" ("id" text PRIMARY KEY, "giveawayId" text NOT NULL, "userId" text NOT NULL, "tgId" text, "username" text, "firstName" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "GiveawayEntry_giveawayId_createdAt_idx" ON "GiveawayEntry" ("giveawayId", "createdAt")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "GiveawayEntry_giveawayId_userId_key" ON "GiveawayEntry" ("giveawayId", "userId")`,
+    `ALTER TABLE "GiveawayEntry" ADD CONSTRAINT "GiveawayEntry_giveawayId_fkey" FOREIGN KEY ("giveawayId") REFERENCES "Giveaway"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -100,6 +110,8 @@ const CRITICAL: Array<[string, string | null]> = [
   ['Notification', 'commentId'],
   ['BotEmoji', null],
   ['BotSetting', null],
+  ['Giveaway', null],
+  ['GiveawayEntry', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -119,7 +131,7 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR
         (c.table_name = 'Notification' AND c.column_name = 'commentId') OR
-        (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting')
+        (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()

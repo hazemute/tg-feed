@@ -37,7 +37,7 @@ model User {
   profilePalette String @default("crimson")
   profileBg      String @default("none")
   profileFrame   String @default("none")
-  // === Кошелёк (v5.38): единый баланс — рубли + свайпы (100 свайпов = 1 ₽) ===
+  // === Кошелёк (v5.38): единый баланс — рубли + свайпы (курс v5.40: 500 свайпов = 1 ₽) ===
   balanceKop     Int      @default(0) // рубли, в копейках
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
   createdAt      DateTime @default(now())
@@ -574,4 +574,53 @@ model BotSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+// ===================== РОЗЫГРЫШИ (v5.40) =====================
+// Админ собирает конкурс в панели → бот публикует пост в канал с цветной
+// кнопкой «Участвовать (N)» (иконка — премиум-эмодзи, цвет — style Bot API).
+// Клик: бот проверяет подписки на обязательные каналы, принимает заявку,
+// счётчик кнопки обновляется в реальном времени (editMessageReplyMarkup).
+// В endAt бот сам выбирает победителей (крипто-RNG), начисляет призы и
+// публикует красивый пост со списком счастливчиков.
+model Giveaway {
+  id          String    @id @default(cuid())
+  title       String
+  text        String    @default("") // markdown-lite описание (условия)
+  // Призы — JSON: [{kind:'swipes'|'rub'|'tier'|'custom', amount, period?, winners, label}]
+  prizes      String    @default("[]")
+  // Обязательные подписки — JSON: ["SnapTeamDev", "sponsor_channel"]
+  channels    String    @default("[]")
+  // Кнопка «Участвовать»: цвет (Bot API style) + эмодзи (юникод-фолбэк) + премиум-иконка
+  buttonStyle String    @default("primary") // primary | success | danger
+  buttonEmoji String    @default("🎉")
+  buttonEmojiId String  @default("") // custom_emoji_id для icon_custom_emoji_id
+  startAt     DateTime  @default(now()) // публикация поста (или сразу, если в прошлом)
+  endAt       DateTime // окончание приёма заявок → розыгрыш
+  status      String    @default("draft") // draft | scheduled | active | finished | cancelled
+  chatId      String? // канал публикации (напр. -100… или @username)
+  messageId   Int? // пост с кнопкой (для realtime-обновления счётчика)
+  winners     String? // JSON: [{userId, name, tgId?, prizeIndex}] после финализации
+  winnersMessageId Int? // пост с победителями
+  createdAt   DateTime  @default(now())
+
+  entries     GiveawayEntry[]
+
+  @@index([status, endAt])
+}
+
+// Заявка участника: уникальная пара (розыгрыш, юзер) — повторный клик не дублирует.
+// tgId/name снимком на момент заявки — для поста победителей и ссылок.
+model GiveawayEntry {
+  id         String   @id @default(cuid())
+  giveawayId String
+  giveaway   Giveaway @relation(fields: [giveawayId], references: [id], onDelete: Cascade)
+  userId     String // User.id (tg_<uid>)
+  tgId       String? // числовой id Telegram (ссылка tg://user?id=)
+  username   String?
+  firstName  String?
+  createdAt  DateTime @default(now())
+
+  @@unique([giveawayId, userId])
+  @@index([giveawayId, createdAt])
 }

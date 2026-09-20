@@ -5,6 +5,7 @@ import { runParser, backfillCustomEmoji } from '@/lib/parse-engine'
 import { notifyNewPosts } from '@/lib/tg-bot'
 import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, cardBatchSize } from '@/lib/parse-scheduler'
 import { pruneAll } from '@/lib/retention'
+import { checkDueGiveaways } from '@/lib/giveaways'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -101,6 +102,10 @@ async function handle(request: Request) {
     // бесплатен (мгновенный skipped), раз в сутки реально подрезает журналы
     const pruned = await pruneAll().catch(() => null)
 
+    // Розыгрыши: публикация запланированных + итоги просроченных (страховка,
+    // если у бота не было трафика — вебхук дергает планировщик лениво)
+    const giveaways = await checkDueGiveaways().catch(() => null)
+
     return NextResponse.json({
       ok: true,
       batch: batch.length,
@@ -111,6 +116,7 @@ async function handle(request: Request) {
       notified,
       emojiBackfill,
       pruned,
+      giveaways,
       ms: Date.now() - started,
     })
   } catch (e) {

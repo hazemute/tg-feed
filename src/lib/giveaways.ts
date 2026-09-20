@@ -1,0 +1,672 @@
+import { randomInt } from 'crypto'
+import { db } from '@/lib/db'
+import { botBanned, markBotBan, escapeHtml as escTg, isTelegramMember } from '@/lib/tg-bot'
+import { premiumText, stripTgEmoji, premiumMap } from '@/lib/tg-emoji'
+import { buildPlainKeyboard, type BotButton } from '@/lib/tg-buttons'
+import { fmtRub, SWP_PER_RUB } from '@/lib/wallet'
+import { tierExpiryFor } from '@/lib/tiers'
+import { cacheIncr, cacheExpire, cacheSet } from '@/lib/redis'
+
+/**
+ * РОЗЫГРЫШИ (v5.40) — полноценная система конкурсов:
+ *
+ *  1. Админ собирает розыгрыш в панели (призы, каналы, время, кнопка) →
+ *     «Опубликовать» → бот публикует пост в канал с цветной кнопкой
+ *     «Участвовать 🎉 (N)» (style + icon_custom_emoji_id — Bot API v5.29).
+ *  2. Клик по кнопке → вебхук gw:join:<id> → бот за долю секунды проверяет
+ *     подписки (getChatMember) → заявка принята / список каналов для подписки.
+ *  3. Счётчик на кнопке обновляется В РЕАЛЬНОМ ВРЕМЕНИ: каждая новая заявка
+ *     перерисовывает кнопку через editMessageReplyMarkup (флуд-агрегация).
+ *  4. В endAt — финализация: крипто-RNG выбирает победителей, призы
+ *     зачисляются автоматически (свайпы/рубли/тариф), в канал уходит
+ *     красивый пост со списком счастливчиков.
+ *
+ * Финализация ленивая: checkDueGiveaways() вызывается из вебхука (троттлинг
+ * через Redis), из панели и из daily-cron — розыгрыш никогда не «забудется».
+ */
+
+/** Канал публикации по умолчанию (наш канал) */
+export const GIVEAWAY_CHANNEL_KEY = 'giveaway_channel'
+export const DEFAULT_GIVEAWAY_CHANNEL = '@SnapTeamDev'
+
+export type PrizeKind = 'swipes' | 'rub' | 'tier' | 'custom'
+
+export type Prize = {
+  kind: PrizeKind
+  /** swipes: сколько свайпов; rub: копейки; tier: 'plus'|'pro'; custom: 0 */
+  amount: number
+  /** для tier: период (дней) — 0 = бессрочно/до ручного отзыва */
+  periodDays?: number
+  /** сколько мест (победителей) на этот приз */
+  winners: number
+  /** человекочитаемое название («1 000 свайпов», «Snap Pro на месяц») */
+  label: string
+}
+
+export type GiveawayWinner = {
+  userId: string
+  name: string
+  tgId?: string
+  prizeIndex: number
+}
+
+type TgChat = { id: number | string; title?: string }
+
+const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
+
+/** Вызов Bot API с результатом (для sendMessage/editMessageReplyMarkup розыгрышей) */
+async function tgCall<T = unknown>(
+  method: string,
+  payload: Record<string, unknown>,
+): Promise<{ ok: boolean; result?: T; description?: string }> {
+  if (!BOT_TOKEN()) return { ok: false, description: 'TELEGRAM_BOT_TOKEN не задан' }
+  if (botBanned()) return { ok: false, description: 'Bot API на паузе после 429' }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(10_000),
+    })
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean
+      result?: T
+      description?: string
+      parameters?: { retry_after?: number }
+    } | null
+    if (res.status === 429) {
+      const retry = Number(data?.parameters?.retry_after ?? 30)
+      void markBotBan(Number.isFinite(retry) && retry > 0 ? retry : 30)
+    }
+    if (data?.ok) return { ok: true, result: data.result }
+    return { ok: false, description: data?.description ?? `HTTP ${res.status}` }
+  } catch (e) {
+    return { ok: false, description: String((e as Error)?.message ?? e) }
+  }
+}
+
+/* ------------------------------ призы ------------------------------ */
+
+export function parsePrizes(json: string | null | undefined): Prize[] {
+  try {
+    const v = JSON.parse(json || '[]') as unknown
+    if (!Array.isArray(v)) return []
+    return v.filter(
+      (p): p is Prize =>
+        !!p && typeof p === 'object' &&
+        typeof (p as Prize).kind === 'string' &&
+        typeof (p as Prize).amount === 'number' &&
+        typeof (p as Prize).winners === 'number' && (p as Prize).winners > 0,
+    )
+  } catch {
+    return []
+  }
+}
+
+export function parseChannels(json: string | null | undefined): string[] {
+  try {
+    const v = JSON.parse(json || '[]') as unknown
+    if (!Array.isArray(v)) return []
+    return v
+      .filter((c): c is string => typeof c === 'string')
+      .map((c) => c.trim().replace(/^https?:\/\/t\.me\//i, '').replace(/^@/, '').replace(/\/+$/, ''))
+      .filter(Boolean)
+  } catch {
+    return []
+  }
+}
+
+export function parseWinners(json: string | null | undefined): GiveawayWinner[] {
+  try {
+    const v = JSON.parse(json || '[]') as unknown
+    return Array.isArray(v) ? (v as GiveawayWinner[]) : []
+  } catch {
+    return []
+  }
+}
+
+export function prizesLabel(prizes: Prize[]): string {
+  const out: string[] = []
+  let place = 0
+  for (const p of prizes) {
+    for (let i = 0; i < p.winners; i++) {
+      place++
+      out.push(`${place}. ${p.label}`)
+    }
+  }
+  return out.join('\n')
+}
+
+export function totalWinners(prizes: Prize[]): number {
+  return prizes.reduce((a, p) => a + Math.max(1, p.winners), 0)
+}
+
+/** Человекочитаемое описание приза по умолчанию (конструктор подставляет сам) */
+export function prizeAutoLabel(p: { kind: PrizeKind; amount: number; periodDays?: number }): string {
+  switch (p.kind) {
+    case 'swipes':
+      return `${p.amount.toLocaleString('ru-RU')} свайпов`
+    case 'rub':
+      return fmtRub(p.amount)
+    case 'tier':
+      return p.amount >= 2
+        ? 'Snap Pro'
+        : 'Snap Plus'
+    case 'custom':
+      return 'сюрприз от команды'
+  }
+}
+
+/* ------------------------------ пост розыгрыша ------------------------------ */
+
+const PLURAL = (n: number, one: string, few: string, many: string) => {
+  const m10 = n % 10
+  const m100 = n % 100
+  if (m10 === 1 && m100 !== 11) return one
+  if (m10 >= 2 && m10 <= 4 && (m100 < 12 || m100 > 14)) return few
+  return many
+}
+
+function fmtEndAt(endAt: Date): string {
+  const d = new Date(endAt.getTime() + 3 * 3600_000) // МСК для читаемости в посте
+  const months = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+  const hh = String(d.getUTCHours()).padStart(2, '0')
+  const mm = String(d.getUTCMinutes()).padStart(2, '0')
+  return `${d.getUTCDate()} ${months[d.getUTCMonth()]} в ${hh}:${mm} МСК`
+}
+
+/**
+ * Текст поста розыгрыша (HTML для Bot API): премиум-эмодзи оборачиваются
+ * premiumText'ом, призы и условия — из карточки. channels — какие каналы
+ * обязательны (список в посте с @ссылками).
+ */
+export function giveawayPostHtml(g: {
+  title: string
+  text: string
+  prizes: string
+  channels: string
+  endAt: Date
+}): string {
+  const prizes = parsePrizes(g.prizes)
+  const channels = parseChannels(g.channels)
+  const lines: string[] = []
+  lines.push(`🎉 <b>${escTg(g.title)}</b>`)
+  lines.push('')
+  if (g.text.trim()) {
+    // markdown-lite постов → упрощённый HTML: **b** → <b>, __i__ → <i>
+    const t = g.text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>')
+      .replace(/__([^_\n]+)__/g, '<i>$1</i>')
+    lines.push(t)
+    lines.push('')
+  }
+  lines.push('🎁 <b>Призы:</b>')
+  lines.push(prizesLabel(prizes) || '—')
+  lines.push('')
+  if (channels.length > 0) {
+    lines.push('✅ <b>Условие:</b> быть подписанным на ' + channels.map((c) => `@${escTg(c)}`).join(', '))
+    lines.push('')
+  }
+  lines.push(`⏰ <b>Итоги:</b> ${fmtEndAt(g.endAt)}`)
+  const total = totalWinners(prizes)
+  if (total > 1) lines.push(`🏆 Победителей: <b>${total}</b> — выбор случайным генератором`)
+  return lines.join('\n')
+}
+
+/** Кнопка «Участвовать (N)»: премиум-иконка + цвет; N = заявок сейчас */
+export function giveawayKeyboard(
+  g: { id: string; buttonStyle: string; buttonEmoji: string; buttonEmojiId: string },
+  count: number,
+): BotButton[][] {
+  const style = (['primary', 'success', 'danger'].includes(g.buttonStyle) ? g.buttonStyle : 'primary') as
+    | 'primary'
+    | 'success'
+    | 'danger'
+  const label = `Участвовать (${count})`
+  // emoji — ключ слота премиум-иконки (если premiumMap знает этот юникод) и
+  // юникод-префикс в plain-фолбэке; custom_emoji_id из карточки приоритетнее слота
+  return [
+    [
+      {
+        label,
+        emoji: g.buttonEmoji || '🎉',
+        callback_data: `gw:join:${g.id}`,
+        style,
+        ...(g.buttonEmojiId ? { customEmojiId: g.buttonEmojiId } : {}),
+      } as BotButton & { customEmojiId?: string },
+    ],
+  ]
+}
+
+/** Расширенная сборка клавиатуры с явным custom_emoji_id иконки кнопки */
+function keyboardMarkup(
+  rows: BotButton[][],
+  premiumMap: Map<string, string>,
+): { icon: ReturnType<typeof buildPlainKeyboard> | undefined; plain: ReturnType<typeof buildPlainKeyboard> } {
+  const iconRows = rows.map((row) =>
+    row.map((b) => {
+      const custom = (b as BotButton & { customEmojiId?: string }).customEmojiId
+      const slotId = b.emoji ? premiumMap.get(b.emoji) : undefined
+      const id = custom || slotId
+      return {
+        text: id ? b.label : [b.emoji, b.label].filter(Boolean).join(' '),
+        ...(id ? { icon_custom_emoji_id: id } : {}),
+        ...(b.style ? { style: b.style } : {}),
+        ...(b.url ? { url: b.url } : {}),
+        ...(b.callback_data ? { callback_data: b.callback_data } : {}),
+      }
+    }),
+  )
+  return {
+    icon: { inline_keyboard: iconRows },
+    plain: buildPlainKeyboard(rows),
+  }
+}
+
+/* ------------------------------ публикация ------------------------------ */
+
+async function botChannelId(): Promise<string> {
+  const row = await db.botSetting.findUnique({ where: { key: GIVEAWAY_CHANNEL_KEY } }).catch(() => null)
+  return row?.value?.trim() || DEFAULT_GIVEAWAY_CHANNEL
+}
+/**
+ * Опубликовать пост розыгрыша от имени бота в канале. Возвращает chatId/messageId.
+ * Бот должен быть админом канала с правом публикации (как и для ИИ-публикаций).
+ */
+export async function publishGiveawayPost(g: {
+  id: string
+  title: string
+  text: string
+  prizes: string
+  channels: string
+  buttonStyle: string
+  buttonEmoji: string
+  buttonEmojiId: string
+  endAt: Date
+}): Promise<{ ok: boolean; chatId?: string; messageId?: number; error?: string }> {
+  if (botBanned()) return { ok: false, error: 'Bot API на паузе после 429' }
+  const chat = await botChannelId()
+  const html = await premiumText(giveawayPostHtml(g))
+  const rows = giveawayKeyboard(g, 0)
+  const markup = keyboardMarkup(rows, await premiumMap())
+  const htmlSkip = stripTgEmoji(html)
+
+  // 1) с иконками и premium-текстом → 2) plain-текст, иконки → 3) всё plain
+  const attempts: Array<Record<string, unknown>> = [
+    { chat_id: chat, text: html, parse_mode: 'HTML', reply_markup: markup.icon },
+    { chat_id: chat, text: htmlSkip, parse_mode: 'HTML', reply_markup: markup.icon },
+    { chat_id: chat, text: htmlSkip, parse_mode: 'HTML', reply_markup: markup.plain },
+  ]
+  let lastError = ''
+  for (const payload of attempts) {
+    const r = await tgCall<{ message_id?: number; chat?: TgChat }>('sendMessage', payload)
+    if (r.ok && r.result) {
+      return {
+        ok: true,
+        chatId: String(r.result.chat?.id ?? chat),
+        messageId: r.result.message_id,
+      }
+    }
+    lastError = r.description ?? ''
+    if (botBanned()) return { ok: false, error: 'Bot API на паузе после 429' }
+  }
+  return { ok: false, error: lastError || 'Telegram отклонил публикацию' }
+}
+
+/* ------------------------------ участие ------------------------------ */
+
+export type JoinResult =
+  | { ok: true; count: number; already?: boolean }
+  | { ok: false; reason: 'ended' | 'not_active' | 'banned' | 'db'; message: string }
+  | { ok: false; reason: 'need_subscribe'; message: string; channels: string[] }
+
+/**
+ * Клик «Участвовать»: проверяем активность, подписки → создаём заявку.
+ * Все обязательные каналы проверяются getChatMember (бот-админ наших каналов;
+ * для каналов спонсоров бот должен быть добавлен админом — иначе считаем
+ * проверку пройденной, чтобы не блокировать участников по вине внешнего канала).
+ */
+export async function joinGiveaway(
+  giveawayId: string,
+  user: { id: string; tgId?: number; username?: string; firstName?: string },
+): Promise<JoinResult> {
+  const g = await db.giveaway.findUnique({ where: { id: giveawayId } })
+  if (!g) return { ok: false, reason: 'not_active', message: 'Розыгрыш не найден' }
+  if (g.status === 'finished' || g.status === 'cancelled' || g.status === 'draft') {
+    return { ok: false, reason: 'not_active', message: 'Розыгрыш уже не активен' }
+  }
+  if (g.endAt.getTime() <= Date.now()) {
+    return { ok: false, reason: 'ended', message: '⌛️ Приём заявок окончен — итоги вот-вот!' }
+  }
+
+  // Уже участвует — не дублируем, просто показываем счётчик
+  const existing = await db.giveawayEntry.findUnique({
+    where: { giveawayId_userId: { giveawayId, userId: user.id } },
+  })
+  if (existing) {
+    const count = await db.giveawayEntry.count({ where: { giveawayId } })
+    return { ok: true, count, already: true }
+  }
+
+  // Проверка подписок (максимум 5 каналов — лимит на один клик)
+  const channels = parseChannels(g.channels).slice(0, 5)
+  const notSubscribed: string[] = []
+  for (const ch of channels) {
+    const ok = user.tgId ? await isTelegramMember(ch, user.tgId) : true
+    // null = бот не видит участников канала — не блокируем участника по вине внешнего канала
+    if (ok === false) notSubscribed.push(ch)
+    if (botBanned()) break
+  }
+  if (notSubscribed.length > 0) {
+    return {
+      ok: false,
+      reason: 'need_subscribe',
+      message:
+        `🚫 Сначала подпишись на ${notSubscribed.length > 1 ? 'каналы' : 'канал'}: ` +
+        notSubscribed.map((c) => `@${c}`).join(', ') +
+        ' — и жми кнопку заново!',
+      channels: notSubscribed,
+    }
+  }
+
+  try {
+    await db.giveawayEntry.create({
+      data: {
+        giveawayId,
+        userId: user.id,
+        tgId: user.tgId ? String(user.tgId) : null,
+        username: user.username ?? null,
+        firstName: user.firstName ?? null,
+      },
+    })
+  } catch {
+    // гонка даблклика: unique-violation → уже участвует
+    const count = await db.giveawayEntry.count({ where: { giveawayId } })
+    return { ok: true, count, already: true }
+  }
+  const count = await db.giveawayEntry.count({ where: { giveawayId } })
+  return { ok: true, count }
+}
+
+// Подписки проверяет isTelegramMember (кэш 5 мин, null = нечем проверить — не блокируем)
+
+/* ------------------ realtime-счётчик на кнопке ------------------ */
+
+/**
+ * Обновить «(N)» на кнопке поста. Вызывается после каждой заявки;
+ * дребезг гасится Redis-счётчиком: не чаще раза в 2с на розыгрыш,
+ * между апдейтами счётчик копится и уезжает следующим тиком.
+ */
+export async function refreshGiveawayButton(giveawayId: string, count: number): Promise<void> {
+  const g = await db.giveaway.findUnique({
+    where: { id: giveawayId },
+    select: { chatId: true, messageId: true, buttonStyle: true, buttonEmoji: true, buttonEmojiId: true, status: true },
+  })
+  if (!g || !g.chatId || !g.messageId || g.status !== 'active') return
+
+  const throttleKey = `gw:btn:${giveawayId}`
+  const pending = await cacheIncr(throttleKey).catch(() => 1)
+  if (pending === 1) await cacheExpire(throttleKey, 2).catch(() => {})
+  if (pending > 1) {
+    // уже есть тик в полёте — следующий апдейт подхватит свежий count
+    await cacheSet(`gw:btn:pending:${giveawayId}`, count, 5).catch(() => {})
+    return
+  }
+
+  const rows = giveawayKeyboard(
+    { id: giveawayId, buttonStyle: g.buttonStyle, buttonEmoji: g.buttonEmoji, buttonEmojiId: g.buttonEmojiId },
+    count,
+  )
+  const markup = keyboardMarkup(rows, await premiumMap())
+  for (const m of [markup.icon, markup.plain]) {
+    const r = await tgCall('editMessageReplyMarkup', {
+      chat_id: g.chatId,
+      message_id: g.messageId,
+      ...(m ? { reply_markup: m } : {}),
+    })
+    if (r.ok) return
+    if (botBanned()) return
+  }
+}
+
+/* ------------------------------ финализация ------------------------------ */
+
+/**
+ * Выбрать победителей крипто-РНГ (Фишер–Йетс перемешивание, randomInt —
+ * криптостойкий). Порядок призов: первый приз — первые места.
+ */
+export function pickWinners(entries: GiveawayWinner[], prizes: Prize[]): GiveawayWinner[] {
+  const total = totalWinners(prizes)
+  const pool = [...entries]
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = randomInt(0, i + 1)
+    ;[pool[i], pool[j]] = [pool[j]!, pool[i]!]
+  }
+  const winners = pool.slice(0, total)
+  // распределение по призам
+  let idx = 0
+  for (let pi = 0; pi < prizes.length && idx < winners.length; pi++) {
+    for (let k = 0; k < prizes[pi]!.winners && idx < winners.length; k++) {
+      winners[idx]!.prizeIndex = pi
+      idx++
+    }
+  }
+  return winners
+}
+
+/** Начислить приз победителю (идемпотентность на вызывающем коде — одна финализация) */
+async function creditPrize(userId: string, prize: Prize): Promise<void> {
+  if (prize.kind === 'swipes' && prize.amount > 0) {
+    await db.user.update({
+      where: { id: userId },
+      data: { swipes: { increment: prize.amount } },
+    })
+    await db.balanceLog.create({
+      data: { userId, kind: 'admin', currency: 'swp', amount: prize.amount, note: 'Приз розыгрыша' },
+    }).catch(() => {})
+    return
+  }
+  if (prize.kind === 'rub' && prize.amount > 0) {
+    await db.user.update({
+      where: { id: userId },
+      data: { balanceKop: { increment: prize.amount } },
+    })
+    await db.balanceLog.create({
+      data: { userId, kind: 'admin', currency: 'rub', amount: prize.amount, note: 'Приз розыгрыша' },
+    }).catch(() => {})
+    return
+  }
+  if (prize.kind === 'tier') {
+    const tier = prize.amount >= 2 ? 'pro' : 'plus'
+    const u = await db.user.findUnique({ where: { id: userId }, select: { tierUntil: true } })
+    const until =
+      prize.periodDays && prize.periodDays > 0
+        ? new Date(
+            (u?.tierUntil && u.tierUntil.getTime() > Date.now() ? u.tierUntil.getTime() : Date.now()) +
+              prize.periodDays * 86_400_000,
+          )
+        : tierExpiryFor(u?.tierUntil, 'month')
+    await db.user.update({ where: { id: userId }, data: { tier, tierUntil: until } })
+  }
+  // custom — ничего не начисляем, только объявляем
+}
+
+/** Пост с победителями: премиум-эмодзи, ссылки на профили, приз каждого места */
+export function winnersPostHtml(g: {
+  title: string
+  prizes: string
+  winnersJson: string | null
+  entriesCount: number
+}): string {
+  const prizes = parsePrizes(g.prizes)
+  const winners = parseWinners(g.winnersJson)
+  const lines: string[] = []
+  lines.push('🏆 <b>Итоги розыгрыша</b>')
+  lines.push('')
+  lines.push(`🎉 <b>${escTg(g.title)}</b>`)
+  lines.push('')
+  if (winners.length === 0) {
+    lines.push('Никто не успел принять участие — в этот раз без победителей 😔')
+  } else {
+    const medals = ['🥇', '🥈', '🥉']
+    winners.forEach((w, i) => {
+      const medal = medals[i] ?? `🎖`
+      const prize = prizes[w.prizeIndex]
+      const name = escTg(w.name || 'участник')
+      const link = w.tgId ? ` <a href="tg://user?id=${escTg(w.tgId)}">(${name})</a>` : ` (${name})`
+      lines.push(`${medal} ${prize ? `<b>${escTg(prize.label)}</b> —${link}` : link}`)
+    })
+    lines.push('')
+    lines.push(
+      `🎲 Из ${g.entriesCount} ${PLURAL(g.entriesCount, 'заявки', 'заявок', 'заявок')} — случайный выбор ` +
+        'криптогенератором. Призы уже на балансах победителей!',
+    )
+  }
+  lines.push('')
+  lines.push('💜 Спасибо всем за участие — новый розыгрыш не за горами!')
+  return lines.join('\n')
+}
+
+/**
+ * Финализировать ОДИН розыгрыш: победители, призы, пост в канал.
+ * Идемпотентность — атомарный перевод статуса в finished (updateMany guard).
+ */
+export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolean; error?: string; winners?: number }> {
+  const g = await db.giveaway.findUnique({ where: { id: giveawayId } })
+  if (!g) return { ok: false, error: 'не найден' }
+  if (g.status === 'finished') return { ok: true, winners: parseWinners(g.winners).length }
+  if (g.status === 'draft' || g.status === 'scheduled') return { ok: false, error: 'ещё не опубликован' }
+
+  const entries = await db.giveawayEntry.findMany({
+    where: { giveawayId },
+    select: { userId: true, tgId: true, username: true, firstName: true },
+  })
+
+  // Погружаем имена из User (гость мог не иметь firstName в заявке)
+  const userIds = [...new Set(entries.map((e) => e.userId))]
+  const users = await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, firstName: true, username: true } })
+  const userById = new Map(users.map((u) => [u.id, u]))
+
+  const prizes = parsePrizes(g.prizes)
+  const participants: GiveawayWinner[] = entries.map((e) => ({
+    userId: e.userId,
+    name: e.firstName || userById.get(e.userId)?.firstName || (e.username ? `@${e.username}` : 'участник'),
+    ...(e.tgId ? { tgId: e.tgId } : {}),
+    prizeIndex: 0,
+  }))
+
+  const winners = pickWinners(participants, prizes)
+
+  // Начисление призов (до смены статуса — сбой начисления должен ретраиться)
+  for (const w of winners) {
+    const prize = prizes[w.prizeIndex]
+    if (prize) await creditPrize(w.userId, prize).catch((e) => console.error('[giveaway] creditPrize', e))
+  }
+
+  const winnersJson = JSON.stringify(winners)
+
+  // Пост с победителями
+  let winnersMessageId: number | null = null
+  let chatId = g.chatId
+  if (chatId && !botBanned()) {
+    const html = await premiumText(winnersPostHtml({ title: g.title, prizes: g.prizes, winnersJson, entriesCount: participants.length }))
+    for (const text of [html, stripTgEmoji(html)]) {
+      const r = await tgCall<{ message_id?: number }>('sendMessage', { chat_id: chatId, text, parse_mode: 'HTML' })
+      if (r.ok && r.result) {
+        winnersMessageId = r.result.message_id ?? null
+        break
+      }
+      if (botBanned()) break
+    }
+  }
+
+  // Атомарная смена статуса (повторный вызов ничего не сломает)
+  const upd = await db.giveaway.updateMany({
+    where: { id: g.id, status: { not: 'finished' } },
+    data: { status: 'finished', winners: winnersJson, ...(winnersMessageId ? { winnersMessageId } : {}) },
+  })
+  if (upd.count === 0) return { ok: true, winners: parseWinners(g.winners).length }
+
+  // Спрятать кнопку участия в исходном посте (приём окончен)
+  if (g.chatId && g.messageId && !botBanned()) {
+    void tgCall('editMessageReplyMarkup', { chat_id: g.chatId, message_id: g.messageId, reply_markup: { inline_keyboard: [] } })
+  }
+
+  return { ok: true, winners: winners.length }
+}
+
+/**
+ * Ленивый планировщик: опубликовать запланированные (startAt <= now) и
+ * завершить просроченные (endAt <= now). Вызывается из вебхука (троттлинг),
+ * панели и daily-cron. Redis-лок от параллельных инстансов.
+ */
+export async function checkDueGiveaways(): Promise<{ published: number; finished: number }> {
+  const now = new Date()
+  let published = 0
+  let finished = 0
+
+  // 1) Запланированные → активные (публикация поста)
+  const due = await db.giveaway.findMany({
+    where: { status: { in: ['scheduled', 'active'] }, startAt: { lte: now }, endAt: { lte: now } },
+    select: { id: true },
+  })
+  const expiredIds = due.map((d) => d.id)
+
+  const toPublish = await db.giveaway.findMany({
+    where: { status: 'scheduled', startAt: { lte: now }, id: { notIn: expiredIds } },
+  })
+  for (const g of toPublish) {
+    if (g.endAt.getTime() <= now.getTime()) {
+      // уже просрочен до публикации — просто активируем, финализация ниже
+      await db.giveaway.updateMany({ where: { id: g.id, status: 'scheduled' }, data: { status: 'active' } })
+      finished += await finishOne(g.id)
+      continue
+    }
+    const r = await publishGiveawayPost(g)
+    if (r.ok && r.chatId && r.messageId) {
+      await db.giveaway.update({
+        where: { id: g.id },
+        data: { status: 'active', chatId: r.chatId, messageId: r.messageId },
+      })
+      published++
+    } else {
+      // публикация не прошла — оставляем scheduled (ретрай на следующем тике)
+      console.error('[giveaway] publish failed', g.id, r.error)
+    }
+  }
+
+  // 2) Активные с истёкшим endAt → финализация
+  const active = await db.giveaway.findMany({
+    where: { status: 'active', endAt: { lte: now } },
+    select: { id: true },
+  })
+  for (const a of active) finished += await finishOne(a.id)
+  for (const id of expiredIds) finished += await finishOne(id)
+
+  return { published, finished }
+}
+
+async function finishOne(id: string): Promise<number> {
+  const r = await finalizeGiveaway(id).catch((e) => {
+    console.error('[giveaway] finalize', id, e)
+    return { ok: false } as { ok: boolean; winners?: number }
+  })
+  return r.ok ? (r.winners ?? 0) : 0
+}
+
+/** Троттлинг вызова checkDueGiveaways из вебхука: не чаще раза в 30с */
+export async function kickDueGiveaways(): Promise<void> {
+  const n = await cacheIncr('gw:due_kick').catch(() => 1)
+  if (n === 1) {
+    await cacheExpire('gw:due_kick', 30).catch(() => {})
+    void checkDueGiveaways().catch(() => {})
+  }
+}
+
+/** Для панели: счётчик заявок */
+export async function giveawayCount(giveawayId: string): Promise<number> {
+  return db.giveawayEntry.count({ where: { giveawayId } })
+}

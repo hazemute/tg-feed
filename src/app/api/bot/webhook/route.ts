@@ -17,6 +17,7 @@ import {
 } from '@/lib/tg-buttons'
 import { externalOrigin } from '@/lib/server'
 import { botBanned, markBotBan } from '@/lib/tg-bot'
+import { joinGiveaway, kickDueGiveaways, refreshGiveawayButton } from '@/lib/giveaways'
 
 export const dynamic = 'force-dynamic'
 
@@ -241,7 +242,7 @@ async function handleStartLogin(token: string, from: TgFrom | undefined, chatId?
       keyboard: [
         // Иконка ✅ из слота + зелёная кнопка (style: success, Bot API v5.29)
         [{ label: 'Это я, войти', emoji: '✅', callback_data: `login:${token}`, style: 'success' }],
-        [{ label: 'Открыть Tg Swipe', emoji: '🌐', url: SITE_URL }],
+        [{ label: 'Открыть Tg Swipe', emoji: '🌐', url: SITE_URL, style: 'primary' }],
       ] satisfies BotButton[][],
     },
   )
@@ -354,8 +355,8 @@ async function sendGreeting(chatId: number, lang: 'ru' | 'en', from: TgFrom | un
     ].join('\n'),
     {
       keyboard: [
-        [{ label: 'Подписаться на канал', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
-        [{ label: 'Открыть Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+          [{ label: 'Подписаться на канал', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
+          [{ label: 'Открыть Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
       ] satisfies BotButton[][],
     },
   )
@@ -465,6 +466,82 @@ async function handleEmojisCommand(from: TgFrom | undefined, chatId?: number) {
       ...(capLines.length > 0 ? ['', ...capLines] : []),
     ].join('\n'),
   ).catch(() => {})
+}
+
+/**
+ * callback gw:join:<giveawayId> — кнопка «Участвовать (N)» розыгрыша.
+ * Автопроверка подписок → заявка / список каналов; счётчик кнопки — в реальном времени.
+ */
+async function handleGiveawayJoin(
+  cbId: string,
+  giveawayId: string,
+  from: TgFrom | undefined,
+  chatId?: number,
+) {
+  if (!from || typeof from.id !== 'number') {
+    await botCall('answerCallbackQuery', { callback_query_id: cbId })
+    return
+  }
+  const r = await joinGiveaway(giveawayId, {
+    id: `tg_${from.id}`,
+    tgId: from.id,
+    username: from.username,
+    firstName: from.first_name,
+  }).catch(
+    (): { ok: false; reason: 'db'; message: string } => ({
+      ok: false,
+      reason: 'db',
+      message: 'Не получилось — попробуйте ещё раз',
+    }),
+  )
+
+  if (r.ok) {
+    await botCall('answerCallbackQuery', {
+      callback_query_id: cbId,
+      text: r.already ? 'Вы уже в игре! 🎉' : '🎉 Вы в игре! Ваша заявка принята',
+      show_alert: !r.already,
+    })
+    // Реалтайм-счётчик: кнопка «Участвовать (N)» обновляется у всех
+    if (!r.already) void refreshGiveawayButton(giveawayId, r.count)
+    return
+  }
+
+  if (r.reason === 'need_subscribe') {
+    await botCall('answerCallbackQuery', {
+      callback_query_id: cbId,
+      text: r.message,
+      show_alert: true,
+    })
+    // Кнопки подписки на недостающие каналы — вторым сообщением (удобно тапать)
+    if (chatId && r.channels.length > 0) {
+      await botSendRich(
+        chatId,
+        [
+          '🔗 <b>Сначала подпишись</b> — это условие розыгрыша:',
+          '',
+          ...r.channels.map((c) => `• @${escapeHtml(c)}`),
+          '',
+          'Подписался — жми «Участвовать» ещё раз!',
+        ].join('\n'),
+        {
+          keyboard: r.channels.map((c) => [{
+            label: `Подписаться на @${c}`,
+            emoji: '✨',
+            url: `https://t.me/${c}`,
+            style: 'primary',
+          }]) satisfies BotButton[][],
+        },
+      ).catch(() => {})
+    }
+    return
+  }
+
+  // ended / not_active / прочее — алерт с причиной
+  await botCall('answerCallbackQuery', {
+    callback_query_id: cbId,
+    text: r.message,
+    show_alert: true,
+  })
 }
 
 /** callback_query login:<token> — подтверждение входа */
@@ -699,6 +776,19 @@ export async function POST(request: Request) {
     }
 
     const cq = update.callback_query
+    // Розыгрыши: ленивый планировщик (публикация запланированных + итоги просроченных),
+    // троттлинг внутри kickDueGiveaways (не чаще раза в 30с на инстанс)
+    void kickDueGiveaways().catch(() => {})
+    if (cq?.data?.startsWith('gw:join:')) {
+      const gid = cq.data.slice('gw:join:'.length)
+      // id — cuid (25 символов, латиница/цифры) — фильтр от мусорных колбэков
+      if (/^[a-z0-9]{16,32}$/i.test(gid)) {
+        await handleGiveawayJoin(cq.id, gid, cq.from, cq.message?.chat?.id)
+      } else {
+        await botCall('answerCallbackQuery', { callback_query_id: cq.id })
+      }
+      return NextResponse.json({ ok: true })
+    }
     if (cq?.data?.startsWith('lang:')) {
       const code = cq.data.slice('lang:'.length)
       if (code === 'ru' || code === 'en') {

@@ -3,7 +3,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import { chatSimple, chatWithTools, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
+import { chatSimple, chatWithTools, chatWithToolsStream, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
+import { aiPremiumEmojiText } from '@/lib/ai-emoji'
 import {
   AI_MTOK_IN_SWP,
   AI_MTOK_OUT_SWP,
@@ -169,13 +170,13 @@ export async function POST(request: Request) {
     const d = parsed.data
 
     if (!openRouterEnabled() && d.action !== 'publish') {
-      return err('ИИ-ассистент временно недоступен', 503)
+      return err('Snap Ассистент временно недоступен', 503)
     }
 
     const tier = await tierOfUser(g.uid)
     if (!tierAtLeast(tier, 'pro')) {
       return NextResponse.json(
-        { error: 'pro_required', message: 'ИИ-ассистент доступен на тарифе Snap Pro' },
+        { error: 'pro_required', message: 'Snap Ассистент доступен на тарифе Snap Pro' },
         { status: 402 },
       )
     }
@@ -195,8 +196,8 @@ export async function POST(request: Request) {
           {
             error: 'not_enough_swipes',
             message:
-              `Не хватает свайпов для ИИ-ассистента: тарификация по токенам (${AI_MTOK_IN_SWP} за 1 млн входных + ${AI_MTOK_OUT_SWP} за 1 млн выходных). ` +
-              'Пополните баланс — свайпы купятся автоматически (1 ₽ = 100 свайпов).',
+              `Не хватает свайпов для Snap Ассистента: тарификация по токенам (${AI_MTOK_IN_SWP} за 1 млн входных + ${AI_MTOK_OUT_SWP} за 1 млн выходных). ` +
+              'Пополните баланс — свайпы купятся автоматически (1 ₽ = 500 свайпов).',
           },
           { status: 402 },
         )
@@ -279,24 +280,27 @@ export async function POST(request: Request) {
       return sseStream(async (send) => {
         let messages = history
         // Тарификация: копим токены всей цепочки (модель + финальный вызов),
-        // списываем по факту после ответа — как в ИИ-поиске
+        // списываем по факту после ответа — как в Snap Search
         const collector = usageCollector()
         const settle = async () => {
-          await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент', 12)
+          await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент', 12)
           if (collector.acc.usage) send('paid', { swipes: swipesForUsage(collector.acc.usage) })
         }
         try {
           for (let i = 0; i < MAX_LOOP; i++) {
-            const r = await chatWithTools(messages, schemasFor('assistant'), {
+            // v5.40: стриминг токенов — ответ печатается в чате в реальном времени
+            const r = await chatWithToolsStream(messages, schemasFor('assistant'), {
               maxTokens: 1400,
               timeoutMs: 60_000,
               temperature: 0.6,
               onUsage: collector.onUsage,
+              onDelta: (chunk) => send('delta', { text: chunk }),
             })
             if (r.toolCalls.length === 0) {
-              // Финальный ответ
+              // Финальный ответ (+ премиум-эмодзи из слотов бота)
+              const reply = await aiPremiumEmojiText(r.content || 'Готово!')
               await settle()
-              send('done', { reply: r.content || 'Готово!', ...meta, model: r.model })
+              send('done', { reply, ...meta, model: r.model })
               return
             }
             // Эхо вызова + статусы + исполнение
@@ -348,8 +352,9 @@ export async function POST(request: Request) {
             [],
             { maxTokens: 900, timeoutMs: 45_000, temperature: 0.6, onUsage: collector.onUsage },
           )
+          const reply = await aiPremiumEmojiText(tail.content || 'Готово!')
           await settle()
-          send('done', { reply: tail.content || 'Готово!', ...meta })
+          send('done', { reply, ...meta })
         } catch (e) {
           console.error('[ai/assistant chat]', e)
           // Токены частично потрачены — тарифицируем и отдаём ошибку
@@ -367,7 +372,7 @@ export async function POST(request: Request) {
         where: { id: channel.id },
         data: { styleProfile: JSON.stringify(profile), styleAt: new Date() },
       })
-      await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент (стиль)', 4)
+      await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент (стиль)', 4)
       return NextResponse.json({ ok: true, profile })
     }
 
@@ -405,10 +410,10 @@ export async function POST(request: Request) {
       const text = await chatSimple(system, user, { maxTokens: 700, timeoutMs: 40_000, temperature: 0.75, onUsage: collector.onUsage })
       const clean = text.replace(/^["«»]+|["»]+$/g, '').trim()
       if (clean.length < 30) {
-        await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент (пост)', 8)
+        await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент (пост)', 8)
         return err('Нейросеть вернула пустой пост — попробуйте ещё раз', 502)
       }
-      await chargeAiUsage(g.uid, collector.acc.usage, 'ИИ-ассистент (пост)', 8)
+      await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент (пост)', 8)
 
       // v5.33: суть поста → английский визуальный промпт (бесплатная модель)
       // → бесплатный pollinations. И текст, и визуал — ноль рублей.

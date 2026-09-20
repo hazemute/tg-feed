@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
+  Bot,
+  Check,
   ChevronRight,
   CreditCard,
   FileText,
@@ -16,13 +18,6 @@ import {
   Send,
   Settings,
   ShieldCheck,
-  X,
-  BarChart3,
-  BookOpen,
-  Check,
-  CheckCheck,
-  Eye,
-  Heart,
   Sparkles,
   Wallet,
 } from 'lucide-react'
@@ -30,10 +25,9 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
-import { stripMarkdown } from '@/lib/markdown'
-import { formatCount, pluralRu } from '@/lib/format'
+import { formatCount } from '@/lib/format'
 import { haptic, openInvoiceUrl, userAvatarUrl } from '@/lib/tg'
-import type { PostDTO, ProfileStatsResponse, SubscriptionDTO, TiersResponse } from '@/lib/types'
+import type { SubscriptionDTO, TiersResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ThemeGallery } from '@/components/tg/ThemeGallery'
@@ -47,14 +41,12 @@ import { UserBadges } from '@/components/badges/UserBadges'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
 import { WalletCard } from '@/components/tabs/WalletCard'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
+import { AiChat } from '@/components/ai/AiChat'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 
 
-/** Элемент списка закладок — приходит из /api/bookmarks с отметкой прочтения */
-type BookmarkItem = PostDTO & { readAt: string | null }
-
-/*
+/**
  * v5.35: SWR-кэш уровня модуля (паттерн v5.34 «кэш виден, сеть догоняет»).
  * Вкладка профиля размонтируется при переключении табов — без кэша каждое
  * возвращение мигало скелетонами и прочерками статистики. Теперь при монтировании
@@ -63,18 +55,16 @@ type BookmarkItem = PostDTO & { readAt: string | null }
 type ProfileStats = { stats: { likes: number; subscriptions: number; views: number; bookmarks: number } }
 let cachedStats: ProfileStats | null = null
 let cachedSubs: SubscriptionDTO[] | null = null
-let cachedBookmarks: BookmarkItem[] | null = null
 
 /**
  * Экран «Профиль» по макету: шапка пользователя, статистика,
- * мои категории, подписки, настройки. Плюс «Мой канал» и закладки.
+ * мои категории, подписки, настройки. Плюс «Мой канал» и Snap Ассистент.
  */
 export function ProfileTab() {
   const { user, theme, fontScale, lang, setLang, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
   const t = useT()
   const [profile, setProfile] = useState<ProfileStats | null>(() => cachedStats)
   const [subs, setSubs] = useState<SubscriptionDTO[] | null>(() => cachedSubs)
-  const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(() => cachedBookmarks)
   const [editOpen, setEditOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [themesOpen, setThemesOpen] = useState(false)
@@ -101,13 +91,10 @@ export function ProfileTab() {
   // Кошелёк (v5.39): шторка пополнения + счётчик изменений для обновления баланса
   const [topUpOpen, setTopUpOpen] = useState(false)
   const [walletReload, setWalletReload] = useState(0)
-
-  // Единая точка обновления закладок: пишем и в состояние, и в SWR-кэш модуля —
-  // иначе оптимистичные удаления/отметки «прочитано» терялись при уходе с вкладки
-  const applyBookmarks = (next: BookmarkItem[] | null) => {
-    cachedBookmarks = next
-    setBookmarks(next)
-  }
+  // Snap Ассистент (v5.40): чат ИИ-контентщика прямо из профиля — канал берём
+  // из привязанных (/api/mychannel); без канала — тост + ведём в «Мой канал»
+  const [assistantOpen, setAssistantOpen] = useState(false)
+  const [aiChannel, setAiChannel] = useState<{ id: string; title: string } | null>(null)
 
   const reload = () => {
     if (!user) return
@@ -123,9 +110,6 @@ export function ProfileTab() {
         setSubs(d.items)
       })
       .catch(() => setSubs([]))
-    api<{ items: BookmarkItem[] }>(`/api/bookmarks?userId=${encodeURIComponent(user.id)}`)
-      .then((d) => applyBookmarks(d.items))
-      .catch(() => applyBookmarks([]))
   }
 
   useEffect(() => {
@@ -164,11 +148,26 @@ export function ProfileTab() {
     }
   }, [])
 
-  // Непрочитанные закладки (открытие поста — отметка «прочитано»)
-  const unreadCount = useMemo(
-    () => (bookmarks ?? []).filter((b) => !b.readAt).length,
-    [bookmarks],
-  )
+  // Snap Ассистент: первый клик — лениво достаём привязанный канал
+  const openAssistant = () => {
+    haptic('light')
+    if (aiChannel) {
+      setAssistantOpen(true)
+      return
+    }
+    api<{ channels: Array<{ id: string; title: string }> }>('/api/mychannel')
+      .then((d) => {
+        const ch = d.channels[0]
+        if (!ch) {
+          toast('Ассистент работает с вашим каналом — сначала привяжите его', { icon: '🤖' })
+          setTab('mychannel')
+          return
+        }
+        setAiChannel({ id: ch.id, title: ch.title })
+        setAssistantOpen(true)
+      })
+      .catch(() => toast.error('Не удалось загрузить каналы'))
+  }
 
   if (!user) return null
 
@@ -183,48 +182,6 @@ export function ProfileTab() {
   const memberSinceLabel = user.createdAt
     ? new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(new Date(user.createdAt))
     : null
-
-  const removeBookmark = async (p: BookmarkItem) => {
-    applyBookmarks((bookmarks ?? []).filter((x) => x.id !== p.id))
-    try {
-      await api('/api/bookmark', {
-        method: 'POST',
-        body: JSON.stringify({ userId: user.id, postId: p.id }),
-      })
-    } catch {
-      // Откат: без него закладка исчезает из списка, хотя на сервере осталась —
-      // расхождение с бейджем «Сохранено» до перезагрузки
-      const prev = bookmarks ?? []
-      if (!prev.some((x) => x.id === p.id)) applyBookmarks([...prev, p])
-      toast.error('Не удалось убрать закладку')
-    }
-  }
-
-  const markRead = (postId: string) => {
-    applyBookmarks(
-      (bookmarks ?? []).map((b) =>
-        b.id === postId && !b.readAt ? { ...b, readAt: new Date().toISOString() } : b,
-      ),
-    )
-    void api('/api/bookmark/read', {
-      method: 'POST',
-      body: JSON.stringify({ userId: user.id, postId }),
-    }).catch(() => {})
-  }
-
-  const markAllRead = async () => {
-    applyBookmarks((bookmarks ?? []).map((b) => ({ ...b, readAt: b.readAt ?? new Date().toISOString() })))
-    haptic('light')
-    try {
-      await api('/api/bookmark/read', {
-        method: 'POST',
-        body: JSON.stringify({ userId: user.id, all: true }),
-      })
-      toast.success('Всё сохранённое прочитано')
-    } catch {
-      toast.error('Не удалось отметить прочитанным')
-    }
-  }
 
   const categoryTitle = (slug: string) => categories.find((c) => c.slug === slug)?.title ?? slug
 
@@ -425,93 +382,6 @@ export function ProfileTab() {
         )}
       </section>
 
-      {/* Сохранённые посты (с непрочитанными) */}
-      {bookmarks !== null && bookmarks.length > 0 && (
-        <section className="pt-7">
-          <div className="flex items-center justify-between px-4">
-            <h2 className="text-[19px] font-bold text-tg-text">Сохранённое</h2>
-            <div className="flex items-center gap-2.5">
-              {unreadCount > 0 && (
-                <button
-                  type="button"
-                  onClick={markAllRead}
-                  className="flex items-center gap-1 rounded-full bg-tg-link/10 px-2.5 py-1 text-[12px] font-semibold text-tg-link transition active:scale-95"
-                  aria-label="Отметить всё прочитанным"
-                >
-                  <CheckCheck className="h-3.5 w-3.5" />
-                  Всё прочитано
-                </button>
-              )}
-              <span className="text-[13px] font-medium text-tg-hint">{bookmarks.length}</span>
-            </div>
-          </div>
-          <div className="no-scrollbar max-h-[440px] overflow-y-auto overscroll-contain pt-1">
-            {bookmarks.map((p, i) => {
-              const unread = !p.readAt
-              return (
-                <div
-                  key={p.id}
-                  className={cn(
-                    'flex items-start gap-3 px-4 py-3',
-                    i > 0 && 'border-t border-tg-sep/60',
-                  )}
-                >
-                  <div className="relative shrink-0">
-                    <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={40} />
-                    {unread && (
-                      <span
-                        className="absolute -right-0.5 -top-0.5 h-2.5 w-2.5 rounded-full border-2 border-tg-bg bg-tg-link"
-                        aria-label="Непрочитано"
-                      />
-                    )}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      markRead(p.id)
-                      openChannel(p.channel.username)
-                    }}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <span
-                      className={cn(
-                        'block truncate text-[14.5px] text-tg-text',
-                        unread ? 'font-bold' : 'font-semibold',
-                      )}
-                    >
-                      {p.channel.title}
-                    </span>
-                    <span
-                      className={cn(
-                        'mt-0.5 line-clamp-2 text-[13.5px] leading-snug',
-                        unread ? 'text-tg-text/80' : 'text-tg-hint',
-                      )}
-                    >
-                      {p.text ? stripMarkdown(p.text) || 'медиа-пост' : 'медиа-пост'}
-                    </span>
-                    {unread && (
-                      <span className="mt-1 inline-flex items-center rounded-full bg-tg-link/10 px-1.5 py-0.5 text-[10.5px] font-semibold text-tg-link">
-                        новое
-                      </span>
-                    )}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeBookmark(p)}
-                    aria-label="Убрать из сохранённых"
-                    className="mt-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint active:scale-90"
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </section>
-      )}
-
-      {/* Активность за 7 дней (после «Подписок» — верх профиля повторяет макет) */}
-      <ActivityCard userId={user.id} />
 
       {/* Настройки */}
       <section className="pt-7">
@@ -560,6 +430,25 @@ export function ProfileTab() {
               </span>
             }
             onClick={() => setInfoMenuOpen(true)}
+            last
+          />
+        </div>
+      </section>
+
+      {/* Snap Ассистент (v5.40): переехал из карточки «Мой канал» — компактная
+          строка как у остальных пунктов; чат канала открывается поверх профиля */}
+      <section className="pt-7">
+        <div className="mt-1">
+          <SettingRow
+            icon={<Bot className="h-[22px] w-[22px]" strokeWidth={1.7} />}
+            label={t('profile.assistantRow')}
+            right={
+              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
+                {t('profile.assistantHint')}
+                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
+              </span>
+            }
+            onClick={openAssistant}
             last
           />
         </div>
@@ -699,8 +588,8 @@ export function ProfileTab() {
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
             <h3 className="text-[14.5px] font-bold text-tg-text">Услуги и тарифы</h3>
             <ul className="mt-1.5 space-y-1 text-tg-hint">
-              <li>• Free — бесплатно: лента, свайпы, 3 ИИ-поиска в день;</li>
-              <li>• Snap Plus — 390 ₽/мес или 2 990 ₽/год: безлимитный ИИ-поиск,
+              <li>• Free — бесплатно: лента, свайпы, 3 запроса Snap Search в день;</li>
+              <li>• Snap Plus — 390 ₽/мес или 2 990 ₽/год: безлимитный Snap Search,
               инкогнито, приоритетная скорость, премиум-эмодзи;</li>
               <li>• Snap Pro — 1 490 ₽/мес или 9 990 ₽/год: всё из Plus,
               ИИ-контентщик, продвижение до 7 постов в неделю, CTA-кнопка;</li>
@@ -713,7 +602,7 @@ export function ProfileTab() {
             <p className="mt-1.5 text-tg-hint">
               На балансе две валюты: <b className="text-tg-text">рубли</b> и{' '}
               <b className="text-tg-text">свайпы</b>. Курс всегда один:{' '}
-              <b className="text-tg-text">100 свайпов = 1 рубль</b> (1 копейка = 1 свайп).
+              <b className="text-tg-text">500 свайпов = 1 рубль</b> (1 свайп = 0,2 копейки).
               Свайпы — валюта нейросетей: списываются за запросы к ИИ по токенам
               (как в OpenRouter — за реальные входные и выходные токены).
               Рублёвый баланс покупает всё в сервисе: свайпы, тарифы Snap,
@@ -863,7 +752,7 @@ export function ProfileTab() {
         </div>
       </BottomSheet>
 
-      {/* Тарифы Snap: статус тира, лимит ИИ-поиска, покупка Plus/Pro через Stars.
+      {/* Тарифы Snap: статус тира, лимит Snap Search, покупка Plus/Pro через Stars.
           Из кастомайзера (z-90) шит открывается поверх — z-95, иначе слой под страницей */}
       <TiersSheet
         open={tiersOpen}
@@ -887,6 +776,17 @@ export function ProfileTab() {
       {/* Чат поддержки (телеграм-стиль) */}
       <SupportChat open={supportOpen} onClose={() => setSupportOpen(false)} />
       <SupportChat open={feedbackOpen} onClose={() => setFeedbackOpen(false)} kind="feedback" />
+
+      {/* Snap Ассистент (v5.40): тот же полноэкранный чат, что и из «Моего канала» */}
+      {aiChannel && (
+        <AiChat
+          kind="assistant"
+          open={assistantOpen}
+          onClose={() => setAssistantOpen(false)}
+          channelId={aiChannel.id}
+          channelTitle={aiChannel.title}
+        />
+      )}
     </div>
   )
 }
@@ -906,7 +806,7 @@ const PLAN_META: { plan: 'plus' | 'pro'; title: string; features: string[] }[] =
     plan: 'plus',
     title: 'Snap Plus',
     features: [
-      'Безлимитный ИИ-поиск',
+      'Безлимитный Snap Search',
       'Режим «Инкогнито» — просмотры скрыты из статистики админов',
       'Приоритетная скорость медиа',
       'Анимированные премиум-эмодзи',
@@ -929,7 +829,7 @@ const PLAN_META: { plan: 'plus' | 'pro'; title: string; features: string[] }[] =
 const kopToRub = (kop: number): string => `${(kop / 100).toLocaleString('ru-RU')} ₽`
 
 /**
- * Шит «Тариф Snap»: карточка текущего тира (с лимитом ИИ-поиска для free),
+ * Шит «Тариф Snap»: карточка текущего тира (с лимитом Snap Search для free),
  * карточки Plus/Pro с выбором периода (месяц/год) и покупкой через
  * Telegram Stars — POST /api/tiers отдаёт invoiceUrl, открываем нативный
  * инвойс через openInvoiceUrl; по оплате ('paid') подтягиваем свежий тир.
@@ -1064,7 +964,7 @@ function TiersSheet({
       onClose={onClose}
       zClass={zClass}
       title="Тариф Snap"
-      subtitle="ИИ-поиск, инкогнито и инструменты для канала"
+      subtitle="Snap Search, инкогнито и инструменты для канала"
     >
       {loading && (
         <div className="space-y-3" aria-hidden>
@@ -1105,7 +1005,7 @@ function TiersSheet({
               </p>
             ) : data.tier === 'free' && data.aiSearch.limit > 0 ? (
               <p className="mt-1 text-[13.5px] text-tg-hint">
-                Использовано ИИ-поисков сегодня: {data.aiSearch.used} из {data.aiSearch.limit}
+                Использовано запросов Snap Search сегодня: {data.aiSearch.used} из {data.aiSearch.limit}
               </p>
             ) : null}
           </div>
@@ -1295,125 +1195,6 @@ function RequisitesSheet({ open, onClose }: { open: boolean; onClose: () => void
         </p>
       </div>
     </BottomSheet>
-  )
-}
-
-/* ---------- Активность за 7 дней (мини-барчарт на CSS) ---------- */
-
-/** Максимальная высота бара, px */
-const BAR_MAX_PX = 52
-/** Высота «базы» пустого бара, px */
-const BAR_EMPTY_PX = 2
-
-/**
- * Карточка «Активность за 7 дней»: мини-барчарт просмотров по дням
- * (сегодня — цветом tg-link), под ним легенда с итогами недели.
- * Пока данные грузятся — скелетон; при ошибке блок тихо скрывается.
- */
-function ActivityCard({ userId }: { userId: string }) {
-  const [stats, setStats] = useState<ProfileStatsResponse | null>(null)
-  const [failed, setFailed] = useState(false)
-
-  useEffect(() => {
-    const ac = new AbortController()
-    api<ProfileStatsResponse>(
-      `/api/profile/stats?userId=${encodeURIComponent(userId)}`,
-      { signal: ac.signal },
-    )
-      .then((d) => {
-        setStats(d)
-        setFailed(false)
-      })
-      .catch((err: unknown) => {
-        // Отмена при unmount — не ошибка, остальное тихо скрывает блок
-        if ((err as Error)?.name !== 'AbortError') setFailed(true)
-      })
-    return () => ac.abort()
-  }, [userId])
-
-  // Ошибка загрузки → не рендерим блок вовсе
-  if (failed) return null
-
-  const days = stats?.days ?? []
-  const totals = stats?.totals
-  // Сегодня по UTC — совпадает с тем, как сервер строит окно дней
-  const todayKey = new Date().toISOString().slice(0, 10)
-  const maxViews = Math.max(1, ...days.map((d) => d.views))
-  const viewsWord = totals ? pluralRu(totals.views, 'просмотр', 'просмотра', 'просмотров') : ''
-  const likesWord = totals ? pluralRu(totals.likes, 'лайк', 'лайка', 'лайков') : ''
-
-  return (
-    <section className="pt-7" aria-label="Активность за 7 дней">
-      <h2 className="px-4 text-[19px] font-bold text-tg-text">Активность за 7 дней</h2>
-      {!totals ? (
-        /* Скелетон-строка на время загрузки */
-        <div className="mx-4 mt-3 flex items-end gap-2" aria-hidden>
-          {Array.from({ length: 7 }, (_, i) => (
-            <div key={i} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-              <div
-                className="tg-shimmer w-full max-w-[26px] rounded-full"
-                style={{ height: `${16 + ((i * 13) % 30)}px` }}
-              />
-              <div className="tg-shimmer h-2.5 w-5 rounded" />
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mx-4 mt-3 rounded-2xl bg-tg-surface p-4">
-          {/* Барчарт: высота бара пропорциональна просмотрам дня */}
-          <div
-            className="flex items-end gap-2"
-            role="img"
-            aria-label={`Активность за 7 дней: ${totals.views} ${viewsWord}, ${totals.reads} прочитано, ${totals.likes} ${likesWord}`}
-          >
-            {days.map((d) => {
-              const isToday = d.date === todayKey
-              const h =
-                d.views === 0
-                  ? BAR_EMPTY_PX
-                  : Math.max(4, Math.round((d.views / maxViews) * BAR_MAX_PX))
-              return (
-                <div key={d.date} className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
-                  <div className="flex w-full items-end justify-center" style={{ height: `${BAR_MAX_PX}px` }}>
-                    <div
-                      className={cn(
-                        'w-full max-w-[26px] rounded-full',
-                        isToday ? 'bg-tg-link' : 'bg-tg-sep',
-                      )}
-                      style={{ height: `${h}px` }}
-                    />
-                  </div>
-                  <span
-                    className={cn(
-                      'text-[11px] leading-none',
-                      isToday ? 'font-semibold text-tg-link' : 'text-tg-hint',
-                    )}
-                  >
-                    {/* T00:00:00 — парсим как локальную полночь, чтобы день недели совпадал с датой */}
-                    {new Date(`${d.date}T00:00:00`).toLocaleDateString('ru-RU', { weekday: 'short' })}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-          {/* Легенда: итоги недели (прочитано — несклоняемая форма) */}
-          <p className="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-[12.5px] text-tg-hint">
-            <Eye className="h-3.5 w-3.5" aria-hidden />
-            <span>
-              {totals.views} {viewsWord}
-            </span>
-            <span aria-hidden>·</span>
-            <BookOpen className="h-3.5 w-3.5" aria-hidden />
-            <span>{totals.reads} прочитано</span>
-            <span aria-hidden>·</span>
-            <Heart className="h-3.5 w-3.5" aria-hidden />
-            <span>
-              {totals.likes} {likesWord}
-            </span>
-          </p>
-        </div>
-      )}
-    </section>
   )
 }
 
