@@ -295,15 +295,47 @@ export async function POST(request: Request) {
           for (let i = 0; i < MAX_LOOP; i++) {
             // v5.40: стриминг токенов — ответ печатается в чате в реальном времени
             const r = await chatWithToolsStream(messages, schemasFor('assistant'), {
-              maxTokens: 1400,
+              maxTokens: 2000,
               timeoutMs: 60_000,
               temperature: 0.6,
               onUsage: collector.onUsage,
               onDelta: (chunk) => send('delta', { text: chunk }),
             })
             if (r.toolCalls.length === 0) {
+              // v5.55: ответ, ОБРЕЗАННЫЙ лимитом токенов (finish_reason=length),
+              // дописываем продолжениями — «обрез чата» больше не показывается юзеру
+              let content = r.content || ''
+              let finishReason = r.finishReason
+              let cont = 0
+              while (finishReason === 'length' && cont < 2) {
+                cont++
+                send('status', { tool: 'continue', label: 'Дописываю ответ…' })
+                const more = await chatWithToolsStream(
+                  [
+                    ...messages,
+                    { role: 'assistant', content },
+                    {
+                      role: 'user',
+                      content:
+                        '[система] Твой предыдущий ответ оборвался ровно на середине из-за лимита длины. Продолжи с места обрыва — без повторов написанного, без приветствий и заголовков «Продолжение». Если текст логически завершён — просто закончи последнее предложение.',
+                    },
+                  ],
+                  [],
+                  {
+                    maxTokens: 1400,
+                    timeoutMs: 60_000,
+                    temperature: 0.6,
+                    onUsage: collector.onUsage,
+                    onDelta: (chunk) => send('delta', { text: chunk }),
+                  },
+                )
+                if (!more.content) break
+                content += more.content
+                finishReason = more.finishReason
+                if (more.toolCalls.length > 0) break
+              }
               // Финальный ответ (+ премиум-эмодзи из слотов бота)
-              const reply = await aiPremiumEmojiText(r.content || 'Готово!')
+              const reply = await aiPremiumEmojiText(content || 'Готово!')
               await settle()
               send('done', { reply, ...meta, model: r.model })
               return

@@ -264,7 +264,38 @@ export async function POST(request: Request) {
               onDelta: (chunk) => send('delta', { text: chunk }),
             })
             if (r.toolCalls.length === 0) {
-              const reply = await aiPremiumEmojiText(r.content || 'Не нашёл — переформулируйте вопрос.')
+              // v5.55: обрезанный лимитом ответ (finish_reason=length) дописываем
+              let content = r.content || ''
+              let finishReason = r.finishReason
+              let cont = 0
+              while (finishReason === 'length' && cont < 2) {
+                cont++
+                send('status', { tool: 'continue', label: 'Дописываю ответ…' })
+                const more = await chatWithToolsStream(
+                  [
+                    ...messages,
+                    { role: 'assistant', content },
+                    {
+                      role: 'user',
+                      content:
+                        '[система] Твой предыдущий ответ оборвался ровно на середине из-за лимита длины. Продолжи с места обрыва — без повторов написанного. Если текст логически завершён — просто закончи последнее предложение.',
+                    },
+                  ],
+                  [],
+                  {
+                    maxTokens: 1000,
+                    timeoutMs: 60_000,
+                    temperature: 0.3,
+                    onUsage: collector.onUsage,
+                    onDelta: (chunk) => send('delta', { text: chunk }),
+                  },
+                )
+                if (!more.content) break
+                content += more.content
+                finishReason = more.finishReason
+                if (more.toolCalls.length > 0) break
+              }
+              const reply = await aiPremiumEmojiText(content || 'Не нашёл — переформулируйте вопрос.')
               const sources = await sourcesDTO(sourceIds.slice(0, 6))
               await settle()
               send('done', { reply, ...meta, sources })

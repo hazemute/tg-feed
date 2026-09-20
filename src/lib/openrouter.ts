@@ -394,6 +394,7 @@ const TOOL_MODELS = PREFERRED_FREE
 
 type RawToolCall = { id?: { name?: string } | string; function?: { name?: string; arguments?: string } }
 type ToolResponseChoice = {
+  finish_reason?: string
   message?: {
     content?: string | null
     tool_calls?: RawToolCall[]
@@ -458,7 +459,7 @@ export async function chatWithTools(
     /** Реальный token-usage успешного вызова (для тарификации в свайпах) */
     onUsage?: (u: AiUsage) => void
   },
-): Promise<{ content: string; toolCalls: ToolCall[]; model?: string }> {
+): Promise<{ content: string; toolCalls: ToolCall[]; model?: string; finishReason?: string }> {
   const key = process.env.OPENROUTER_API_KEY
   if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const maxTokens = opts?.maxTokens ?? 1200
@@ -565,21 +566,23 @@ export async function chatWithTools(
         continue
       }
       const data = (await res.json()) as { choices?: ToolResponseChoice[]; usage?: ApiUsage }
-      const msg = data.choices?.[0]?.message
+      const choice = data.choices?.[0]
+      const msg = choice?.message
+      const finishReason = choice?.finish_reason
       const content = (typeof msg?.content === 'string' ? msg.content.trim() : '') ?? ''
       const toolCalls = normalizeToolCalls(msg?.tool_calls)
       if (toolCalls.length > 0) {
         const u = usageOf(data.usage, model)
         if (u) opts?.onUsage?.(u)
-        return { content, toolCalls, model }
+        return { content, toolCalls, model, finishReason }
       }
       if (content) {
         const u = usageOf(data.usage, model)
         if (u) opts?.onUsage?.(u)
         // Текст-фолбэк: некоторые модели отвечают JSON-блоком даже с tools
         const parsed = parseToolJsonBlock(content)
-        if (parsed) return { content: parsed.rest, toolCalls: [parsed.call], model }
-        return { content, toolCalls: [], model }
+        if (parsed) return { content: parsed.rest, toolCalls: [parsed.call], model, finishReason }
+        return { content, toolCalls: [], model, finishReason }
       }
       lastError = new Error(`OpenRouter ${model}: пустой ответ`)
     } catch (e) {
@@ -611,7 +614,7 @@ export async function chatWithToolsStream(
     /** Дельта финального текста (realtime-стриминг в миниапп) */
     onDelta?: (chunk: string) => void
   },
-): Promise<{ content: string; toolCalls: ToolCall[]; model?: string }> {
+): Promise<{ content: string; toolCalls: ToolCall[]; model?: string; finishReason?: string }> {
   const key = process.env.OPENROUTER_API_KEY
   if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const maxTokens = opts?.maxTokens ?? 1200
@@ -644,19 +647,22 @@ export async function chatWithToolsStream(
   for (const model of chain) {
     let content = ''
     let sawAnyToken = false
+    // finish_reason потока ('stop' | 'length' | ...) — length = ответ ОБРЕЗАН лимитом
+    let finishReason: string | undefined
     try {
-      const res = await postWith429Retry(
-        {
-          model,
-          max_tokens: maxTokens,
-          temperature,
-          stream: true,
-          messages: wire,
-          tools,
-          tool_choice: 'auto',
-        },
-        timeoutMs,
-      )
+      const body: Record<string, unknown> = {
+        model,
+        max_tokens: maxTokens,
+        temperature,
+        stream: true,
+        messages: wire,
+      }
+      // Пустой tools-массив некоторые провайдеры встречают 400 — шлём только когда есть
+      if (tools.length > 0) {
+        body.tools = tools
+        body.tool_choice = 'auto'
+      }
+      const res = await postWith429Retry(body, timeoutMs)
       if (!res.ok || !res.body) {
         // Модель не умеет tools — фолбэк на текстовый JSON-протокол (не стримим:
         // JSON-блок юзеру показывать нельзя), дальше по цепочке не идём
@@ -708,6 +714,7 @@ export async function chatWithToolsStream(
             try {
               const json = JSON.parse(payload) as {
                 choices?: Array<{
+                  finish_reason?: string
                   delta?: {
                     content?: string
                     tool_calls?: Array<{
@@ -723,6 +730,8 @@ export async function chatWithToolsStream(
               if (json.error?.message) throw new Error(json.error.message)
               const u = usageOf(json.usage, model)
               if (u) opts?.onUsage?.(u)
+              const chunkFinish = json.choices?.[0]?.finish_reason
+              if (chunkFinish) finishReason = chunkFinish
               const delta = json.choices?.[0]?.delta
               const piece = delta?.content ?? ''
               if (piece) {
@@ -759,20 +768,21 @@ export async function chatWithToolsStream(
           args: tc.args || '{}',
         }))
       if (toolCalls.length > 0) {
-        return { content: content.trim(), toolCalls, model }
+        return { content: content.trim(), toolCalls, model, finishReason }
       }
       if (content.trim().length > 0) {
         // Текст без tools — некоторые модели отвечают JSON-блоком даже со stream
         const parsed = parseToolJsonBlock(content)
-        if (parsed) return { content: parsed.rest, toolCalls: [parsed.call], model }
-        return { content: content.trim(), toolCalls: [], model }
+        if (parsed) return { content: parsed.rest, toolCalls: [parsed.call], model, finishReason }
+        return { content: content.trim(), toolCalls: [], model, finishReason }
       }
       lastError = new Error(`OpenRouter ${model}: пустой поток`)
     } catch (e) {
       lastError = e
-      // Поток умер с содержательным куском — отдаём как есть (лучше, чем ничего)
+      // Поток умер с содержательным куском — отдаём как есть (лучше, чем ничего);
+      // помечаем length: текст реально оборван → вызывающий допишет продолжением
       if (sawAnyToken && content.trim().length >= 40) {
-        return { content: content.trim(), toolCalls: [], model }
+        return { content: content.trim(), toolCalls: [], model, finishReason: finishReason ?? 'length' }
       }
     }
   }
