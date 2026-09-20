@@ -206,6 +206,8 @@ const CRITICAL: Array<[string, string | null]> = [
   ['Giveaway', 'tasks'],
   ['GiveawayEntry', 'ticketsCount'],
   ['UserSource', null],
+  ['Quest', null],
+  ['QuestCompletion', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -227,7 +229,8 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'Notification' AND c.column_name = 'commentId') OR
         (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
-        (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone'))
+        (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
+        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()
