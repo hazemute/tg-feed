@@ -31,7 +31,12 @@ const store: PageCacheStore = (G.__tgFeedPageCache ??= { pages: new Map(), overr
 const pages = store.pages
 const overrides = store.overrides
 
-const PAGE_TTL_MS = 45_000
+/*
+ * v5.58: TTL 45с → 90с — новые посты всё равно приходят отдельной пилюлей
+ * «N новых» и попадают в ленту через /api/feed/fresh, а возвраты на вкладку
+ * и смена вкладок вдвое дольше остаются мгновенными.
+ */
+const PAGE_TTL_MS = 90_000
 const PAGE_MAX = 400
 const OVERRIDE_TTL_MS = 10 * 60_000
 

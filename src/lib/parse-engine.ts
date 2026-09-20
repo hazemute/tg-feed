@@ -192,6 +192,44 @@ function spoilerNear(block: string, index: number, span = 420): boolean {
 }
 
 // ------------------------------------------------------------------
+// Прогрев edge-кэша медиа (v5.58)
+// ------------------------------------------------------------------
+
+/*
+ * Telegram троттлит датацентровые IP Vercel: холодный фетч файла через
+ * /api/media висел 13-15с. Edge-кэш (Vercel-CDN-Cache-Control) лечит
+ * повторные запросы, но ПЕРВЫЙ запрос каждого файла всё ещё медленный.
+ * Решение: парсер после вставки постов канала сам прогревает прокси
+ * свежими медиа/аватаркой — юзеры почти никогда не встречают холодный
+ * промах (тик проходит раз в сутки, до утреннего трафика).
+ */
+const MEDIA_ORIGIN =
+  process.env.NEXT_PUBLIC_SITE_URL?.trim().replace(/\/+$/, '') ||
+  process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, '') ||
+  'https://tg-swipe.vercel.app'
+
+function warmMediaEdge(urls: string[]): void {
+  const uniq = [...new Set(urls)]
+    .filter((u) => /^https:\/\/(cdn\d+\.telesco\.pe|[\w.-]*telegram\.org)\//.test(u))
+    .slice(0, 10)
+  if (uniq.length === 0) return
+  void (async () => {
+    await Promise.all(
+      uniq.map(async (u) => {
+        try {
+          await fetch(`${MEDIA_ORIGIN}/api/media?u=${encodeURIComponent(u)}`, {
+            headers: { 'User-Agent': 'TgSwipeWarm/1.0' },
+            signal: AbortSignal.timeout(12_000),
+          })
+        } catch {
+          /* прогрев не критичен — edge соберётся первым юзером */
+        }
+      }),
+    )
+  })()
+}
+
+// ------------------------------------------------------------------
 // Парсер HTML канала
 // ------------------------------------------------------------------
 
@@ -775,6 +813,17 @@ export async function runParser(
           // гонка с другим инстансом — дубликат, пропускаем
         }
       }
+      // v5.58: прогрев edge-кэша — аватарка (og:image из этого же HTML) +
+      // медиа вставленных постов (до 10 URL на канал за тик)
+      const ogAvatar = html.match(/<meta[^>]+property=["']og:image["'][^>]+content=["'](https:[^"']+)["']/)?.[1]
+      const warmUrls: string[] = ogAvatar ? [ogAvatar] : []
+      for (const p of queue.slice(0, added)) {
+        if (p.media?.url) warmUrls.push(p.media.url)
+        for (const g of p.gallery) if (g.url) warmUrls.push(g.url)
+        if (warmUrls.length >= 10) break
+      }
+      void warmMediaEdge(warmUrls)
+
       results.push({ username: target, added, adSkipped })
       processed++
       report(results[results.length - 1], channel.title, processed)

@@ -17,8 +17,10 @@ export const dynamic = 'force-dynamic'
  * Range-запросы пробрасываются (перемотка видео/аудио работает).
  */
 export async function GET(request: Request) {
-  // Публичный эндпоинт — мягкий лимит на IP (медиа грузится пачками при скролле)
-  const ip = guardIp(request, { limit: 240, windowMs: 60_000, bucket: 'media' })
+  // Публичный эндпоинт — мягкий лимит на IP (медиа грузится пачками при скролле;
+  // v5.58: 240→600/мин — за NAT оператора сидят десятки юзеров, каждая карточка
+  // = аватар + фото + эмодзи через этот прокси)
+  const ip = guardIp(request, { limit: 600, windowMs: 60_000, bucket: 'media' })
   if (!ip.ok) return ip.res
 
   const { searchParams } = new URL(request.url)
@@ -29,20 +31,24 @@ export async function GET(request: Request) {
   }
 
   const range = request.headers.get('range') ?? undefined
-  try {
-    /*
-     * ТАЙМАУТ ТОЛЬКО НА ЗАГОЛОВКИ, не на тело: AbortSignal.timeout(25s)
-     * обрывал весь стрим — большие видео/голосовые не успевали прокачаться
-     * через сервер за 25с и умирали с «failed to pipe response» прямо у
-     * пользователя («грузится бесконечно»). Теперь: 15с на соединение и
-     * ответные заголовки, после — тело течёт без лимита (видео любое длины),
-     * обрыв клиента отменяет докачку через request.signal.
-     */
+  /*
+   * v5.58 — СКОРОСТЬ («медиа не грузятся»): Telegram троттлит датацентровые
+   * IP Vercel — холодный фетч файла висел 13-15с. Лечение слоями:
+   *  1) Vercel-CDN-Cache-Control — офиц. хедер edge-кэша для динамических
+   *     роутов (обычный s-maxage у force-dynamic Vercel срезает): файл из
+   *     Telegram качается ОДИН раз в мире, дальше edge HIT ~30мс;
+   *  2) таймаут соединения 15с → 9с + ОДИН тихий ретрай (медленный первый
+   *     байт ≠ мёртвый файл, вторая попытка обычно мгновенна);
+   *  3) парсер прогревает edge-кэш свежих медиа каждым тиком (parse-engine
+   *     warmMedia) — юзеры почти не встречают холодный промах.
+   *  Тело по-прежнему без лимита времени: видео/голосовые стримятся целиком,
+   *  обрыв клиента отменяет докачку через request.signal.
+   */
+  const fetchUpstream = async (): Promise<Response> => {
     const connectAc = new AbortController()
-    const connectTimer = setTimeout(() => connectAc.abort(), 15_000)
-    let upstream: Response
+    const connectTimer = setTimeout(() => connectAc.abort(), 9_000)
     try {
-      upstream = await fetch(raw, {
+      return await fetch(raw, {
         headers: {
           // Telegram CDN отвечает и без браузерных заголовков, но валидный UA надёжнее
           'User-Agent':
@@ -53,6 +59,14 @@ export async function GET(request: Request) {
       })
     } finally {
       clearTimeout(connectTimer)
+    }
+  }
+  try {
+    let upstream: Response
+    try {
+      upstream = await fetchUpstream()
+    } catch {
+      upstream = await fetchUpstream() // один тихий ретрай
     }
 
     if (!upstream.ok && upstream.status !== 206) {
@@ -81,11 +95,17 @@ export async function GET(request: Request) {
     }
     // Кэш: браузер — 7 дней, CDN Vercel — 30 дней (медиа Telegram неизменяемо
     // по URL: file_id фиксирован, перезаписей нет) — повторные скроллы и
-    // возвращения в приложение отдают картинки мгновенно из кэша
+    // возвращения в приложение отдают картинки мгновенно из кэша.
+    // v5.58: Vercel-CDN-Cache-Control — edge-кэш ДИНАМИЧЕСКОГО роута (проверено
+    // замером: обычный s-maxage удалялся, x-vercel-cache: MISS на каждый запрос,
+    // холодные 14с повторялись вечно). 206/Range на edge не кэшируем.
     headers.set(
       'Cache-Control',
       'public, max-age=604800, s-maxage=2592000, stale-while-revalidate=2592000, immutable',
     )
+    if (upstream.status === 200 && !range) {
+      headers.set('Vercel-CDN-Cache-Control', 'public, s-maxage=2592000, stale-while-revalidate=2592000')
+    }
 
     return new NextResponse(upstream.body, { status: upstream.status, headers })
   } catch (e) {
