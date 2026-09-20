@@ -47,12 +47,9 @@ function isSafePhotoUrl(raw: string): boolean {
 }
 
 /**
- * Редирект для аватарки КАНАЛА: доверенные хосты Telegram + свой Supabase
- * Storage. БАГФИКС: Storage-ссылки (554 канала, uehhvzutlaxgbpnwmijo.supabase.co)
- * не проходили isSafePhotoUrl — постоянная аватарка отклонялась, и путь падал
- * либо в 404 (без photoFileId — серые инициалы), либо в медленную прокси-скачку
- * байтов через Bot API. Свой Storage доверен по построению: URL ставит только
- * наш парсер (avatar-store.ts), хост совпадает с NEXT_PUBLIC_SUPABASE_URL.
+ * Редирект для аватарки КАНАЛА: доверенные хосты Telegram (+ исторически —
+ * свой Supabase Storage; v5.56: мёртвые *.supabase.co отсекаются ДО этого
+ * вызова — проект с бакетом удалён, см. комментарий в GET).
  */
 function isSafeChannelAvatarUrl(raw: string): boolean {
   if (isSafePhotoUrl(raw)) return true
@@ -135,10 +132,16 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       const channel = await channelPhotoOf(channelId)
       if (!channel) return new NextResponse('not found', { status: 404 })
 
-      // Постоянная аватарка из Storage — самый быстрый путь: 302 + долгий кэш.
-      // (v5.33: основной путь аватарок каналов — прокси /api/media в DTO;
-      // этот redirect остаётся фолбэком для /api/avatar/c_<id>.)
-      if (channel.avatarUrl && isSafeChannelAvatarUrl(channel.avatarUrl)) {
+      // Постоянная аватарка — 302 + долгий кэш (telesco.pe/telegram.org — прямые
+      // ссылки из og:image, v5.56).
+      // ЛЕГАСИ (v5.56): ссылки *.supabase.co МЕРТВЫ (проект с бакетом удалён,
+      // DNS NXDOMAIN) — раньше Storage доверялся по построению, теперь редирект
+      // на него = 307 в яму. Считаем отсутствующей → падаем в Bot API-байты.
+      if (
+        channel.avatarUrl &&
+        !channel.avatarUrl.includes('.supabase.co/') &&
+        isSafeChannelAvatarUrl(channel.avatarUrl)
+      ) {
         return NextResponse.redirect(channel.avatarUrl, {
           headers: {
             'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
