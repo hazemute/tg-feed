@@ -122,6 +122,46 @@ function prefetchOtherLangs(current: LangFilter, userId: string, category: strin
 }
 
 /**
+ * Prefetch СЛЕДУЮЩЕЙ страницы ленты (v5.57 — «догрузка без ожидания»).
+ * После успешной загрузки страницы p тихо тянем p+1 с тем же сидом/разрезом:
+ * ответ кладём в клиентскую память (и в серверный L0-кэш заодно). Когда
+ * сентинел уйдёт вниз, append достанет страницу из карты мгновенно —
+ * спиннер догрузки не появится вовсе. TTL короче языкового (страница
+ * быстрее устаревает из-за вставки свежих постов шедулером).
+ */
+const pagePrefetch = new Map<string, PrefetchEntry>()
+const pagePrefetchInflight = new Set<string>()
+const PAGE_PREFETCH_TTL_MS = 45_000
+
+function pagePrefetchKey(userId: string, category: string, lang: LangFilter, seed: string, p: number): string {
+  return `${userId}|${category}|${lang}|${seed}|${p}`
+}
+
+function prefetchNextPage(next: number, userId: string, category: string, lang: LangFilter, seed: string): void {
+  if (next < 1) return
+  const key = pagePrefetchKey(userId, category, lang, seed, next)
+  const hit = pagePrefetch.get(key)
+  if (hit && hit.exp > Date.now()) return
+  if (pagePrefetchInflight.has(key)) return
+  pagePrefetchInflight.add(key)
+  api<FeedResponse>(
+    `/api/feed?userId=${encodeURIComponent(userId)}&category=${encodeURIComponent(category)}&page=${next}&limit=${PAGE_SIZE}&sh=${seed}&lang=${lang}`,
+    { signal: AbortSignal.timeout(30_000) },
+  )
+    .then((d) => {
+      if (pagePrefetch.size > 8) {
+        const now = Date.now()
+        for (const [k, e] of pagePrefetch) if (e.exp <= now) pagePrefetch.delete(k)
+      }
+      pagePrefetch.set(key, { data: d, exp: Date.now() + PAGE_PREFETCH_TTL_MS })
+    })
+    .catch(() => {
+      /* тихо — обычная догрузка по сентинелу работает как раньше */
+    })
+    .finally(() => pagePrefetchInflight.delete(key))
+}
+
+/**
  * Разнообразие ленты на клиенте: один и тот же канал — НЕ подряд. Работает
  * поверх серверного diversify и ловит ВСЕ источники повторов: стыки страниц,
  * тихий аппенд свежих постов, дедуп при «съехавшем» окне пагинации, офлайн-кэш.
@@ -495,10 +535,17 @@ export function FeedView() {
            пересборка ленты (дальний Supabase, пустой индекс) занимает ~20-35с —
            дефолт обрубал ответ ровно в момент, когда сервер почти отвечал.
            «Бесконечной загрузки» нет: ниже авто-ретрай и статус-пилюля. */
-        const data = await api<FeedResponse>(
-          `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}&lang=${langRef.current}`,
-          { signal: AbortSignal.timeout(45_000) },
-        )
+        // v5.57: страница ужеprefetch’нута после прошлой загрузки — отдаём
+        // мгновенно, без сети (мимо — обычный запрос)
+        const pfKey = pagePrefetchKey(userRef.current.id, category, langRef.current, seedRef.current, p)
+        const pfHit = pagePrefetch.get(pfKey)
+        const data: FeedResponse =
+          pfHit && pfHit.exp > Date.now()
+            ? (pagePrefetch.delete(pfKey), pfHit.data)
+            : await api<FeedResponse>(
+                `/api/feed?userId=${encodeURIComponent(userRef.current.id)}&category=${encodeURIComponent(category)}&page=${p}&limit=${PAGE_SIZE}&sh=${seedRef.current}&lang=${langRef.current}`,
+                { signal: AbortSignal.timeout(45_000) },
+              )
         // Ответ устарел (категория/язык сменились, пока летел запрос) — молча discard
         if (seq !== loadSeqRef.current) return
         /* Дедуп: внутри ответа (ранк может вернуть пост дважды) и против уже
@@ -542,6 +589,10 @@ export function FeedView() {
         setPage(p)
         setOffline(false)
         setLoadFailed(false)
+        // v5.57: сразу догреваем СЛЕДУЮЩУЮ страницу того же разреза —
+        // append у сентинела станет мгновенным (память клиента + L0 сервера)
+        if (!feedOver && data.hasMore && userRef.current)
+          void prefetchNextPage(p + 1, userRef.current.id, category, langRef.current, seedRef.current)
         // Кэшируем свежую страницу (офлайн-режим) — раздельно по языку
         if (replace) {
           void saveFeedCache(category, data.items, langRef.current)

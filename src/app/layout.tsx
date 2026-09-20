@@ -18,6 +18,7 @@ import {
   CUSTOM_THEME_KEY,
 } from '@/lib/custom-theme'
 import './globals.css'
+import { SITE_URL } from '@/lib/site'
 
 const geistSans = Geist({
   variable: '--font-geist-sans',
@@ -35,15 +36,59 @@ export const viewport: Viewport = {
   maximumScale: 1,
   userScalable: false,
   viewportFit: 'cover',
-  themeColor: '#ffffff',
+  // v5.57: цвет интерфейса браузера под светлую/тёмную схему (раньше был
+  // жёстко белый — в тёмной теме шапка браузера слепила)
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#0e141c' },
+  ],
 }
 
 export const metadata: Metadata = {
+  metadataBase: new URL(SITE_URL),
   title: 'Tg Swipe — умная лента Telegram-каналов',
   description:
     'Умная лента постов из открытых Telegram-каналов по вашим интересам: работает как сайт по домену и как Telegram Mini App. Подписка в один тап, AI-саммари, закладки.',
   keywords: ['Telegram', 'лента', 'каналы', 'Tg Swipe', 'сайт', 'Mini App'],
-  icons: { icon: '/logo.svg' },
+  applicationName: 'Tg Swipe',
+  manifest: '/manifest.webmanifest',
+  alternates: { canonical: '/' },
+  icons: {
+    icon: [
+      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/logo.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/apple-touch-icon.png',
+  },
+  openGraph: {
+    type: 'website',
+    locale: 'ru_RU',
+    url: SITE_URL,
+    siteName: 'Tg Swipe',
+    title: 'Tg Swipe — умная лента Telegram-каналов',
+    description:
+      'Лента постов по вашим интересам: свайпы, AI-саммари, закладки. Работает как сайт и как Telegram Mini App.',
+    images: [
+      {
+        url: '/tgswipe-welcome.png',
+        width: 1200,
+        height: 630,
+        alt: 'Tg Swipe — умная лента Telegram-каналов',
+      },
+    ],
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Tg Swipe — умная лента Telegram-каналов',
+    description:
+      'Лента постов по вашим интересам: свайпы, AI-саммари, закладки.',
+    images: ['/tgswipe-welcome.png'],
+  },
+  appleWebApp: {
+    capable: true,
+    title: 'Tg Swipe',
+    statusBarStyle: 'default',
+  },
 }
 
 /*
@@ -146,10 +191,10 @@ export default function RootLayout({
       data-platform="telegram"
     >
       <head>
-        {/* Предподключение к внешним источникам: аватарки каналов (Supabase
-            Storage) — экономия TLS-хендшейка ~100-300мс на первом экране */}
-        <link rel="preconnect" href={process.env.NEXT_PUBLIC_SUPABASE_URL ?? 'https://supabase.co'} crossOrigin="anonymous" />
-        <link rel="dns-prefetch" href="https://cdn4.telesco.pe" />
+        {/* v5.57: предподключение к Telegram CDN (аватарки каналов теперь
+            отдаются прямыми ссылками telesco.pe) — TLS-хендшейк экономится
+            ~100-300мс на первом экране. Мёртвый preconnect Supabase убран. */}
+        <link rel="preconnect" href="https://cdn4.telesco.pe" crossOrigin="anonymous" />
         <link rel="dns-prefetch" href="https://cdn2.telesco.pe" />
       </head>
       <body

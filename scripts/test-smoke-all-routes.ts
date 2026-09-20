@@ -115,6 +115,8 @@ check('like без postId → 400', badLike.status === 400, `status=${badLike.st
 const badQuest = await get('/api/quests/definitely_not_exists/claim', { method: 'POST', body: JSON.stringify({ userId: UID }) })
 check('claim несуществующего → status=unavailable', badQuest.status === 200 && badQuest.body?.status === 'unavailable', `status=${badQuest.status} body=${JSON.stringify(badQuest.body).slice(0, 80)}`)
 
+// module-маркер (top-level await требует ES-модуль)
+export {}
 console.log(`\nИтог: ${ok} ok, ${fails.length} fail`)
 if (fails.length) {
   console.log('FAILS:')

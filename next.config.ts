@@ -9,10 +9,8 @@ config({ override: true });
 
 const nextConfig: NextConfig = {
   output: "standalone",
-  /* config options here */
-  typescript: {
-    ignoreBuildErrors: true,
-  },
+  /* v5.57: строгий type-check на сборке — tsc чист, ошибки больше не
+     «проталкиваются» в прод молча (ignoreBuildErrors удалён) */
   reactStrictMode: false,
   // Anti-scan: не раскрываем стек (X-Powered-By: Next.js) в ответах
   poweredByHeader: false,

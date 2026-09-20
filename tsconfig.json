@@ -38,6 +38,9 @@
   ],
   "exclude": [
     "node_modules",
-    "mini-services"
+    "mini-services",
+    "skills",
+    "scripts",
+    "examples"
   ]
 }
