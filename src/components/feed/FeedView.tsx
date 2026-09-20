@@ -204,7 +204,7 @@ function FilterChip({
       aria-label={aria}
       title={aria}
       className={cn(
-        'flex h-8 shrink-0 items-center gap-1 rounded-full border px-2.5 text-[12.5px] font-medium transition active:scale-95',
+        'flex h-9 shrink-0 items-center gap-1 rounded-full border px-3 text-[12.5px] font-medium transition active:scale-95',
         active
           ? 'border-tg-link/30 bg-tg-link/10 text-tg-link'
           : 'border-tg-sep bg-tg-surface text-tg-hint',
@@ -901,6 +901,20 @@ export function FeedView() {
     setItems((prev) => prev.map((p) => (p.id === id ? { ...p, ...patch } : p)))
   }, [])
 
+  /* v5.35: защита от двойного тапа по лайку/закладке — пока запрос по этому посту
+   * в полёте, повторные тапы игнорируются. Раньше быстрый двойной тап успевал
+   * дважды перевернуть оптимистичный флаг и отправить два toggle-запроса:
+   * лайк ставился и тут же снимался (двойной расход счётчика и запросов). */
+  const inflightActionsRef = useRef<Set<string>>(new Set())
+  const actionInflight = (key: string) => {
+    if (inflightActionsRef.current.has(key)) return true
+    inflightActionsRef.current.add(key)
+    return false
+  }
+  const actionSettled = (key: string) => {
+    inflightActionsRef.current.delete(key)
+  }
+
   // Лайк/закладка из полного экрана поста (PostOverlay) синхронизируются
   // с лентой точечно, без рефетча и потери скролла
   useEffect(() => {
@@ -923,6 +937,8 @@ export function FeedView() {
         haptic('light')
         return
       }
+      const key = `like:${post.id}`
+      if (actionInflight(key)) return
       const nextLiked = !post.liked
       const nextCount = post.likesCount + (nextLiked ? 1 : -1)
       updatePost(post.id, { liked: nextLiked, likesCount: Math.max(0, nextCount) })
@@ -935,6 +951,8 @@ export function FeedView() {
       } catch {
         updatePost(post.id, { liked: post.liked, likesCount: post.likesCount })
         toast.error('Не удалось сохранить лайк')
+      } finally {
+        actionSettled(key)
       }
     },
     [user, updatePost],
@@ -949,6 +967,8 @@ export function FeedView() {
         haptic('light')
         return
       }
+      const key = `bm:${post.id}`
+      if (actionInflight(key)) return
       const next = !post.bookmarked
       updatePost(post.id, {
         bookmarked: next,
@@ -967,6 +987,8 @@ export function FeedView() {
           bookmarksCount: Math.max(0, post.bookmarksCount + (next ? -1 : 1)),
         })
         toast.error('Ошибка')
+      } finally {
+        actionSettled(key)
       }
     },
     [user, updatePost],
@@ -1075,7 +1097,7 @@ export function FeedView() {
                     setCategory(t.slug)
                   }}
                   className={cn(
-                    'relative shrink-0 pb-2 text-[19px] leading-none transition-colors',
+                    'relative shrink-0 pb-2.5 pt-1 text-[19px] leading-none transition-colors',
                     active ? 'font-bold text-tg-text' : 'font-medium text-tg-hint',
                   )}
                 >
@@ -1228,9 +1250,9 @@ export function FeedView() {
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.2 }}
             role="status"
-            className="overflow-hidden bg-amber-50 dark:bg-amber-500/10"
+            className="overflow-hidden bg-tg-star/10"
           >
-            <div className="flex items-center justify-center gap-2 px-4 py-1.5 text-[12.5px] font-medium text-amber-700 dark:text-amber-400">
+            <div className="flex items-center justify-center gap-2 px-4 py-1.5 text-[12.5px] font-medium text-tg-star">
               <WifiOff className="h-3.5 w-3.5" />
               Нет сети — показаны сохранённые посты
             </div>

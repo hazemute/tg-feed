@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { err } from '@/lib/server'
+import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
@@ -17,7 +17,8 @@ export async function POST(request: Request) {
   if (!g.ok) return g.res
 
   try {
-    const body = (await request.json().catch(() => ({}))) as { tag?: unknown }
+    // readJson: кап 64KB по content-length ДО чтения тела
+    const body = await readJson<{ tag?: unknown }>(request)
     // Нормализация: снимаем решётку, режем пробелы, приводим к нижнему регистру
     const raw = typeof body?.tag === 'string' ? body.tag.trim().replace(/^#/, '') : ''
     if (!TAG_RE.test(raw)) return err('invalid tag')

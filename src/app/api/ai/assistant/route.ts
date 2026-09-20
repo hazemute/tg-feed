@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import { chatSimple, chatWithTools, openRouterEnabled, type ChatMsg } from '@/lib/openrouter'
+import { chatSimple, chatWithTools, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
 import { enVisualPrompt, pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-image'
 import { botPublishToChannel } from '@/lib/tg-bot'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
@@ -167,7 +167,22 @@ export async function POST(request: Request) {
       )
     }
 
-    const channel = await db.channel.findUnique({ where: { id: d.channelId } })
+    // select вместо полной строки (egress: avatarHash/membersFetchedAt и пр.
+    // не нужны; styleProfile/styleAt нужны для styleFresh, username/description —
+    // для системного промпта и анализа стиля)
+    const channel = await db.channel.findUnique({
+      where: { id: d.channelId },
+      select: {
+        id: true,
+        title: true,
+        username: true,
+        description: true,
+        categoryId: true,
+        claimedById: true,
+        styleProfile: true,
+        styleAt: true,
+      },
+    })
     if (!channel || channel.claimedById !== g.uid) return err('Канал не привязан к вам', 403)
 
     /* ---------- Чат с инструментами (SSE) ---------- */
@@ -291,7 +306,7 @@ export async function POST(request: Request) {
           send('done', { reply: tail.content || 'Готово!', ...meta })
         } catch (e) {
           console.error('[ai/assistant chat]', e)
-          send('error', { message: 'Нейросеть не ответила — попробуйте ещё раз' })
+          send('error', { message: openRouterErrorText(e) })
         }
       })
     }

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { cronAuthorized } from '@/lib/guard'
-import { generateTts, ttsPlainOf } from '@/lib/tts'
 import { summarizePostCached, translatePostCached } from '@/lib/ai'
 import { runAiModeration } from '@/lib/ai-moderate'
 import { warmFeedIndexes } from '@/lib/feed-warm'
@@ -14,12 +13,13 @@ export const maxDuration = 60
  *
  * После каждого тика парсинга движок просит приложение заранее подготовить для
  * свежих постов:
- *  - озвучку (Post.ttsAudio) — 2 поста;
  *  - переводы на русский для нерусских (Post.translations) — 4 поста;
  *  - краткое содержание для длинных (Post.aiSummary) — 2 поста.
  *
  * Всё кэшируется в общей БД — пользователь на любом окружении получает
- * перевод/саммари/озвучку мгновенно, без ожидания генерации.
+ * перевод/саммари мгновенно, без ожидания генерации.
+ * v5.35: озвучку (Post.ttsAudio) из прогрева УБРАЛИ — base64-блобы
+ * раздували Supabase (DB + egress); аудио теперь генерируется по запросу.
  * Авторизация: Authorization: Bearer $CRON_SECRET.
  */
 export async function POST(request: Request) {
@@ -30,7 +30,6 @@ export async function POST(request: Request) {
   const since = new Date(Date.now() - 3 * 24 * 3600_000)
 
   try {
-    let tts = 0
     let translated = 0
     let summarized = 0
     let moderated = 0
@@ -61,30 +60,10 @@ export async function POST(request: Request) {
       /* прогрев индексов не влияет на остальной warm */
     }
 
-    /* ---------- Озвучка: 2 свежих поста без аудио ---------- */
-    const ttsPosts = await db.post.findMany({
-      where: { ttsAudio: null, text: { not: '' }, publishedAt: { gte: since } },
-      select: { id: true, text: true },
-      orderBy: { publishedAt: 'desc' },
-      take: 6,
-    })
-    for (const post of ttsPosts) {
-      if (tts >= 2) break
-      if (ttsPlainOf(post.text).length < 12) continue
-      try {
-        const audio = await generateTts(post.text)
-        if (!audio) continue
-        await db.post
-          .update({
-            where: { id: post.id },
-            data: { ttsAudio: audio.toString('base64'), ttsAt: new Date() },
-          })
-          .catch(() => {})
-        tts++
-      } catch {
-        // один неудачный пост не роняет прогрев
-      }
-    }
+    /* ---------- Озвучка: УДАЛЕНО (v5.35) ----------
+     * base64-блобы в Post.ttsAudio — главный жор Supabase; /api/tts теперь
+     * генерирует компактный MP3 по запросу с кэшем в памяти. */
+    const tts = 0
 
     /* ---------- Переводы: 4 нерусских свежих поста ---------- */
     const foreignPosts = await db.post.findMany({

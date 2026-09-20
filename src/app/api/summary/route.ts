@@ -27,7 +27,8 @@ export async function POST(request: Request) {
     if (!parsed.success) return err('postId required')
     const postId = parsed.data.postId
 
-    const post = await db.post.findUnique({ where: { id: postId } })
+    // select вместо полной строки (egress: ttsAudio/translations не нужны)
+    const post = await db.post.findUnique({ where: { id: postId }, select: { text: true } })
     if (!post) return err('post not found', 404)
 
 

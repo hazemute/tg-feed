@@ -74,7 +74,23 @@ async function loadChannels(category: string, q: string) {
       ...(category ? { category: { slug: category } } : {}),
       ...(q ? { OR: [{ title: { contains: q } }, { username: { contains: q } }] } : {}),
     },
-    include: { category: true, _count: { select: { posts: true } } },
+    // egress (11-a): select вместо include — styleProfile/avatarVideoUrl и пр.
+    // (тяжёлые служебные колонки) из каталога не отдаются
+    select: {
+      id: true,
+      title: true,
+      username: true,
+      description: true,
+      avatarColor: true,
+      avatarUrl: true,
+      photoFileId: true,
+      membersCount: true,
+      subscribersCount: true,
+      isPremium: true,
+      status: true,
+      category: { select: { slug: true, title: true } },
+      _count: { select: { posts: true } },
+    },
     // сначала каналы с известным реальным числом подписчиков (Bot API), потом без
     orderBy: [
       { isPremium: 'desc' },

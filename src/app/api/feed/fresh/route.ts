@@ -5,7 +5,7 @@ import { err } from '@/lib/server'
 import { buildFeedScope } from '@/lib/feed'
 import { detectLang, langPasses } from '@/lib/lang'
 import { diversify } from '@/lib/rank'
-import { toPostDTO } from '@/lib/dto'
+import { POST_LIST_SELECT, postDTOFromRow } from '@/lib/dto'
 import { guardAuth } from '@/lib/guard'
 import { nsfwPostNotIn } from '@/lib/moderation'
 import type { PostDTO } from '@/lib/types'
@@ -58,7 +58,9 @@ export async function GET(request: Request) {
       },
       orderBy: { publishedAt: 'desc' },
       take: 30,
-      include: { channel: { include: { category: true } }, _count: { select: { bookmarkedBy: true } } },
+      // POST_LIST_SELECT (egress): пилюля «N новых» поллится каждые ~20с —
+      // include тянул ttsAudio/translations каждого поста впустую
+      select: { ...POST_LIST_SELECT, _count: { select: { bookmarkedBy: true } } },
     })
 
     // Флаги пользователя для этих постов (недорого: постов ≤ 30)
@@ -79,7 +81,7 @@ export async function GET(request: Request) {
     const items: PostDTO[] = posts
       .filter((p) => langPasses(detectLang(p.text), lang))
       .map((p) =>
-        toPostDTO(
+        postDTOFromRow(
           p,
           {
             liked: likeSet.has(p.id),

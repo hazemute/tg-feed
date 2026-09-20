@@ -16,7 +16,25 @@ export async function GET(request: Request) {
   const userId = g.uid
 
   try {
-    const user = await db.user.findUnique({ where: { id: userId } })
+    // select: только поля DTO (egress + меньше байтов из Supabase)
+    const user = await db.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        photoUrl: true,
+        isGuest: true,
+        isPremium: true,
+        languageCode: true,
+        categories: true,
+        createdAt: true,
+        profilePalette: true,
+        profileBg: true,
+        profileFrame: true,
+      },
+    })
     if (!user) return NextResponse.json({ error: 'user not found' }, { status: 404 })
 
     const [likes, subscriptions, views, bookmarks] = await Promise.all([

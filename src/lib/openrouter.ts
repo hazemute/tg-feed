@@ -15,18 +15,107 @@
 
 const API_URL = 'https://openrouter.ai/api/v1/chat/completions'
 
-/** Цепочка моделей: первая доступная отвечает. Только :free — ноль рублей.
- *  Переопределяется env OPENROUTER_MODELS */
-const FREE_CHAIN = [
-  'z-ai/glm-5.3-flash:free', // ЕДИНАЯ модель сервиса (решение владельца) — везде первая
-  'z-ai/glm-5.2:free', // фолбэк на случай исчерпания лимитов GLM Flash
-  'google/gemma-4-26b-a4b-it:free', // последний бесплатный фолбэк
+/** Приоритет бесплатных моделей: первая живая отвечает. Только :free — ноль рублей.
+ *  Переопределяется env OPENROUTER_MODELS.
+ *  v5.35: z-ai/glm-5.3-flash:free ИСЧЕЗ из каталога OpenRouter (2026-09) —
+ *  каждый запрос начинался с 404, а фолбэки упирались в лимиты. Слоты :free
+ *  на OpenRouter появляются/исчезают, поэтому: (1) держим glm-5.3-flash:free
+ *  первой — живая дискавери (ниже) вернёт её в цепочку автоматически,
+ *  (2) сегодня фактически отвечает glm-5.2:free (та же GLM, бесплатно). */
+const PREFERRED_FREE = [
+  'z-ai/glm-5.3-flash:free', // вернётся в каталог — снова станет первой (решение владельца)
+  'z-ai/glm-5.2:free', // сегодня: единственный бесплатный GLM — фактический основной
+  'google/gemma-4-26b-a4b-it:free',
+  'google/gemma-4-31b-it:free',
+  'deepseek/deepseek-v4-flash-0731:free',
+  'inclusionai/ling-3.0-flash-vl:free',
 ]
 
-const DEFAULT_MODELS = FREE_CHAIN
+const DEFAULT_MODELS = PREFERRED_FREE
 
-/** Цепочка для СТРИМИНГА (перевод/саммари) — та же бесплатная тройка */
-const SPEED_MODELS = FREE_CHAIN
+/** Цепочка для СТРИМИНГА (перевод/саммари) — та же бесплатная шестёрка */
+const SPEED_MODELS = PREFERRED_FREE
+
+/* ==================== ЖИВАЯ ДИСКАВЕРИ МОДЕЛЕЙ (v5.35) ====================
+ * Раз в час в фоне спрашиваем публичный GET /models и строим цепочку только
+ * из ЖИВЫХ бесплатных моделей. Горячий путь НИКОГДА не ждёт дискавери:
+ * холодный старт идёт по статичной цепочке, кэш догоняет в фоне. */
+
+const MODELS_URL = 'https://openrouter.ai/api/v1/models'
+const MODELS_TTL_MS = 60 * 60 * 1000
+
+type LiveModels = { ids: Set<string>; at: number }
+
+function liveStore(): { __orLiveModels?: LiveModels; __orLiveFetching?: boolean } {
+  return globalThis as unknown as { __orLiveModels?: LiveModels; __orLiveFetching?: boolean }
+}
+
+/** Синхронно: последний кэш живых id моделей (без сети) */
+function cachedLiveIds(): Set<string> | null {
+  return liveStore().__orLiveModels?.ids ?? null
+}
+
+/** Фоновая дискавери: не блокирует запрос */
+function kickModelDiscovery(): void {
+  const g = liveStore()
+  if (g.__orLiveModels && Date.now() - g.__orLiveModels.at < MODELS_TTL_MS) return
+  if (g.__orLiveFetching) return
+  g.__orLiveFetching = true
+  fetch(MODELS_URL, { signal: AbortSignal.timeout(8000) })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((d: { data?: Array<{ id?: string }> } | null) => {
+      const ids = new Set((d?.data ?? []).map((m) => m.id ?? '').filter(Boolean))
+      if (ids.size > 0) g.__orLiveModels = { ids, at: Date.now() }
+    })
+    .catch(() => {})
+    .finally(() => {
+      g.__orLiveFetching = false
+    })
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+/** POST /chat/completions с ОДНИМ ретраем на 429 (минутные лимиты free-слотов:
+ *  ретрай через ~1.5с почти всегда проходит, не переключая модель). */
+async function postWith429Retry(body: Record<string, unknown>, timeoutMs: number): Promise<Response> {
+  const key = process.env.OPENROUTER_API_KEY ?? ''
+  const headers = {
+    Authorization: `Bearer ${key}`,
+    'Content-Type': 'application/json',
+    'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
+    'X-Title': 'Tg Swipe',
+  }
+  let res = await fetch(API_URL, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
+  })
+  if (res.status === 429) {
+    await sleep(1100 + Math.floor(Math.random() * 800))
+    res = await fetch(API_URL, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    })
+  }
+  return res
+}
+
+/** Человеческое сообщение об ошибке OpenRouter (для SSE 'error' и JSON-ответов) */
+export function openRouterErrorText(e: unknown): string {
+  const msg = e instanceof Error ? e.message : String(e)
+  if (/HTTP 429|rate\s*limit/i.test(msg))
+    return 'Бесплатная нейросеть перегружена (лимит запросов) — подождите минуту и попробуйте снова'
+  if (/HTTP 402|credits/i.test(msg))
+    return 'Суточный лимит бесплатной нейросети исчерпан — попробуйте завтра'
+  if (/timeout|time\s*out|abort/i.test(msg))
+    return 'Нейросеть отвечала слишком долго — попробуйте ещё раз'
+  if (/HTTP 40[134]/.test(msg))
+    return 'Нейросеть временно недоступна — попробуйте ещё раз через минуту'
+  return 'Нейросеть не ответила — попробуйте ещё раз'
+}
 
 export function openRouterEnabled(): boolean {
   return Boolean(process.env.OPENROUTER_API_KEY)
@@ -37,7 +126,18 @@ function models(): string[] {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean)
-  return custom.length > 0 ? custom : DEFAULT_MODELS
+  if (custom.length > 0) return custom
+  const live = cachedLiveIds()
+  if (live && live.size > 0) {
+    const alive = PREFERRED_FREE.filter((m) => live.has(m))
+    if (alive.length > 0) return alive
+  }
+  return DEFAULT_MODELS
+}
+
+/** Динамическая бесплатная цепочка для модулей со своими списками (ai-moderate) */
+export function freeModelChain(): string[] {
+  return models()
 }
 
 /**
@@ -56,21 +156,12 @@ export async function chatMessages(
   const timeoutMs = opts?.timeoutMs ?? 25_000
   const temperature = opts?.temperature ?? 0.2
   const chain = opts?.models ?? models()
+  kickModelDiscovery()
 
   let lastError: unknown = null
   for (const model of chain) {
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
-          'X-Title': 'Tg Swipe',
-        },
-        body: JSON.stringify({ model, max_tokens: maxTokens, temperature, messages }),
-        signal: AbortSignal.timeout(timeoutMs),
-      })
+      const res = await postWith429Retry({ model, max_tokens: maxTokens, temperature, messages }, timeoutMs)
       if (!res.ok) {
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
         continue
@@ -119,19 +210,13 @@ export async function chatStream(
   const temperature = opts?.temperature ?? 0.2
   const firstTokenMs = opts?.firstTokenMs ?? 6_000
 
+  kickModelDiscovery()
   let lastError: unknown = null
   for (const model of chain) {
     let accumulated = ''
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
-          'X-Title': 'Tg Swipe',
-        },
-        body: JSON.stringify({
+      const res = await postWith429Retry(
+        {
           model,
           max_tokens: maxTokens,
           temperature,
@@ -140,9 +225,9 @@ export async function chatStream(
             { role: 'system', content: system },
             { role: 'user', content: user },
           ],
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      })
+        },
+        timeoutMs,
+      )
       if (!res.ok || !res.body) {
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
         continue
@@ -257,9 +342,9 @@ export type ToolSchema = {
   }
 }
 
-/** Цепочка для tool-calling: та же бесплатная тройка (без tools — текстовый
+/** Цепочка для tool-calling: та же бесплатная шестёрка (без tools — текстовый
  *  JSON-протокол, см. parseToolJsonBlock, работает на любой модели) */
-const TOOL_MODELS = FREE_CHAIN
+const TOOL_MODELS = PREFERRED_FREE
 
 type RawToolCall = { id?: { name?: string } | string; function?: { name?: string; arguments?: string } }
 type ToolResponseChoice = {
@@ -332,6 +417,7 @@ export async function chatWithTools(
   const timeoutMs = opts?.timeoutMs ?? 45_000
   const temperature = opts?.temperature ?? 0.5
   const chain = opts?.models?.length ? opts.models : TOOL_MODELS
+  kickModelDiscovery()
 
   // Провайдерам, не понимающим role:'tool', превращаем историю в совместимую:
   // tool-сообщения склеиваем в user-текст «[результат инструмента N]: ...»
@@ -379,24 +465,17 @@ export async function chatWithTools(
   let lastError: unknown = null
   for (const model of chain) {
     try {
-      const res = await fetch(API_URL, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
-          'X-Title': 'Tg Swipe',
-        },
-        body: JSON.stringify({
+      const res = await postWith429Retry(
+        {
           model,
           max_tokens: maxTokens,
           temperature,
           messages: encode(true),
           tools,
           tool_choice: 'auto',
-        }),
-        signal: AbortSignal.timeout(timeoutMs),
-      })
+        },
+        timeoutMs,
+      )
       if (!res.ok) {
         // Модель не поддерживает tools (400/404) — сразу пробуем текстовый протокол
         if (res.status === 400 || res.status === 404 || res.status === 422) {

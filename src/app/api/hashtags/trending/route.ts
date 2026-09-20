@@ -12,7 +12,12 @@ export const dynamic = 'force-dynamic'
  *  2) если кликов пока мало (<3) — добираем частотными хэштегами из текстов
  *     последних 150 постов, чтобы блок не был пустым на старте.
  * Публичный (персонализации нет), лимит 60/мин на юзера/IP.
+ *
+ * CDN (11-a): ответ ОДИНАКОВЫЙ для всех (без сессии/куков) — Vercel edge
+ * кэширует его на 60с, бёрст поллинга не доходит до функции и БД.
  */
+const CDN_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'
+
 export async function GET(request: Request) {
   const g = guardPublic(request, { limit: 60, windowMs: 60_000, bucket: 'trending' })
   if (!g.ok) return g.res
@@ -58,7 +63,7 @@ export async function GET(request: Request) {
       }
     }
 
-    return NextResponse.json({ items })
+    return NextResponse.json({ items }, { headers: { 'Cache-Control': CDN_CACHE } })
   } catch (e) {
     console.error('[hashtags/trending]', e)
     return NextResponse.json({ items: [] })

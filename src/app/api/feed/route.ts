@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { Channel, Post } from '@prisma/client'
 import { db } from '@/lib/db'
@@ -259,6 +260,22 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
   const userId = g.uid
 
+  /**
+   * ETag/304 (v5.35): поллинг ленты (раз в 45с) и возврат на вкладку не должны
+   * снова качать тот же JSON — активный пользователь генерировал десятки МБ
+   * egress в сутки. Если If-None-Match совпал — пустой 304 вместо тела.
+   */
+  const jsonWithEtag = (payload: unknown): NextResponse => {
+    const etag = `W/"f-${createHash('sha1').update(JSON.stringify(payload)).digest('base64url').slice(0, 24)}"`
+    const inm = request.headers.get('if-none-match')
+    if (inm && inm.split(',').map((s) => s.trim()).includes(etag)) {
+      return new NextResponse(null, { status: 304, headers: { ETag: etag } })
+    }
+    const res = NextResponse.json(payload)
+    res.headers.set('ETag', etag)
+    return res
+  }
+
   const perf = process.env.FEED_PERF === '1'
   const t0 = Date.now()
   const mark = (label: string) => {
@@ -276,7 +293,7 @@ export async function GET(request: Request) {
     // Часовая серверная ротация сида не конфликтует с кэшем: TTL 45с << 1 часа.
     const seedForCache = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
     const cached = getCachedPage(userId, category, page, limit, seedForCache, lang)
-    if (cached) return NextResponse.json({ ...cached, page })
+    if (cached) return jsonWithEtag({ ...cached, page })
 
     // Скоуп нужен первым (из него ключ индекса); сигналы и индекс — параллельно:
     // тяжёлая транзакция сигналов прячется под выборкой индекса (v5.27 —
@@ -516,7 +533,7 @@ export async function GET(request: Request) {
     const hasMore = (page + 1) * limit < ordered.length
     putCachedPage(userId, category, page, limit, seedForCache, lang, items, hasMore)
 
-    return NextResponse.json({
+    return jsonWithEtag({
       items,
       page,
       hasMore,

@@ -118,7 +118,27 @@ export async function GET(request: Request) {
       where: { channelId: { in: channelIds }, publishedAt: { gt: since } },
       orderBy: { publishedAt: 'desc' },
       take: MAX_POSTS,
-      include: { channel: { include: { category: true } } },
+      // egress (11-a): инбоксу нужен только превью-сниппет + шапка канала —
+      // include тянул ttsAudio/translations/aiSummary каждого поста впустую
+      select: {
+        id: true,
+        channelId: true,
+        text: true,
+        mediaUrl: true,
+        publishedAt: true,
+        channel: {
+          select: {
+            id: true,
+            title: true,
+            username: true,
+            isPremium: true,
+            avatarColor: true,
+            avatarUrl: true,
+            photoFileId: true,
+            category: { select: { slug: true } },
+          },
+        },
+      },
     })
 
     // Группировка по каналам с сохранением порядка (posts уже desc по времени)

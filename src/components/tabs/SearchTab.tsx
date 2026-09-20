@@ -64,12 +64,10 @@ export function SearchTab() {
   // ОТДЕЛЬНЫЙ ЧАТ ИИ-поиска (v5.21): открыт/закрыт + seed-запрос для автоотправки
   const [aiChatOpen, setAiChatOpen] = useState(false)
   const [aiSeed, setAiSeed] = useState<string | null>(null)
-
-  // Топ каналов по подписчикам — для рельса «Популярные каналы»
-  const topChannels = useMemo(() => {
-    if (!channels) return null
-    return [...channels].sort((a, b) => b.subscribersCount - a.subscribersCount).slice(0, 6)
-  }, [channels])
+  // Защита от двойного тапа по «Подписаться»: пока запрос в полёте, повторные
+  // тапы игнорируются (иначе двойной тап успевает перевернуть флаг дважды —
+  // «подписался и тут же отписался»; бэкенд идемпотентен, но UX ломается)
+  const subInflightRef = useRef<Set<string>>(new Set())
 
   // Тренды хэштегов: кэшированный запрос (повторное открытие вкладки — мгновенно)
   useEffect(() => {
@@ -198,6 +196,8 @@ export function SearchTab() {
 
   const toggleSub = async (ch: ChannelDTO) => {
     if (!user) return
+    if (subInflightRef.current.has(ch.id)) return
+    subInflightRef.current.add(ch.id)
     const next = !ch.subscribed
     setChannels((prev) =>
       (prev ?? []).map((c) =>
@@ -232,6 +232,8 @@ export function SearchTab() {
         ),
       )
       toast.error('Ошибка подписки')
+    } finally {
+      subInflightRef.current.delete(ch.id)
     }
   }
 
@@ -402,17 +404,9 @@ export function SearchTab() {
         </section>
       )}
 
-      {/* Популярные каналы — вертикальный список строк как в макете (в режиме каналов без запроса; пока открыт блок истории — скрыт) */}
-      {filter === 'channels' && q === '' && !showHistory && topChannels !== null && topChannels.length > 0 && (
-        <section className="pb-2 pt-1" aria-label="Популярные каналы">
-          <h2 className="px-4 text-[15px] font-semibold text-tg-text">Популярные каналы</h2>
-          <div className="mt-1" data-noswipe>
-            {topChannels.map((c, i) => (
-              <ChannelRow key={c.id} index={i} channel={c} onToggle={() => toggleSub(c)} onOpen={() => openChannel(c.username)} />
-            ))}
-          </div>
-        </section>
-      )}
+      {/* v5.35: дубль-рельс «Популярные каналы» (топ-6) убран — при пустом
+          запросе он повторял первые строки КАТАЛОГА каналов ниже, и один и тот же
+          канал приходилось листать дважды. Каталог — единственный список каналов. */}
 
       {/* Контент */}
       {filter === 'channels' && (
@@ -587,7 +581,7 @@ function SubscribePill({ subscribed, onClick }: { subscribed: boolean; onClick: 
       onClick={onClick}
       aria-pressed={subscribed}
       className={cn(
-        'flex h-9 shrink-0 items-center gap-1 rounded-full px-3.5 text-[14px] font-medium transition active:scale-95',
+        'flex h-10 shrink-0 items-center gap-1 rounded-full px-3.5 text-[14px] font-medium transition active:scale-95',
         subscribed ? 'bg-tg-surface text-tg-hint' : 'bg-tg-surface text-tg-text',
       )}
     >

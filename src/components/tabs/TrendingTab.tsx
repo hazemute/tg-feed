@@ -230,6 +230,10 @@ function TopPosts({ posts }: { posts: PostDTO[] }) {
 function TopChannels({ channels }: { channels: ChannelDTO[] }) {
   const { user, openChannel } = useApp()
   const [list, setList] = useState<ChannelDTO[]>(channels)
+  // Защита от двойного тапа по «+» подписки: пока запрос в полёте, повторные
+  // тапы по тому же каналу игнорируются (иначе двойной тап успевает перевернуть
+  // флаг дважды — «подписался и тут же отписался»)
+  const subInflightRef = useRef<Set<string>>(new Set())
 
   // Обновляем локальный список, когда родитель перезагрузил данные (retry)
   useEffect(() => {
@@ -238,6 +242,8 @@ function TopChannels({ channels }: { channels: ChannelDTO[] }) {
 
   const toggleSub = async (ch: ChannelDTO) => {
     if (!user) return
+    if (subInflightRef.current.has(ch.id)) return
+    subInflightRef.current.add(ch.id)
     const next = !ch.subscribed
     setList((prev) =>
       prev.map((c) =>
@@ -262,6 +268,8 @@ function TopChannels({ channels }: { channels: ChannelDTO[] }) {
         ),
       )
       toast.error('Ошибка подписки')
+    } finally {
+      subInflightRef.current.delete(ch.id)
     }
   }
 
@@ -338,7 +346,7 @@ function SubscribeButton({
       aria-pressed={subscribed}
       aria-label={subscribed ? `Отписаться от «${title}»` : `Подписаться на «${title}»`}
       className={cn(
-        'flex h-9 w-9 shrink-0 items-center justify-center rounded-full transition active:scale-90',
+        'flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition active:scale-90',
         subscribed ? 'bg-tg-surface text-tg-green' : 'bg-tg-link text-white',
       )}
     >

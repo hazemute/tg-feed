@@ -222,6 +222,10 @@ export function PostOverlay() {
 
   useBackButton(open, closePost)
 
+  /* v5.35: защита от двойного тапа — пока запрос по посту в полёте, повторные
+   * тапы по лайку/закладке игнорируются (иначе двойной toggle = лайк снялся) */
+  const inflightRef = useRef<Set<string>>(new Set())
+
   const ch = current?.channel
 
   const onLike = async () => {
@@ -232,6 +236,8 @@ export function PostOverlay() {
       haptic('light')
       return
     }
+    if (inflightRef.current.has(`like:${current.id}`)) return
+    inflightRef.current.add(`like:${current.id}`)
     const nextLiked = !current.liked
     const nextCount = Math.max(0, current.likesCount + (nextLiked ? 1 : -1))
     setLive({ id: current.id, data: { ...current, liked: nextLiked, likesCount: nextCount } })
@@ -250,6 +256,8 @@ export function PostOverlay() {
     } catch {
       setLive({ id: current.id, data: { ...current, liked: !nextLiked, likesCount: current.likesCount } })
       toast.error(t('post.likeError'))
+    } finally {
+      if (current) inflightRef.current.delete(`like:${current.id}`)
     }
   }
 
@@ -261,6 +269,8 @@ export function PostOverlay() {
       haptic('light')
       return
     }
+    if (inflightRef.current.has(`bm:${current.id}`)) return
+    inflightRef.current.add(`bm:${current.id}`)
     const next = !current.bookmarked
     const nextCount = Math.max(0, current.bookmarksCount + (next ? 1 : -1))
     setLive({ id: current.id, data: { ...current, bookmarked: next, bookmarksCount: nextCount } })
@@ -275,6 +285,8 @@ export function PostOverlay() {
     } catch {
       setLive({ id: current.id, data: { ...current, bookmarked: !next, bookmarksCount: current.bookmarksCount } })
       toast.error(t('post.error'))
+    } finally {
+      if (current) inflightRef.current.delete(`bm:${current.id}`)
     }
   }
 

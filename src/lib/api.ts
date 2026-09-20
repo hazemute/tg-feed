@@ -25,6 +25,35 @@ export function setSessionToken(token: string | null): void {
   }
 }
 
+/* ====================== ETAG / 304 (v5.35) ====================== */
+
+/**
+ * Прозрачный ETag-кэш GET-запросов: обёртка помнит последний ответ и его
+ * ETag на каждый путь, шлёт If-None-Match и на 304 подставляет сохранённое
+ * тело — НИ ОДИН вызывающий код не меняется. Поллинг ленты (раз в 45с) и
+ * повторы перестают качать один и тот же JSON — минус десятки МБ трафика
+ * на пользователя в сутки.
+ */
+type EtagEntry = { etag: string; body: unknown }
+const ETAG_CACHE = new Map<string, EtagEntry>()
+const ETAG_MAX = 20
+
+function etagRemember(path: string, etag: string, body: unknown): void {
+  if (ETAG_CACHE.size >= ETAG_MAX) {
+    const first = ETAG_CACHE.keys().next().value
+    if (first !== undefined) ETAG_CACHE.delete(first)
+  }
+  ETAG_CACHE.set(path, { etag, body })
+}
+
+function isEtaggable(init?: RequestInit): boolean {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  if (method !== 'GET') return false
+  // У запросов с кастомным body/сигналом отмены не рискуем: ETag нужен
+  // только фоновым GET (поллинг, apiCached-префетчи)
+  return !init?.body
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const token = getSessionToken()
   const headers: Record<string, string> = {
@@ -32,6 +61,10 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     ...(init?.headers as Record<string, string> | undefined),
   }
   if (token) headers.Authorization = `Bearer ${token}`
+
+  const etaggable = isEtaggable(init)
+  const known = etaggable ? ETAG_CACHE.get(path) : undefined
+  if (known) headers['If-None-Match'] = known.etag
 
   const res = await fetch(path, {
     cache: 'no-store',
@@ -43,12 +76,16 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     signal: init?.signal ?? AbortSignal.timeout(20_000),
   })
 
+  // 304 Not Modified — тело не изменилось: отдаём сохранённый ответ как есть
+  if (res.status === 304 && known) return known.body as T
+
   if (res.status === 401) {
     // Сессия протухла/невалидна — сбрасываем и просим page.tsx пере-авторизоваться
     setSessionToken(null)
     // Кэш мог быть набран под старой сессией — мгновенно забываем всё
     MEMO_CACHE.clear()
     INFLIGHT.clear()
+    ETAG_CACHE.clear()
     if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
   }
 
@@ -62,7 +99,11 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(data.error || `HTTP ${res.status}`)
   }
-  return res.json() as Promise<T>
+
+  const body = (await res.json()) as T
+  const etag = etaggable ? res.headers.get('etag') : null
+  if (etag) etagRemember(path, etag, body)
+  return body
 }
 
 /* ====================== МГНОВЕННЫЕ ВКЛАДКИ (v5.34) ====================== */

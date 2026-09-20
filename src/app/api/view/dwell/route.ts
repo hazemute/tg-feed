@@ -36,31 +36,35 @@ export async function POST(request: Request) {
     // Дочитывание — сильный сигнал «горячего» поста: задержался 5с+ → +3 к температуре
     const hotDelta = ms >= 5_000 ? 3 : 0
 
-    const existing = await db.postView.findUnique({
-      where: { userId_postId: { userId, postId } },
-      select: { id: true },
+    /*
+     * Дешёвый путь (поллится клиентом постоянно): сначала ОДИН updateMany —
+     * если просмотр уже есть, на этом всё (1 RTT вместо 2-4: раньше были
+     * последовательные findUnique → update). Только для первого просмотра —
+     * ветка create с post.update (viewsCount +1, hotScore hotDelta-1).
+     * Семантика прежняя, включая гонку с параллельным просмотром.
+     */
+    const updated = await db.postView.updateMany({
+      where: { userId, postId },
+      data: { dwellMs: { increment: ms } },
     })
-    if (existing) {
-      await db.postView.update({
-        where: { id: existing.id },
-        data: { dwellMs: { increment: ms } },
-      })
-    } else {
-      try {
-        await db.postView.create({ data: { userId, postId, dwellMs: ms } })
-        await db.post.update({
-          where: { id: postId },
-          data: { viewsCount: { increment: 1 }, hotScore: hotDelta - 1 },
-        })
-      } catch {
-        // гонка с параллельным просмотром — досыпаем время поверх
-        await db.postView
-          .update({ where: { userId_postId: { userId, postId } }, data: { dwellMs: { increment: ms } } })
-          .catch(() => {})
+    if (updated.count > 0) {
+      if (hotDelta > 0) {
+        await db.post.update({ where: { id: postId }, data: { hotScore: { increment: hotDelta } } }).catch(() => {})
       }
+      return NextResponse.json({ ok: true })
     }
-    if (existing && hotDelta > 0) {
-      await db.post.update({ where: { id: postId }, data: { hotScore: { increment: hotDelta } } }).catch(() => {})
+
+    try {
+      await db.postView.create({ data: { userId, postId, dwellMs: ms } })
+      await db.post.update({
+        where: { id: postId },
+        data: { viewsCount: { increment: 1 }, hotScore: hotDelta - 1 },
+      })
+    } catch {
+      // гонка с параллельным просмотром — досыпаем время поверх
+      await db.postView
+        .update({ where: { userId_postId: { userId, postId } }, data: { dwellMs: { increment: ms } } })
+        .catch(() => {})
     }
 
     return NextResponse.json({ ok: true })

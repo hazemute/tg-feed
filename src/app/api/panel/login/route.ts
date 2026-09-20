@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import crypto from 'node:crypto'
 import { db } from '@/lib/db'
-import { err, APP_VERSION } from '@/lib/server'
+import { err, APP_VERSION, readJson } from '@/lib/server'
 import { guardIp } from '@/lib/guard'
 import { botEnabled } from '@/lib/tg-bot'
 
@@ -28,7 +28,9 @@ export async function POST(request: Request) {
 
   let key = ''
   try {
-    const body = (await request.json()) as { key?: unknown }
+    // readJson: кап 64KB по content-length ДО чтения тела (анти-абьюз памяти:
+    // роут доступен ДО проверки ключа, тело не должно читаться безлимитно)
+    const body = await readJson<{ key?: unknown }>(request)
     if (typeof body?.key === 'string') key = body.key.trim()
   } catch {
     // тело не JSON — key останется пустым

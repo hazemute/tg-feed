@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
-import { toChannelDTO, toPostDTO } from '@/lib/dto'
+import { CHANNEL_LIST_SELECT, POST_LIST_SELECT, channelDTOFromRow, postDTOFromRow } from '@/lib/dto'
 import { guardPublic } from '@/lib/guard'
 import type { PostDTO } from '@/lib/types'
 
@@ -41,7 +41,7 @@ export async function GET(request: Request) {
 
     const channel = await db.channel.findFirst({
       where: { username },
-      include: { category: true, _count: { select: { posts: true } } },
+      select: { ...CHANNEL_LIST_SELECT, _count: { select: { posts: true } } },
     })
     if (!channel) return err('channel not found', 404)
 
@@ -64,7 +64,7 @@ export async function GET(request: Request) {
         orderBy: { publishedAt: 'desc' },
         skip: page * limit,
         take: limit,
-        include: { channel: { include: { category: true } }, _count: { select: { bookmarkedBy: true } } },
+        select: { ...POST_LIST_SELECT, _count: { select: { bookmarkedBy: true } } },
       }),
       db.post.count({ where: postWhere }),
       userId
@@ -89,11 +89,11 @@ export async function GET(request: Request) {
     const subscribed = !!subRow
 
     const items: PostDTO[] = posts.map((p) =>
-      toPostDTO(p, { liked: likeSet.has(p.id), bookmarked: bookmarkSet.has(p.id), subscribed }, p._count.bookmarkedBy),
+      postDTOFromRow(p, { liked: likeSet.has(p.id), bookmarked: bookmarkSet.has(p.id), subscribed }, p._count.bookmarkedBy),
     )
 
     return NextResponse.json({
-      channel: toChannelDTO(channel, subscribed, channel._count.posts),
+      channel: channelDTOFromRow(channel, subscribed, channel._count.posts),
       items,
       page,
       tab,

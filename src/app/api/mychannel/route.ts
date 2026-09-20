@@ -78,9 +78,28 @@ export async function GET(request: Request) {
 
   try {
     const since24h = new Date(Date.now() - 24 * 60 * 60_000)
+    // egress (11-a): select вместо include — styleProfile и прочие тяжёлые
+    // служебные колонки канала в кабинет не отдаются (форма ответа прежняя)
     const channels = await db.channel.findMany({
       where: { claimedById: g.uid },
-      include: { category: true },
+      select: {
+        id: true,
+        title: true,
+        username: true,
+        description: true,
+        avatarColor: true,
+        avatarUrl: true,
+        photoFileId: true,
+        membersCount: true,
+        subscribersCount: true,
+        status: true,
+        teaserMode: true,
+        teaserLimit: true,
+        ctaLabel: true,
+        ctaUrl: true,
+        styleAt: true,
+        category: { select: { slug: true, title: true } },
+      },
       orderBy: { createdAt: 'asc' },
     })
 

@@ -18,8 +18,11 @@ type CategoryItem = {
  * GET /api/categories
  * Категории без служебной «other» + счётчик «новых постов за сегодня».
  * Полностью публичные данные (персонализации нет) — целиком в Redis на 120с.
+ * CDN (11-a): ответ одинаковый для всех — Vercel edge кэширует на 60с.
  * Лимит 120 запросов в минуту.
  */
+const CDN_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'
+
 export async function GET(request: Request) {
   const g = guardPublic(request, { limit: 120, windowMs: 60_000, bucket: 'categories' })
   if (!g.ok) return g.res
@@ -61,7 +64,7 @@ export async function GET(request: Request) {
       },
     })
 
-    return NextResponse.json({ items })
+    return NextResponse.json({ items }, { headers: { 'Cache-Control': CDN_CACHE } })
   } catch (e) {
     console.error('[categories]', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

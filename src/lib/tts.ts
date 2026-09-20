@@ -171,3 +171,42 @@ export async function generateTts(postText: string): Promise<Buffer | null> {
     ? (await ttsEdge(capped)) ?? (await ttsGoogle(capped)) ?? (await ttsZai(capped))
     : (await ttsZai(capped)) ?? (await ttsEdge(capped)) ?? (await ttsGoogle(capped))
 }
+
+/* ==================== ПАМЯТЬ-КЭШ ВМЕСТО БД (v5.35) ====================
+ * Раньше аудио жило base64-блобом в Post.ttsAudio (до 3.5+ МБ/пост):
+ * прогрев-движок 24/7 писал их в Supabase, каждый тап «Слушать» тянул блоб
+ * из БД — главный жор egress. Теперь аудио НЕ хранится в БД вообще:
+ * генерируется по запросу (Edge MP3 ≈ 6 КБ/с) и кэшируется в памяти
+ * инстанса на 30 минут. Повторы внутри тёплого инстанса — мгновенно и
+ * бесплатно; холодный инстанс генерирует заново (~2-4с). */
+
+type TtsMemEntry = { v: string; at: number }
+
+function ttsMem(): Map<string, TtsMemEntry> {
+  const g = globalThis as unknown as { __ttsMem?: Map<string, TtsMemEntry> }
+  if (!g.__ttsMem) g.__ttsMem = new Map()
+  return g.__ttsMem
+}
+
+const TTS_MEM_TTL_MS = 30 * 60 * 1000
+const TTS_MEM_MAX = 8
+
+export function getCachedTts(postId: string): string | null {
+  const hit = ttsMem().get(postId)
+  if (!hit) return null
+  if (Date.now() - hit.at > TTS_MEM_TTL_MS) {
+    ttsMem().delete(postId)
+    return null
+  }
+  return hit.v
+}
+
+export function setCachedTts(postId: string, base64: string): void {
+  const m = ttsMem()
+  if (m.size >= TTS_MEM_MAX) {
+    // выкидываем самую старую запись (Map хранит порядок вставки)
+    const first = m.keys().next().value
+    if (first !== undefined) m.delete(first)
+  }
+  m.set(postId, { v: base64, at: Date.now() })
+}

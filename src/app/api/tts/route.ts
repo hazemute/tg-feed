@@ -3,10 +3,10 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import { generateTts } from '@/lib/tts'
+import { generateTts, getCachedTts, setCachedTts } from '@/lib/tts'
 
 export const dynamic = 'force-dynamic'
-export const maxDuration = 60
+export const maxDuration = 30
 
 const bodySchema = z.object({
   postId: z.string().min(1).max(64),
@@ -15,11 +15,17 @@ const bodySchema = z.object({
 /**
  * POST /api/tts { postId }
  *
- * Озвучка поста (кнопка «Слушать»): текст поста читается голосом, результат
- * кэшируется в Post.ttsAudio — повторные включения мгновенны и не тратят квоту.
- * Движки: на Vercel первым идёт Google TTS, в песочнице — z-ai SDK;
- * упавший движок заменяется вторым. Кроме того движок 24/7 предпрогревает
- * кэш (/api/tts/prewarm) — большинство постов озвучены заранее.
+ * Озвучка поста (кнопка «Слушать»).
+ *
+ * v5.35 — БЕЗ БД-БЛОБОВ: раньше аудио хранилось base64 в Post.ttsAudio
+ * (мегабайты на пост) — прогрев-движок 24/7 писал их в Supabase, а каждый
+ * тап тянул блоб из БД наружу. Это был главный жор egress. Теперь:
+ *  - из БД читается ТОЛЬКО текст поста (блобы ttsAudio больше не
+ *    выбираются никогда — старые блобы не покидают Supabase);
+ *  - аудио генерируется по запросу (прод: Edge MP3 ≈ 6 КБ/с — 3 минуты
+ *    речи ≈ 110 КБ; песочница: z-ai);
+ *  - кэш — память инстанса (30 мин, до 8 постов) + сессионный кэш клиента
+ *    (TTSButton) — повторы мгновенны и бесплатны.
  */
 export async function POST(request: Request) {
   const g = guardAuth(request, { limit: 6, windowMs: 60_000, bucket: 'tts' })
@@ -28,46 +34,28 @@ export async function POST(request: Request) {
   try {
     const parsed = bodySchema.safeParse(await readJson(request))
     if (!parsed.success) return err('postId required')
+
+    // Память инстанса: повторное включение в тёплой функции — мгновенно
+    const mem = getCachedTts(parsed.data.postId)
+    if (mem) return NextResponse.json({ ok: true, audio: mem, cached: true })
+
     const post = await db.post.findUnique({
       where: { id: parsed.data.postId },
-      select: { id: true, text: true, ttsAudio: true, ttsAt: true, publishedAt: true },
+      select: { id: true, text: true },
     })
     if (!post) return err('post not found', 404)
-
-    // Кэш валиден, пока текст поста не менялся (парсер мог обновить разметку);
-    // на Vercel раздутый WAV-кэш не отдаётся (лимит ответа ~4.5 МБ) —
-    // перегенерируем компактным прода-движком (Edge MP3)
-    if (post.ttsAudio && post.ttsAt && post.ttsAt > post.publishedAt) {
-      if (process.env.VERCEL !== '1' || post.ttsAudio.length <= 3_500_000) {
-        return NextResponse.json({ ok: true, audio: post.ttsAudio, cached: true })
-      }
-    }
 
     const wav = await generateTts(post.text)
     if (!wav) return err('Озвучка не удалась, попробуйте позже', 502)
 
     const audio = wav.toString('base64')
-
-    /*
-     * Защита от гигантских ответов: WAV от z-ai весит ~100 КБ/с — трёхминутный
-     * пост даёт base64 >10 МБ, а лимит ответа serverless на Vercel ~4.5 МБ
-     * (вторая причина «Озвучка недоступна» в проде). Компактные движки прода
-     * (Edge/Google MP3 ≈ 6 КБ/с) в лимит помещаются с запасом. Слишком большие
-     * кэш НЕ засоряют (Post.ttsAudio останется null) и в проде не отдаются.
-     */
-    const tooBig = audio.length > 3_500_000
-    if (tooBig && process.env.VERCEL === '1') {
+    // Страховка от гигантских ответов (лимит ответа serverless ~4.5 МБ):
+    // компактные прода-движки (Edge/Google MP3) в лимит не попадают
+    if (audio.length > 3_500_000) {
       return err('Озвучка не удалась, попробуйте позже', 502)
     }
-    if (!tooBig) {
-      await db.post
-        .update({
-          where: { id: post.id },
-          data: { ttsAudio: audio, ttsAt: new Date() },
-        })
-        .catch(() => {})
-    }
 
+    setCachedTts(post.id, audio)
     return NextResponse.json({ ok: true, audio, cached: false })
   } catch (e) {
     console.error('[tts]', e)

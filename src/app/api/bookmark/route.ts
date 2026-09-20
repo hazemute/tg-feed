@@ -23,22 +23,34 @@ export async function POST(request: Request) {
     if (!parsed.success) return err('postId required')
     const postId = parsed.data.postId
 
+    // select вместо полной строки (egress: ttsAudio/translations на тоггл не нужны)
     const [user, post] = await Promise.all([
-      db.user.findUnique({ where: { id: userId } }),
-      db.post.findUnique({ where: { id: postId } }),
+      db.user.findUnique({ where: { id: userId }, select: { id: true } }),
+      db.post.findUnique({ where: { id: postId }, select: { id: true } }),
     ])
     if (!user) return err('user not found', 404)
     if (!post) return err('post not found', 404)
 
-    const existing = await db.bookmark.findFirst({ where: { userId, postId } })
+    const existing = await db.bookmark.findUnique({
+      where: { userId_postId: { userId, postId } },
+      select: { id: true },
+    })
 
     if (existing) {
-      await db.bookmark.delete({ where: { id: existing.id } })
+      try {
+        await db.bookmark.delete({ where: { id: existing.id } })
+      } catch {
+        // гонка (двойной тап): закладку уже снял параллельный запрос
+      }
       putFlagsOverride(userId, postId, { bookmarked: false })
-    return NextResponse.json({ bookmarked: false })
+      return NextResponse.json({ bookmarked: false })
     }
 
-    await db.bookmark.create({ data: { userId, postId } })
+    try {
+      await db.bookmark.create({ data: { userId, postId } })
+    } catch {
+      // гонка (двойной тап): закладка уже стоит — идемпотентно
+    }
     putFlagsOverride(userId, postId, { bookmarked: true })
     return NextResponse.json({ bookmarked: true })
   } catch (e) {

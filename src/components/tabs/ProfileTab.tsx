@@ -51,6 +51,17 @@ import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/Profi
 /** Элемент списка закладок — приходит из /api/bookmarks с отметкой прочтения */
 type BookmarkItem = PostDTO & { readAt: string | null }
 
+/*
+ * v5.35: SWR-кэш уровня модуля (паттерн v5.34 «кэш виден, сеть догоняет»).
+ * Вкладка профиля размонтируется при переключении табов — без кэша каждое
+ * возвращение мигало скелетонами и прочерками статистики. Теперь при монтировании
+ * мгновенно рендерим прошлые данные, а сеть их тихо обновляет.
+ */
+type ProfileStats = { stats: { likes: number; subscriptions: number; views: number; bookmarks: number } }
+let cachedStats: ProfileStats | null = null
+let cachedSubs: SubscriptionDTO[] | null = null
+let cachedBookmarks: BookmarkItem[] | null = null
+
 /**
  * Экран «Профиль» по макету: шапка пользователя, статистика,
  * мои категории, подписки, настройки. Плюс «Мой канал» и закладки.
@@ -58,11 +69,9 @@ type BookmarkItem = PostDTO & { readAt: string | null }
 export function ProfileTab() {
   const { user, theme, fontScale, lang, setLang, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
   const t = useT()
-  const [profile, setProfile] = useState<{
-    stats: { likes: number; subscriptions: number; views: number; bookmarks: number }
-  } | null>(null)
-  const [subs, setSubs] = useState<SubscriptionDTO[] | null>(null)
-  const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(null)
+  const [profile, setProfile] = useState<ProfileStats | null>(() => cachedStats)
+  const [subs, setSubs] = useState<SubscriptionDTO[] | null>(() => cachedSubs)
+  const [bookmarks, setBookmarks] = useState<BookmarkItem[] | null>(() => cachedBookmarks)
   const [editOpen, setEditOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [themesOpen, setThemesOpen] = useState(false)
@@ -87,19 +96,30 @@ export function ProfileTab() {
   // Оформление профиля (v5.27): отдельная полная страница кастомайзера
   const [customizerOpen, setCustomizerOpen] = useState(false)
 
+  // Единая точка обновления закладок: пишем и в состояние, и в SWR-кэш модуля —
+  // иначе оптимистичные удаления/отметки «прочитано» терялись при уходе с вкладки
+  const applyBookmarks = (next: BookmarkItem[] | null) => {
+    cachedBookmarks = next
+    setBookmarks(next)
+  }
+
   const reload = () => {
     if (!user) return
-    api<{ stats: { likes: number; subscriptions: number; views: number; bookmarks: number } }>(
-      `/api/profile?userId=${encodeURIComponent(user.id)}`,
-    )
-      .then(setProfile)
+    api<ProfileStats>(`/api/profile?userId=${encodeURIComponent(user.id)}`)
+      .then((d) => {
+        cachedStats = d
+        setProfile(d)
+      })
       .catch(() => {})
     api<{ items: SubscriptionDTO[] }>(`/api/subscriptions?userId=${encodeURIComponent(user.id)}`)
-      .then((d) => setSubs(d.items))
+      .then((d) => {
+        cachedSubs = d.items
+        setSubs(d.items)
+      })
       .catch(() => setSubs([]))
     api<{ items: BookmarkItem[] }>(`/api/bookmarks?userId=${encodeURIComponent(user.id)}`)
-      .then((d) => setBookmarks(d.items))
-      .catch(() => setBookmarks([]))
+      .then((d) => applyBookmarks(d.items))
+      .catch(() => applyBookmarks([]))
   }
 
   useEffect(() => {
@@ -113,6 +133,29 @@ export function ProfileTab() {
     const onOpenSupport = () => setSupportOpen(true)
     window.addEventListener('tgfeed:open-support', onOpenSupport)
     return () => window.removeEventListener('tgfeed:open-support', onOpenSupport)
+  }, [])
+
+  // Кнопки «Тарифы» из кабинета («Мой канал») ведут в шит тарифов здесь:
+  // флаг кладётся в sessionStorage ДО переключения вкладки (проверяем на
+  // монтировании), событие ловим, если вкладка уже смонтирована.
+  useEffect(() => {
+    let t: number | undefined
+    try {
+      if (sessionStorage.getItem('tgfeed_open_tiers') === '1') {
+        sessionStorage.removeItem('tgfeed_open_tiers')
+        // Через таймаут: state-колбэки нельзя звать синхронно в теле эффекта
+        // (react-hooks/set-state-in-effect) — открытие срабатывает сразу после коммита
+        t = window.setTimeout(() => setTiersOpen(true), 0)
+      }
+    } catch {
+      /* приватный режим */
+    }
+    const onOpenTiers = () => setTiersOpen(true)
+    window.addEventListener('tgfeed:open-tiers', onOpenTiers)
+    return () => {
+      if (t !== undefined) window.clearTimeout(t)
+      window.removeEventListener('tgfeed:open-tiers', onOpenTiers)
+    }
   }, [])
 
   // Непрочитанные закладки (открытие поста — отметка «прочитано»)
@@ -136,7 +179,7 @@ export function ProfileTab() {
     : null
 
   const removeBookmark = async (p: BookmarkItem) => {
-    setBookmarks((prev) => (prev ?? []).filter((x) => x.id !== p.id))
+    applyBookmarks((bookmarks ?? []).filter((x) => x.id !== p.id))
     try {
       await api('/api/bookmark', {
         method: 'POST',
@@ -145,14 +188,15 @@ export function ProfileTab() {
     } catch {
       // Откат: без него закладка исчезает из списка, хотя на сервере осталась —
       // расхождение с бейджем «Сохранено» до перезагрузки
-      setBookmarks((prev) => (prev && !prev.some((x) => x.id === p.id) ? [...prev, p] : prev))
+      const prev = bookmarks ?? []
+      if (!prev.some((x) => x.id === p.id)) applyBookmarks([...prev, p])
       toast.error('Не удалось убрать закладку')
     }
   }
 
   const markRead = (postId: string) => {
-    setBookmarks((prev) =>
-      (prev ?? []).map((b) =>
+    applyBookmarks(
+      (bookmarks ?? []).map((b) =>
         b.id === postId && !b.readAt ? { ...b, readAt: new Date().toISOString() } : b,
       ),
     )
@@ -163,7 +207,7 @@ export function ProfileTab() {
   }
 
   const markAllRead = async () => {
-    setBookmarks((prev) => (prev ?? []).map((b) => ({ ...b, readAt: b.readAt ?? new Date().toISOString() })))
+    applyBookmarks((bookmarks ?? []).map((b) => ({ ...b, readAt: b.readAt ?? new Date().toISOString() })))
     haptic('light')
     try {
       await api('/api/bookmark/read', {
@@ -336,7 +380,9 @@ export function ProfileTab() {
             Вы пока не подписаны на каналы. Нажмите [+] в ленте — канал появится здесь.
           </p>
         ) : (
-          <div className="pt-1">
+          /* v5.35: длинный список не растягивает профиль бесконечно — кап по высоте
+             с внутренней прокруткой (скроллбары скрыты глобально, владелец просил) */
+          <div className="no-scrollbar max-h-[440px] overflow-y-auto overscroll-contain pt-1">
             {subs.map((s, i) => (
               <button
                 key={s.channelId}
@@ -385,7 +431,7 @@ export function ProfileTab() {
               <span className="text-[13px] font-medium text-tg-hint">{bookmarks.length}</span>
             </div>
           </div>
-          <div className="pt-1">
+          <div className="no-scrollbar max-h-[440px] overflow-y-auto overscroll-contain pt-1">
             {bookmarks.map((p, i) => {
               const unread = !p.readAt
               return (
@@ -1038,7 +1084,7 @@ function TiersSheet({
                         key={f}
                         className="flex items-start gap-2 text-[13.5px] leading-snug text-tg-text2"
                       >
-                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" strokeWidth={2.5} />
+                        <Check className="mt-0.5 h-4 w-4 shrink-0 text-tg-green" strokeWidth={2.5} />
                         <span>{f}</span>
                       </li>
                     ))}

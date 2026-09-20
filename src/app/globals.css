@@ -619,7 +619,9 @@ button {
   bottom: 8px;
   width: 3px;
   border-radius: 999px;
-  background: linear-gradient(to bottom, #a855f7, #e879f9);
+  /* v5.35: сплошной акцент палитры вместо фиолетово-фуксиевого градиента —
+   * строгий монохром (направление стиля v5.34), цвет живёт во всех 23 темах */
+  background: var(--tg-star, #f5a623);
   opacity: 0.9;
 }
 

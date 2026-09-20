@@ -39,11 +39,18 @@ export async function POST(request: Request) {
     if (!channelId && !username) return err('channelId or username required')
 
     const [user, channel] = await Promise.all([
-      db.user.findUnique({ where: { id: userId } }),
+      // select вместо полной строки (egress)
+      db.user.findUnique({ where: { id: userId }, select: { id: true } }),
       channelId
-        ? db.channel.findUnique({ where: { id: channelId } })
+        ? db.channel.findUnique({
+            where: { id: channelId },
+            select: { id: true, membersCount: true, subscribersCount: true },
+          })
         : username
-          ? db.channel.findUnique({ where: { username: username.toLowerCase() } })
+          ? db.channel.findUnique({
+              where: { username: username.toLowerCase() },
+              select: { id: true, membersCount: true, subscribersCount: true },
+            })
           : Promise.resolve(null),
     ])
     if (!user) return err('user not found', 404)
@@ -140,8 +147,8 @@ export async function GET(request: Request) {
     if (!channelId && !username) return err('channelId or username required')
 
     const channel = channelId
-      ? await db.channel.findUnique({ where: { id: channelId } })
-      : await db.channel.findUnique({ where: { username: username.toLowerCase() } })
+      ? await db.channel.findUnique({ where: { id: channelId }, select: { id: true } })
+      : await db.channel.findUnique({ where: { username: username.toLowerCase() }, select: { id: true } })
     if (!channel) return err('channel not found', 404)
 
     const sub = await db.subscription.findFirst({ where: { userId, channelId: channel.id } })

@@ -23,6 +23,9 @@ export const dynamic = 'force-dynamic'
 
 const UidSchema = z.string().min(3).max(64).regex(/^[a-z0-9_]+$/i)
 
+/** CDN (11-a): ответ без персонализации — edge-кэш 60с снимает бёрсты поллинга */
+const CDN_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'
+
 export async function GET(request: Request, { params }: { params: Promise<{ uid: string }> }) {
   const g = guardIp(request, { limit: 60, windowMs: 60_000, bucket: 'pubprof' })
   if (!g.ok) return g.res
@@ -83,7 +86,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ uid:
       },
     }
 
-    return NextResponse.json(dto)
+    return NextResponse.json(dto, { headers: { 'Cache-Control': CDN_CACHE } })
   } catch (e) {
     console.error('[user/public]', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })

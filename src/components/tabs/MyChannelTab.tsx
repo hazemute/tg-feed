@@ -29,7 +29,7 @@ import {
 import { cn } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
-import { api } from '@/lib/api'
+import { api, apiCached, invalidateApiCache } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
 import { stripMarkdown } from '@/lib/markdown'
@@ -77,9 +77,14 @@ export function MyChannelTab() {
   const [tab, setTab] = useState<McTab>('stats')
   const t = useT()
 
-  const load = useCallback(async () => {
+  const fetchChannel = useCallback(async (useCache: boolean) => {
     try {
-      const r = await api<MyChannelResponse>('/api/mychannel')
+      // v5.35: короткий клиентский кэш (15с) — возврат на вкладку не мигает
+      // скелетоном (паттерн v5.34 «кэш виден, сеть догоняет»); явные перезагрузки
+      // после действий (onReload) кэш инвалидируют — цифры всегда свежие
+      const r = useCache
+        ? await apiCached<MyChannelResponse>('/api/mychannel', 15_000)
+        : await api<MyChannelResponse>('/api/mychannel')
       setData(r)
       setActiveId((prev) => prev ?? r.channels[0]?.id ?? null)
     } catch {
@@ -93,6 +98,14 @@ export function MyChannelTab() {
       setLoading(false)
     }
   }, [])
+
+  /** Первичное открытие вкладки: кэш допустим — без мигания скелетона */
+  const load = useCallback(() => fetchChannel(true), [fetchChannel])
+  /** Перезагрузка после действий (продвижение/настройки/пополнение): только сеть */
+  const reload = useCallback(() => {
+    invalidateApiCache('/api/mychannel')
+    return fetchChannel(false)
+  }, [fetchChannel])
 
   useEffect(() => {
     if (user) void load()
@@ -122,11 +135,11 @@ export function MyChannelTab() {
       {loading ? (
         <div className="mt-6 space-y-3">
           {[0, 1, 2].map((i) => (
-            <div key={i} className="h-28 rounded-3xl tg-shimmer" />
+            <div key={i} className="h-28 rounded-2xl tg-shimmer" />
           ))}
         </div>
       ) : !data || data.channels.length === 0 ? (
-        <ClaimCard onDone={load} />
+        <ClaimCard onDone={reload} />
       ) : (
         <div className="mt-5 space-y-4">
           {/* Переключатель каналов (если привязано несколько) */}
@@ -154,7 +167,7 @@ export function MyChannelTab() {
             </div>
           )}
 
-          <ChannelHero channel={channel!} onReload={load} />
+          <ChannelHero channel={channel!} onReload={reload} />
 
           {/* ВКЛАДКИ (приказ владельца): Аналитика / Показ / Продвижение.
               Липкая полоса — при прокрутке держится у верха кабинета. */}
@@ -208,9 +221,13 @@ export function MyChannelTab() {
             )}
             {tab === 'display' && (
               <div className="space-y-5">
-                <DisplaySection channel={channel!} onSaved={load} />
-                <CtaSection key={channel!.id} channel={channel!} tier={tier} />
-                <AiAssistantSection key={channel!.id} channel={channel!} tier={tier} />
+                {/* key с префиксом: сброс состояния при смене канала, но ключи
+                    СОСЕДЕЙ уникальны (раньше CtaSection и AiAssistantSection
+                    делили один key={channel.id} — React-ошибка «two children
+                    with the same key» при каждом открытии вкладки) */}
+                <DisplaySection key={`display-${channel!.id}`} channel={channel!} onSaved={load} />
+                <CtaSection key={`cta-${channel!.id}`} channel={channel!} tier={tier} />
+                <AiAssistantSection key={`ai-${channel!.id}`} channel={channel!} tier={tier} />
               </div>
             )}
             {tab === 'ads' && (
@@ -220,9 +237,9 @@ export function MyChannelTab() {
                   channel={channel!}
                   tier={tier}
                   promotion={promotion}
-                  onReload={load}
+                  onReload={reload}
                 />
-                <AdsSection channel={channel!} advertiser={data.advertiser} onReload={load} />
+                <AdsSection channel={channel!} advertiser={data.advertiser} onReload={reload} />
               </div>
             )}
           </motion.div>
@@ -297,7 +314,7 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mt-6 overflow-hidden rounded-3xl border border-tg-sep/60 bg-gradient-to-b from-tg-link/[0.07] to-transparent"
+      className="mt-6 overflow-hidden rounded-2xl border border-tg-sep/60 bg-tg-surface/50"
     >
       <div className="flex items-center gap-3 px-5 pt-5">
         <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-tg-link/15">
@@ -341,7 +358,7 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
                 'flex h-12 shrink-0 items-center gap-1.5 rounded-2xl px-5 text-[14.5px] font-semibold transition active:scale-95',
                 busy || !username.trim()
                   ? 'cursor-not-allowed bg-tg-surface text-tg-hint'
-                  : 'bg-tg-link text-white shadow-[0_4px_16px_rgba(10,132,255,0.3)]',
+                  : 'bg-tg-link text-white',
               )}
             >
               {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Link2 className="h-4.5 w-4.5" />}
@@ -399,21 +416,25 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
 /* Шапка канала                                                        */
 /* ------------------------------------------------------------------ */
 
-function ChannelHero({ channel, onReload }: { channel: MyChannelDTO; onReload: () => void }) {
+function ChannelHero({ channel, onReload }: { channel: MyChannelDTO; onReload: () => void | Promise<void> }) {
   const [syncing, setSyncing] = useState(false)
-  const sync = () => {
+  // v5.35: спиннер живёт ровно столько, сколько реально идёт перезагрузка данных
+  // (раньше — фиктивный setTimeout 1200мс, при медленном ответе он гас раньше данных)
+  const sync = async () => {
     if (syncing) return
     setSyncing(true)
-    onReload()
-    setTimeout(() => setSyncing(false), 1200)
+    try {
+      await onReload()
+    } finally {
+      setSyncing(false)
+    }
   }
   return (
     <motion.section
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
-      className="relative overflow-hidden rounded-3xl border border-tg-sep/50"
+      className="relative overflow-hidden rounded-2xl border border-tg-sep/50"
     >
-      <div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-tg-link/[0.10] via-transparent to-tg-star/[0.08]" aria-hidden />
       <div className="relative p-5">
         <div className="flex items-center gap-3.5">
           <Avatar
@@ -446,7 +467,7 @@ function ChannelHero({ channel, onReload }: { channel: MyChannelDTO; onReload: (
           </button>
           <button
             type="button"
-            onClick={sync}
+            onClick={() => void sync()}
             aria-label="Обновить статистику"
             className="flex h-10 w-10 items-center justify-center rounded-xl bg-tg-surface text-tg-text2 transition active:scale-95"
           >
@@ -494,7 +515,7 @@ function DisplaySection({ channel, onSaved }: { channel: MyChannelDTO; onSaved: 
   return (
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}>
       <SectionTitle icon={Eye}>Показ в ленте</SectionTitle>
-      <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+      <div className="rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4">
         <p className="text-[12.5px] leading-relaxed text-tg-hint">
           Управляйте тем, сколько поста видят неподписчики: полный текст, обрезка с призывом
           читать в канале или размытие.
@@ -573,10 +594,32 @@ function proRequired(err: unknown): boolean {
   return (err as Error)?.message === 'pro_required'
 }
 
+/**
+ * Кнопки «Тарифы» из кабинета: раньше показывали тупиковый тост «Тарифы — в профиле»,
+ * теперь ведут прямо в шит тарифов на вкладке «Профиль» (флаг в sessionStorage +
+ * событие — ProfileTab подхватывает и на монтировании, и когда уже смонтирован).
+ */
+const TIERS_FLAG = 'tgfeed_open_tiers'
+const TIERS_EVENT = 'tgfeed:open-tiers'
+function useGoToTiers() {
+  const setTab = useApp((s) => s.setTab)
+  return () => {
+    haptic('light')
+    try {
+      sessionStorage.setItem(TIERS_FLAG, '1')
+    } catch {
+      /* приватный режим — останется только событие */
+    }
+    window.dispatchEvent(new Event(TIERS_EVENT))
+    setTab('profile')
+  }
+}
+
 /** Заблокированная возможность (не-pro): замок + кнопка апгрейда */
 function LockedCard({ title, text }: { title: string; text: string }) {
+  const goTiers = useGoToTiers()
   return (
-    <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+    <div className="rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4">
       <div className="flex items-start gap-3">
         <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-tg-link/12">
           <Lock className="h-5 w-5 text-tg-link" />
@@ -588,10 +631,7 @@ function LockedCard({ title, text }: { title: string; text: string }) {
       </div>
       <button
         type="button"
-        onClick={() => {
-          haptic('light')
-          toast.info('Тарифы — в профиле')
-        }}
+        onClick={goTiers}
         className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14px] font-semibold text-white transition active:scale-[0.98]"
       >
         <Sparkles className="h-4 w-4" />
@@ -603,6 +643,7 @@ function LockedCard({ title, text }: { title: string; text: string }) {
 
 /** Компактная апгрейд-подсказка (показывается после 402 pro_required) */
 function UpgradeNote({ className }: { className?: string }) {
+  const goTiers = useGoToTiers()
   return (
     <div
       className={cn(
@@ -613,10 +654,7 @@ function UpgradeNote({ className }: { className?: string }) {
       <span className="text-[12.5px] leading-snug text-tg-text2">Эта возможность входит в тариф Snap Pro</span>
       <button
         type="button"
-        onClick={() => {
-          haptic('light')
-          toast.info('Тарифы — в профиле')
-        }}
+        onClick={goTiers}
         className="shrink-0 rounded-full bg-tg-link px-3.5 py-1.5 text-[12px] font-bold text-white transition active:scale-95"
       >
         Тарифы
@@ -670,7 +708,7 @@ function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | '
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.12 }}>
       <SectionTitle icon={MousePointerClick}>Кнопка действия (CTA)</SectionTitle>
       {pro ? (
-        <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+        <div className="rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4">
           <p className="text-[12.5px] leading-relaxed text-tg-hint">
             Появляется в конце раскрытых постов канала: ведите читателя на сайт, бота или в закреп.
           </p>
@@ -908,7 +946,7 @@ function PromotionSection({
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}>
       <SectionTitle icon={Rocket}>Продвижение в ленте</SectionTitle>
       {pro ? (
-        <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+        <div className="rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4">
           <p className="text-[12.5px] leading-relaxed text-tg-hint">
             Протолкните пост в первые ряды ленты — буст температуры на сутки.
           </p>
@@ -923,7 +961,7 @@ function PromotionSection({
             </div>
             <div className="mt-1.5 h-2 overflow-hidden rounded-full bg-tg-sep/50">
               <div
-                className="h-full rounded-full bg-gradient-to-r from-tg-link to-tg-star transition-all duration-500"
+                className="h-full rounded-full bg-tg-link transition-all duration-500"
                 style={{
                   width: `${Math.min(100, Math.round((promotion.used / Math.max(1, promotion.limit)) * 100))}%`,
                 }}
@@ -1009,7 +1047,7 @@ function AdsSection({
       <SectionTitle icon={Megaphone}>Реклама</SectionTitle>
       <div className="space-y-3">
         {/* Баланс — в свайпах (1 свайп = 1 ₽) */}
-        <div className="flex items-center gap-4 rounded-3xl border border-tg-sep/50 bg-gradient-to-r from-tg-star/[0.09] to-transparent p-4">
+        <div className="flex items-center gap-4 rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4">
           <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl bg-tg-star/15">
             <Wallet className="h-6 w-6 text-tg-star" />
           </span>
@@ -1040,7 +1078,7 @@ function AdsSection({
 
         {/* Кампании */}
         {active.length === 0 && finished.length === 0 ? (
-          <div className="rounded-3xl border border-dashed border-tg-sep bg-tg-surface/50 p-5 text-center">
+          <div className="rounded-2xl border border-dashed border-tg-sep bg-tg-surface/50 p-5 text-center">
             <Sparkles className="mx-auto h-6 w-6 text-tg-hint" />
             <p className="mt-2 text-[13.5px] leading-relaxed text-tg-hint">
               Запустите кампанию — посты канала поднимутся в первые ряды ленты, платите только за
@@ -1227,7 +1265,7 @@ function CampaignCard({ campaign, reload }: { campaign: CampaignDTOView; reload:
   }
 
   return (
-    <div className="rounded-3xl border border-tg-sep/50 bg-tg-surface/70 p-4">
+    <div className="rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4">
       <div className="flex items-start gap-2.5">
         <div className="min-w-0 flex-1">
           <div className="truncate text-[15px] font-bold text-tg-text">{campaign.title}</div>
@@ -1242,7 +1280,7 @@ function CampaignCard({ campaign, reload }: { campaign: CampaignDTOView; reload:
       <div className="mt-3">
         <div className="h-2 overflow-hidden rounded-full bg-tg-sep/50">
           <motion.div
-            className="h-full rounded-full bg-gradient-to-r from-tg-link to-tg-star"
+            className="h-full rounded-full bg-tg-link"
             initial={{ width: 0 }}
             animate={{ width: `${progress}%` }}
             transition={{ duration: 0.6, ease: 'easeOut' }}

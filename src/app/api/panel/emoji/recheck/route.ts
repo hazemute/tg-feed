@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { err } from '@/lib/server'
+import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { getCustomEmojiStickers } from '@/lib/tg-bot'
 import { clearAnimatedEmojiKindsCache } from '@/lib/emoji-registry'
@@ -37,7 +37,8 @@ export async function POST(request: Request) {
      * отсутствующие. */
     let action = 'recheck'
     try {
-      const body = (await request.json()) as { action?: unknown }
+      // readJson: кап 64KB по content-length ДО чтения тела
+      const body = await readJson<{ action?: unknown }>(request)
       if (typeof body?.action === 'string' && body.action === 'backfill') action = 'backfill'
     } catch {
       // пустое тело — дефолтный recheck

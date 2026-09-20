@@ -560,10 +560,11 @@ export function PostCard({
               Реклама
             </span>
           )}
-          {/* Промо-пост (Snap Pro): заметная плашка продвижения */}
+          {/* Промо-пост (Snap Pro): заметная плашка продвижения — строгий
+              монохром (инверсия текст/фон), без градиентов (стиль v5.34) */}
           {post.promoted && (
             <span
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-to-r from-violet-600 to-fuchsia-500 px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-white shadow-sm"
+              className="inline-flex items-center gap-1 rounded-full bg-tg-text px-2 py-0.5 text-[10.5px] font-bold uppercase tracking-wide text-tg-bg"
               title="Пост продвинут автором канала"
             >
               <Rocket className="h-3 w-3" aria-hidden />
@@ -574,7 +575,7 @@ export function PostCard({
             <span
               aria-label="Новый пост"
               title="Новый пост"
-              className="h-2 w-2 rounded-full bg-emerald-500"
+              className="h-2 w-2 rounded-full bg-tg-green"
             />
           )}
           {timeAgo(post.publishedAt, lang)}
@@ -704,7 +705,7 @@ export function PostCard({
             }}
             aria-label={t('feed.notInterested')}
             title={t('feed.notInterested')}
-            className="ml-auto -mr-1 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 active:bg-tg-sep/50"
+            className="ml-auto -mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 active:bg-tg-sep/50"
           >
             <EyeOff className="h-[15px] w-[15px]" aria-hidden />
           </button>

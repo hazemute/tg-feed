@@ -231,7 +231,7 @@ export function SupportChat({
         <span
           className={cn(
             'flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white',
-            isFeedback ? 'bg-gradient-to-tr from-tg-star to-tg-link' : 'bg-tg-link',
+            isFeedback ? 'bg-tg-star' : 'bg-tg-link',
           )}
         >
           {isFeedback ? <Lightbulb className="h-[18px] w-[18px]" aria-hidden /> : <Headset className="h-[18px] w-[18px]" aria-hidden />}

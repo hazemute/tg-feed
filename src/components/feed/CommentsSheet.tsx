@@ -635,7 +635,7 @@ function SortChip({ active, onClick, label }: { active: boolean; onClick: () => 
       aria-selected={active}
       onClick={onClick}
       className={cn(
-        'h-8 rounded-full px-3.5 text-[13px] font-semibold transition active:scale-95',
+        'h-9 rounded-full px-3.5 text-[13px] font-semibold transition active:scale-95',
         active ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-hint active:text-tg-text',
       )}
     >

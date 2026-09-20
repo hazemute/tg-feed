@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
-import { toPostDTO, toChannelDTO } from '@/lib/dto'
+import { CHANNEL_LIST_SELECT, POST_LIST_SELECT, channelDTOFromRow, postDTOFromRow } from '@/lib/dto'
 import { cacheAside, famKey } from '@/lib/redis'
 import { nsfwPostNotIn, getNsfwChannelIds } from '@/lib/moderation'
 import type { ChannelDTO, PostDTO } from '@/lib/types'
@@ -156,10 +156,7 @@ async function computeCore(): Promise<TrendingCore> {
     const load = async (since: Date) =>
       db.post.findMany({
         where: { publishedAt: { gte: since }, AND: nsfwPostNotIn() },
-        include: {
-          channel: { include: { category: true } },
-          _count: { select: { bookmarkedBy: true } },
-        },
+        select: { ...POST_LIST_SELECT, _count: { select: { bookmarkedBy: true } } },
         orderBy: [{ likesCount: 'desc' }, { viewsCount: 'desc' }],
         take: 60,
       })
@@ -171,7 +168,7 @@ async function computeCore(): Promise<TrendingCore> {
     const top = candidates.slice(0, 10)
 
     return top.map((p) =>
-      toPostDTO(p, { liked: false, bookmarked: false, subscribed: false }, p._count.bookmarkedBy),
+      postDTOFromRow(p, { liked: false, bookmarked: false, subscribed: false }, p._count.bookmarkedBy),
     )
   })()
 
@@ -182,14 +179,14 @@ async function computeCore(): Promise<TrendingCore> {
   const topChannelsPromise = (async (): Promise<ChannelDTO[]> => {
     const channels = await db.channel.findMany({
       where: { status: 'active', id: { notIn: await getNsfwChannelIds() } },
-      include: { category: true },
+      select: CHANNEL_LIST_SELECT,
       orderBy: [
         { membersCount: { sort: 'desc', nulls: 'last' } },
         { subscribersCount: 'desc' },
       ],
       take: 8,
     })
-    return channels.map((c) => toChannelDTO(c, false))
+    return channels.map((c) => channelDTOFromRow(c, false))
   })()
 
   const [pulse, hashtags, topPosts, topChannels] = await Promise.all([

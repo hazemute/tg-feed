@@ -1,12 +1,15 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { guardAuth } from '@/lib/guard'
+import { proxiedMediaUrl } from '@/lib/media'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * GET /api/subscriptions — подписки пользователя с флагом «скрыт из ленты».
  * Пользователь берётся из Bearer-сессии; лимит 60 запросов в минуту.
+ * egress (11-a): select вместо include — styleProfile (JSON-слепок ИИ),
+ * avatarVideoUrl, avatarHash и пр. в ответ не идут, форма DTO прежняя.
  */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'subscriptions' })
@@ -16,8 +19,27 @@ export async function GET(request: Request) {
   try {
     const subs = await db.subscription.findMany({
       where: { userId },
-      include: {
-        channel: { include: { category: true, _count: { select: { posts: true } } } },
+      select: {
+        channelId: true,
+        hidden: true,
+        notify: true,
+        channel: {
+          select: {
+            id: true,
+            title: true,
+            username: true,
+            description: true,
+            avatarColor: true,
+            avatarUrl: true,
+            photoFileId: true,
+            membersCount: true,
+            subscribersCount: true,
+            isPremium: true,
+            status: true,
+            category: { select: { slug: true, title: true } },
+            _count: { select: { posts: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
     })
@@ -33,7 +55,8 @@ export async function GET(request: Request) {
           username: s.channel.username,
           description: s.channel.description?.replace(/\s+/g, ' ').trim() ?? null,
           avatarColor: s.channel.avatarColor,
-          avatarUrl: s.channel.avatarUrl ?? (s.channel.photoFileId ? `/api/avatar/c_${s.channel.id}` : null),
+          // v5.33: Storage-аватарка через /api/media (CDN-кэш, экономия egress Supabase)
+          avatarUrl: proxiedMediaUrl(s.channel.avatarUrl) ?? (s.channel.photoFileId ? `/api/avatar/c_${s.channel.id}` : null),
           subscribersCount: s.channel.membersCount ?? s.channel.subscribersCount,
           isPremium: s.channel.isPremium,
           status: s.channel.status,

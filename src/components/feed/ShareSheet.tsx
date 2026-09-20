@@ -122,7 +122,7 @@ export function ShareSheet() {
               </>
             )
           }
-          iconClass="relative bg-gradient-to-tr from-tg-star/25 to-tg-link/25 text-tg-link"
+          iconClass="relative bg-tg-star/15 text-tg-star"
           title={t('post.shareStory')}
           hint={t('post.shareStoryHint')}
         />

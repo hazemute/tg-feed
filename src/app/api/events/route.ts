@@ -35,42 +35,20 @@ export async function GET(request: Request) {
 
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
-      let closed = false
-
-      const send = (event: string, data: unknown) => {
-        if (closed) return
-        try {
-          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
-        } catch {
-          closed = true
-        }
-      }
-
-      send('hello', { ok: true, time: Date.now() })
-
-      const onPostsNew = (payload: unknown) => send('posts:new', payload)
-      appBus().on('posts:new', onPostsNew)
-
-      // notif:new — толчок бейджу колокольчика; событие адресное:
-      // пушим только тому SSE-клиенту, чей userId совпал с получателем
-      const onNotifNew = (payload: { userId: string }) => {
-        if (payload.userId === session.uid) send('notif:new', { ok: true })
-      }
-      appBus().on('notif:new', onNotifNew)
-
-      const heartbeat = setInterval(() => {
-        if (closed) return
-        try {
-          controller.enqueue(encoder.encode(': hb\n\n'))
-        } catch {
-          closed = true
-        }
-      }, 25_000)
+      // ЕДИНСТВЕННЫЙ флаг жизненного цикла + идемпотентный cleanup.
+      // Раньше: cleanup ранним return'ом выходил при closed=true (флаг ставился
+      // неудачным enqueue при обрыве клиента) — clearInterval и off() НЕ
+      // выполнялись, и на общей шине appBus накапливались мёртвые слушатели
+      // (2 на каждое reconnect-соединение) + вечные 25-секундные интервалы.
+      // МаксListeners(200) забивался, память текла. Теперь cleanup всегда
+      // отрабатывает ровно один раз, из любой точки.
+      let cleaned = false
+      let heartbeat: ReturnType<typeof setInterval> | undefined
 
       const cleanup = () => {
-        if (closed) return
-        closed = true
-        clearInterval(heartbeat)
+        if (cleaned) return
+        cleaned = true
+        if (heartbeat) clearInterval(heartbeat)
         appBus().off('posts:new', onPostsNew)
         appBus().off('notif:new', onNotifNew)
         try {
@@ -79,6 +57,37 @@ export async function GET(request: Request) {
           // поток уже закрыт клиентом
         }
       }
+
+      const send = (event: string, data: unknown) => {
+        if (cleaned) return
+        try {
+          controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`))
+        } catch {
+          cleanup()
+        }
+      }
+
+      const onPostsNew = (payload: unknown) => send('posts:new', payload)
+      // notif:new — толчок бейджу колокольчика; событие адресное:
+      // пушим только тому SSE-клиенту, чей userId совпал с получателем
+      const onNotifNew = (payload: { userId: string }) => {
+        if (payload.userId === session.uid) send('notif:new', { ok: true })
+      }
+
+      heartbeat = setInterval(() => {
+        if (cleaned) return
+        try {
+          controller.enqueue(encoder.encode(': hb\n\n'))
+        } catch {
+          cleanup()
+        }
+      }, 25_000)
+
+      appBus().on('posts:new', onPostsNew)
+      appBus().on('notif:new', onNotifNew)
+
+      send('hello', { ok: true, time: Date.now() })
+
       request.signal.addEventListener('abort', cleanup)
     },
   })

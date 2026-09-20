@@ -285,7 +285,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     {
       id: 'stars',
       label: t('topup.tabStars'),
-      icon: <Star className="h-[19px] w-[19px] fill-amber-400 text-amber-400" strokeWidth={1.2} />,
+      icon: <Star className="h-[19px] w-[19px] fill-tg-star text-tg-star" strokeWidth={1.2} />,
       available: methods?.stars ?? true,
     },
     {
@@ -484,7 +484,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
             {STAR_PACKS.map((sw) =>
               packRow(sw, {
                 selected: starsAmount === sw,
-                icon: <Star className="h-5 w-5 shrink-0 fill-amber-400 text-amber-400" strokeWidth={1.2} />,
+                icon: <Star className="h-5 w-5 shrink-0 fill-tg-star text-tg-star" strokeWidth={1.2} />,
                 name: `${formatCount(sw)} ${t('topup.packName')}`,
                 main: formatRub(sw * 100),
                 sub: `${formatCount(sw)} ${swipesWord(sw)}`,
@@ -596,9 +596,9 @@ function TonWaiting({
         <motion.span
           initial={{ scale: 0.6, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
-          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-emerald-500/15"
+          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-tg-green/15"
         >
-          <Check className="h-8 w-8 text-emerald-600 dark:text-emerald-400" strokeWidth={2.5} />
+          <Check className="h-8 w-8 text-tg-green" strokeWidth={2.5} />
         </motion.span>
         <div className="mt-3 text-[18px] font-bold text-tg-text">{t('topup.paid')}</div>
         <p className="mx-auto mt-1.5 max-w-[320px] text-[13.5px] leading-relaxed text-tg-hint">

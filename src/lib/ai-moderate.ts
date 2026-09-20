@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { chatSimple, openRouterEnabled } from '@/lib/openrouter'
+import { chatSimple, freeModelChain, openRouterEnabled } from '@/lib/openrouter'
 import { cacheAside, shortHash } from '@/lib/redis'
 import { looksLikeGarbage } from '@/lib/text-clean'
 
@@ -30,14 +30,16 @@ import { looksLikeGarbage } from '@/lib/text-clean'
 export type AiVerdict = 'ok' | 'junk' | 'nsfw' | 'spam'
 
 /** Бесплатные модели (env AI_MODERATION_MODELS переопределяет).
- *  v5.33: единая модель сервиса z-ai/glm-5.3-flash:free — первая везде. */
-const FREE_MODELS = [
-  'z-ai/glm-5.3-flash:free',
-  'google/gemma-3-27b-it:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'deepseek/deepseek-chat-v3-0324:free',
-  'mistralai/mistral-small-3.2-24b-instruct:free',
-]
+ *  v5.35: ЖИВАЯ цепочка из openrouter.ts — free-слоты OpenRouter появляются/
+ *  исчезают (glm-5.3-flash:free исчез 2026-09), статичные списки протухают.
+ *  freeModelChain() = приоритет GLM Flash → другие живые :free, авто-обновление. */
+function moderationModels(): string[] {
+  const custom = (process.env.AI_MODERATION_MODELS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+  return custom.length > 0 ? custom : freeModelChain()
+}
 
 const VERDICT_RE = /\b(ok|junk|nsfw|spam)\b/g
 
@@ -148,7 +150,7 @@ async function judgeBatch(posts: ModeratablePost[]): Promise<Map<string, AiVerdi
     const raw = await chatSimple(SYSTEM_PROMPT, userMsg, {
       maxTokens: 400,
       timeoutMs: 30_000,
-      models: FREE_MODELS,
+      models: moderationModels(),
       temperature: 0,
     })
     const judged = parseVerdicts(raw, needAi.map((p) => p.id))

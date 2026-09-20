@@ -12,6 +12,9 @@ const querySchema = z.object({
   username: z.string().trim().min(1).max(100),
 })
 
+/** CDN (11-a): статистика публична и одинакова для всех — edge-кэш 60с */
+const CDN_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'
+
 /*
  * Кабинет канала — ТОЧНАЯ статистика из БД (никаких выдумок):
  * всё считается SQL-агрегатами по реальным постам (t.me-просмотры/реакции,
@@ -211,7 +214,7 @@ export async function GET(request: Request) {
     const username = parsed.data.username.replace(/^@/, '').toLowerCase()
 
     const cached = statsCache.get(username)
-    if (cached && cached.exp > Date.now()) return NextResponse.json(cached.data)
+    if (cached && cached.exp > Date.now()) return NextResponse.json(cached.data, { headers: { 'Cache-Control': CDN_CACHE } })
 
     const channel = await db.channel.findFirst({
       where: { username },
@@ -314,7 +317,7 @@ export async function GET(request: Request) {
       const a = agg
       const built = finalizeStats({ a, bins, seriesRows, cadenceRows, topViews, topReactions, appViews, mediaRows, members: channel.membersCount ?? channel.subscribersCount, subscribers: channel.subscribersCount })
       statsCache.set(username, { data: built, exp: Date.now() + STATS_TTL_MS })
-      return NextResponse.json(built)
+      return NextResponse.json(built, { headers: { 'Cache-Control': CDN_CACHE } })
     }
 
     const [agg, bins, seriesRows, cadenceRows, topViews, topReactions, appViewsRows, mediaRows] =
@@ -430,7 +433,7 @@ export async function GET(request: Request) {
     }
     statsCache.set(username, { data, exp: Date.now() + STATS_TTL_MS })
 
-    return NextResponse.json(data)
+    return NextResponse.json(data, { headers: { 'Cache-Control': CDN_CACHE } })
   } catch (e) {
     console.error('[channel/stats]', e)
     return err('stats failed', 500)

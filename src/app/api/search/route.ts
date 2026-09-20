@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
-import { toPostDTO } from '@/lib/dto'
+import { POST_LIST_SELECT, postDTOFromRow } from '@/lib/dto'
 import { guardPublic } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { isNsfwText, getNsfwChannelIds } from '@/lib/moderation'
@@ -55,13 +55,14 @@ export async function GET(request: Request) {
             text: ci(needle),
             channel: { status: 'active', id: { notIn: await getNsfwChannelIds() } },
           },
-          include: { channel: { include: { category: true } } },
+          // POST_LIST_SELECT (egress): ttsAudio/translations в выдачу поиска не идут
+          select: POST_LIST_SELECT,
           orderBy: { publishedAt: 'desc' },
           take: 30,
         })
         return posts
           .filter((p) => !isNsfwText(p.text)) // NSFW-спам не находится поиском
-          .map((p) => toPostDTO(p, { liked: false, bookmarked: false, subscribed: false }))
+          .map((p) => postDTOFromRow(p, { liked: false, bookmarked: false, subscribed: false }))
       },
     })
 

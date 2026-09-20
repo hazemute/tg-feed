@@ -40,7 +40,7 @@ export async function POST(request: Request) {
     }
 
     // Целевой язык: параметр → язык клиента Telegram → русский
-    const user = await db.user.findUnique({ where: { id: g.uid } })
+    const user = await db.user.findUnique({ where: { id: g.uid }, select: { languageCode: true } })
     const lang = (parsed.data.lang ?? user?.languageCode ?? 'ru').slice(0, 2).toLowerCase()
 
     const r = await translatePostCached(postId, lang)

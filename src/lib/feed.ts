@@ -120,7 +120,7 @@ type ScopeResult = {
     publishedAt?: { gt: Date }
     AND?: Array<Record<string, unknown>>
   }
-  user: { id: string; categories: string }
+  user: { categories: string }
   sig: string | null
 } | null
 
@@ -162,7 +162,8 @@ async function buildFeedScopeUncached(userId: string, category: string) {
   // Пользователь + скрытые каналы + NSFW-каналы — один batch (дальний регион:
   // каждая последовательная «(п)роверка» стоит ~1 RTT до Supabase)
   const [user, hidden, nsfwIds] = await Promise.all([
-    db.user.findUnique({ where: { id: userId } }),
+    // select: нужен только categories (egress: полная строка User не нужна)
+    db.user.findUnique({ where: { id: userId }, select: { categories: true } }),
     db.subscription.findMany({
       where: { userId, hidden: true },
       select: { channelId: true },

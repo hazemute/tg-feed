@@ -28,6 +28,11 @@ export async function GET(request: Request) {
 
   const stream = new ReadableStream({
     start(controller) {
+      // Идемпотентный close (11-a): раньше close() ранним return'ом выходил
+      // при closed=true (флаг ставил неудачный enqueue при обрыве клиента) —
+      // clearInterval/off() пропускались, на adminBus теки мёртвые слушатели
+      // и вечные 20-секундные интервалы. Теперь очистка всегда выполняется
+      // ровно один раз, из любой точки.
       let closed = false
 
       const send = (event: string, data?: unknown) => {
@@ -39,7 +44,7 @@ export async function GET(request: Request) {
             ),
           )
         } catch {
-          closed = true
+          close()
         }
       }
 
@@ -48,10 +53,6 @@ export async function GET(request: Request) {
         adminBus().on(name, fn)
         return { name, fn }
       })
-
-      // hello + первый статус сразу
-      send('hello', { ts: Date.now() })
-      send('status', { ts: Date.now(), bot: botConfigured })
 
       const statusTimer = setInterval(() => {
         send('status', { ts: Date.now(), bot: botConfigured })
@@ -69,6 +70,10 @@ export async function GET(request: Request) {
           // уже закрыт
         }
       }
+
+      // hello + первый статус сразу
+      send('hello', { ts: Date.now() })
+      send('status', { ts: Date.now(), bot: botConfigured })
 
       request.signal.addEventListener('abort', close)
     },

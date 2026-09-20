@@ -7,9 +7,9 @@ import { cacheGet, cacheSet, shortHash } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import { looksLikeGarbage } from '@/lib/text-clean'
 import { stripMarkdown } from '@/lib/markdown'
-import { chatSimple, chatWithTools, openRouterEnabled, type ChatMsg } from '@/lib/openrouter'
+import { chatSimple, chatWithTools, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
 import { aiSearchAllowance } from '@/lib/tiers'
-import { toPostDTO } from '@/lib/dto'
+import { POST_LIST_SELECT, postDTOFromRow } from '@/lib/dto'
 import { schemasFor, toolBy, type ToolExecResult, searchSystemPrompt, type ToolCtx } from '@/lib/ai-tools'
 import { sseStream } from '@/lib/sse'
 
@@ -75,7 +75,17 @@ async function buildAnswer(q: string, categorySlug: string | undefined): Promise
         ...(categorySlug ? { category: { slug: categorySlug } } : {}),
       },
     },
-    include: { channel: { include: { category: true } } },
+    // egress (11-a): дайджесту нужны только тексты/счётчики — select вместо
+    // include (ttsAudio/translations 220 постов больше не качаются впустую)
+    select: {
+      id: true,
+      text: true,
+      publishedAt: true,
+      likesCount: true,
+      reactionsTg: true,
+      viewsCount: true,
+      channel: { select: { id: true, title: true, username: true } },
+    },
     orderBy: { publishedAt: 'desc' },
     take: 220,
   })
@@ -137,11 +147,11 @@ async function sourcesDTO(ids: string[]) {
   if (ids.length === 0) return []
   const sourcePosts = await db.post.findMany({
     where: { id: { in: ids }, channel: { status: 'active' } },
-    include: { channel: { include: { category: true } } },
+    select: POST_LIST_SELECT,
   })
   const byId = new Map(sourcePosts.map((p) => [p.id, p]))
   const ordered = ids.map((id) => byId.get(id)).filter((p): p is NonNullable<typeof p> => Boolean(p))
-  return ordered.map((p) => toPostDTO(p, { liked: false, bookmarked: false, subscribed: false }))
+  return ordered.map((p) => postDTOFromRow(p, { liked: false, bookmarked: false, subscribed: false }))
 }
 
 export async function POST(request: Request) {
@@ -239,7 +249,7 @@ export async function POST(request: Request) {
           send('done', { reply: tail.content || 'Не нашёл — переформулируйте вопрос.', ...meta, sources })
         } catch (e) {
           console.error('[ai/search chat]', e)
-          send('error', { message: 'Нейросеть не ответила — попробуйте ещё раз' })
+          send('error', { message: openRouterErrorText(e) })
         }
       })
     }
@@ -294,6 +304,6 @@ export async function POST(request: Request) {
     })
   } catch (e) {
     console.error('[ai/search]', e)
-    return err('Нейросеть не ответила — попробуйте ещё раз', 502)
+    return err(openRouterErrorText(e), 502)
   }
 }

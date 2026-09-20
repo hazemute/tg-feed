@@ -97,6 +97,10 @@ function ChannelScreen({
   // Ленивая регистрация: гость? шторка входа
   const isGuest = useApp((s) => s.user?.isGuest ?? false)
   const openAuthGate = useApp((s) => s.openAuthGate)
+  // Защита от двойного тапа (лайк/закладка/подписка): пока запрос в полёте,
+  // повторные тапы по тому же объекту игнорируются — иначе оптимистичный флаг
+  // переворачивается дважды и «действие отменяет само себя»
+  const inflightRef = useRef<Set<string>>(new Set())
 
   const load = useCallback(
     async (p: number, replace: boolean) => {
@@ -182,6 +186,9 @@ function ChannelScreen({
       haptic('light')
       return
     }
+    const key = `like:${post.id}`
+    if (inflightRef.current.has(key)) return
+    inflightRef.current.add(key)
     const nextLiked = !post.liked
     updatePost(post.id, { liked: nextLiked, likesCount: Math.max(0, post.likesCount + (nextLiked ? 1 : -1)) })
     try {
@@ -192,6 +199,8 @@ function ChannelScreen({
       updatePost(post.id, r)
     } catch {
       updatePost(post.id, { liked: post.liked, likesCount: post.likesCount })
+    } finally {
+      inflightRef.current.delete(key)
     }
   }
 
@@ -204,6 +213,9 @@ function ChannelScreen({
       haptic('light')
       return
     }
+    const key = `bm:${post.id}`
+    if (inflightRef.current.has(key)) return
+    inflightRef.current.add(key)
     const next = !post.bookmarked
     updatePost(post.id, {
       bookmarked: next,
@@ -221,12 +233,16 @@ function ChannelScreen({
         bookmarked: !next,
         bookmarksCount: Math.max(0, post.bookmarksCount + (next ? -1 : 1)),
       })
+    } finally {
+      inflightRef.current.delete(key)
     }
   }
 
   const onSubscribe = async () => {
     const uid = userRef.current
     if (!uid || !channel) return
+    if (inflightRef.current.has('sub')) return
+    inflightRef.current.add('sub')
     const next = !channel.subscribed
     if (next) setNotify(true) // новая подписка — звук включён по умолчанию
     setChannel({ ...channel, subscribed: next, subscribersCount: Math.max(0, channel.subscribersCount + (next ? 1 : -1)) })
@@ -254,6 +270,8 @@ function ChannelScreen({
         c ? { ...c, subscribed: !next, subscribersCount: Math.max(0, c.subscribersCount + (next ? -1 : 1)) } : c,
       )
       toast.error('Ошибка подписки')
+    } finally {
+      inflightRef.current.delete('sub')
     }
   }
 
@@ -629,10 +647,14 @@ function RelatedChannels({ username, userId }: { username: string; userId: strin
     return () => ac.abort()
   }, [username, userId])
 
-  /** Подписка/отписка в один тап — как у основной кнопки экрана, но по username (id в DTO нет) */
+  /** Подписка/отписка в один тап — как у основной кнопки экрана, но по username (id в DTO нет).
+   *  Двойной тап защищён inflight-набором: повторный тап по тому же каналу до ответа игнорируется. */
+  const inflightRef = useRef<Set<string>>(new Set())
   const toggleSub = async (c: RelatedChannelDTO) => {
     const uid = userId
     if (!uid) return
+    if (inflightRef.current.has(c.username)) return
+    inflightRef.current.add(c.username)
     const next = !c.subscribed
     setItems((prev) =>
       prev
@@ -664,6 +686,8 @@ function RelatedChannels({ username, userId }: { username: string; userId: strin
           : prev,
       )
       toast.error('Ошибка подписки')
+    } finally {
+      inflightRef.current.delete(c.username)
     }
   }
 

@@ -605,7 +605,7 @@ export function AiChat({
                           key={i}
                           className={cn(
                             'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium',
-                            s.ok ? 'bg-tg-surface text-tg-hint' : 'bg-red-500/10 text-red-500',
+                            s.ok ? 'bg-tg-surface text-tg-hint' : 'bg-destructive/10 text-destructive',
                           )}
                         >
                           {s.ok ? <Check className="h-2.5 w-2.5" /> : <AlertCircle className="h-2.5 w-2.5" />}
@@ -620,7 +620,7 @@ export function AiChat({
                       m.role === 'user'
                         ? 'rounded-br-md bg-tg-link text-white'
                         : m.failed
-                          ? 'rounded-bl-md bg-red-500/10 text-red-500'
+                          ? 'rounded-bl-md bg-destructive/10 text-destructive'
                           : 'rounded-bl-md bg-tg-surface text-tg-text',
                     )}
                   >

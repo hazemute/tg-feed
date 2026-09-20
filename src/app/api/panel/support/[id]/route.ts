@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { emitAppEvent } from '@/lib/events'
-import { err } from '@/lib/server'
+import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
@@ -75,7 +75,7 @@ export async function POST(request: Request, ctx: Ctx) {
 
   try {
     const { id } = await ctx.params
-    const parsed = replySchema.safeParse(await request.json().catch(() => null))
+    const parsed = replySchema.safeParse(await readJson(request).catch(() => null))
     if (!parsed.success) return err('text required (1..2000)')
 
     const thread = await db.supportThread.findUnique({ where: { id }, select: { id: true, status: true, userId: true } })
@@ -122,7 +122,7 @@ export async function PATCH(request: Request, ctx: Ctx) {
 
   try {
     const { id } = await ctx.params
-    const parsed = patchSchema.safeParse(await request.json().catch(() => null))
+    const parsed = patchSchema.safeParse(await readJson(request).catch(() => null))
     if (!parsed.success) return err('status must be ai | human | closed')
 
     const thread = await db.supportThread.findUnique({ where: { id }, select: { id: true } })

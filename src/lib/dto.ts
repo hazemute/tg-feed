@@ -1,4 +1,4 @@
-import type { Channel, Post } from '@prisma/client'
+import type { Channel, Post, Prisma } from '@prisma/client'
 import type { ChannelDTO, MediaItemDTO, MediaKind, PostDTO } from '@/lib/types'
 import { proxiedMediaUrl } from '@/lib/media'
 import { animatedEmojiKinds } from '@/lib/emoji-registry'
@@ -23,6 +23,85 @@ const KNOWN_KINDS: MediaKind[] = [
   'link',
   'none',
 ]
+
+/*
+ * EGRESS-ЭКОНОМИКА (11-a): минимальные select-списки для списков постов/каналов.
+ * Ровно те поля, которые читают toPostDTO/toChannelDTO. Крупные колонки БД —
+ * ttsAudio (base64 mp3, до ~3.5МБ на пост), translations (JSON-кэш переводов),
+ * aiSummary, styleProfile, avatarVideoUrl и прочие служебные — НЕ выбираются:
+ * UI их в списках не читает, а Supabase отдавал их байт-в-байт на каждый
+ * /api/bookmarks (100 постов!), /api/feed/fresh (поллится каждые ~20с),
+ * /api/search, /api/trending и т.д. Форма DTO на выходе НЕ меняется.
+ */
+export const CHANNEL_LIST_SELECT = {
+  id: true,
+  title: true,
+  username: true,
+  description: true,
+  avatarColor: true,
+  photoFileId: true,
+  avatarUrl: true,
+  membersCount: true,
+  subscribersCount: true,
+  isPremium: true,
+  verified: true,
+  status: true,
+  teaserMode: true,
+  teaserLimit: true,
+  ctaLabel: true,
+  ctaUrl: true,
+  claimedBy: { select: { tier: true, tierUntil: true } },
+  category: { select: { slug: true, title: true } },
+} satisfies Prisma.ChannelSelect
+
+export const POST_LIST_SELECT = {
+  id: true,
+  channelId: true,
+  text: true,
+  mediaUrl: true,
+  mediaType: true,
+  mediaMeta: true,
+  gallery: true,
+  link: true,
+  viewsCount: true,
+  viewsTg: true,
+  reactionsTg: true,
+  likesCount: true,
+  commentsCount: true,
+  publishedAt: true,
+  channel: { select: CHANNEL_LIST_SELECT },
+} satisfies Prisma.PostSelect
+
+/** Строка поста, обрезанная POST_LIST_SELECT (+ опциональный _count) */
+export type PrunedPostRow = Prisma.PostGetPayload<{ select: typeof POST_LIST_SELECT }> & {
+  _count?: { bookmarkedBy: number }
+}
+/** Строка канала, обрезанная CHANNEL_LIST_SELECT (+ опциональный _count) */
+export type PrunedChannelRow = Prisma.ChannelGetPayload<{ select: typeof CHANNEL_LIST_SELECT }> & {
+  _count?: { posts: number }
+}
+
+/**
+ * toPostDTO для «обрезанных» строк: рантайм-гарантия полей — сам
+ * POST_LIST_SELECT, поэтому сужение типа безопасно (тот же приём, что в
+ * сыром SQL /api/feed — postFromRow).
+ */
+export function postDTOFromRow(
+  p: PrunedPostRow,
+  flags: { liked: boolean; bookmarked: boolean; subscribed: boolean },
+  bookmarksCount = 0,
+): PostDTO {
+  return toPostDTO(p as unknown as Parameters<typeof toPostDTO>[0], flags, bookmarksCount)
+}
+
+/** toChannelDTO для «обрезанных» строк (см. postDTOFromRow) */
+export function channelDTOFromRow(
+  c: PrunedChannelRow,
+  subscribed: boolean,
+  postsCount?: number,
+): ChannelDTO {
+  return toChannelDTO(c as unknown as Parameters<typeof toChannelDTO>[0], subscribed, postsCount)
+}
 
 function normalizeKind(raw: string): MediaKind {
   return (KNOWN_KINDS as string[]).includes(raw) ? (raw as MediaKind) : 'image'
