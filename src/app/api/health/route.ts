@@ -8,8 +8,30 @@ import { checkSchema, ensureAppSchema } from '@/lib/ensure-schema'
 export const dynamic = 'force-dynamic'
 
 /**
+ * Сводка строк подключения БД БЕЗ секретов: хост:порт, имя юзера, параметры.
+ * Нужно для диагностики cutover'а (в Vercel могут оказаться значения от
+ * другого проекта Supabase — видено в 5.36.1: приложение молча само создало
+ * пустую схему на чужой БД).
+ */
+function envDbSummary(raw: string | undefined): Record<string, string> | null {
+  if (!raw) return null
+  try {
+    const u = new URL(raw)
+    return {
+      host: u.hostname,
+      port: u.port || '5432',
+      user: decodeURIComponent(u.username),
+      db: u.pathname.replace(/^\//, '') || 'postgres',
+      params: [...u.searchParams.keys()].join(','),
+    }
+  } catch {
+    return { host: '<unparseable>' }
+  }
+}
+
+/**
  * GET /api/health — статус здоровья бэкенда (мониторинг/cron-сервис).
- * Публичный, но без чувствительных данных.
+ * Публичный, но без чувствительных данных (env-сводка без паролей).
  */
 export async function GET() {
   let dbOk = false
@@ -32,11 +54,31 @@ export async function GET() {
   const bot = botEnabled()
   const botUsername = bot ? await getBotUsername() : null
 
+  // Фингерпринт фактической БД (какой проект реально подключён): размер,
+  // наличие таблиц, current_user. Достаточно, чтобы различить старый/новый/
+  // посторонний пустой проект Supabase.
+  let dbFinger: Record<string, unknown> | null = null
+  try {
+    const r = await db.$queryRaw<{ sz: string; usr: string; has_post: string | null; has_sys: string | null }[]>`
+      select pg_database_size(current_database())::text as sz,
+             current_user as usr,
+             to_regclass('public."Post"')::text as has_post,
+             to_regclass('public."SystemSetting"')::text as has_sys`
+    dbFinger = r[0] ?? null
+  } catch {
+    dbFinger = null
+  }
+
   return NextResponse.json(
     {
       ok: dbOk && schema.ok,
       db: dbOk,
       schema,
+      dbFinger,
+      dbEnv: {
+        database_url: envDbSummary(process.env.DATABASE_URL),
+        direct_url: envDbSummary(process.env.DIRECT_URL),
+      },
       cache,
       bot,
       botUsername,
