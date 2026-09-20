@@ -10,6 +10,7 @@ import { api, getSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
 import { loadFeedCache, saveFeedCache } from '@/lib/offline'
+import { prewarmUpcoming } from '@/lib/prewarm'
 import type { LangFilter } from '@/lib/lang'
 import { openChannelToJoin } from '@/lib/tg-subscribe'
 import type { AdDTO, FeedResponse, NotificationsResponse, PostDTO } from '@/lib/types'
@@ -154,6 +155,9 @@ function prefetchNextPage(next: number, userId: string, category: string, lang: 
         for (const [k, e] of pagePrefetch) if (e.exp <= now) pagePrefetch.delete(k)
       }
       pagePrefetch.set(key, { data: d, exp: Date.now() + PAGE_PREFETCH_TTL_MS })
+      // v5.60: медиа первых постов следующей страницы в idle — при свайпе
+      // картинка уже в кэше браузера/edge, shimmer не появится
+      prewarmUpcoming(d.items ?? [], false, 2, 4)
     })
     .catch(() => {
       /* тихо — обычная догрузка по сентинелу работает как раньше */
@@ -593,6 +597,8 @@ export function FeedView() {
         // append у сентинела станет мгновенным (память клиента + L0 сервера)
         if (!feedOver && data.hasMore && userRef.current)
           void prefetchNextPage(p + 1, userRef.current.id, category, langRef.current, seedRef.current)
+        // v5.60: медиа/аватары постов, которые юзер вот-вот увидит, — в idle-загрузку
+        prewarmUpcoming(incoming)
         // Кэшируем свежую страницу (офлайн-режим) — раздельно по языку
         if (replace) {
           void saveFeedCache(category, data.items, langRef.current)

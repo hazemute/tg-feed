@@ -6,6 +6,7 @@ import { ChevronLeft, ChevronRight, Download, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
 import type { MediaItemDTO } from '@/lib/types'
+import { optimizedImgSrc } from '@/lib/media'
 
 /**
  * Полноэкранный просмотр медиа (как в Telegram): тап по фото/видео/гиф/стикеру
@@ -173,10 +174,20 @@ export function MediaLightbox({
               />
             ) : (
               <img
-                src={item.url}
+                src={
+                  item.url?.startsWith('/api/media')
+                    ? optimizedImgSrc(item.url, 1080, 75)
+                    : (item.url ?? '')
+                }
                 alt="Медиа поста"
                 draggable={false}
                 onClick={onSurfaceClick}
+                onError={(e) => {
+                  /* Оптимизатор споткнулся — фолбэк на прямые байты прокси */
+                  const img = e.currentTarget
+                  const direct = item.url
+                  if (direct && img.src !== direct && !img.src.includes('/api/media?u=')) img.src = direct
+                }}
                 onDoubleClick={(e) => {
                   // дублируем зум по dblclick (десктоп)
                   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()

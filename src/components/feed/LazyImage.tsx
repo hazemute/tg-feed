@@ -1,7 +1,9 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { optimizedImgSrc } from '@/lib/media'
 
 /**
  * Экономное изображение («сбережение трафика»):
@@ -10,9 +12,18 @@ import { cn } from '@/lib/utils'
  *  • ПОЛНАЯ картинка качается, когда блок во вьюпорте и пост задержался
  *    на экране ~0.4с — быстрые сети получают фото почти мгновенно,
  *    а «пролетевшие» при быстром скролле посты трафик не тратят.
- *    (Было 1.2с — пользователи видели «фото не грузятся».)
  *
  * eager — без задержки (полный экран поста, лайтбокс, стикеры).
+ *
+ * v5.60 — ЛЕСТНИЦА КАНДИДАТОВ (медиа грузится «что бы то ни стало»):
+ *  1. /_next/image (AVIF/WebP, байтов ×3-5 меньше) — самый быстрый на плохих
+ *     каналах;
+ *  2. прямой /api/media — если оптимизатор споткнулся;
+ *  3-4. прямой с cache-buster (hbr) — обход залипшего edge/404-наследия;
+ *  между попытками — растущая пауза (0.4/0.8/1.2с), часовой watchdog 20с
+ *  ловит «залипший» коннект (мобильные сети душат большие ответы).
+ *  Все попытки кончились — НЕ прячем медиа, а показываем кнопку «Повторить»:
+ *  один тап перезапускает лестницу (у юзера всегда есть ручной шанс).
  */
 export function LazyImage({
   src,
@@ -23,6 +34,7 @@ export function LazyImage({
   draggable,
   onClick,
   onError,
+  imgWidth = 828,
 }: {
   src: string
   alt: string
@@ -33,26 +45,63 @@ export function LazyImage({
   eager?: boolean
   draggable?: boolean
   onClick?: () => void
+  /** Вызывается когда исчерпана ВСЯ лестница и юзер больше не жмёт «Повторить» —
+   *  раньше родители прятали слайд по первой ошибке, теперь медиа живучее */
   onError?: (e: React.SyntheticEvent<HTMLImageElement>) => void
+  /** Ширина для /_next/image (устройства с dpr — Optimizer сам отдаст нужную) */
+  imgWidth?: number
 }) {
   const [active, setActive] = useState(Boolean(eager))
   const [loaded, setLoaded] = useState(false)
-  /*
-   * v5.59 — ОДИН ТИХИЙ РЕТРАЙ при ошибке: edge мог закэшировать 404 старой
-   * мёртвой ссылки ДО лечения (Cache-Control 30с/наследие). Cache-buster
-   * обходит edge — сервер в это время уже отдаёт свежие байты.
-   */
-  const [retrySrc, setRetrySrc] = useState<string | null>(null)
-  const retriedRef = useRef(false)
-  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    if (!retriedRef.current && src.includes('/api/media')) {
-      retriedRef.current = true
-      setRetrySrc(`${src}${src.includes('?') ? '&' : '?'}hbr=${Date.now()}`)
+  const [failed, setFailed] = useState(false)
+  /** индекс текущего кандидата лестницы */
+  const [attempt, setAttempt] = useState(0)
+  /** поколение попыток: тап «Повторить» или новая src перегенерируют кандидатов */
+  const [gen, setGen] = useState(0)
+
+  const candidates = useMemo(() => {
+    void gen // смена поколения → свежие hbr-таймстампы
+    const list: string[] = []
+    if (src.startsWith('/api/media')) {
+      list.push(optimizedImgSrc(src, imgWidth))
+      const bust = (n: number) => `${src}${src.includes('?') ? '&' : '?'}hbr=${Date.now()}${n}`
+      list.push(src, bust(1), bust(2))
+    } else {
+      list.push(src)
+    }
+    return list
+  }, [src, gen, imgWidth])
+
+  const attemptRef = useRef(0)
+  attemptRef.current = attempt
+  const cur = candidates[Math.min(attempt, candidates.length - 1)]
+
+  /** Следующий кандидат; кончились — экран «Повторить» + нотификация родителю */
+  const advance = (e?: React.SyntheticEvent<HTMLImageElement>) => {
+    if (attemptRef.current < candidates.length - 1) {
+      // растущая пауза 0.4/0.8/1.2с — даём сети выдохнуть между попытками
+      const delay = Math.min(3000, 400 * (attemptRef.current + 1))
+      window.setTimeout(() => setAttempt((a) => a + 1), delay)
       return
     }
-    onError?.(e)
+    setFailed(true)
+    if (e) onError?.(e) // родители прячут слайд ТОЛЬКО когда медиа мертво по-настоящему
   }
+
+  const handleImgError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    advance(e)
+  }
+
   const ref = useRef<HTMLDivElement>(null)
+  /* Новая src (компонент переиспользован для другого поста) — полный сброс */
+  const [prevSrc, setPrevSrc] = useState(src)
+  if (prevSrc !== src) {
+    setPrevSrc(src)
+    setLoaded(false)
+    setFailed(false)
+    setAttempt(0)
+    setGen((g) => g + 1)
+  }
 
   useEffect(() => {
     if (active) return
@@ -83,15 +132,24 @@ export function LazyImage({
     }
   }, [active, eager])
 
+  /* Часовой: картинка «висит» дольше 20с (душеный коннект) — считаем ошибкой,
+     переходим к следующему кандидату (свежий hbr = новое соединение) */
+  useEffect(() => {
+    if (!active || loaded || failed) return
+    const t = window.setTimeout(() => advance(), 20_000)
+    return () => window.clearTimeout(t)
+  }, [active, loaded, failed, attempt, cur])
+
   return (
     <div ref={ref} className={cn('relative overflow-hidden bg-tg-surface', className)}>
-      {!loaded && <span className="tg-shimmer absolute inset-0" aria-hidden />}
-      {active && (
-         
+      {!loaded && !failed && <span className="tg-shimmer absolute inset-0" aria-hidden />}
+      {active && !failed && (
         <img
-          src={retrySrc ?? src}
+          key={cur}
+          src={cur}
           alt={alt}
           draggable={draggable}
+          decoding="async"
           onClick={onClick}
           onLoad={() => setLoaded(true)}
           onError={handleImgError}
@@ -101,6 +159,24 @@ export function LazyImage({
             imgClassName,
           )}
         />
+      )}
+      {failed && (
+        <button
+          type="button"
+          data-noswipe
+          onClick={(e) => {
+            e.stopPropagation()
+            setFailed(false)
+            setAttempt(0)
+            setGen((g) => g + 1)
+            setLoaded(false)
+          }}
+          aria-label="Повторить загрузку медиа"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1.5 bg-tg-surface/85 text-tg-hint transition active:scale-[0.98]"
+        >
+          <RefreshCw className="h-5 w-5" aria-hidden />
+          <span className="text-[12px] font-semibold">Повторить</span>
+        </button>
       )}
     </div>
   )

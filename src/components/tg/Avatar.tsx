@@ -7,6 +7,11 @@ import { cn } from '@/lib/utils'
  * Аватар канала/пользователя: фото (src) с автоматическим фолбэком на
  * цветной круг с инициалами (1–2 буквы, как в Telegram), если картинки нет
  * или она не загрузилась (404 у прокси, оффлайн и т.п.).
+ *
+ * v5.60 — ОДИН ТИХИЙ РЕТРАЙ: edge мог закэшировать 404/обрыв ровно на момент
+ * первого запроса (мобильные сети рвут коннекты), а <img> сам не повторяет.
+ * Cache-buster (hbr) делает новый запрос мимо залипшего кэша — аватарка
+ * возвращается вместо мгновенных инициалов.
  */
 export function Avatar({
   name,
@@ -22,23 +27,38 @@ export function Avatar({
   className?: string
 }) {
   const [broken, setBroken] = useState(false)
+  /** cache-buster ретрай: у нашей /api/* одна ошибка часто лечится новым запросом */
+  const [retrySrc, setRetrySrc] = useState<string | null>(null)
+  /** src, за который ретрай уже потрачен (один тихий ретрай на ссылку) */
+  const [retriedFor, setRetriedFor] = useState<string | null>(null)
+  const handleErr = () => {
+    if (src && retriedFor !== src && (src.startsWith('/api/') || src.startsWith('/_next/'))) {
+      setRetriedFor(src)
+      setRetrySrc(`${src}${src.includes('?') ? '&' : '?'}hbr=${Date.now()}`)
+      return
+    }
+    setBroken(true)
+  }
   // Новая ссылка — сбрасываем флаг (картинка канала могла обновиться).
   // Сброс во время рендера — канонический паттерн React без лишнего эффекта
   const [prevSrc, setPrevSrc] = useState(src)
   if (prevSrc !== src) {
     setPrevSrc(src)
     setBroken(false)
+    setRetrySrc(null)
+    setRetriedFor(null)
   }
 
-  if (src && !broken) {
+  const shown = retrySrc ?? src
+  if (shown && !broken) {
     return (
       <img
-        src={src}
+        src={shown}
         alt={name}
         loading="lazy"
         decoding="async"
         draggable={false}
-        onError={() => setBroken(true)}
+        onError={handleErr}
         className={cn('shrink-0 rounded-full object-cover', className)}
         style={{ width: size, height: size }}
       />

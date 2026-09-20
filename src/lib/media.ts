@@ -55,6 +55,20 @@ export function proxiedMediaUrl(url: string | null | undefined): string | null |
 }
 
 /**
+ * v5.60 — БАЙТЫ ×3-5 МЕНЬШЕ: большие JPEG из /api/media прогоняем через
+ * оптимизатор Vercel (/_next/image): AVIF/WebP под ширину экрана, edge-кэш
+ * на год. На медленном/душеном канале (типичная жалоба «медиа не грузится»)
+ * 170КБ JPEG превращаются в ~40КБ AVIF — часто это разница между
+ * «загрузилось» и «вечный shimmer». Источник относительный (тот же origin),
+ * remotePatterns не нужен; при сбое оптимизатора LazyImage падает на прямой
+ * /api/media — картинка не теряется ни при каких условиях.
+ */
+export function optimizedImgSrc(url: string, width = 828, quality = 70): string {
+  if (!url.startsWith('/api/media')) return url
+  return `/_next/image?url=${encodeURIComponent(url)}&w=${width}&q=${quality}`
+}
+
+/**
  * Аватарка канала → URL для клиента (v5.59, единая точка для всех DTO).
  *
  * ПРИОРИТЕТ ВЕЧНОГО ИСТОЧНИКА: photoFileId (Bot API) НЕ ПРОТУХЛИВАЕТ —
