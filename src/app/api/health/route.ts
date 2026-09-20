@@ -56,17 +56,20 @@ export async function GET() {
 
   // Фингерпринт фактической БД (какой проект реально подключён): размер,
   // наличие таблиц, current_user. Достаточно, чтобы различить старый/новый/
-  // посторонний пустой проект Supabase.
+  // посторонний пустой проект Supabase. pg_* существует только на Postgres —
+  // на SQLite-песочнице (file:) запрос бессмыслен и шумел ошибкой в лог.
   let dbFinger: Record<string, unknown> | null = null
-  try {
-    const r = await db.$queryRaw<{ sz: string; usr: string; has_post: string | null; has_sys: string | null }[]>`
-      select pg_database_size(current_database())::text as sz,
-             current_user as usr,
-             to_regclass('public."Post"')::text as has_post,
-             to_regclass('public."SystemSetting"')::text as has_sys`
-    dbFinger = r[0] ?? null
-  } catch {
-    dbFinger = null
+  if (!(process.env.DATABASE_URL ?? '').startsWith('file:')) {
+    try {
+      const r = await db.$queryRaw<{ sz: string; usr: string; has_post: string | null; has_sys: string | null }[]>`
+        select pg_database_size(current_database())::text as sz,
+               current_user as usr,
+               to_regclass('public."Post"')::text as has_post,
+               to_regclass('public."SystemSetting"')::text as has_sys`
+      dbFinger = r[0] ?? null
+    } catch {
+      dbFinger = null
+    }
   }
 
   return NextResponse.json(

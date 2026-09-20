@@ -3,6 +3,7 @@ import type { Comment, User } from '@prisma/client'
 import type { CommentDTO } from '@/lib/types'
 import { parseBadges } from '@/lib/badges'
 import { emitAppEvent } from '@/lib/events'
+import { sendBotNotification } from '@/lib/bot-notify'
 
 /**
  * Серверные помощники комментариев (общие для /api/comments, /api/comments/[id],
@@ -102,6 +103,16 @@ export function notifyUser(data: {
       // Мгновенный толчок бейджу колокольчика: SSE-клиенты пользователя
       // обновят счётчик без 30-секундного поллинга
       emitAppEvent('notif:new', { userId: data.userId })
+      // v5.45: ДОПОЛНИТЕЛЬНО бот пишет в ЛС — ссылка на приложение в тексте
+      // + инлайн-кнопка «Перейти к уведомлению» (startapp deep-link в миниапп)
+      sendBotNotification({
+        userId: data.userId,
+        type: data.type,
+        title: data.title,
+        body: data.body,
+        postId: data.postId,
+        commentId: data.commentId,
+      })
     } catch (e) {
       console.error('[comments notify]', e)
     }

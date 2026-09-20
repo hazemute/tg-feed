@@ -67,7 +67,7 @@ const tabVariants = {
 }
 
 export default function Home() {
-  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, prerelease, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, setPrerelease, goToTab, setLoginOpen } =
+  const { user, authReady, tab, tabDir, theme, fontScale, maintenance, prerelease, setUser, setAuthReady, setCategories, setTheme, setFontScale, setLang, setMaintenance, setPrerelease, goToTab, setLoginOpen, openCommentsById } =
     useApp()
   /*
    * Приложение закрыто (техработы или ещё не выпущено) — префетчи не нужны:
@@ -371,6 +371,29 @@ export default function Home() {
     window.addEventListener('tgfeed:unauthorized', onUnauthorized)
     return () => window.removeEventListener('tgfeed:unauthorized', onUnauthorized)
   }, [authenticate])
+
+  /*
+   * v5.45 DEEP-LINK ИЗ УВЕДОМЛЕНИЯ БОТА: кнопка «Перейти к уведомлению»
+   * открывает миниапп как t.me/tgswipe_bot/tgswipe?startapp=n_<postId>[_<commentId>].
+   * Payload приходит в initDataUnsafe.start_param; cuid не содержит «_», поэтому
+   * разбор надёжен: n_<postId> — пост, n_<postId>_<commentId> — комментарии
+   * на этом комментарии (ветка раскроется, строка подсветится). Один раз за запуск.
+   */
+  const startParamHandled = useRef(false)
+  useEffect(() => {
+    if (!authReady || !user || !appOpen || startParamHandled.current) return
+    const sp = tg()?.initDataUnsafe?.start_param?.trim() ?? ''
+    if (!sp) return
+    startParamHandled.current = true
+    const m = /^n_([A-Za-z0-9]+)(?:_([A-Za-z0-9]+))?$/.exec(sp)
+    if (!m) return
+    const [, postId, commentId] = m
+    // Даём ленте первые кадры, чтобы переход был не на пустом экране
+    const timer = window.setTimeout(() => {
+      openCommentsById(postId, 0, commentId ?? null)
+    }, 600)
+    return () => window.clearTimeout(timer)
+  }, [authReady, user, appOpen, openCommentsById])
 
   /** Смена вкладки с направлением анимации */
   const switchTo = (next: Tab) => {

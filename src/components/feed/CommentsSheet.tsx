@@ -19,12 +19,15 @@ import { UserBadges } from '@/components/badges/UserBadges'
 import { ChatInput } from '@/components/ai/ChatInput'
 
 /**
- * Комментарии под постом (глобальный шит) — TikTok-стиль (v5.14):
+ * Комментарии под постом (глобальный шит) — TikTok-стиль (v5.45):
  *  • сортировка «Новые» (хронология) / «Популярные» (по лайкам);
  *  • лайки комментариев (сердечки справа, оптимистичный тоггл);
  *  • дерево ответов на один уровень (как в TikTok): «Ответить» под комментом,
- *    плашка «Ответ NAME» у ответа на ответ, раскрытие ветки по тапу;
- *  • уведомления автору на ответ/лайк (см. API + NotificationsSheet).
+ *    плашка «Ответ NAME» у ответа на ответ;
+ *  • v5.45: ветка ответов = сворачиваемая «нить» — пилюля со стеком мини-аватаров
+ *    последних отвечающих + счётчик, плавное раскрытие/скрытие (framer-motion),
+ *    вертикальная линия-нить от авы корня, «Скрыть ответы» в конце ветки;
+ *  • уведомления автору на ответ/лайк (API + NotificationsSheet + ЛС бота).
  *
  * Читать может кто угодно — комментарии цепляют гостя; отправка/лайки — только
  * после привязки Telegram (ленивая регистрация: тап открывает шторку входа).
@@ -33,7 +36,6 @@ import { ChatInput } from '@/components/ai/ChatInput'
  */
 
 const MAX_LEN = 700
-const PREVIEW_REPLIES = 2 // сколько ответов показывает сервер сразу
 
 /** Последний выбранный фильтр живёт в рамках сессии (как в TikTok) */
 let sessionSort: 'new' | 'top' = 'new'
@@ -673,10 +675,10 @@ function CommentRow({
   const t = useT()
   const openUserProfile = useApp((s) => s.openUserProfile)
   const tmp = c.id.startsWith('tmp_')
-  const avatarSize = isReply ? 28 : 36
+  const avatarSize = isReply ? 24 : 36
   const flash = flashId === c.id
-  // Ширина колонки авы (ава + зазор внешнего gap-2.5): контент коммента сидит
-  // на этом отступе, ава вытягивается в него кнопкой автора изнутри
+  // Ширина колонки авы (ава + зазор внешнего gap-2.5): контент корневого
+  // коммента сидит на этом отступе, ава вытягивается в него кнопкой автора
   const authorIndent = avatarSize + 10
 
   // Тап по автору (ава/имя — одна кнопка): у гостя профиля нет, остальным —
@@ -691,139 +693,275 @@ function CommentRow({
     openUserProfile(id)
   }
 
+  const likeRail = (
+    <motion.button
+      type="button"
+      whileTap={{ scale: 0.8 }}
+      onClick={() => onLike(c, isReply ? c.parentId ?? undefined : undefined)}
+      aria-label={t('comments.like')}
+      aria-pressed={c.likedByMe}
+      className={cn(
+        'flex shrink-0 flex-col items-center gap-0.5 pt-1.5',
+        isReply ? 'w-7' : 'w-9',
+        tmp && 'pointer-events-none opacity-50',
+      )}
+    >
+      <Heart
+        className={cn(
+          'transition-colors',
+          isReply ? 'h-4 w-4' : 'h-[18px] w-[18px]',
+          c.likedByMe ? 'fill-rose-500 text-rose-500' : 'text-tg-hint/70',
+        )}
+        strokeWidth={1.9}
+      />
+      {c.likesCount > 0 && (
+        <span
+          className={cn(
+            'font-semibold tabular-nums',
+            isReply ? 'text-[10.5px]' : 'text-[11px]',
+            c.likedByMe ? 'text-rose-500' : 'text-tg-hint',
+          )}
+        >
+          {c.likesCount > 999 ? '1k+' : c.likesCount}
+        </span>
+      )}
+    </motion.button>
+  )
+
+  /* Общая шапка строки: имя, бейджи, время, удаление своего */
+  const meta = (
+    <>
+      {c.author.badges && c.author.badges.length > 0 && (
+        <UserBadges badges={c.author.badges} max={isReply ? 1 : 2} compact />
+      )}
+      <time dateTime={c.createdAt} className="shrink-0 text-[11.5px] text-tg-hint">
+        {timeAgo(c.createdAt)}
+      </time>
+      {c.own && !tmp && (
+        <button
+          type="button"
+          onClick={() => onDelete(c)}
+          aria-label={t('comments.delete')}
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-red-50 hover:text-red-600 active:scale-90 dark:hover:bg-red-500/10"
+        >
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
+        </button>
+      )}
+    </>
+  )
+
+  /* Плашка «Ответ NAME» у ответа на ответ (v5.45: мягкая пилюля) */
+  const replyTag =
+    isReply && c.replyToName ? (
+      <span className="mt-0.5 inline-flex max-w-full items-center gap-1 rounded-full bg-tg-surface/70 py-[2px] pl-1.5 pr-2 align-top text-[11px] font-medium text-tg-hint">
+        <CornerDownRight className="h-2.5 w-2.5 shrink-0 text-tg-link" aria-hidden />
+        <span className="truncate">
+          {t('comments.replyTag')} <span className="font-semibold text-tg-link">{c.replyToName}</span>
+        </span>
+      </span>
+    ) : null
+
+  const body = (
+    <p
+      className={cn(
+        'whitespace-pre-wrap break-words leading-snug text-tg-text2',
+        isReply ? 'text-[13px]' : 'mt-0.5 text-[14.5px]',
+      )}
+    >
+      {c.text}
+    </p>
+  )
+
+  /* ---------- Корневой комментарий ---------- */
+  if (!isReply) {
+    return (
+      <div
+        id={`comment-${c.id}`}
+        className={cn(
+          'flex gap-2.5 rounded-2xl p-1 -m-1',
+          flash && 'bg-tg-link/[0.12] ring-1 ring-tg-link/40 transition-none',
+          !flash && 'transition-colors duration-1000',
+        )}
+      >
+        <div className="min-w-0 flex-1" style={{ paddingLeft: authorIndent }}>
+          <div className="flex items-center gap-2">
+            {/* Ава + имя — ОДНА кнопка: тап открывает публичный профиль автора.
+                Ава позиционируется абсолютно там, где стояла колонка авы (top:0
+                относительно кнопки = верх строки), поэтому бейджи/время/текст
+                не сдвигаются ни на пиксель */}
+            <button
+              type="button"
+              onClick={openAuthorProfile}
+              aria-label={`Профиль ${c.author.name}`}
+              className="relative flex min-w-0 items-center text-left active:opacity-70"
+            >
+              <span className="absolute top-0" style={{ left: -authorIndent }} aria-hidden>
+                <Avatar name={c.author.name} src={c.author.avatarUrl} size={avatarSize} />
+              </span>
+              <span className="truncate text-[13.5px] font-semibold text-tg-text">{c.author.name}</span>
+            </button>
+            {meta}
+          </div>
+          {body}
+
+          {/* Действия: Ответить + пилюля ветки ответов */}
+          <div className="mt-1 flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => onReply(c)}
+              className="text-[12.5px] font-semibold text-tg-hint transition active:text-tg-link"
+            >
+              {t('comments.reply')}
+            </button>
+            {(c.repliesCount > 0 || (c.replies?.length ?? 0) > 0) && (
+              <button
+                type="button"
+                onClick={() => onToggle?.(c)}
+                aria-expanded={expanded}
+                className={cn(
+                  'inline-flex h-7 max-w-full items-center gap-1.5 rounded-full pl-1 pr-2 transition active:opacity-70',
+                  expanded ? 'bg-transparent' : 'bg-tg-surface/80',
+                )}
+              >
+                {(c.replies?.length ?? 0) > 0 ? (
+                  // Стек мини-аватаров последних отвечающих (как в Instagram)
+                  <span className="flex -space-x-1.5" aria-hidden>
+                    {c.replies!.slice(0, 3).map((r) => (
+                      <span key={r.id} className="rounded-full ring-2 ring-tg-bg">
+                        <Avatar name={r.author.name} src={r.author.avatarUrl} size={16} />
+                      </span>
+                    ))}
+                  </span>
+                ) : (
+                  <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-tg-link/10" aria-hidden>
+                    <CornerDownRight className="h-2.5 w-2.5 text-tg-link" />
+                  </span>
+                )}
+                <span className="whitespace-nowrap text-[12px] font-semibold text-tg-link">
+                  {expanded
+                    ? t('comments.hideReplies')
+                    : `${c.repliesCount} ${repliesWord?.(c.repliesCount) ?? ''}`}
+                </span>
+                <ChevronDown
+                  className={cn('h-3.5 w-3.5 text-tg-hint transition-transform duration-200', expanded && 'rotate-180')}
+                  aria-hidden
+                />
+              </button>
+            )}
+          </div>
+
+          {/* Нить ответов (v5.45): плавное раскрытие, линия от авы корня,
+              ответы с мини-авой правее линии */}
+          <AnimatePresence initial={false}>
+            {expanded && (
+              <motion.div
+                key="thread"
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.28, ease: [0.4, 0, 0.2, 1] }}
+                className="overflow-hidden"
+              >
+                <div
+                  className="relative mt-2"
+                  style={{ marginLeft: avatarSize / 2 - 1 - authorIndent, paddingLeft: 12 }}
+                >
+                  {/* Вертикальная нить: от центра авы корня вниз, растворяется к концу */}
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute bottom-2 left-0 top-0 w-[2px] rounded-full bg-gradient-to-b from-tg-sep via-tg-sep/80 to-tg-sep/25"
+                  />
+                  <div className="space-y-3 py-0.5">
+                    {(c.replies ?? []).map((r) => (
+                      <CommentRow
+                        key={r.id}
+                        c={r}
+                        isReply
+                        onLike={onLike}
+                        onReply={onReply}
+                        onDelete={onDelete}
+                        flashId={flashId}
+                      />
+                    ))}
+                    {/* Подгрузка остальных ответов ветки */}
+                    {(c.replies?.length ?? 0) < c.repliesCount && onLoadMoreReplies && !tmp && (
+                      <button
+                        type="button"
+                        onClick={() => onLoadMoreReplies(c)}
+                        className="inline-flex h-7 items-center gap-1.5 rounded-full bg-tg-surface/60 px-3 text-[12px] font-semibold text-tg-link active:opacity-70"
+                      >
+                        <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                        {t('comments.moreReplies')} ({c.repliesCount - (c.replies?.length ?? 0)})
+                      </button>
+                    )}
+                    {/* Скрыть длинную ветку, дочитав до конца */}
+                    {(c.replies?.length ?? 0) >= c.repliesCount && (
+                      <div className="pt-0.5 text-center">
+                        <button
+                          type="button"
+                          onClick={() => onToggle?.(c)}
+                          aria-expanded
+                          className="inline-flex h-6 items-center gap-1 rounded-full px-2 text-[11.5px] font-medium text-tg-hint active:text-tg-link"
+                        >
+                          <ChevronDown className="h-3 w-3 rotate-180" aria-hidden />
+                          {t('comments.hideReplies')}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+
+        {likeRail}
+      </div>
+    )
+  }
+
+  /* ---------- Ответ в ветке: простая flex-строка (ава — отдельный элемент) ---------- */
   return (
     <div
       id={`comment-${c.id}`}
       className={cn(
-        'flex gap-2.5 rounded-2xl p-1 -m-1',
+        'flex gap-2 rounded-2xl p-1 -m-1',
         flash && 'bg-tg-link/[0.12] ring-1 ring-tg-link/40 transition-none',
         !flash && 'transition-colors duration-1000',
       )}
     >
-      <div className="min-w-0 flex-1" style={{ paddingLeft: authorIndent }}>
+      <button
+        type="button"
+        onClick={openAuthorProfile}
+        aria-label={`Профиль ${c.author.name}`}
+        className="shrink-0 self-start pt-0.5 active:opacity-70"
+      >
+        <Avatar name={c.author.name} src={c.author.avatarUrl} size={avatarSize} />
+      </button>
+      <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
-          {/* Ава + имя — ОДНА кнопка: тап открывает публичный профиль автора.
-              Ава позиционируется абсолютно там, где стояла колонка авы (top:0
-              относительно кнопки = верх строки), поэтому бейджи/время/текст
-              не сдвигаются ни на пиксель */}
           <button
             type="button"
             onClick={openAuthorProfile}
-            aria-label={`Профиль ${c.author.name}`}
-            className="relative flex min-w-0 items-center text-left active:opacity-70"
+            className="min-w-0 truncate text-left text-[12.5px] font-semibold text-tg-text active:opacity-70"
           >
-            <span className="absolute top-0" style={{ left: -authorIndent }} aria-hidden>
-              <Avatar name={c.author.name} src={c.author.avatarUrl} size={avatarSize} />
-            </span>
-            <span className={cn('truncate text-tg-text', isReply ? 'text-[12.5px]' : 'text-[13.5px]', 'font-semibold')}>
-              {c.author.name}
-            </span>
+            {c.author.name}
           </button>
-          {/* v5.19: бейджи автора (разработчик/менеджер/спонсор…) — компактные иконки */}
-          {c.author.badges && c.author.badges.length > 0 && (
-            <UserBadges badges={c.author.badges} max={isReply ? 1 : 2} compact />
-          )}
-          <time dateTime={c.createdAt} className="shrink-0 text-[11.5px] text-tg-hint">
-            {timeAgo(c.createdAt)}
-          </time>
-          {c.own && !tmp && (
-            <button
-              type="button"
-              onClick={() => onDelete(c)}
-              aria-label={t('comments.delete')}
-              className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-red-50 hover:text-red-600 active:scale-90 dark:hover:bg-red-500/10"
-            >
-              <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
-            </button>
-          )}
+          {meta}
         </div>
-        {/* Плашка «Ответ NAME» у ответа на ответ */}
-        {isReply && c.replyToName && (
-          <span className="mt-0.5 inline-flex items-center gap-1 text-[12px] font-medium text-tg-link">
-            <CornerDownRight className="h-3 w-3" aria-hidden />
-            {t('comments.replyTag')} {c.replyToName}
-          </span>
-        )}
-        <p className={cn('mt-0.5 whitespace-pre-wrap break-words leading-snug text-tg-text2', isReply ? 'text-[13.5px]' : 'text-[14.5px]')}>
-          {c.text}
-        </p>
-
-        {/* Действия: Ответить + раскрытие ветки */}
-        <div className="mt-1 flex items-center gap-3.5">
+        {replyTag}
+        {body}
+        <div className="mt-0.5">
           <button
             type="button"
             onClick={() => onReply(c)}
-            className="text-[12.5px] font-semibold text-tg-hint transition active:text-tg-link"
+            className="text-[12px] font-semibold text-tg-hint transition active:text-tg-link"
           >
             {t('comments.reply')}
           </button>
-          {!isReply && (c.repliesCount > 0 || (c.replies?.length ?? 0) > 0) && (
-            <button
-              type="button"
-              onClick={() => onToggle?.(c)}
-              aria-expanded={expanded}
-              className="flex items-center gap-1 text-[12.5px] font-semibold text-tg-link active:opacity-70"
-            >
-              <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', expanded && 'rotate-180')} aria-hidden />
-              {expanded ? t('comments.hideReplies') : `${c.repliesCount} ${repliesWord?.(c.repliesCount) ?? ''}`}
-            </button>
-          )}
         </div>
-
-        {/* Ветка ответов (только у корня, один уровень — как в TikTok) */}
-        {!isReply && expanded && (
-          <div className="mt-2.5 space-y-3 border-l-2 border-tg-sep/70 pl-3">
-            {(c.replies ?? []).map((r) => (
-              <CommentRow
-                key={r.id}
-                c={r}
-                isReply
-                onLike={onLike}
-                onReply={onReply}
-                onDelete={onDelete}
-                flashId={flashId}
-              />
-            ))}
-            {/* Подгрузка остальных ответов ветки */}
-            {(c.replies?.length ?? 0) < c.repliesCount && onLoadMoreReplies && !tmp && (
-              <button
-                type="button"
-                onClick={() => onLoadMoreReplies(c)}
-                className="text-[12.5px] font-semibold text-tg-link active:opacity-70"
-              >
-                {t('comments.moreReplies')} ({c.repliesCount - (c.replies?.length ?? 0)})
-              </button>
-            )}
-          </div>
-        )}
       </div>
-
-      {/* Лайк: сердечко + счётчик справа (TikTok-рельса) */}
-      <motion.button
-        type="button"
-        whileTap={{ scale: 0.8 }}
-        onClick={() => onLike(c, isReply ? c.parentId ?? undefined : undefined)}
-        aria-label={t('comments.like')}
-        aria-pressed={c.likedByMe}
-        className={cn(
-          'flex shrink-0 flex-col items-center gap-0.5 pt-1.5',
-          isReply ? 'w-8' : 'w-9',
-          tmp && 'pointer-events-none opacity-50',
-        )}
-      >
-        <Heart
-          className={cn(
-            'h-[18px] w-[18px] transition-colors',
-            c.likedByMe ? 'fill-rose-500 text-rose-500' : 'text-tg-hint/70',
-          )}
-          strokeWidth={1.9}
-        />
-        {c.likesCount > 0 && (
-          <span className={cn('text-[11px] font-semibold tabular-nums', c.likedByMe ? 'text-rose-500' : 'text-tg-hint')}>
-            {c.likesCount > 999 ? '1k+' : c.likesCount}
-          </span>
-        )}
-      </motion.button>
+      {likeRail}
     </div>
   )
 }

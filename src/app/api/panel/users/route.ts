@@ -7,6 +7,7 @@ import { setMaintenanceAllowed, setBanned } from '@/lib/maintenance'
 import { KOPECKS_PER_SWIPE } from '@/lib/money'
 import { logAdmin } from '@/lib/admin-log'
 import { emitAppEvent } from '@/lib/events'
+import { sendBotNotification } from '@/lib/bot-notify'
 import { type Tier } from '@/lib/tiers'
 import { BADGES, parseBadges, serializeBadges } from '@/lib/badges'
 
@@ -264,6 +265,19 @@ export async function PATCH(request: Request) {
           },
         })
         emitAppEvent('notif:new', { userId })
+        // v5.45: дублируем в ЛС бота (кнопка «Открыть Tg Swipe»)
+        sendBotNotification({
+          userId,
+          type: 'system',
+          title:
+            mode === 'grant'
+              ? `Вам выдан бейдж «${def.label}»`
+              : `Бейдж «${def.label}» снят`,
+          body:
+            mode === 'grant'
+              ? (reason?.slice(0, 180) ?? 'Отмечен администрацией Tg Swipe — бейдж виден рядом с вашим именем.')
+              : 'Если это ошибка — напишите в поддержку.',
+        })
       } catch (ne) {
         console.error('[panel/users badge] notify failed', (ne as Error).message)
       }

@@ -29,6 +29,12 @@ export type TgWebApp = {
       is_premium?: boolean
       language_code?: string
     }
+    /**
+     * Параметр запуска миниаппа: t.me/<bot>/<app>?startapp=<payload> —
+     * v5.45 deep-link уведомлений бота «Перейти к уведомлению»
+     * (n_<postId>[_<commentId>] → открыть комментарии на этом комментарии).
+     */
+    start_param?: string
   }
   openTelegramLink: (url: string) => void
   openLink: (url: string, options?: { try_instant_view?: boolean }) => void

@@ -6,6 +6,7 @@ import { guardAdmin } from '@/lib/guard'
 import { logAdmin } from '@/lib/admin-log'
 import { BADGES, BADGE_LIST, parseBadges, serializeBadges, type BadgeSlug } from '@/lib/badges'
 import { emitAppEvent } from '@/lib/events'
+import { sendBotNotification } from '@/lib/bot-notify'
 
 export const dynamic = 'force-dynamic'
 
@@ -214,6 +215,8 @@ export async function POST(request: Request) {
           data: { userId, type: 'system', title, body: bodyText },
         })
         emitAppEvent('notif:new', { userId })
+        // v5.45: дублируем в ЛС бота (кнопка «Открыть Tg Swipe»)
+        sendBotNotification({ userId, type: 'system', title, body: bodyText })
       } catch (e) {
         console.error('[panel/badges] notify failed', (e as Error).message)
       }
