@@ -29,7 +29,8 @@ export const SWP_CONVERT_MIN = SWP_PER_RUB
  * Типичный запрос (≈2 000 входных + 300 выходных токенов) ≈ 3 свайпа = 0,03 ₽.
  */
 function envNum(v: string | undefined, dflt: number): number {
-  const n = Number(v ?? '')
+  if (!v || !v.trim()) return dflt // пустая/не заданная переменная — дефолт
+  const n = Number(v)
   return Number.isFinite(n) && n >= 0 ? n : dflt
 }
 export const AI_MTOK_IN_SWP = envNum(process.env.AI_MTOK_IN_SWP, 1000)
