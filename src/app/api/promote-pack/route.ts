@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import { PROMOTE_PACK, tierAtLeast, tierOfUser } from '@/lib/tiers'
+import { PROMOTE_PACKS, promotePackById, tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { paymentMethods } from '@/lib/payments'
 import { yookassaCreatePayment, yookassaEnabled } from '@/lib/yookassa'
 import { buyPromotePackWithBalance, payWithBalance, refundToBalance } from '@/lib/wallet'
@@ -15,16 +15,19 @@ const buySchema = z.object({
   // half — 50/50: половина с баланса сейчас + счёт на половину картой;
   // card — счёт на всю сумму картой (ЮKassa embedded).
   method: z.enum(['balance', 'half', 'card']),
+  // v5.74: тир пакета (starter=1 · growth=3 · max=10). Пропуск → growth.
+  pack: z.enum(['starter', 'growth', 'max']).optional(),
 })
 
 /**
- * Пакет продвижений (v5.69) — докупка сверх бесплатного месячного лимита
- * Snap Pro (1 продвижение/месяц). PROMOTE_PACK: 5 продвижений за 199 ₽.
+ * Пакет продвижений (v5.69 → v5.74) — докупка к бесплатному месячному лимиту
+ * Snap Pro (1 продвижение/месяц). ТИРЫ: starter 1 за 149 ₽, growth 3 за 349 ₽,
+ * max 10 за 899 ₽.
  *
- * GET /api/promote-pack — цена/размер пакета, доступные способы оплаты
- * и рублёвый баланс кошелька (UI переключателя «С баланса / 50/50 / Картой»).
+ * GET /api/promote-pack — тиры/цены, доступные способы оплаты и рублёвый
+ * баланс кошелька (UI переключателя «С баланса / 50/50 / Картой»).
  *
- * POST /api/promote-pack { method } — покупка:
+ * POST /api/promote-pack { method, pack } — покупка:
  *  - balance: атомарная транзакция — списание рублей + зачисление кредитов
  *    (buyPromotePackWithBalance), без карт и счетов;
  *  - half: половина списывается с баланса (атомарно, журнал 'purchase'),
@@ -45,8 +48,11 @@ export async function GET(request: Request) {
     })
     return NextResponse.json({
       ok: true,
-      priceKop: PROMOTE_PACK.priceKop,
-      count: PROMOTE_PACK.count,
+      // v5.74: тиры пакетов + выбранная по умолчанию позиция (growth)
+      packs: PROMOTE_PACKS,
+      packId: 'growth',
+      priceKop: PROMOTE_PACKS[1].priceKop,
+      count: PROMOTE_PACKS[1].count,
       credits: user?.promoteCredits ?? 0,
       wallet: { balanceKop: user?.balanceKop ?? 0, swipes: user?.swipes ?? 0 },
       methods: paymentMethods(),
@@ -66,6 +72,7 @@ export async function POST(request: Request) {
     const parsed = buySchema.safeParse(await readJson(request))
     if (!parsed.success) return err('Некорректный способ оплаты')
     const { method } = parsed.data
+    const pack = promotePackById(parsed.data.pack ?? 'growth') ?? PROMOTE_PACKS[1]
 
     // Пакет — докупка к месячному бесплатному продвижению Snap Pro:
     // без тира кредиты невозможно использовать, не продаём бесполезное.
@@ -77,8 +84,11 @@ export async function POST(request: Request) {
       )
     }
 
-    const { priceKop, count } = PROMOTE_PACK
+    const { priceKop, count, id: packId } = pack
     const note = `пакет продвижений · ${count} шт`
+    // v5.74: размер пакета едет в purpose — вебхук начисляет ровно столько кредитов
+    const purposeFull = `promote_pack:${count}`
+    const purposeHalf = `promote_pack_half:${count}`
 
     /* С БАЛАНСА: рублей хватает → кредиты зачисляются мгновенно, одной транзакцией */
     if (method === 'balance') {
@@ -93,6 +103,7 @@ export async function POST(request: Request) {
       return NextResponse.json({
         ok: true,
         method: 'balance',
+        pack: packId,
         credits: user?.promoteCredits ?? 0,
         balanceKop: user?.balanceKop ?? 0,
       })
@@ -116,7 +127,7 @@ export async function POST(request: Request) {
             userId: g.uid,
             amountKop: halfKop,
             provider: 'yookassa',
-            purpose: 'promote_pack_half',
+            purpose: purposeHalf,
           },
           select: { id: true },
         })
@@ -156,7 +167,7 @@ export async function POST(request: Request) {
         userId: g.uid,
         amountKop: priceKop,
         provider: 'yookassa',
-        purpose: 'promote_pack',
+        purpose: purposeFull,
       },
       select: { id: true },
     })

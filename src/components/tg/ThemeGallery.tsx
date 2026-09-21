@@ -8,6 +8,7 @@ import { useApp } from '@/lib/store'
 import { haptic, useBackButton } from '@/lib/tg'
 import { THEMES, type ThemeGroup } from '@/lib/themes'
 import type { ThemeMode } from '@/lib/types'
+import { Portal } from '@/components/ui/Portal'
 import {
   blendHex,
   DEFAULT_CUSTOM_THEME,
@@ -211,7 +212,9 @@ export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => 
 
   const groups: ThemeGroup[] = ['sync', 'light', 'dark']
 
+  // v5.74: портал в body — галерея из профиля застревает под навбаром
   return (
+    <Portal>
     <AnimatePresence>
       {open && (
         <motion.div
@@ -272,5 +275,6 @@ export function ThemeGallery({ open, onClose }: { open: boolean; onClose: () => 
         </motion.div>
       )}
     </AnimatePresence>
+    </Portal>
   )
 }

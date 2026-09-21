@@ -1,4 +1,5 @@
 import { db } from '@/lib/db'
+import { spendSwipes, AI_IMAGE_SWP } from '@/lib/wallet'
 import { stripMarkdown } from '@/lib/markdown'
 import { looksLikeGarbage } from '@/lib/text-clean'
 import { getNsfwChannelIds } from '@/lib/moderation'
@@ -386,11 +387,15 @@ const generateImage: ToolDef = {
     // URL /api/upload/<id> (фолбэк — сырая ссылка pollinations, если не вышло)
     const img = await generatePublicImage(prompt, { ownerId: ctx.uid })
     if (!img.url) return { ok: false, data: 'Картинка не сгенерировалась — сервис недоступен. Продолжай без неё.' }
+    // v5.74: картинка — платная (AI_IMAGE_SWP), но ЧЕСТНО: списываем только
+    // при успешной генерации. Не вышло у сервиса — пользователь не платит.
+    await spendSwipes(ctx.uid, AI_IMAGE_SWP, `Генерация картинки (ИИ): ${prompt.slice(0, 80)}`).catch(() => {})
     return {
       ok: true,
       data:
         `Картинка готова и УЖЕ ПОКАЗАНА автору картинкой под сообщением. Ссылку в текст ответа НЕ вставляй — ` +
-        `автор видит картинку автоматически. Если будешь публиковать пост или менять аватар — передай этот URL без изменений: ${img.url}`,
+        `автор видит картинку автоматически. Если будешь публиковать пост или менять аватар — передай этот URL без изменений: ${img.url}` +
+        ` (списано ${AI_IMAGE_SWP} свайпов за генерацию).`,
       meta: { imageUrl: img.url, imagePending: img.pending },
     }
   },
@@ -1196,6 +1201,48 @@ export async function aiMemoryBlock(uid: string): Promise<string> {
   }
 }
 
+/**
+ * ГЛОБАЛЬНАЯ ПАМЯТЬ ЧАТОВ (v5.74): последние сообщения из ДРУГИХ чатов этого
+ * пользователя (все поверхности, кроме текущей сессии). Новый чат знает, о чём
+ * говорили в прошлых, и может продолжить мысль без пересказа. Блок компактный:
+ * 16 последних сообщений по 200 символов — заметный контекст без раздува промпта.
+ */
+export async function aiCrossChatBlock(uid: string, excludeSessionId?: string | null): Promise<string> {
+  try {
+    const msgs = await db.aiChatMessage.findMany({
+      where: {
+        userId: uid,
+        ...(excludeSessionId ? { sessionId: { not: excludeSessionId } } : {}),
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 16,
+      select: { role: true, content: true, sessionId: true },
+    })
+    if (msgs.length === 0) return ''
+    const sessionIds = [...new Set(msgs.map((m) => m.sessionId).filter(Boolean))] as string[]
+    const sessions =
+      sessionIds.length > 0
+        ? await db.aiChatSession.findMany({ where: { id: { in: sessionIds } }, select: { id: true, title: true } })
+        : []
+    const titleById = new Map(sessions.map((s) => [s.id, s.title]))
+    const lines = msgs
+      .reverse()
+      .map((m) => {
+        const chat = titleById.get(m.sessionId ?? '') ?? 'прошлый чат'
+        return `[чат «${chat}»] ${m.role === 'user' ? 'Пользователь' : 'Ты'}: ${m.content.replace(/\s+/g, ' ').slice(0, 200)}`
+      })
+      .join('\n')
+    return (
+      '=== ЧТО ОБСУЖДАЛИ В ДРУГИХ ЧАТАХ С ЭТИМ ПОЛЬЗОВАТЕЛЕМ (недавнее; память сквозная — ' +
+      'можешь продолжать прежнюю мысль, если он просит «продолжи»/«как договорились», без пересказа) ===\n' +
+      lines.slice(0, 3200) +
+      '\n=== конец других чатов ==='
+    )
+  } catch {
+    return ''
+  }
+}
+
 const rememberFactTool: ToolDef = {
   name: 'remember_fact',
   label: 'Запоминаю',
@@ -1441,6 +1488,8 @@ export function searchSystemPrompt(ctx: {
   knowledge?: string
   /** Долговременная память о пользователе (v5.73) */
   memory?: string
+  /** Глобальная память чатов (v5.74): свежие сообщения из других чатов пользователя */
+  crossChat?: string
 }): string {
   const now = new Date()
   return [
@@ -1449,6 +1498,7 @@ export function searchSystemPrompt(ctx: {
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}), ${now.toISOString().slice(11, 16)} UTC. Пользователь: ${ctx.userName}, тариф: ${ctx.tier}.`,
     ctx.knowledge ?? '',
     ctx.memory ?? '',
+    ctx.crossChat ?? '',
     '',
     'КАК РАБОТАТЬ:',
     '1. Для ЛЮБОГО вопроса о содержании постов сначала вызывай search_posts (вопрос → ключевые слова). Затем при необходимости read_post для деталей.',
@@ -1481,6 +1531,8 @@ export function assistantSystemPrompt(ctx: {
   knowledge?: string
   /** Долговременная память о пользователе (v5.73) */
   memory?: string
+  /** Глобальная память чатов (v5.74): свежие сообщения из других чатов пользователя */
+  crossChat?: string
 }): string {
   const now = new Date()
   const age = ctx.createdAt
@@ -1501,6 +1553,7 @@ export function assistantSystemPrompt(ctx: {
     `Продвижения в ленте на этой неделе: ${ctx.weeklyPromo.used}/${ctx.weeklyPromo.limit}.`,
     ctx.knowledge ?? '',
     ctx.memory ?? '',
+    ctx.crossChat ?? '',
     '',
     ctx.statsBlock
       ? `=== ДАННЫЕ КАНАЛА (уже собраны, вызывать get_channel_stats для базовых цифр НЕ нужно) ===\n${ctx.statsBlock}\n=== конец данных канала ===`

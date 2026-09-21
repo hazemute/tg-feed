@@ -21,18 +21,20 @@ import { chatSimple, chatWithTools, chatWithToolsStream, openRouterEnabled, open
 import { aiPremiumEmojiText } from '@/lib/ai-emoji'
 import { aiSearchAllowance } from '@/lib/tiers'
 import { POST_LIST_SELECT, postDTOFromRow } from '@/lib/dto'
-import { schemasFor, toolBy, type ToolExecResult, searchSystemPrompt, type ToolCtx, aiMemoryBlock } from '@/lib/ai-tools'
+import { schemasFor, toolBy, type ToolExecResult, searchSystemPrompt, type ToolCtx, aiMemoryBlock, aiCrossChatBlock } from '@/lib/ai-tools'
 import { knowledgeBlock } from '@/lib/ai-knowledge'
 import { sseStream } from '@/lib/sse'
 
 
-/** v5.73: best-effort сохранение пары «вопрос-ответ» в постоянную историю */
+/** v5.73: best-effort сохранение пары «вопрос-ответ» в постоянную историю.
+ *  v5.74: пишет в сессию и двигает updatedAt/титул сессии. */
 async function persistAiTurn(
   uid: string,
   userText: string,
   reply: string,
   meta: Record<string, unknown>,
   channelId?: string,
+  sessionId?: string | null,
 ): Promise<void> {
   try {
     const metaClean: Record<string, unknown> = { ...meta }
@@ -41,10 +43,22 @@ async function persistAiTurn(
     const metaJson = Object.keys(metaClean).length > 0 ? JSON.stringify(metaClean) : null
     await db.aiChatMessage.createMany({
       data: [
-        { userId: uid, surface: 'search', channelId: channelId ?? null, role: 'user', content: userText.slice(0, 4000), meta: null },
-        { userId: uid, surface: 'search', channelId: channelId ?? null, role: 'assistant', content: reply.slice(0, 8000), meta: metaJson },
+        { userId: uid, surface: 'search', channelId: channelId ?? null, role: 'user', content: userText.slice(0, 4000), meta: null, sessionId: sessionId ?? null },
+        { userId: uid, surface: 'search', channelId: channelId ?? null, role: 'assistant', content: reply.slice(0, 8000), meta: metaJson, sessionId: sessionId ?? null },
       ],
     })
+    if (sessionId) {
+      const s = await db.aiChatSession.findUnique({ where: { id: sessionId }, select: { title: true } })
+      if (s) {
+        await db.aiChatSession.update({
+          where: { id: sessionId },
+          data: {
+            updatedAt: new Date(),
+            ...(s.title === 'Новый чат' && userText.trim() ? { title: userText.trim().slice(0, 60) } : {}),
+          },
+        })
+      }
+    }
     // Хвост истории ограничиваем (на всякий случай — 200 последних)
     const all = await db.aiChatMessage.findMany({
       where: { userId: uid, surface: 'search' },
@@ -81,6 +95,8 @@ export const dynamic = 'force-dynamic'
 
 const chatSchema = z.object({
   action: z.literal('chat'),
+  // v5.74: чат = сессия; null/undefined → сервер создаст «Новый чат»
+  sessionId: z.string().max(64).nullish(),
   messages: z
     .array(
       z.object({
@@ -230,23 +246,39 @@ async function sourcesDTO(ids: string[]) {
 
 
 /* ==================== v5.73: постоянная история чата ==================== *
- *  GET    — последние 50 сообщений (surface=search) для восстановления
- *           переписки на другом устройстве/после очистки localStorage.
- *  DELETE — очистить историю (кнопка «очистить чат» синхронно стирает и тут).
+ *  GET    — последние 50 сообщений СЕССИИ (v5.74: ?sessionId=…, без параметра —
+ *           самая свежая сессия). DELETE — ?sessionId=… → один чат; без — все.
  */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'ai-history' })
   if (!g.ok) return g.res
   try {
     const url = new URL(request.url)
-    const channelId = url.searchParams.get('channelId')
+    const sessionId = url.searchParams.get('sessionId')
+    let sid: string | null = null
+    if (sessionId) {
+      const own = await db.aiChatSession.findFirst({
+        where: { id: sessionId, userId: g.uid, surface: 'search' },
+        select: { id: true },
+      })
+      sid = own?.id ?? null
+    } else {
+      const latest = await db.aiChatSession.findFirst({
+        where: { userId: g.uid, surface: 'search' },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      })
+      sid = latest?.id ?? null
+    }
+    if (!sid) return NextResponse.json({ messages: [], sessionId: null })
     const rows = await db.aiChatMessage.findMany({
-      where: { userId: g.uid, surface: 'search' },
+      where: { userId: g.uid, surface: 'search', sessionId: sid },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: { role: true, content: true, meta: true, createdAt: true },
     })
     return NextResponse.json({
+      sessionId: sid,
       messages: rows.reverse().map((r) => ({
         role: r.role,
         text: r.content,
@@ -274,10 +306,27 @@ export async function DELETE(request: Request) {
   if (!g.ok) return g.res
   try {
     const url = new URL(request.url)
-    const channelId = url.searchParams.get('channelId')
-    await db.aiChatMessage.deleteMany({
+    const sessionId = url.searchParams.get('sessionId')
+    if (sessionId) {
+      const del = await db.aiChatSession.deleteMany({ where: { id: sessionId, userId: g.uid } })
+      if (del.count > 0) {
+        await db.aiChatMessage.deleteMany({ where: { sessionId, userId: g.uid } })
+      }
+      return NextResponse.json({ ok: true })
+    }
+    const own = await db.aiChatSession.findMany({
       where: { userId: g.uid, surface: 'search' },
+      select: { id: true },
     })
+    const ids = own.map((x) => x.id)
+    await db.aiChatMessage.deleteMany({
+      where: {
+        userId: g.uid,
+        surface: 'search',
+        ...(ids.length > 0 ? { OR: [{ sessionId: { in: ids } }, { sessionId: null }] } : { sessionId: null }),
+      },
+    })
+    await db.aiChatSession.deleteMany({ where: { id: { in: ids }, userId: g.uid } })
     return NextResponse.json({ ok: true })
   } catch {
     return err('Ошибка', 500)
@@ -326,7 +375,30 @@ export async function POST(request: Request) {
         knowledgeBlock('compact').catch(() => undefined),
         aiMemoryBlock(g.uid).catch(() => ''),
       ])
-      const sys = searchSystemPrompt({ userName, tier: allowance.tier, knowledge, memory })
+      // v5.74: глобальная память чатов + сессия (валидация/создание)
+      const crossChat = await aiCrossChatBlock(uid, d.sessionId ?? null).catch(() => '')
+      let session: { id: string } | null = null
+      if (d.sessionId) {
+        const own = await db.aiChatSession.findFirst({
+          where: { id: d.sessionId, userId: uid, surface: 'search' },
+          select: { id: true },
+        })
+        if (own) session = { id: own.id }
+      }
+      if (!session) {
+        const created = await db.aiChatSession
+          .create({
+            data: {
+              userId: uid,
+              surface: 'search',
+              title: (d.messages.find((m) => m.role === 'user')?.content ?? 'Новый чат').trim().slice(0, 60) || 'Новый чат',
+            },
+            select: { id: true },
+          })
+          .catch(() => null)
+        if (created) session = { id: created.id }
+      }
+      const sys = searchSystemPrompt({ userName, tier: allowance.tier, knowledge, memory, crossChat })
       const history: ChatMsg[] = [
         { role: 'system', content: sys },
         ...d.messages.map((m) => ({ role: m.role, content: m.content }) as ChatMsg),
@@ -338,6 +410,8 @@ export async function POST(request: Request) {
       const sourceIds = meta.sourceIds as string[]
 
       return sseStream(async (send) => {
+        // v5.74: сразу отдаём id сессии — клиент запомнит чат
+        if (session) send('session', { sessionId: session.id })
         let messages = history
         const collector = usageCollector()
         // Списать по факту после цепочки (best-effort: ответ уже отдан)
@@ -393,8 +467,8 @@ export async function POST(request: Request) {
               const reply = await aiPremiumEmojiText(content || 'Не нашёл — переформулируйте вопрос.')
               const sources = await sourcesDTO(sourceIds.slice(0, 6))
               await settle()
-              void persistAiTurn(uid, lastUserText, reply ?? '', meta)
-              send('done', { reply, ...meta, sources })
+              void persistAiTurn(uid, lastUserText, reply ?? '', meta, undefined, session?.id ?? null)
+              send('done', { reply, ...meta, sources, sessionId: session?.id ?? null })
               return
             }
             messages = [...messages, { role: 'assistant', content: r.content || '', toolCalls: r.toolCalls }]
@@ -432,12 +506,12 @@ export async function POST(request: Request) {
           const reply = await aiPremiumEmojiText(tail.content || 'Не нашёл — переформулируйте вопрос.')
           const sources = await sourcesDTO(sourceIds.slice(0, 6))
           await settle()
-          void persistAiTurn(uid, lastUserText, reply ?? '', meta)
-          send('done', { reply, ...meta, sources })
+          void persistAiTurn(uid, lastUserText, reply ?? '', meta, undefined, session?.id ?? null)
+          send('done', { reply, ...meta, sources, sessionId: session?.id ?? null })
         } catch (e) {
           console.error('[ai/search chat]', e)
-          // Токены уже потрачены на частичную цепочку — тарифицируем тоже
-          await settle().catch(() => {})
+          // v5.74: «ИИ не ответил — свайпы не снимаем» — тарифицируем только
+          // успешные ответы (settle вызывается перед send('done'))
           send('error', { message: openRouterErrorText(e) })
         }
       })

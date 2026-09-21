@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState, type ReactNode } from 'react'
+import { useSyncExternalStore, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
+const emptySubscribe = () => () => {}
+
 /**
- * ПОРТАЛ В document.body (v5.74) — починка бага «шапка навбара перекрывает чат
+ * ПОРТАЛ В document.body (v5.74) — починка бага «навбар перекрывает чат
  * поддержки» (скрин от 21:39): модалки, отрендеренные ВНУТРИ вкладки, застревали
  * в stacking context motion.main (framer-motion держит will-change: transform,
  * opacity → элемент создаёт свой контекст наложения). Внутри этого контекста
@@ -15,12 +17,15 @@ import { createPortal } from 'react-dom'
  * с навбаром напрямую. Используется всеми полноэкранными модалками, которые
  * монтируются из табов (SupportChat, SummarySheet, MediaLightbox, BottomSheet…).
  *
- * Монтирование после первого коммита: на сервере document.body недоступен,
- * а гидратация не должна расходиться (портал-контент не участвует в SSR-сравнении).
+ * useSyncExternalStore: на сервере getServerSnapshot → false (портал не рендерится,
+ * гидратация не расходится), на клиенте → true сразу после монтажа.
  */
 export function Portal({ children }: { children: ReactNode }) {
-  const [mounted, setMounted] = useState(false)
-  useEffect(() => setMounted(true), [])
+  const mounted = useSyncExternalStore(
+    emptySubscribe,
+    () => true,
+    () => false,
+  )
   if (!mounted) return null
   return createPortal(children, document.body)
 }

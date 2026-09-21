@@ -23,18 +23,48 @@ export type SeedQuest = {
 }
 
 /**
- * Экономика (500 свайпов = 1 ₽): лёгкие одноразовые ≈ 150+100+150+50+75+120+100
- * = 745 свайпов (~1,5 ₽) — «не легко больше ~800»; TikTok (+300) и буст (+250)
- * требуют реальных действий; ежедневный вход — 15/день (+100 за каждые 7 дней).
+ * Экономика v5.74 (rebalance ×4; 500 свайпов = 1 ₽): цены ИИ выросли в 4 раза
+ * (AI_MTOK_*_SWP), поэтому и задания дают в 4 раза больше — «на один запрос
+ * стало хватать еле-еле» больше не звучит. Лёгкие одноразовые ≈
+ * 600+400+600+200+300+480+400 = 2980 свайпов (~6 ₽); TikTok (+1200) и буст
+ * (+1000) требуют реальных действий; ежедневный вход — 60/день
+ * (+400 за каждые 7 дней, DAILY_STREAK_BONUS тоже ×4).
  */
+
+/**
+ * ПОВЫШЕНИЕ НАГРАД v5.74: старое значение → новое. Применяется идемпотентно:
+ * квест апгрейдится ТОЛЬКО если его текущая награда равна старой дефолтной
+ * (админскую правку из панели не трогаем — святое).
+ */
+/** v5.74: заодно правим устаревшие суммы в описаниях (только нетронутые дефолты) */
+export const REWARD_DESC_FIXES: Array<{ id: string; from: string; to: string }> = [
+  {
+    id: 'q_daily_checkin',
+    from: 'Заходи в приложение каждый день — за каждые 7 дней подряд бонус +100',
+    to: 'Заходи в приложение каждый день — за каждые 7 дней подряд бонус +400',
+  },
+]
+
+export const REWARD_BUMPS: Record<string, { from: number; to: number }> = {
+  q_daily_checkin: { from: 15, to: 60 },
+  q_official_channel: { from: 150, to: 600 },
+  q_profile_setup: { from: 50, to: 200 },
+  q_liveMiniTim: { from: 100, to: 400 },
+  q_join_chat: { from: 150, to: 600 },
+  q_tiktok: { from: 300, to: 1200 },
+  q_boost: { from: 250, to: 1000 },
+  q_read10: { from: 75, to: 300 },
+  q_read50: { from: 120, to: 480 },
+  q_referral: { from: 100, to: 400 },
+}
 export const DEFAULT_QUESTS: SeedQuest[] = [
   {
     id: 'q_daily_checkin',
     title: 'Ежедневный вход',
-    description: 'Заходи в приложение каждый день — за каждые 7 дней подряд бонус +100',
+    description: 'Заходи в приложение каждый день — за каждые 7 дней подряд бонус +400',
     kind: 'daily_checkin',
     target: 'none',
-    rewardSwp: 15,
+    rewardSwp: 60,
     sort: 5,
   },
   {
@@ -43,7 +73,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     description: 'Канал команды Snap: новости, обновления и розыгрыши',
     kind: 'subscribe',
     target: 'snapteamdev',
-    rewardSwp: 150,
+    rewardSwp: 600,
     sort: 10,
   },
   {
@@ -52,7 +82,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     description: 'Установи аватар и имя во вкладке «Профиль»',
     kind: 'profile_setup',
     target: 'none',
-    rewardSwp: 50,
+    rewardSwp: 200,
     sort: 15,
   },
   {
@@ -61,7 +91,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     description: 'Авторские миниаппы и подборки от партнёров',
     kind: 'subscribe',
     target: 'liveminitim',
-    rewardSwp: 100,
+    rewardSwp: 400,
     sort: 20,
   },
   {
@@ -81,7 +111,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     kind: 'tiktok_follow',
     target: 'snapteamdev',
     link: 'https://tiktok.com/@snapteamdev',
-    rewardSwp: 300,
+    rewardSwp: 1200,
     sort: 40,
   },
   {
@@ -90,7 +120,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     description: 'Отдай любой буст каналу @SnapTeamDev и нажми «Получить»',
     kind: 'boost',
     target: 'snapteamdev',
-    rewardSwp: 250,
+    rewardSwp: 1000,
     sort: 50,
   },
   {
@@ -99,7 +129,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     description: 'Открой 10 постов в ленте — счётчик растёт сам',
     kind: 'activity_milestone',
     target: 'posts:10',
-    rewardSwp: 75,
+    rewardSwp: 300,
     sort: 60,
   },
   {
@@ -108,7 +138,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     description: 'Открой 50 постов в ленте — для тех, кто листает всерьёз',
     kind: 'activity_milestone',
     target: 'posts:50',
-    rewardSwp: 120,
+    rewardSwp: 480,
     sort: 70,
   },
   {
@@ -117,7 +147,7 @@ export const DEFAULT_QUESTS: SeedQuest[] = [
     description: 'Друг зайдёт в миниапп по твоей ссылке — награда твоя',
     kind: 'referral',
     target: '1',
-    rewardSwp: 100,
+    rewardSwp: 400,
     sort: 80,
   },
 ]
@@ -142,6 +172,25 @@ export async function seedDefaultQuests(opts?: {
   seedRunning = (async () => {
     let created = 0
     let skipped = 0
+    // v5.74: поднятие наград существующих квестов (только нетронутые админом —
+    // текущая награда равна старому дефолту). Один updateMany на бамп-пару.
+    for (const [id, bump] of Object.entries(REWARD_BUMPS)) {
+      try {
+        await db.quest.updateMany({
+          where: { id, rewardSwp: bump.from },
+          data: { rewardSwp: bump.to },
+        })
+      } catch (e) {
+        console.error('[quests-seed] reward bump failed', id, e)
+      }
+    }
+    for (const d of REWARD_DESC_FIXES) {
+      try {
+        await db.quest.updateMany({ where: { id: d.id, description: d.from }, data: { description: d.to } })
+      } catch {
+        /* описание — не критично */
+      }
+    }
     for (const q of DEFAULT_QUESTS) {
       try {
         const exists = await db.quest.findUnique({ where: { id: q.id }, select: { id: true } })

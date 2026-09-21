@@ -267,6 +267,17 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE TABLE IF NOT EXISTS "AiChatMessage" ("id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL, "surface" TEXT NOT NULL, "channelId" TEXT, "role" TEXT NOT NULL, "content" TEXT NOT NULL, "meta" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE INDEX IF NOT EXISTS "AiChatMessage_userId_surface_createdAt_idx" ON "AiChatMessage"("userId", "surface", "createdAt")`,
   ],
+  // КЛЮЧ 'v5.74-ai-sessions': сессии ИИ-чатов («Новый чат»/история/удаление) +
+  // колонка sessionId в сообщениях. Монетизация: Post.promoteSpent ('free' |
+  // 'credit' | 'refund') — источник списанного продвижения, нужен для «Снять
+  // с продвижения» и гарантии возврата (авто-рефанд за слабые показы).
+  'v5.74-ai-sessions': [
+    `CREATE TABLE IF NOT EXISTS "AiChatSession" ("id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL, "surface" TEXT NOT NULL, "channelId" TEXT, "title" TEXT NOT NULL DEFAULT 'Новый чат', "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "AiChatSession_userId_surface_updatedAt_idx" ON "AiChatSession"("userId", "surface", "updatedAt")`,
+    `ALTER TABLE "AiChatMessage" ADD COLUMN IF NOT EXISTS "sessionId" TEXT`,
+    `CREATE INDEX IF NOT EXISTS "AiChatMessage_sessionId_createdAt_idx" ON "AiChatMessage"("sessionId", "createdAt")`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "promoteSpent" TEXT`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -318,6 +329,9 @@ const CRITICAL: Array<[string, string | null]> = [
   ['QuestVerifyLog', null],
   ['BotChat', null],
   ['Channel', 'teaserApplyTo'],
+  ['AiChatSession', null],
+  ['AiChatMessage', 'sessionId'],
+  ['Post', 'promoteSpent'],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }

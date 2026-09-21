@@ -32,18 +32,27 @@ export const SWP_CONVERT_MIN = SWP_PER_RUB
  * токенам OpenRouter (usage.prompt_tokens / completion_tokens приходят в ответе
  * каждого вызова) — тяжёлые запросы стоят дороже, лёгкие дешевле.
  *
- * Цены — за 1 млн токенов (как в прайсах OpenRouter), настраиваются env:
- *   AI_MTOK_IN_SWP  — свайпов за 1 млн ВХОДНЫХ токенов (по умолчанию 1 000 = 10 ₽)
- *   AI_MTOK_OUT_SWP — свайпов за 1 млн ВЫХОДНЫХ токенов (по умолчанию 4 000 = 40 ₽)
- * Типичный запрос (≈2 000 входных + 300 выходных токенов) ≈ 3 свайпа = 0,03 ₽.
+ * v5.74 (economy rebalance): цены ×4 — задание теперь даёт в 4 раза больше
+ * свайпов (см. quests-seed), а запросы к ИИ ощутимее в кошельке:
+ *   AI_MTOK_IN_SWP  — свайпов за 1 млн ВХОДНЫХ токенов (по умолчанию 4 000 = 40 ₽)
+ *   AI_MTOK_OUT_SWP — свайпов за 1 млн ВЫХОДНЫХ токенов (по умолчанию 16 000 = 160 ₽)
+ *   AI_IMAGE_SWP    — фикс за ОДНУ сгенерированную картинку (250 свайпов = 0,5 ₽),
+ *                     списывается только при УСПЕШНОЙ генерации.
+ * Типичный лёгкий запрос (≈2 000 входных + 300 выходных) ≈ 13 свайпов;
+ * чат ассистента с инструментами и памятью ≈ 40–80 свайпов.
+ *
+ * ВАЖНО (v5.74): «ИИ не ответил — свайпы не снимаем». chargeAiUsage вызывается
+ * ТОЛЬКО после успешного ответа (done); ветки ошибок/обрывов не тарифицируются.
  */
 function envNum(v: string | undefined, dflt: number): number {
   if (!v || !v.trim()) return dflt // пустая/не заданная переменная — дефолт
   const n = Number(v)
   return Number.isFinite(n) && n >= 0 ? n : dflt
 }
-export const AI_MTOK_IN_SWP = envNum(process.env.AI_MTOK_IN_SWP, 1000)
-export const AI_MTOK_OUT_SWP = envNum(process.env.AI_MTOK_OUT_SWP, 4000)
+export const AI_MTOK_IN_SWP = envNum(process.env.AI_MTOK_IN_SWP, 4000)
+export const AI_MTOK_OUT_SWP = envNum(process.env.AI_MTOK_OUT_SWP, 16000)
+/** Свайпов за одну успешную генерацию картинки (pollinations + скачивание + WebP) */
+export const AI_IMAGE_SWP = envNum(process.env.AI_IMAGE_SWP, 250)
 
 export type AiUsage = { promptTokens: number; completionTokens: number; model?: string }
 

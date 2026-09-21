@@ -423,7 +423,7 @@ export async function claimQuest(userId: string, questId: string): Promise<Claim
 
 /* --------------------------- Ежедневный вход --------------------------- */
 
-export const DAILY_STREAK_BONUS = 100 // за 7 дней подряд
+export const DAILY_STREAK_BONUS = 400 // за 7 дней подряд (v5.74: ×4 вслед за ценами ИИ)
 export const DAILY_BONUS_EVERY = 7
 
 function utcDay(d: Date = new Date()): string {

@@ -17,6 +17,7 @@ import {
   Rocket,
   Scissors,
   Sparkles,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
@@ -80,8 +81,8 @@ export function PromoSection({
 }) {
   const tier = data.tier
   const promotion = data.promotion ?? { used: 0, limit: 1, available: false, credits: 0 }
-  const packPrice = data.promotePackPrice ?? 19_900
-  const packCount = data.promotePackCount ?? 5
+  const packPrice = data.promotePackPrice ?? 34_900
+  const packCount = data.promotePackCount ?? 3
   // Селектор канала нужен только при нескольких привязанных — локальный стейт
   const [activeId, setActiveId] = useState<string | null>(channel.id)
   const active = useMemo(
@@ -124,6 +125,8 @@ export function PromoSection({
         promotion={promotion}
         packPrice={packPrice}
         packCount={packCount}
+        promotions={data.promotions ?? []}
+        promoTerms={data.promoTerms ?? { guaranteeViews: 500, guaranteeHours: 48, refundWindowMin: 60 }}
         onReload={onReload}
       />
 
@@ -219,6 +222,8 @@ function PromotionSection({
   promotion,
   packPrice,
   packCount,
+  promotions,
+  promoTerms,
   onReload,
 }: {
   channel: MyChannelDTO
@@ -226,6 +231,9 @@ function PromotionSection({
   promotion: MyChannelResponse['promotion']
   packPrice: number
   packCount: number
+  /** v5.74: активные продвижения (просмотры с запуска + гарантия) */
+  promotions: NonNullable<MyChannelResponse['promotions']>
+  promoTerms: NonNullable<MyChannelResponse['promoTerms']>
   onReload: () => void
 }) {
   const pro = tier === 'pro'
@@ -236,6 +244,8 @@ function PromotionSection({
   const freeLeft = Math.max(0, promotion.limit - promotion.used)
   // Продвигать можно, пока есть бесплатный слот месяца ИЛИ купленные кредиты
   const limitReached = freeLeft <= 0 && promotion.credits <= 0
+  // v5.74: карта активных продвижений по id поста
+  const promoById = useMemo(() => new Map(promotions.map((x) => [x.postId, x])), [promotions])
 
   // Последние 10 постов канала: публичный роут экрана канала (GET /api/channel?username=…&limit=10)
   useEffect(() => {
@@ -292,6 +302,30 @@ function PromotionSection({
     }
   }
 
+  /** v5.74: снять продвижение. В первые 60 минут — кредит/слот вернётся автоматически */
+  const unpromote = async (postId: string) => {
+    if (busyId) return
+    setBusyId(postId)
+    try {
+      const r = await api<{ ok: boolean; refunded: boolean; credits: number }>('/api/mychannel', {
+        method: 'POST',
+        body: JSON.stringify({ action: 'unpromote', channelId: channel.id, postId }),
+      })
+      haptic('success')
+      toast.success(
+        r.refunded
+          ? 'Продвижение снято — оплата вернулась на баланс'
+          : 'Продвижение снято — пост снова показывается в обычном порядке',
+      )
+      onReload()
+    } catch (err) {
+      toast.error((err as Error).message || 'Не удалось снять продвижение')
+      haptic('error')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
   return (
     <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 }}>
       <SectionTitle icon={Rocket}>Продвижение в ленте</SectionTitle>
@@ -333,34 +367,83 @@ function PromotionSection({
             ) : posts.length === 0 ? (
               <p className="py-2 text-center text-[13px] text-tg-hint">У канала пока нет постов в Tg Swipe</p>
             ) : (
-              posts.map((p) => (
-                <div
-                  key={p.id}
-                  className="flex items-center gap-2.5 rounded-2xl border border-tg-sep/40 bg-tg-bg p-2.5"
-                >
-                  <div className="min-w-0 flex-1">
-                    <p className="line-clamp-2 text-[13px] leading-snug text-tg-text2">
-                      {stripMarkdown(p.text).replace(/\s+/g, ' ').trim() || 'Медиа-пост'}
-                    </p>
-                    <div className="mt-0.5 text-[11.5px] text-tg-hint">
-                      {timeAgoRu(p.publishedAt)} · {formatCount(p.viewsCount)} {pluralRu(p.viewsCount, 'просмотр', 'просмотра', 'просмотров')}
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => promote(p.id)}
-                    disabled={busyId !== null || limitReached}
-                    className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-tg-surface px-3 text-[12.5px] font-semibold text-tg-link transition active:scale-95 disabled:opacity-50"
-                  >
-                    {busyId === p.id ? (
-                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    ) : (
-                      <Rocket className="h-3.5 w-3.5" />
+              posts.map((p) => {
+                const promo = promoById.get(p.id)
+                return (
+                  <div
+                    key={p.id}
+                    className={cn(
+                      'rounded-2xl border bg-tg-bg p-2.5',
+                      promo ? 'border-tg-link/40' : 'border-tg-sep/40',
                     )}
-                    Продвинуть
-                  </button>
-                </div>
-              ))
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <div className="min-w-0 flex-1">
+                        <p className="line-clamp-2 text-[13px] leading-snug text-tg-text2">
+                          {stripMarkdown(p.text).replace(/\s+/g, ' ').trim() || 'Медиа-пост'}
+                        </p>
+                        <div className="mt-0.5 text-[11.5px] text-tg-hint">
+                          {timeAgoRu(p.publishedAt)} · {formatCount(p.viewsCount)} {pluralRu(p.viewsCount, 'просмотр', 'просмотра', 'просмотров')}
+                        </div>
+                      </div>
+                      {promo ? (
+                        // v5.74: пост продвинут — показываем прогресс гарантии и кнопку «Снять»
+                        <button
+                          type="button"
+                          onClick={() => unpromote(p.id)}
+                          disabled={busyId !== null}
+                          className="flex h-9 shrink-0 items-center gap-1 rounded-xl border border-tg-sep bg-tg-surface px-2.5 text-[12px] font-semibold text-tg-hint transition active:scale-95 disabled:opacity-50"
+                          aria-label="Снять с продвижения"
+                        >
+                          {busyId === p.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <X className="h-3.5 w-3.5" />}
+                          Снять
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => promote(p.id)}
+                          disabled={busyId !== null || limitReached}
+                          className="flex h-11 shrink-0 items-center gap-1.5 rounded-xl bg-tg-surface px-3 text-[12.5px] font-semibold text-tg-link transition active:scale-95 disabled:opacity-50"
+                        >
+                          {busyId === p.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Rocket className="h-3.5 w-3.5" />
+                          )}
+                          Продвинуть
+                        </button>
+                      )}
+                    </div>
+                    {promo && (
+                      <div className="mt-2 rounded-xl bg-tg-link/[0.07] px-2.5 py-2">
+                        <div className="flex items-center justify-between text-[11.5px] font-medium text-tg-text2">
+                          <span className="flex items-center gap-1">
+                            <Rocket className="h-3 w-3 text-tg-link" aria-hidden />
+                            Продвинуто{promo.guarantee === 'met' ? ' · гарантия выполнена' : ''}
+                          </span>
+                          <span className="tabular-nums text-tg-hint">
+                            {promo.guarantee === 'pending' ? `осталось ${promo.hoursLeft} ч` : 'зачтено'}
+                          </span>
+                        </div>
+                        {promo.guarantee === 'pending' && (
+                          <>
+                            <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-tg-sep/60">
+                              <div
+                                className="h-full rounded-full bg-tg-link transition-all duration-500"
+                                style={{ width: `${Math.min(100, Math.round((promo.views / Math.max(1, promo.target)) * 100))}%` }}
+                              />
+                            </div>
+                            <p className="mt-1 text-[11px] leading-snug text-tg-hint">
+                              {formatCount(promo.views)} из {formatCount(promo.target)} просмотров — гарантия: не наберётся за 48 ч, оплата вернётся сама.
+                              Снятие в первые 60 минут — возврат без вопросов.
+                            </p>
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )
+              })
             )}
           </div>
 
@@ -386,7 +469,7 @@ function PromotionSection({
             )}
           >
             <Plus className="h-4 w-4" aria-hidden />
-            Купить продвижения · {packCount} за {fmtPackPrice(packPrice)}
+            Купить продвижения · от 149 ₽
           </button>
           {needPro && <UpgradeNote className="mt-3" />}
         </div>

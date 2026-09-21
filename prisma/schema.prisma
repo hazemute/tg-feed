@@ -160,6 +160,7 @@ model Post {
   publishedAt DateTime
   notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
   promotedAt  DateTime? // когда автор протолкнул пост в ленту (Snap Pro: ≤7 раз в неделю)
+  promoteSpent String? // v5.74: источник продвижения 'free'|'credit' (null — не продвинут/уже снят или рефанд выдан)
 
   embedTried  Boolean  @default(false) // бэкфилл медиа через t.me/<u>/<id>?embed=1 уже пробовали
   likedBy     Like[]
@@ -387,17 +388,33 @@ model AiMemory {
 }
 
 /// Постоянная история ИИ-чатов (v5.73): surface = assistant | search
+/// Сессии ИИ-чатов (v5.74): «Новый чат», история чатов, удаление.
+/// title — авто-титул из первого сообщения пользователя.
+model AiChatSession {
+  id        String   @id @default(cuid())
+  userId    String
+  surface   String   // assistant | search
+  channelId String?
+  title     String   @default("Новый чат")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId, surface, updatedAt])
+}
+
 model AiChatMessage {
   id        String   @id @default(cuid())
   userId    String
   surface   String
   channelId String?
+  sessionId String? // v5.74: принадлежность чату (null — легаси до сессий)
   role      String
   content   String
   meta      String?
   createdAt DateTime @default(now())
 
   @@index([userId, surface, createdAt])
+  @@index([sessionId, createdAt])
 }
 
 model BalanceLog {

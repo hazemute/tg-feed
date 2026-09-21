@@ -35,6 +35,7 @@ import {
 } from '@/lib/profile-style'
 import { Avatar } from '@/components/tg/Avatar'
 import { ProfileHeaderCover } from '@/components/profile/ProfileHeaderCover'
+import { Portal } from '@/components/ui/Portal'
 
 type CustomizerTab = 'palette' | 'bg' | 'frame'
 
@@ -80,7 +81,9 @@ export function ProfileCustomizer({ open, onClose }: { open: boolean; onClose: (
     haptic('light')
   }
 
+  // v5.74: портал в body — модалка из профиля застревает под навбаром
   return (
+    <Portal>
     <motion.div
       role="dialog"
       aria-modal="true"
@@ -261,6 +264,7 @@ export function ProfileCustomizer({ open, onClose }: { open: boolean; onClose: (
         </button>
       </div>
     </motion.div>
+    </Portal>
   )
 }
 

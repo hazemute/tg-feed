@@ -6,11 +6,13 @@ import { guardAuth } from '@/lib/guard'
 import { chatSimple, chatWithTools, chatWithToolsStream, openRouterEnabled, openRouterErrorText, type ChatMsg } from '@/lib/openrouter'
 import { aiPremiumEmojiText } from '@/lib/ai-emoji'
 import {
+  AI_IMAGE_SWP,
   AI_MTOK_IN_SWP,
   AI_MTOK_OUT_SWP,
   aiCanAfford,
   chargeAiUsage,
   estimateAiSwipes,
+  spendSwipes,
   swipesForUsage,
   usageCollector,
 } from '@/lib/wallet'
@@ -20,18 +22,21 @@ import { botPublishToChannel, getBotChatRights, getChatMemberCount } from '@/lib
 import { sweepScheduledPostsThrottled } from '@/lib/scheduled-posts'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { stripMarkdown } from '@/lib/markdown'
-import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx, channelStatsBlock, aiMemoryBlock } from '@/lib/ai-tools'
+import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx, channelStatsBlock, aiMemoryBlock, aiCrossChatBlock } from '@/lib/ai-tools'
 import { knowledgeBlock } from '@/lib/ai-knowledge'
 import { sseStream } from '@/lib/sse'
 
 
-/** v5.73: best-effort сохранение пары «вопрос-ответ» в постоянную историю */
+/** v5.73: best-effort сохранение пары «вопрос-ответ» в постоянную историю.
+ *  v5.74: пишет в СЕССИЮ (AiChatMessage.sessionId) и двигает updatedAt сессии —
+ *  список чатов сортируется по свежести; авто-титул из первого вопроса. */
 async function persistAiTurn(
   uid: string,
   userText: string,
   reply: string,
   meta: Record<string, unknown>,
   channelId?: string,
+  sessionId?: string | null,
 ): Promise<void> {
   try {
     const metaClean: Record<string, unknown> = { ...meta }
@@ -40,10 +45,22 @@ async function persistAiTurn(
     const metaJson = Object.keys(metaClean).length > 0 ? JSON.stringify(metaClean) : null
     await db.aiChatMessage.createMany({
       data: [
-        { userId: uid, surface: 'assistant', channelId: channelId ?? null, role: 'user', content: userText.slice(0, 4000), meta: null },
-        { userId: uid, surface: 'assistant', channelId: channelId ?? null, role: 'assistant', content: reply.slice(0, 8000), meta: metaJson },
+        { userId: uid, surface: 'assistant', channelId: channelId ?? null, role: 'user', content: userText.slice(0, 4000), meta: null, sessionId: sessionId ?? null },
+        { userId: uid, surface: 'assistant', channelId: channelId ?? null, role: 'assistant', content: reply.slice(0, 8000), meta: metaJson, sessionId: sessionId ?? null },
       ],
     })
+    if (sessionId) {
+      const s = await db.aiChatSession.findUnique({ where: { id: sessionId }, select: { title: true } })
+      if (s) {
+        await db.aiChatSession.update({
+          where: { id: sessionId },
+          data: {
+            updatedAt: new Date(),
+            ...(s.title === 'Новый чат' && userText.trim() ? { title: userText.trim().slice(0, 60) } : {}),
+          },
+        })
+      }
+    }
     // Хвост истории ограничиваем (на всякий случай — 200 последних)
     const all = await db.aiChatMessage.findMany({
       where: { userId: uid, surface: 'assistant' },
@@ -83,6 +100,8 @@ const MAX_HISTORY = 20 // сообщений истории от клиента
 const chatSchema = z.object({
   action: z.literal('chat'),
   channelId: z.string().min(1),
+  // v5.74: чат = сессия. null/undefined → сервер сам создаст «Новый чат»
+  sessionId: z.string().max(64).nullish(),
   messages: z
     .array(
       z.object({
@@ -200,9 +219,11 @@ async function trendingDigest(): Promise<string> {
 
 
 /* ==================== v5.73: постоянная история чата ==================== *
- *  GET    — последние 50 сообщений (surface=assistant) для восстановления
- *           переписки на другом устройстве/после очистки localStorage.
- *  DELETE — очистить историю (кнопка «очистить чат» синхронно стирает и тут).
+ *  GET    — последние 50 сообщений СЕССИИ (v5.74: ?sessionId=…, без параметра —
+ *           самая свежая сессия) для восстановления переписки на другом
+ *           устройстве/после очистки localStorage.
+ *  DELETE — ?sessionId=… → удалить этот чат; без параметра — все чаты
+ *           поверхности (кнопка «очистить чат» синхронно стирает и тут).
  */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'ai-history' })
@@ -210,13 +231,33 @@ export async function GET(request: Request) {
   try {
     const url = new URL(request.url)
     const channelId = url.searchParams.get('channelId')
+    const sessionId = url.searchParams.get('sessionId')
+    // Сессия: явная из параметра, иначе — самая свежая (продолжить последний чат).
+    // Чужая/несуществующая сессия → пусто (не отдаём чужую переписку).
+    let sid: string | null = null
+    if (sessionId) {
+      const own = await db.aiChatSession.findFirst({
+        where: { id: sessionId, userId: g.uid, surface: 'assistant' },
+        select: { id: true },
+      })
+      sid = own?.id ?? null
+    } else {
+      const latest = await db.aiChatSession.findFirst({
+        where: { userId: g.uid, surface: 'assistant', ...(channelId ? { channelId } : {}) },
+        orderBy: { updatedAt: 'desc' },
+        select: { id: true },
+      })
+      sid = latest?.id ?? null
+    }
+    if (!sid) return NextResponse.json({ messages: [], sessionId: null })
     const rows = await db.aiChatMessage.findMany({
-      where: { userId: g.uid, surface: 'assistant', ...(channelId ? { channelId } : {}) },
+      where: { userId: g.uid, surface: 'assistant', sessionId: sid },
       orderBy: { createdAt: 'desc' },
       take: 50,
       select: { role: true, content: true, meta: true, createdAt: true },
     })
     return NextResponse.json({
+      sessionId: sid,
       messages: rows.reverse().map((r) => ({
         role: r.role,
         text: r.content,
@@ -245,9 +286,30 @@ export async function DELETE(request: Request) {
   try {
     const url = new URL(request.url)
     const channelId = url.searchParams.get('channelId')
-    await db.aiChatMessage.deleteMany({
+    const sessionId = url.searchParams.get('sessionId')
+    if (sessionId) {
+      // v5.74: удаляем один чат (сессию владельца + её сообщения)
+      const del = await db.aiChatSession.deleteMany({ where: { id: sessionId, userId: g.uid } })
+      if (del.count > 0) {
+        await db.aiChatMessage.deleteMany({ where: { sessionId, userId: g.uid } })
+      }
+      return NextResponse.json({ ok: true })
+    }
+    // Без sessionId — полная очистка: сессии поверхности + легаси-сообщения
+    const own = await db.aiChatSession.findMany({
       where: { userId: g.uid, surface: 'assistant', ...(channelId ? { channelId } : {}) },
+      select: { id: true },
     })
+    const ids = own.map((x) => x.id)
+    await db.aiChatMessage.deleteMany({
+      where: {
+        userId: g.uid,
+        surface: 'assistant',
+        ...(channelId ? { channelId } : {}),
+        ...(ids.length > 0 ? { OR: [{ sessionId: { in: ids } }, { sessionId: null }] } : { sessionId: null }),
+      },
+    })
+    await db.aiChatSession.deleteMany({ where: { id: { in: ids }, userId: g.uid } })
     return NextResponse.json({ ok: true })
   } catch {
     return err('Ошибка', 500)
@@ -349,6 +411,34 @@ export async function POST(request: Request) {
         knowledgeBlock('full').catch(() => undefined),
         aiMemoryBlock(g.uid).catch(() => ''),
       ])
+      // v5.74: ГЛОБАЛЬНАЯ ПАМЯТЬ ЧАТОВ — свежие сообщения из других чатов
+      // пользователя: новый чат продолжает прошлые разговоры без пересказа
+      const crossChat = await aiCrossChatBlock(g.uid, d.sessionId ?? null).catch(() => '')
+
+      // v5.74: сессия чата — валидируем переданную или создаём «Новый чат».
+      // Чужая/несуществующая сессия молча превращается в новую (не 500 — чат должен работать).
+      let session: { id: string; created: boolean } | null = null
+      if (d.sessionId) {
+        const own = await db.aiChatSession.findFirst({
+          where: { id: d.sessionId, userId: g.uid, surface: 'assistant' },
+          select: { id: true },
+        })
+        if (own) session = { id: own.id, created: false }
+      }
+      if (!session) {
+        const created = await db.aiChatSession
+          .create({
+            data: {
+              userId: g.uid,
+              surface: 'assistant',
+              channelId: channel.id,
+              title: (d.messages.find((m) => m.role === 'user')?.content ?? 'Новый чат').trim().slice(0, 60) || 'Новый чат',
+            },
+            select: { id: true },
+          })
+          .catch(() => null)
+        if (created) session = { id: created.id, created: true }
+      }
       const userName =
         [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
         (user?.username ? `@${user.username}` : 'автор канала')
@@ -382,6 +472,7 @@ export async function POST(request: Request) {
         createdAt: channelFull?.createdAt ?? null,
         knowledge,
         memory,
+        ...(crossChat ? { crossChat } : {}),
       })
 
       const history: ChatMsg[] = [
@@ -395,6 +486,8 @@ export async function POST(request: Request) {
       const steps = meta.steps as Array<{ tool: string; label: string; ok: boolean }>
 
       return sseStream(async (send) => {
+        // v5.74: сразу отдаём id сессии — клиент запомнит чат в истории
+        if (session) send('session', { sessionId: session.id })
         let messages = history
         // Тарификация: копим токены всей цепочки (модель + финальный вызов),
         // списываем по факту после ответа — как в Snap Search
@@ -449,8 +542,8 @@ export async function POST(request: Request) {
               // Финальный ответ (+ премиум-эмодзи из слотов бота)
               const reply = await aiPremiumEmojiText(content || 'Готово!')
               await settle()
-              void persistAiTurn(g.uid, lastUserText, reply, meta, channel.id)
-              send('done', { reply, ...meta, model: r.model })
+              void persistAiTurn(g.uid, lastUserText, reply, meta, channel.id, session?.id ?? null)
+              send('done', { reply, ...meta, model: r.model, sessionId: session?.id ?? null })
               return
             }
             // Эхо вызова + статусы + исполнение
@@ -506,12 +599,13 @@ export async function POST(request: Request) {
           )
           const reply = await aiPremiumEmojiText(tail.content || 'Готово!')
           await settle()
-          void persistAiTurn(g.uid, lastUserText, reply, meta, channel.id)
-          send('done', { reply, ...meta })
+          void persistAiTurn(g.uid, lastUserText, reply, meta, channel.id, session?.id ?? null)
+          send('done', { reply, ...meta, sessionId: session?.id ?? null })
         } catch (e) {
           console.error('[ai/assistant chat]', e)
-          // Токены частично потрачены — тарифицируем и отдаём ошибку
-          await settle().catch(() => {})
+          // v5.74: «ИИ не ответил — свайпы не снимаем». Токены могли частично
+          // уйти в провайдер, но ответа пользователь НЕ получил — тарифицируем
+          // только успешные ответы (settle вызывается перед send('done')).
           send('error', { message: openRouterErrorText(e) })
         }
       })
@@ -563,7 +657,7 @@ export async function POST(request: Request) {
       const text = await chatSimple(system, user, { maxTokens: 700, timeoutMs: 40_000, temperature: 0.75, onUsage: collector.onUsage })
       const clean = text.replace(/^["«»]+|["»]+$/g, '').trim()
       if (clean.length < 30) {
-        await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент (пост)', 8)
+        // v5.74: пустой пост = ответа нет — НЕ тарифицируем
         return err('Нейросеть вернула пустой пост — попробуйте ещё раз', 502)
       }
       await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент (пост)', 8)
@@ -573,7 +667,12 @@ export async function POST(request: Request) {
       // v5.70: байты скачиваются сервером, сжимаются в WebP ≤350КБ и хранятся
       // в Upload → клиенту отдаётся стабильный /api/upload/<id> (фолбэк —
       // сырая ссылка pollinations, если скачать/сохранить не удалось)
+      // v5.74: картинка тарифицируется (AI_IMAGE_SWP) ТОЛЬКО при успехе;
+      // сервис не ответил — списания нет
       const img = await generatePublicImage(clean, { ownerId: g.uid }).catch(() => null)
+      if (img?.url) {
+        await spendSwipes(g.uid, AI_IMAGE_SWP, `Генерация картинки (пост): ${clean.slice(0, 80)}`).catch(() => {})
+      }
 
       return NextResponse.json({
         text: clean,

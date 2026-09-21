@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, CalendarClock, Check, Copy, Loader2, Rocket, Send, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ArrowLeft, CalendarClock, Check, Copy, History, Loader2, Rocket, Send, Sparkles, SquarePen, Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
@@ -417,6 +417,171 @@ function SourceRow({ post, index, onOpen }: { post: PostDTO; index: number; onOp
   )
 }
 
+/* ============================ Список чатов (v5.74) ============================ */
+
+type SessionInfo = { id: string; title: string; updatedAt: string; lastPreview: string | null }
+
+/**
+ * Шторка «Чаты» (v5.74): история разговоров иишки — новый чат, переключение,
+ * удаление. Память сквозная: даже в новом чате модель знает, о чём говорили
+ * в прошлых (глобальный контекст приходит с сервера).
+ */
+function SessionsDrawer({
+  kind,
+  channelId,
+  currentId,
+  open,
+  onClose,
+  onPick,
+}: {
+  kind: AiChatKind
+  channelId?: string
+  currentId: string | null
+  open: boolean
+  onClose: () => void
+  onPick: (id: string) => void
+}) {
+  const [list, setList] = useState<SessionInfo[] | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
+
+  const load = useCallback(() => {
+    const token = getSessionToken()
+    if (!token) {
+      setList([])
+      return
+    }
+    const url =
+      `/api/ai/sessions?surface=${kind}` +
+      (kind === 'assistant' && channelId ? `&channelId=${encodeURIComponent(channelId)}` : '')
+    fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { sessions?: SessionInfo[] } | null) => setList(j?.sessions ?? []))
+      .catch(() => setList([]))
+  }, [kind, channelId])
+
+  useEffect(() => {
+    if (open) {
+      setList(null)
+      load()
+    }
+  }, [open, load])
+
+  const remove = async (id: string) => {
+    if (busyId) return
+    setBusyId(id)
+    try {
+      const token = getSessionToken()
+      if (token) {
+        await fetch(`/api/ai/sessions?id=${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      }
+      setList((l) => (l ? l.filter((x) => x.id !== id) : l))
+      haptic('success')
+    } catch {
+      toast.error('Не удалось удалить чат')
+    } finally {
+      setBusyId(null)
+    }
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          initial={{ x: '100%' }}
+          animate={{ x: 0 }}
+          exit={{ x: '100%' }}
+          transition={{ type: 'spring', damping: 32, stiffness: 340 }}
+          className="absolute inset-0 z-20 flex flex-col bg-tg-bg"
+          role="dialog"
+          aria-label="История чатов"
+          data-noswipe
+        >
+          <header className="flex shrink-0 items-center gap-2 border-b border-tg-sep/60 bg-tg-bg px-2 py-2">
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label="Назад к чату"
+              className="flex h-11 w-11 items-center justify-center rounded-full text-tg-text active:bg-tg-surface"
+            >
+              <ArrowLeft className="h-5.5 w-5.5" />
+            </button>
+            <span className="min-w-0 flex-1 pl-1 text-[16px] font-bold text-tg-text">Чаты</span>
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                onPick('') // пустая строка = новый чат без сессии
+                onClose()
+              }}
+              className="flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-3.5 text-[13px] font-semibold text-white active:scale-95"
+            >
+              <SquarePen className="h-4 w-4" aria-hidden />
+              Новый
+            </button>
+          </header>
+
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+            {list === null ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
+              </div>
+            ) : list.length === 0 ? (
+              <div className="mx-auto mt-12 max-w-[260px] text-center">
+                <p className="text-[14.5px] font-semibold text-tg-text">Пока нет истории</p>
+                <p className="mt-1 text-[12.5px] leading-snug text-tg-hint">
+                  Каждый разговор сохраняется сюда. Память сквозная — новый чат помнит, о чём говорили в прошлых.
+                </p>
+              </div>
+            ) : (
+              <ul className="divide-y divide-tg-sep/50">
+                {list.map((s) => (
+                  <li key={s.id}>
+                    <div
+                      className={cn(
+                        'flex items-center gap-2 px-3 py-2.5 transition active:bg-tg-surface2/60',
+                        s.id === currentId && 'bg-tg-link/8',
+                      )}
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          haptic('light')
+                          onPick(s.id)
+                          onClose()
+                        }}
+                        className="min-w-0 flex-1 text-left"
+                        aria-label={`Открыть чат: ${s.title}`}
+                      >
+                        <span className="block truncate text-[14px] font-semibold text-tg-text">{s.title}</span>
+                        <span className="mt-0.5 flex items-baseline gap-1.5 text-[12px] text-tg-hint">
+                          <span className="shrink-0">{timeAgo(s.updatedAt, 'ru')}</span>
+                          {s.lastPreview && <span className="min-w-0 truncate">· {s.lastPreview}</span>}
+                        </span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void remove(s.id)}
+                        disabled={busyId === s.id}
+                        aria-label={`Удалить чат: ${s.title}`}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:bg-tg-surface disabled:opacity-40"
+                      >
+                        {busyId === s.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  )
+}
+
 /* ============================ Основной компонент ============================ */
 
 export function AiChat({
@@ -451,6 +616,9 @@ export function AiChat({
   const [streamText, setStreamText] = useState<string | null>(null) // v5.40: realtime-печать
   const [publishing, setPublishing] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  // v5.74: сессии чатов — текущий чат и шторка «Чаты» (история/новый/удаление)
+  const [sessionId, setSessionId] = useState<string | null>(null)
+  const [sessionsOpen, setSessionsOpen] = useState(false)
   // v5.73: ПЛАВНЫЙ стриминг — дельты копятся в буфер, экран обновляется
   // не чаще 1 раза на кадр (requestAnimationFrame): токены сливаются в
   // непрерывную печать без «прыжков» и лишних рендеров на каждый SSE-чанк
@@ -484,7 +652,8 @@ export function AiChat({
   busyRef.current = busy
 
   // Загрузка истории при открытии: сначала локально (мгновенно), затем
-  // серверная ПАМЯТЬ чата (v5.73) — переписка живёт между устройствами
+  // серверная СЕССИЯ чата (v5.74) — без параметра сервер вернёт самую свежую
+  // сессию (продолжить последний разговор) + её id.
   useEffect(() => {
     if (!open) return
     let alive = true
@@ -498,18 +667,27 @@ export function AiChat({
         : '/api/ai/search'
     fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
       .then((r) => (r.ok ? r.json() : null))
-      .then((j: { messages?: Array<{ role: string; text: string; at: string; meta?: Partial<AiMsg> }> } | null) => {
-        if (!alive || !j?.messages?.length) return
-        const server: AiMsg[] = j.messages.slice(-MAX_HISTORY).map((m, i) => ({
-          id: `srv${i}_${m.at}`,
-          role: m.role === 'user' ? 'user' : 'assistant',
-          text: m.text,
-          at: m.at,
-          ...(m.meta ?? {}),
-        }))
-        setMessages(server)
-        saveHistory(kind, channelId, server)
-      })
+      .then(
+        (
+          j: {
+            messages?: Array<{ role: string; text: string; at: string; meta?: Partial<AiMsg> }>
+            sessionId?: string | null
+          } | null,
+        ) => {
+          if (!alive) return
+          setSessionId(j?.sessionId ?? null)
+          if (!j?.messages?.length) return
+          const server: AiMsg[] = j.messages.slice(-MAX_HISTORY).map((m, i) => ({
+            id: `srv${i}_${m.at}`,
+            role: m.role === 'user' ? 'user' : 'assistant',
+            text: m.text,
+            at: m.at,
+            ...(m.meta ?? {}),
+          }))
+          setMessages(server)
+          saveHistory(kind, channelId, server)
+        },
+      )
       .catch(() => {})
     return () => {
       alive = false
@@ -555,6 +733,9 @@ export function AiChat({
       const onEvent = (type: string, data: Record<string, unknown>) => {
         if (type === 'status') {
           setStatus((data.label as string) ?? null)
+        } else if (type === 'session') {
+          // v5.74: сервер создал/подтвердил сессию — запоминаем чат
+          setSessionId((data.sessionId as string) ?? null)
         } else if (type === 'delta') {
           // v5.73: realtime-стриминг через rAF-буфер — печать идеально плавная
           setStatus(null)
@@ -572,6 +753,9 @@ export function AiChat({
           }
         } else if (type === 'done') {
           settled = true
+          // v5.74: дублируем sessionId из done (на случай пропущенного session-события)
+          const sid = (data.sessionId as string | undefined) ?? null
+          if (sid) setSessionId(sid)
           const stepsRaw = (data.steps as Array<{ label: string; ok: boolean }> | undefined) ?? []
           const botMsg: AiMsg = {
             id: uid(),
@@ -624,10 +808,12 @@ export function AiChat({
               ? {
                   action: 'chat',
                   channelId,
+                  sessionId,
                   messages: history.slice(-MAX_HISTORY).map((m) => ({ role: m.role, content: m.text })),
                 }
               : {
                   action: 'chat',
+                  sessionId,
                   messages: history.slice(-MAX_HISTORY).map((m) => ({ role: m.role, content: m.text })),
                 },
           ),
@@ -705,7 +891,7 @@ export function AiChat({
         haptic('error')
       }
     },
-    [messages, persist, kind, channelId, openAuthGate, user, pushStreamChunk, flushStream],
+    [messages, persist, kind, channelId, sessionId, openAuthGate, user, pushStreamChunk, flushStream],
   )
 
   // Seed-запрос из SearchTab: автоотправка один раз
@@ -747,18 +933,60 @@ export function AiChat({
     void send(`Нарисуй картинку${topic ? ` к посту про ${topic}` : ' к последнему посту'}`)
   }
 
-  const clearChat = () => {
+  /** v5.74: «Новый чат» — чистый экран; старый чат остаётся в истории (сессия живёт) */
+  const newChat = () => {
     haptic('light')
+    setSessionId(null)
+    setStreamText(null)
+    setStatus(null)
     persist([])
-    // v5.73: стираем и постоянную историю на сервере
+  }
+
+  /** v5.74: открыть чат из истории — серверные сообщения этой сессии */
+  const openSession = (id: string) => {
+    if (!id) {
+      // пустая строка = «Новый чат» из шторки
+      newChat()
+      return
+    }
     const token = getSessionToken()
-    if (token) {
+    if (!token) return
+    const url =
+      kind === 'assistant'
+        ? `/api/ai/assistant?channelId=${encodeURIComponent(channelId ?? '')}&sessionId=${encodeURIComponent(id)}`
+        : `/api/ai/search?sessionId=${encodeURIComponent(id)}`
+    fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then(
+        (j: { messages?: Array<{ role: string; text: string; at: string; meta?: Partial<AiMsg> }> } | null) => {
+          setSessionId(id)
+          const server: AiMsg[] = (j?.messages ?? []).slice(-MAX_HISTORY).map((m, i) => ({
+            id: `srv${i}_${m.at}`,
+            role: m.role === 'user' ? 'user' : 'assistant',
+            text: m.text,
+            at: m.at,
+            ...(m.meta ?? {}),
+          }))
+          setStreamText(null)
+          setStatus(null)
+          persist(server)
+        },
+      )
+      .catch(() => toast.error('Не удалось открыть чат'))
+  }
+
+  /** v5.73→v5.74: корзина в шапке = удалить ТЕКУЩИЙ чат и начать новый */
+  const deleteCurrentChat = () => {
+    haptic('light')
+    const token = getSessionToken()
+    if (token && sessionId) {
       const url =
         kind === 'assistant'
-          ? `/api/ai/assistant?channelId=${encodeURIComponent(channelId ?? '')}`
-          : '/api/ai/search'
+          ? `/api/ai/assistant?channelId=${encodeURIComponent(channelId ?? '')}&sessionId=${encodeURIComponent(sessionId)}`
+          : `/api/ai/search?sessionId=${encodeURIComponent(sessionId)}`
       void fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(() => {})
     }
+    newChat()
   }
 
   if (typeof document === 'undefined') return null
@@ -805,12 +1033,25 @@ export function AiChat({
               <span className="block truncate text-[16px] font-bold leading-tight text-tg-text">{title}</span>
               <span className="block truncate text-[12.5px] leading-tight text-tg-hint">{subtitle}</span>
             </span>
+            {/* v5.74: история чатов — список, новый чат, удаление */}
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                setSessionsOpen(true)
+              }}
+              aria-label="История чатов"
+              title="История чатов"
+              className="relative flex h-10 w-10 items-center justify-center rounded-full text-tg-hint active:bg-tg-surface"
+            >
+              <History className="h-4.5 w-4.5" />
+            </button>
             {messages.length > 0 && (
               <button
                 type="button"
-                onClick={clearChat}
-                aria-label="Очистить чат"
-                title="Очистить чат"
+                onClick={deleteCurrentChat}
+                aria-label="Удалить текущий чат"
+                title="Удалить текущий чат"
                 className="flex h-10 w-10 items-center justify-center rounded-full text-tg-hint active:bg-tg-surface"
               >
                 <Trash2 className="h-4.5 w-4.5" />
@@ -1018,6 +1259,16 @@ export function AiChat({
               micLabel="Голосовой ввод"
             />
           </div>
+
+          {/* v5.74: шторка «Чаты» — история разговоров, новый чат, удаление */}
+          <SessionsDrawer
+            kind={kind}
+            channelId={channelId}
+            currentId={sessionId}
+            open={sessionsOpen}
+            onClose={() => setSessionsOpen(false)}
+            onPick={openSession}
+          />
         </motion.div>
       )}
     </AnimatePresence>,

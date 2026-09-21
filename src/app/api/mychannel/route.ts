@@ -12,6 +12,9 @@ import {
   PRO_PROMOTE_HOT_BOOST,
   PRO_PROMOTE_MONTHLY_LIMIT,
   PROMOTE_PACK,
+  PROMOTE_REFUND_WINDOW_MIN,
+  PROMOTE_GUARANTEE_VIEWS,
+  PROMOTE_GUARANTEE_HOURS,
   nextMonthStart,
   tierAtLeast,
   tierOfUser,
@@ -65,6 +68,11 @@ const bodySchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('promote'),
+    channelId: z.string().min(1),
+    postId: z.string().min(1),
+  }),
+  z.object({
+    action: z.literal('unpromote'), // v5.74: снять продвижение (окно возврата 60 мин)
     channelId: z.string().min(1),
     postId: z.string().min(1),
   }),
@@ -279,7 +287,78 @@ export async function GET(request: Request) {
     // (v5.69-perf: account/tier/promoState читаются выше, одной волной с каналами)
     const monthKey = utcMonthKey()
     const monthlyUsed = promoState?.promoteFreeMonth === monthKey ? 1 : 0
-    const promoteCredits = promoState?.promoteCredits ?? 0
+    let promoteCredits = promoState?.promoteCredits ?? 0
+
+    /* v5.74: АКТИВНЫЕ ПРОДВИЖЕНИЯ + ГАРАНТИЯ РЕЗУЛЬТАТА (win-win).
+     * Обещаем ≥ PROMOTE_GUARANTEE_VIEWS просмотров за PROMOTE_GUARANTEE_HOURS
+     * часов; не набралось — кредит возвращается автоматически (пост снимается).
+     * Settlement ленивый, при открытии кабинета: постов ≤10, каждый count —
+     * индексная точечная выборка по PostView(postId). */
+    const channelIds = channels.map((c) => c.id)
+    const promoList: Array<{
+      postId: string
+      promotedAt: string
+      views: number
+      target: number
+      hoursLeft: number
+      guarantee: 'pending' | 'met'
+    }> = []
+    let creditsDelta = 0
+    if (channelIds.length > 0) {
+      const promoted = await db.post.findMany({
+        where: { channelId: { in: channelIds }, promotedAt: { not: null } },
+        orderBy: { promotedAt: 'desc' },
+        take: 10,
+        select: { id: true, promotedAt: true, promoteSpent: true },
+      })
+      const now = Date.now()
+      for (const p of promoted) {
+        const at = p.promotedAt!.getTime()
+        const views = await db.postView.count({
+          where: { postId: p.id, createdAt: { gte: new Date(at) } },
+        })
+        const hoursLeft = Math.max(
+          0,
+          Math.ceil((at + PROMOTE_GUARANTEE_HOURS * 3600_000 - now) / 3600_000),
+        )
+        const expired = now - at >= PROMOTE_GUARANTEE_HOURS * 3600_000
+        if (expired && p.promoteSpent != null) {
+          if (views < PROMOTE_GUARANTEE_VIEWS) {
+            // Гарантия не выполнена → авто-возврат кредита + снятие продвижения
+            const res = await db
+              .$transaction([
+                db.post.update({
+                  where: { id: p.id },
+                  data: { promotedAt: null, promoteSpent: null },
+                }),
+                db.user.update({
+                  where: { id: g.uid, promoteCredits: { gte: 0 } },
+                  data: { promoteCredits: { increment: 1 } },
+                }),
+              ])
+              .catch(() => null)
+            if (res) {
+              creditsDelta += 1
+              continue // снят — в список активных не попадает
+            }
+          } else {
+            // Гарантия выполнена — закрываем обязательство (маркер больше не нужен)
+            await db.post
+              .updateMany({ where: { id: p.id, promoteSpent: { not: null } }, data: { promoteSpent: null } })
+              .catch(() => {})
+          }
+        }
+        promoList.push({
+          postId: p.id,
+          promotedAt: new Date(at).toISOString(),
+          views,
+          target: PROMOTE_GUARANTEE_VIEWS,
+          hoursLeft,
+          guarantee: views >= PROMOTE_GUARANTEE_VIEWS ? 'met' : 'pending',
+        })
+      }
+    }
+    promoteCredits += creditsDelta
 
     return NextResponse.json({
       channels: result,
@@ -303,6 +382,14 @@ export async function GET(request: Request) {
       promotePackCount: PROMOTE_PACK.count,
       // Когда вернётся бесплатное продвижение (начало следующего месяца UTC)
       promoteResetAt: nextMonthStart().toISOString(),
+      // v5.74: активные продвижения — просмотры с момента запуска и статус
+      // гарантии результата (500 просмотров/48ч, иначе авто-возврат кредита)
+      promotions: promoList,
+      promoTerms: {
+        guaranteeViews: PROMOTE_GUARANTEE_VIEWS,
+        guaranteeHours: PROMOTE_GUARANTEE_HOURS,
+        refundWindowMin: PROMOTE_REFUND_WINDOW_MIN,
+      },
     })
   } catch (e) {
     console.error('[mychannel:get]', e)
@@ -481,7 +568,13 @@ export async function POST(request: Request) {
         }
         await tx.post.update({
           where: { id: post.id },
-          data: { promotedAt: new Date(), hotScore: { increment: PRO_PROMOTE_HOT_BOOST } },
+          data: {
+            promotedAt: new Date(),
+            hotScore: { increment: PRO_PROMOTE_HOT_BOOST },
+            // v5.74: запоминаем источник — нужен для «Снять с продвижения»
+            // (окно возврата) и гарантии результата (авто-рефанд)
+            promoteSpent: spent,
+          },
         })
         return spent
       })
@@ -490,7 +583,7 @@ export async function POST(request: Request) {
           {
             error: 'promote_exhausted',
             message:
-              'Бесплатное продвижение месяца уже использовано — купите пакет (5 продвижений за 199 ₽) или приходите в следующем месяце',
+              'Бесплатное продвижение месяца уже использовано — купите пакет или приходите в следующем месяце',
           },
           { status: 429 },
         )
@@ -506,6 +599,61 @@ export async function POST(request: Request) {
         used: state?.promoteFreeMonth === monthKey ? 1 : 0,
         limit: PRO_PROMOTE_MONTHLY_LIMIT,
         credits: state?.promoteCredits ?? 0,
+      })
+    }
+
+    if (d.action === 'unpromote') {
+      // v5.74: «ПРОДВИЖЕНИЕ МОЖНО УБИРАТЬ». Снять пост с продвижения в любой
+      // момент. ДЕНЬГИ (win-win, как в настоящих ad-кабинетах):
+      //  • в первые PROMOTE_REFUND_WINDOW_MIN минут — полный возврат: кредит
+      //    возвращается на баланс (или освобождается месячный слот);
+      //  • позже — снятие без возврата (буст уже отработал в ленте).
+      const post = await db.post.findFirst({
+        where: { id: d.postId, channelId: channel.id },
+        select: { id: true, promotedAt: true, promoteSpent: true, hotScore: true },
+      })
+      if (!post) return err('Пост не найден', 404)
+      if (!post.promotedAt) return err('Этот пост сейчас не продвинут', 400)
+
+      const withinRefundWindow =
+        Date.now() - post.promotedAt.getTime() < PROMOTE_REFUND_WINDOW_MIN * 60_000
+      const refunded = withinRefundWindow && post.promoteSpent != null
+
+      await db.$transaction([
+        // Снимаем продвижение: темп откатываем на буст, но не ниже нуля
+        db.post.update({
+          where: { id: post.id },
+          data: {
+            promotedAt: null,
+            promoteSpent: null,
+            hotScore: Math.max(0, post.hotScore - PRO_PROMOTE_HOT_BOOST),
+          },
+        }),
+        ...(refunded
+          ? [
+              // Возврат: кредит — обратно на баланс; бесплатный слот — освобождаем
+              post.promoteSpent === 'credit'
+                ? db.user.update({
+                    where: { id: g.uid },
+                    data: { promoteCredits: { increment: 1 } },
+                  })
+                : db.user.update({
+                    where: { id: g.uid },
+                    data: { promoteFreeMonth: '' },
+                  }),
+            ]
+          : []),
+      ])
+
+      const state = await db.user.findUnique({
+        where: { id: g.uid },
+        select: { promoteCredits: true, promoteFreeMonth: true },
+      })
+      return NextResponse.json({
+        ok: true,
+        refunded,
+        credits: state?.promoteCredits ?? 0,
+        monthlyUsed: state?.promoteFreeMonth === utcMonthKey() ? 1 : 0,
       })
     }
 

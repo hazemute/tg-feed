@@ -28,11 +28,39 @@ export const PRO_PROMOTE_MONTHLY_LIMIT = 1 // бесплатных продви�
 export const PRO_INITIAL_BOOST = 40 // стартовый буст температуры поста Pro-автора
 export const PRO_PROMOTE_HOT_BOOST = 150 // разовый буст температуры при продвижении
 /**
- * Пакет продвижений (v5.69): 5 продвижений за 199 ₽ — докупка сверх бесплатного
- * месячного лимита. Расход: сначала месячный бесплатный, затем купленные кредиты
+ * Пакет продвижений (v5.69 → v5.74): докупка сверх бесплатного месячного лимита.
+ * Расход: сначала месячный бесплатный, затем купленные кредиты
  * (User.promoteCredits). Кредиты не сгорают.
+ *
+ * v5.74 — ПРОФЕССИОНАЛЬНАЯ МОНЕТИЗАЦИЯ: продвижение стало НАМНОГО дороже
+ * (было 5 за 199 ₽ = 40 ₽/шт) и продаётся ТИРОВАННЫМИ ПАКЕТАМИ:
+ *   starter «1» — 149 ₽ (проба);
+ *   growth  «3» — 349 ₽ (≈116 ₽/шт, −22%);
+ *   max     «10» — 899 ₽ (≈90 ₽/шт, −40%) — лучшая цена, как в реальных ad-кабинетах.
+ * purpose платежа несёт размер: 'promote_pack:3' / 'promote_pack_half:10'.
  */
-export const PROMOTE_PACK = { priceKop: 19_900, count: 5 } as const
+export type PromotePack = { id: 'starter' | 'growth' | 'max'; count: number; priceKop: number }
+export const PROMOTE_PACKS: PromotePack[] = [
+  { id: 'starter', count: 1, priceKop: 14_900 },
+  { id: 'growth', count: 3, priceKop: 34_900 },
+  { id: 'max', count: 10, priceKop: 89_900 },
+]
+/** Пакет по умолчанию (обратная совместимость со старым GET/лейблами) */
+export const PROMOTE_PACK: { priceKop: number; count: number } = {
+  priceKop: PROMOTE_PACKS[1].priceKop,
+  count: PROMOTE_PACKS[1].count,
+}
+
+export function promotePackById(id: string): PromotePack | null {
+  return PROMOTE_PACKS.find((p) => p.id === id) ?? null
+}
+
+/** Разовое снятие продвижения: сколько минут держится окно полного возврата */
+export const PROMOTE_REFUND_WINDOW_MIN = 60
+/** Гарантия результата (win-win): сколько просмотров с момента продвижения обещаем */
+export const PROMOTE_GUARANTEE_VIEWS = 500
+/** ...за сколько часов; не набралось → кредит возвращается автоматически */
+export const PROMOTE_GUARANTEE_HOURS = 48
 
 /** Ключ календарного месяца UTC: '2026-09' (граница бесплатного продвижения) */
 export function utcMonthKey(d: Date = new Date()): string {
@@ -113,8 +141,17 @@ export function parseTierPurpose(purpose: string): { plan: 'plus' | 'pro'; perio
   return null
 }
 
-/** purpose платежа пакета продвижений: полная сумма или половина (оплата 50/50) */
+/** purpose платежа пакета продвижений: полная сумма или половина (оплата 50/50).
+ *  v5.74: размер пакета кодируется суффиксом ':N' ('promote_pack:10'). */
 export const PROMOTE_PACK_PURPOSES = ['promote_pack', 'promote_pack_half'] as const
 export function isPromotePackPurpose(purpose: string | null | undefined): boolean {
-  return purpose === 'promote_pack' || purpose === 'promote_pack_half'
+  if (!purpose) return false
+  if (purpose === 'promote_pack' || purpose === 'promote_pack_half') return true
+  return /^promote_pack(_half)?:\d+$/.test(purpose)
+}
+/** Сколько кредитов зачислять по purpose (default — базовый пакет) */
+export function promotePackCountFromPurpose(purpose: string | null | undefined): number {
+  if (!purpose) return PROMOTE_PACK.count
+  const m = purpose.match(/^promote_pack(?:_half)?:(\d+)$/)
+  return m ? Math.max(1, Math.min(100, Number(m[1]))) : PROMOTE_PACK.count
 }

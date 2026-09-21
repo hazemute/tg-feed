@@ -228,6 +228,17 @@ export type MyChannelResponse = {
   promotePackCount: number
   /** Когда вернётся бесплатное продвижение (начало следующего месяца UTC, ISO) */
   promoteResetAt: string
+  /** v5.74: активные продвижения — просмотры с запуска + статус гарантии результата */
+  promotions?: Array<{
+    postId: string
+    promotedAt: string
+    views: number
+    target: number
+    hoursLeft: number
+    guarantee: 'pending' | 'met'
+  }>
+  /** v5.74: условия промо — гарантия 500 просмотров/48ч, окно возврата 60 минут */
+  promoTerms?: { guaranteeViews: number; guaranteeHours: number; refundWindowMin: number }
 }
 
 /** Живая статистика площадки для шита продвижения (GET /api/ads/stats) */

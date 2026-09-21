@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { parseTierPurpose, tierExpiryFor, PROMOTE_PACK, isPromotePackPurpose } from '@/lib/tiers'
+import { parseTierPurpose, tierExpiryFor, isPromotePackPurpose, promotePackCountFromPurpose } from '@/lib/tiers'
 import { invalidateBalance } from '@/lib/balance-cache'
 
 /**
@@ -52,13 +52,14 @@ export async function creditPendingPayment(
       return true
     }
 
-    // Пакет продвижений (v5.69): карта (полная сумма) или половина при 50/50.
-    // Идемпотентность — та же атомарная проводка pending → succeeded выше:
-    // кредиты начисляются ровно один раз, ретраи вебхука безопасны.
+    // Пакет продвижений (v5.69; v5.74 — тиры 1/3/10, размер в purpose ':N'):
+    // карта (полная сумма) или половина при 50/50. Идемпотентность — та же
+    // атомарная проводка pending → succeeded выше: кредиты начисляются ровно
+    // один раз, ретраи вебхука безопасны.
     if (isPromotePackPurpose(payment.purpose)) {
       await tx.user.updateMany({
         where: { id: payment.userId },
-        data: { promoteCredits: { increment: PROMOTE_PACK.count } },
+        data: { promoteCredits: { increment: promotePackCountFromPurpose(payment.purpose) } },
       })
       return true
     }
