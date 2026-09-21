@@ -150,9 +150,36 @@ export async function GET(request: Request) {
   // часть — категории/флаг) + очередь добавления кураторских каналов в after()
   // (сеть/парсинг — НЕ в основном потоке ответа). Шаг планируем на КАЖДЫЙ
   // health-вызов: внутри stepContentCatalog свой троттлинг ≥90с + skip для SQLite
+  let catalogDiag: Record<string, unknown> | null = null
   try {
     await ensureContentCatalog()
     after(() => stepContentCatalog().catch((e) => console.error('[health] catalog step', e)))
+    // v5.77: публичная диагностика фазы (phase/счётчики/хвост лога — без секретов):
+    // без неё невозможно увидеть, почему discover не добавляет каналы
+    try {
+      const row = await db.botSetting.findUnique({ where: { key: 'content-catalog:state' } })
+      if (row) {
+        const st = JSON.parse(row.value) as {
+          phase?: string
+          done?: unknown[]
+          failed?: Array<{ username: string; reason: string }>
+          queue?: string[]
+          log?: string[]
+        }
+        catalogDiag = {
+          phase: st.phase ?? null,
+          done: st.done?.length ?? 0,
+          failed: st.failed?.length ?? 0,
+          queued: st.queue?.length ?? 0,
+          lastFailed: (st.failed ?? []).slice(-4).map((f) => `${f.username}: ${f.reason.slice(0, 60)}`),
+          lastLog: (st.log ?? []).slice(-4),
+        }
+      } else {
+        catalogDiag = { phase: 'no-state' }
+      }
+    } catch {
+      catalogDiag = { phase: 'diag-error' }
+    }
   } catch (e) {
     console.error('[health] content-catalog init failed', e)
   }
@@ -206,6 +233,8 @@ export async function GET(request: Request) {
       cache,
       bot,
       botUsername,
+      // v5.77: диагностика перезагрузки контента (фаза purge/discover)
+      catalog: catalogDiag,
       // v5.76: диагноз вебхука наружу только за cron-секретом (url бота — цель для спама)
       ...(diag ? { webhook } : {}),
       botBanSec: await botBanRemainSecAsync(),
