@@ -180,6 +180,18 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "ScheduledPost_channelId_publishedAt_idx" ON "ScheduledPost" ("channelId", "publishedAt")`,
     `ALTER TABLE "ScheduledPost" ADD CONSTRAINT "ScheduledPost_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "Channel"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
   ],
+  'v5.65': [
+    // v5.65: ПРОМОКОДЫ (генератор в админ-панели, активация в миниаппе — кошелёк).
+    // kind: swipes | rub | tier; одна активация на пользователя (уникальный индекс)
+    `CREATE TABLE IF NOT EXISTS "PromoCode" ("id" text PRIMARY KEY, "code" text NOT NULL, "kind" text NOT NULL, "swipes" integer NOT NULL DEFAULT 0, "amountKop" integer NOT NULL DEFAULT 0, "tierPlan" text, "tierDays" integer NOT NULL DEFAULT 0, "maxUses" integer NOT NULL DEFAULT 1, "usedCount" integer NOT NULL DEFAULT 0, "active" boolean NOT NULL DEFAULT true, "note" text, "expiresAt" timestamptz, "createdById" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "PromoCode_code_key" ON "PromoCode" ("code")`,
+    `CREATE INDEX IF NOT EXISTS "PromoCode_createdAt_idx" ON "PromoCode" ("createdAt")`,
+    `CREATE TABLE IF NOT EXISTS "PromoRedemption" ("id" text PRIMARY KEY, "promoId" text NOT NULL, "userId" text NOT NULL, "reward" text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "PromoRedemption_promoId_userId_key" ON "PromoRedemption" ("promoId", "userId")`,
+    `CREATE INDEX IF NOT EXISTS "PromoRedemption_userId_createdAt_idx" ON "PromoRedemption" ("userId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "PromoRedemption_promoId_createdAt_idx" ON "PromoRedemption" ("promoId", "createdAt")`,
+    `ALTER TABLE "PromoRedemption" ADD CONSTRAINT "PromoRedemption_promoId_fkey" FOREIGN KEY ("promoId") REFERENCES "PromoCode"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -217,6 +229,8 @@ const CRITICAL: Array<[string, string | null]> = [
   ['Quest', null],
   ['QuestCompletion', null],
   ['ScheduledPost', null],
+  ['PromoCode', null],
+  ['PromoRedemption', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -239,7 +253,7 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
         (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
-        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost')
+        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()

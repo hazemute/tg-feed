@@ -183,6 +183,44 @@ model ScheduledPost {
   @@index([channelId, publishedAt])
 }
 
+// Промокоды (v5.65): генератор в админ-панели, активация в миниаппе (кошелёк).
+// kind: swipes — зачисление свайпов; rub — зачисление рублей (amountKop);
+// tier — доступ Snap Plus/Pro на tierDays дней (plan: plus|pro).
+model PromoCode {
+  id          String   @id @default(cuid())
+  code        String   @unique // uppercase A-Z0-9 (4-24 символов)
+  kind        String   // swipes | rub | tier
+  swipes      Int      @default(0) // kind=swipes: сколько свайпов зачислить
+  amountKop   Int      @default(0) // kind=rub: сколько копеек зачислить
+  tierPlan    String?  // kind=tier: plus | pro
+  tierDays    Int      @default(0) // kind=tier: срок в днях (3/7/30)
+  maxUses     Int      @default(1) // сколько пользователей могут активировать
+  usedCount   Int      @default(0) // сколько активаций прошло
+  active      Boolean  @default(true)
+  note        String?  // служебная пометка админа (пользователю не видна)
+  expiresAt   DateTime? // код действует до (null — бессрочно)
+  createdById String?  // админ, создавший код
+  createdAt   DateTime @default(now())
+
+  redemptions PromoRedemption[]
+
+  @@index([createdAt])
+}
+
+// Активации промокодов: один пользователь — одна активация конкретного кода
+model PromoRedemption {
+  id        String    @id @default(cuid())
+  promoId   String
+  promo     PromoCode @relation(fields: [promoId], references: [id], onDelete: Cascade)
+  userId    String
+  reward    String // человекочитаемое описание награды («500 свайпов», «Pro на 7 дней»)
+  createdAt DateTime  @default(now())
+
+  @@unique([promoId, userId])
+  @@index([userId, createdAt])
+  @@index([promoId, createdAt])
+}
+
 model Like {
   id        String   @id @default(cuid())
   userId    String

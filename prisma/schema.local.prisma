@@ -172,6 +172,41 @@ model ScheduledPost {
   @@index([channelId, publishedAt])
 }
 
+// Промокоды (v5.65): генератор в админ-панели, активация в миниаппе (кошелёк).
+model PromoCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  kind        String // swipes | rub | tier
+  swipes      Int      @default(0)
+  amountKop   Int      @default(0)
+  tierPlan    String?
+  tierDays    Int      @default(0)
+  maxUses     Int      @default(1)
+  usedCount   Int      @default(0)
+  active      Boolean  @default(true)
+  note        String?
+  expiresAt   DateTime?
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  redemptions PromoRedemption[]
+
+  @@index([createdAt])
+}
+
+model PromoRedemption {
+  id        String    @id @default(cuid())
+  promoId   String
+  promo     PromoCode @relation(fields: [promoId], references: [id], onDelete: Cascade)
+  userId    String
+  reward    String
+  createdAt DateTime  @default(now())
+
+  @@unique([promoId, userId])
+  @@index([userId, createdAt])
+  @@index([promoId, createdAt])
+}
+
 model Like {
   id        String   @id @default(cuid())
   userId    String

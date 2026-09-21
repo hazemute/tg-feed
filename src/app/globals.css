@@ -684,3 +684,43 @@ button {
     content-visibility: visible;
   }
 }
+
+/* ═══ v5.65 ЖИВОЙ КАНАЛ (чат-вид) — 60 FPS на мобильных ═══ */
+
+/* Офф-скрин баблы не считаются: дальние сообщения почти бесплатны.
+ * Оценка высоты 96px держит скроллбар стабильным (без прыжков). */
+.chat-bubble {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
+}
+/* Внутри видимого бабла раскладка изолирована — пересчёт одного поста
+ * не трогает соседние (нет «каскадных» репейнтов при скролле) */
+.chat-bubble > * {
+  contain: layout style;
+}
+
+/* Плавный скролл чата: инерция iOS и запрет цепочки прокрутки наружу */
+.chat-scroll {
+  -webkit-overflow-scrolling: touch;
+  scroll-behavior: auto; /* программные прыжки — мгновенно, без дёрганья */
+}
+
+/* Превью поста в контекстном меню: ровно 2 строки, дешевле полного рендера */
+.chat-bubble-clamp {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Оверлей живого канала живёт на своём композитном слое — переходы
+ * (transform-only) не переукладывают страницу под ним */
+.live-view-layer {
+  will-change: transform;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-bubble {
+    content-visibility: visible;
+  }
+}

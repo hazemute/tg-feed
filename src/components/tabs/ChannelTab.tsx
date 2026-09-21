@@ -17,6 +17,7 @@ import {
   Loader2,
   Lock,
   Megaphone,
+  MessageSquare,
   MousePointerClick,
   Pause,
   Pin,
@@ -28,6 +29,7 @@ import {
   ScanSearch,
   Scissors,
   Send,
+  Settings2,
   Sparkles,
   Trash2,
   Wallet,
@@ -49,6 +51,7 @@ import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
 import { AiChat } from '@/components/ai/AiChat'
 import { SwipeIcon } from '@/components/tg/SwipeIcon'
+import { ChannelLiveView } from '@/components/channel/ChannelLiveView'
 import type { MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
 
 /**
@@ -68,11 +71,12 @@ const DISPLAY_MODES = [
 ] as const
 
 /**
- * Три главных раздела рабочего стола (приказ владельца):
- * Мой канал · Статистика · ИИ-ассистент. Активная — пилюлей с layoutId.
+ * Разделы рабочего стола (v5.65: + «Живой канал» — вид чата в стиле Telegram).
+ * Активная — пилюлей с layoutId.
  */
 const CHANNEL_SECTIONS = [
   { key: 'manage', label: 'Мой канал' },
+  { key: 'live', label: 'Живой канал' },
   { key: 'stats', label: 'Статистика' },
   { key: 'ai', label: 'ИИ-ассистент' },
 ] as const
@@ -88,6 +92,8 @@ export function ChannelTab() {
   const [failed, setFailed] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
   const [section, setSection] = useState<ChannelSection>('manage')
+  // v5.65: полноэкранный «живой канал» (вид чата) поверх вкладки
+  const [liveOpen, setLiveOpen] = useState(false)
   const t = useT()
 
   const fetchChannel = useCallback(async (useCache: boolean) => {
@@ -195,7 +201,9 @@ export function ChannelTab() {
 
             {/* ТРИ ГЛАВНЫХ РАЗДЕЛА: Мой канал · Статистика · ИИ-ассистент.
                 Скроллящиеся пилюли — лёгкий вес, больше воздуха. */}
-            <div className="sticky top-0 z-20 -mx-4 bg-tg-bg/95 px-4 py-2.5 backdrop-blur lg:-mx-6 lg:px-6">
+            {/* v5.65: сплошной фон вместо backdrop-blur — блюр на скролле
+                перекрашивает слой каждый кадр и съедает кадры на мобильных */}
+            <div className="sticky top-0 z-20 -mx-4 bg-tg-bg px-4 py-2.5 lg:-mx-6 lg:px-6">
               <div className="no-scrollbar flex gap-2 overflow-x-auto" role="tablist" aria-label={t('mc.tabsAria')}>
                 {CHANNEL_SECTIONS.map((s) => {
                   const active = section === s.key
@@ -261,6 +269,9 @@ export function ChannelTab() {
                   <AdsSection key={`ads-${channel!.id}`} channel={channel!} onReload={reload} />
                 </div>
               )}
+              {section === 'live' && (
+                <LiveSection key={`live-${channel!.id}`} channel={channel!} onOpen={() => setLiveOpen(true)} />
+              )}
               {section === 'stats' && (
                 /* Большой дашборд именно этого канала (просмотры, ER, динамика,
                     лучшее время, ритм, топ постов) — плоский, без карточек */
@@ -273,6 +284,116 @@ export function ChannelTab() {
           </div>
         )}
       </div>
+
+      {/* v5.65: полноэкранный «живой канал» — вид чата в стиле Telegram */}
+      <AnimatePresence>
+        {liveOpen && channel && (
+          <ChannelLiveView channelId={channel.id} onClose={() => setLiveOpen(false)} />
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Живой канал (v5.65) — секция-лаунчер нативного чат-вида             */
+/* ------------------------------------------------------------------ */
+
+/** Мини-превью бабла для карточки-лаунчера (декоративное) */
+function LivePreviewBubble({
+  text,
+  time,
+  views,
+  mine,
+}: {
+  text: string
+  time: string
+  views: string
+  mine?: boolean
+}) {
+  return (
+    <div className={cn('flex', mine ? 'justify-end' : 'justify-start')}>
+      <div
+        className={cn(
+          'max-w-[78%] rounded-2xl px-3 py-1.5 shadow-sm',
+          mine ? 'rounded-br-md bg-tg-link text-white' : 'rounded-bl-md bg-tg-surface2 text-tg-text',
+        )}
+      >
+        <p className="text-[12.5px] leading-snug">{text}</p>
+        <p className={cn('mt-0.5 text-right text-[10px]', mine ? 'text-white/70' : 'text-tg-hint')}>
+          {views} · {time}
+        </p>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * «Живой канал» — нативный вид чата своего канала, один в один механика
+ * Telegram (баблы, просмотры, реакции, строка ввода со скрепкой, удаление
+ * через контекстное меню), но стилизованный под дизайн-систему Tg Swipe.
+ */
+function LiveSection({ channel, onOpen }: { channel: MyChannelDTO; onOpen: () => void }) {
+  const features = [
+    { icon: Send, text: 'Публикуйте посты прямо отсюда — с картинками и видео' },
+    { icon: Trash2, text: 'Удаляйте любой пост: тап или долгое нажатие → «Удалить»' },
+    { icon: Settings2, text: 'Название, описание и аватар — классическое меню настроек' },
+    { icon: Eye, text: 'Просмотры и реакции каждого поста — как в самом Telegram' },
+  ]
+  return (
+    <div className="space-y-4">
+      {/* Hero-карточка с превью чата */}
+      <div className="overflow-hidden rounded-2xl bg-gradient-to-br from-tg-link/12 via-tg-link/5 to-transparent p-4">
+        <div className="flex items-center gap-2.5">
+          <Avatar name={channel.title} color={channel.avatarColor} src={channel.avatarUrl} size={44} />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[15.5px] font-bold text-tg-text">{channel.title}</p>
+            <p className="text-[12.5px] text-tg-hint">
+              t.me/{channel.username} · {formatCount(channel.subscribersCount)}{' '}
+              {pluralRu(channel.subscribersCount, 'подписчик', 'подписчика', 'подписчиков')}
+            </p>
+          </div>
+        </div>
+
+        {/* Декоративный мини-чат */}
+        <div className="mt-3.5 space-y-1.5 rounded-2xl bg-tg-bg/60 p-3">
+          <LivePreviewBubble text="Новый выпуск уже сегодня 🔥" time="18:04" views="12,4K" />
+          <LivePreviewBubble text="Ставь ❤️, если ждал" time="18:05" views="11,1K" />
+          <LivePreviewBubble text="Отправить сообщение…" time="" views="" mine />
+        </div>
+
+        <button
+          type="button"
+          onClick={() => {
+            haptic('light')
+            onOpen()
+          }}
+          className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-bold text-white shadow-lg transition-transform active:scale-[0.98]"
+        >
+          <MessageSquare className="h-5 w-5" aria-hidden />
+          Открыть живой канал
+        </button>
+      </div>
+
+      {/* Возможности */}
+      <div className="overflow-hidden rounded-2xl bg-tg-surface">
+        {features.map((f, i) => (
+          <div key={i}>
+            {i > 0 && <div className="mx-3.5 h-px bg-tg-sep" />}
+            <div className="flex items-center gap-3 px-3.5 py-3">
+              <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-tg-link/12 text-tg-link">
+                <f.icon className="h-[18px] w-[18px]" aria-hidden />
+              </span>
+              <p className="text-[13.5px] leading-snug text-tg-text">{f.text}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <p className="px-1 text-[12px] leading-snug text-tg-hint">
+        Всё происходит через нашего бота в вашем канале: публикации, правки и удаления мгновенно
+        появляются в Telegram. Бот должен быть администратором канала.
+      </p>
     </div>
   )
 }

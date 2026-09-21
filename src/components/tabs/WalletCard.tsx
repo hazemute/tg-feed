@@ -15,7 +15,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, ArrowLeftRight, ChevronDown, Loader2, Plus, RefreshCw } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, ChevronDown, Loader2, Plus, RefreshCw, Ticket } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
@@ -62,6 +62,7 @@ const KIND_LABEL: Record<string, string> = {
   ad_campaign: 'Кампания',
   refund: 'Возврат',
   admin: 'Корректировка',
+  promo: 'Промокод',
 }
 
 function fmtTime(iso: string): string {
@@ -87,6 +88,10 @@ export function WalletCard({
   const [failed, setFailed] = useState(false)
   const [busy, setBusy] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
+  // v5.65: активация промокода (свайпы/рубли/тариф — задаёт админ в генераторе)
+  const [promoOpen, setPromoOpen] = useState(false)
+  const [promoCode, setPromoCode] = useState('')
+  const [promoBusy, setPromoBusy] = useState(false)
   // v5.54: мутации из других вкладок (claim заданий, ИИ) прилетают сюда —
   // кошелёк больше не показывает устаревший баланс
   const storeBalance = useApp((s) => s.balance)
@@ -122,6 +127,29 @@ export function WalletCard({
   const swipes = data?.swipes ?? 0
   const balanceKop = data?.balanceKop ?? 0
   const swpWord = (n: number) => pluralRu(n, 'свайп', 'свайпа', 'свайпов')
+
+  /** Активация промокода: награда начисляется мгновенно (POST /api/promo/redeem) */
+  const redeemPromo = useCallback(async () => {
+    const code = promoCode.trim()
+    if (!code || promoBusy) return
+    setPromoBusy(true)
+    try {
+      const r = await api<{ ok: boolean; reward: string }>('/api/promo/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ code }),
+      })
+      haptic('success')
+      toast.success(`Промокод активирован: ${r.reward}`)
+      setPromoCode('')
+      setPromoOpen(false)
+      load()
+    } catch (e) {
+      haptic('error')
+      toast.error((e as Error).message || 'Не удалось активировать промокод')
+    } finally {
+      setPromoBusy(false)
+    }
+  }, [load, promoBusy, promoCode])
 
   /** Обмен всей суммы в выбранную сторону (сервер сам округляет по курсу) */
   const convert = async (action: 'rub2swp' | 'swp2rub') => {
@@ -292,6 +320,49 @@ export function WalletCard({
               )}
             </div>
           )}
+
+          {/* ---- ПРОМОКОД (v5.65) ---- */}
+          <div className="border-t border-tg-sep/60">
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                setPromoOpen((v) => !v)
+              }}
+              aria-expanded={promoOpen}
+              className="flex h-11 w-full items-center justify-between px-4 text-[13.5px] font-medium text-tg-hint transition active:opacity-60"
+            >
+              <span className="flex items-center gap-2">
+                <Ticket className="h-4 w-4" />
+                Активировать промокод
+              </span>
+              <ChevronDown className={cn('h-4 w-4 transition-transform', promoOpen && 'rotate-180')} />
+            </button>
+            {promoOpen && (
+              <div className="flex gap-2 px-4 pb-3.5">
+                <input
+                  value={promoCode}
+                  onChange={(e) => setPromoCode(e.target.value.toUpperCase())}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') void redeemPromo()
+                  }}
+                  placeholder="XXX-XXX-XXX"
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  spellCheck={false}
+                  className="h-11 min-w-0 flex-1 rounded-xl bg-tg-surface2 px-3.5 font-mono text-[14px] tracking-wider text-tg-text outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-tg-hint"
+                />
+                <button
+                  type="button"
+                  onClick={() => void redeemPromo()}
+                  disabled={promoBusy || !promoCode.trim()}
+                  className="flex h-11 shrink-0 items-center justify-center rounded-xl bg-tg-link px-4 text-[14px] font-semibold text-white transition active:scale-[0.97] disabled:opacity-45"
+                >
+                  {promoBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Активировать'}
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* ---- ИСТОРИЯ (свёрнутая по умолчанию) ---- */}
           {(data?.history.length ?? 0) > 0 && (

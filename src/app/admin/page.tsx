@@ -21,6 +21,7 @@ import {
   Server,
   ShieldAlert,
   Sun,
+  Ticket,
   Tv,
   Users,
   Wallet,
@@ -58,6 +59,7 @@ import { SubscriptionsTab } from './components/subscriptions-tab'
 import { SupportTab } from './components/support-tab'
 import { SystemTab } from './components/system-tab'
 import { BotTab } from './components/bot-tab'
+import { PromosTab } from './components/promos-tab'
 import { ToolsTab } from './components/tools-tab'
 import { UsersTab } from './components/users-tab'
 
@@ -77,6 +79,7 @@ type TabKey =
   | 'ads'
   | 'giveaways'
   | 'quests'
+  | 'promos'
   | 'system'
   | 'tools'
 
@@ -112,7 +115,7 @@ const NAV_GROUPS: Array<{ title?: string; keys: TabKey[] }> = [
   { title: 'Деньги', keys: ['finance', 'subscriptions', 'ads'] },
   { title: 'Контент', keys: ['channels', 'moderation', 'feedback'] },
   { title: 'Люди', keys: ['users', 'badges', 'support'] },
-  { title: 'Рост', keys: ['giveaways', 'quests'] },
+  { title: 'Рост', keys: ['giveaways', 'quests', 'promos'] },
   { title: 'Система', keys: ['audit', 'system', 'tools', 'bot'] },
 ]
 
@@ -369,6 +372,7 @@ export default function AdminPage() {
     { key: 'ads', label: 'Реклама', icon: Megaphone },
     { key: 'giveaways', label: 'Розыгрыши', icon: Gift },
     { key: 'quests', label: 'Задания', icon: ListChecks },
+    { key: 'promos', label: 'Промокоды', icon: Ticket },
     {
       key: 'system',
       label: 'Система',
@@ -411,6 +415,8 @@ export default function AdminPage() {
         return <GiveawaysTab tick={tick} onSettled={handleSettled} />
       case 'quests':
         return <QuestsTab tick={tick} onSettled={handleSettled} />
+      case 'promos':
+        return <PromosTab onSettled={handleSettled} />
       case 'system':
         return <SystemTab tick={tick} onSettled={handleSettled} onMaintenance={handleMaintenance} />
       case 'tools':
