@@ -278,6 +278,37 @@ function SingleVisualInner({
   onOpen?: () => void
   eager?: boolean
 }) {
+  // v5.77: КРУЖОК (video note) — круглый виджет как в Telegram: автовоспроизведение,
+  // без звука, длительность снизу. Раньше склеивался с обычным видео (кроп в [4/5]).
+  if (item.kind === 'circle' && item.url) {
+    return (
+      <div
+        className="flex items-center justify-center py-1.5"
+        data-noswipe
+        onDoubleClick={onDoubleTap}
+        onClick={() => onOpen?.()}
+      >
+        <div className="relative">
+          <video
+            src={item.url}
+            poster={item.poster}
+            aria-label={alt}
+            muted
+            loop
+            autoPlay
+            playsInline
+            preload="metadata"
+            className="h-[236px] w-[236px] max-h-[54dvh] rounded-full bg-tg-surface object-cover"
+          />
+          {item.duration ? (
+            <span className="pointer-events-none absolute bottom-2.5 left-1/2 -translate-x-1/2 rounded-full bg-black/50 px-2 py-0.5 text-[10.5px] font-semibold tabular-nums text-white">
+              {fmtMediaDuration(item.duration)}
+            </span>
+          ) : null}
+        </div>
+      </div>
+    )
+  }
   if (item.kind === 'video' && item.url) {
     return <VideoPlayer src={item.url} alt={alt} onDoubleTap={onDoubleTap} onOpen={onOpen} />
   }
@@ -337,7 +368,11 @@ function SingleVisualInner({
     )
   }
   // image
+  // v5.77: честный aspect-ratio из реальных размеров (width/height парсера):
+  // фото НЕ растягивается и НЕ сжимается — контейнер принимает пропорции
+  // оригинала, кроп object-cover (из LazyImage) срезает только перелёты.
   if (item.url) {
+    const ar = item.width && item.height ? item.width / item.height : null
     return (
       <DoubleTapHeart onDoubleTap={onDoubleTap} onSingleTap={onOpen}>
         <LazyImage
@@ -345,7 +380,12 @@ function SingleVisualInner({
           alt={alt}
           draggable={false}
           eager={eager}
-          className="mx-auto aspect-[4/5] max-h-[54dvh] w-full cursor-zoom-in rounded-[14px]"
+          className="mx-auto max-h-[54dvh] w-full cursor-zoom-in rounded-[14px]"
+          style={
+            ar
+              ? { aspectRatio: `${item.width} / ${item.height}` }
+              : { aspectRatio: '4 / 5' }
+          }
           onError={(e) => {
             e.currentTarget.closest('[data-noswipe]')?.setAttribute('style', 'display:none')
           }}
@@ -360,8 +400,15 @@ function SingleVisualInner({
 /* Публичный компонент                                                 */
 /* ------------------------------------------------------------------ */
 
-const VISUAL_KINDS = new Set(['image', 'video', 'gif', 'sticker'])
+const VISUAL_KINDS = new Set(['image', 'video', 'circle', 'gif', 'sticker'])
 const CARD_KINDS = new Set(['file', 'voice', 'audio', 'poll', 'link'])
+
+/** v5.77: «0:42» из секунд (длительность кружка/видео) */
+function fmtMediaDuration(sec: number): string {
+  const m = Math.floor(sec / 60)
+  const s = Math.floor(sec % 60)
+  return `${m}:${String(s).padStart(2, '0')}`
+}
 
 /** Все медиа поста: основное первым */
 export function postMediaItems(post: PostDTO): MediaItemDTO[] {

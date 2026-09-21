@@ -38,6 +38,13 @@ import {
 import { FORWARD_SOURCES_GOAL } from '@/lib/giveaway-tickets'
 
 export const dynamic = 'force-dynamic'
+/**
+ * v5.77: мягкий кап длительности. Тяжёлые цепочки (приветствие с фото,
+ * gw:join с проверкой подписок) раньше могли превышать дефолтный лимит
+ * serverless — платформа убивала функцию молча, Telegram получал не-2xx/таймаут
+ * и ретраил апдейт, что усугубляло зависания. 55с < 60с платформенного лимита.
+ */
+export const maxDuration = 55
 
 /**
  * Webhook Telegram Bot API — единственная точка приёма апдейтов бота.
@@ -72,52 +79,81 @@ const WEBHOOK_MAX_BYTES = 512 * 1024
 const SECRET_WARN_INTERVAL_MS = 60_000
 let lastSecretWarnAt = 0
 
-/* ------------------- Самолечение allowed_updates ------------------- */
+/* ------------------- Самолечение webhook-URL + allowed_updates ------------------- */
 
-const HEAL_KEY = 'webhook_selfheal_v2' // v2: +my_chat_member (задания join_chat → BotChat)
-let healChecked = false // in-memory: 1 раз на инстанс
+const HEAL_KEY = 'webhook_selfheal_v3' // v3: троттлинг-сверка URL (не одноразовый флаг)
+/** Троттлинг самолечения: не чаще раза в 15 минут на инстанс (getWebhookInfo не бесплатен) */
+const HEAL_INTERVAL_MS = 15 * 60_000
+let lastHealAt = 0
 
 /**
- * Если вебхук зарегистрирован СТАРОМ setWebhook (без business_connection в
- * allowed_updates), Telegram молча НЕ шлёт business_connection — и подключение
- * «секретаря» никогда не доедет. При первом же апдейте перерегистрируем вебхук
- * сами (тот же URL + secret, drop_pending_updates=false — ничего не теряем).
+ * v5.77: САМОЛЕЧЕНИЕ ВЕБХУКА ВНУТРИ САМОГО ВЕБХУКА.
+ *
+ * После «очистки деплоев» (v5.75.1) вебхук мог остаться зарегистрированным на
+ * dpl-URL конкретного деплоя — Telegram шлёт апдейты в никуда: бот молчит,
+ * кнопки крутят бесконечный спиннер. Раньше лечение жило в /api/health и под
+ * одноразовым флагом webhook_selfheal_v2 — если health никто не пингует,
+ * бот молчал вечно.
+ *
+ * Теперь при каждом апдейте (троттлинг 15 мин) сверяем фактический URL из
+ * getWebhookInfo с каноническим прод-доменом и перерегистрируем при расхождении.
+ * Канонический домен ВЫШЕ внешнего origin запроса — иначе самолечение
+ * perpetuate'ит dpl-URL (умирает вместе с деплоем).
  */
-async function healWebhookAllowedUpdates(request: Request): Promise<void> {
+async function healWebhook(request: Request): Promise<void> {
+  const now = Date.now()
+  if (now - lastHealAt < HEAL_INTERVAL_MS) return
+  lastHealAt = now
   try {
-    const done = await db.botSetting.findUnique({ where: { key: HEAL_KEY } })
-    if (done) return
-    if (!BOT_TOKEN()) return
-    // v5.76: канонический прод-домен ВЫШЕ внешнего origin запроса — иначе
-    // самолечение perpetuate'ит dpl-URL (умирает вместе с деплоем)
+    const token = BOT_TOKEN()
+    if (!token) return
     const origin =
       process.env.NEXT_PUBLIC_APP_URL?.trim() ||
       (process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
         ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.trim()}`
         : '') ||
       externalOrigin(request)
+    if (!origin) return
+    const expectedUrl = `${origin.replace(/\/$/, '')}/api/bot/webhook`
+
+    // 1) Фактический URL вебхука (расхождение = мёртвый/чужой домен)
+    const infoRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`, {
+      signal: AbortSignal.timeout(6000),
+    })
+    const info = (await infoRes.json().catch(() => null)) as {
+      ok?: boolean
+      result?: { url?: string; last_error_message?: string; pending_update_count?: number }
+    } | null
+    const currentUrl = info?.result?.url ?? ''
+    if (currentUrl === expectedUrl) return // уже здоров
+
+    console.warn(
+      `[bot/webhook] webhook URL расходится: "${currentUrl || '<пусто>'}" → "${expectedUrl}" (last_error: ${info?.result?.last_error_message ?? '—'}) — перерегистрирую`,
+    )
+
+    // 2) Перерегистрация на канонический домен (drop_pending=false — очередь доезжает)
     const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/setWebhook`, {
+    const res = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        url: `${origin}/api/bot/webhook`,
+        url: expectedUrl,
         ...(secret ? { secret_token: secret } : {}),
         allowed_updates: ['message', 'callback_query', 'business_connection', 'my_chat_member'],
         max_connections: 40,
+        drop_pending_updates: false,
       }),
       signal: AbortSignal.timeout(8000),
     })
     const data = (await res.json().catch(() => null)) as { ok?: boolean } | null
     if (data?.ok) {
-      const now = new Date().toISOString()
       await db.botSetting
-        .upsert({ where: { key: HEAL_KEY }, create: { key: HEAL_KEY, value: now }, update: { value: now } })
+        .upsert({ where: { key: HEAL_KEY }, create: { key: HEAL_KEY, value: new Date().toISOString() }, update: { value: new Date().toISOString() } })
         .catch(() => {})
-      console.log('[bot/webhook] allowed_updates self-healed: +business_connection')
+      console.log('[bot/webhook] webhook self-healed →', expectedUrl)
     }
   } catch (e) {
-    console.error('[bot/webhook] webhook self-heal failed (retry on next instance)', e)
+    console.error('[bot/webhook] webhook self-heal failed (retry on next update)', e)
   }
 }
 
@@ -641,10 +677,14 @@ async function handleGiveawayJoin(
   from: TgFrom | undefined,
   chatId?: number,
 ) {
-  if (!from || typeof from.id !== 'number') {
-    await botCall('answerCallbackQuery', { callback_query_id: cbId })
-    return
-  }
+  // v5.77: СНАЧАЛА мгновенно закрываем спиннер — раньше answerCallbackQuery
+  // уходил только после joinGiveaway (до 5 × getChatMember по 8с + DB), и у
+  // пользователя кнопка «грузила бесконечно». Результат приходим сообщением ниже.
+  await botCall('answerCallbackQuery', {
+    callback_query_id: cbId,
+    text: '⏳ Проверяем условия…',
+  }).catch(() => {})
+  if (!from || typeof from.id !== 'number') return
   const r = await joinGiveaway(giveawayId, {
     id: `tg_${from.id}`,
     tgId: from.id,
@@ -659,11 +699,10 @@ async function handleGiveawayJoin(
   )
 
   if (r.ok) {
-    await botCall('answerCallbackQuery', {
-      callback_query_id: cbId,
-      text: r.already ? 'Вы уже в игре! 🎉' : '🎉 Вы в игре! Заявка принята',
-      show_alert: !r.already,
-    })
+    // Спиннер уже закрыт ранним answer; фидбек — сообщением + живым счётчиком кнопки
+    if (!r.already && chatId) {
+      await botSendRich(chatId, '🎉 <b>Ты в игре!</b> Заявка принята — удачи!').catch(() => {})
+    }
     // Реалтайм-счётчик: кнопка «Участвовать (N)» обновляется у всех
     if (!r.already) void refreshGiveawayButton(giveawayId, r.count)
     // v5.46: при первой заявке — ЛС-карточка заданий (как заработать билеты)
@@ -674,12 +713,7 @@ async function handleGiveawayJoin(
   }
 
   if (r.reason === 'need_subscribe') {
-    await botCall('answerCallbackQuery', {
-      callback_query_id: cbId,
-      text: r.message,
-      show_alert: true,
-    })
-    // Кнопки подписки на недостающие каналы — вторым сообщением (удобно тапать)
+    // Кнопки подписки на недостающие каналы — сообщением (удобно тапать)
     if (chatId && r.channels.length > 0) {
       await botSendRich(
         chatId,
@@ -699,16 +733,16 @@ async function handleGiveawayJoin(
           }]) satisfies BotButton[][],
         },
       ).catch(() => {})
+    } else if (chatId) {
+      await botSendRich(chatId, r.message).catch(() => {})
     }
     return
   }
 
-  // ended / not_active / прочее — алерт с причиной
-  await botCall('answerCallbackQuery', {
-    callback_query_id: cbId,
-    text: r.message,
-    show_alert: true,
-  })
+  // ended / not_active / прочее — сообщение с причиной
+  if (chatId) {
+    await botSendRich(chatId, r.message).catch(() => {})
+  }
 }
 
 /** callback_query login:<token> — подтверждение входа */
@@ -904,11 +938,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false }, { status: 413 })
   }
 
-  // Самолечение allowed_updates (1 раз на инстанс; no-op если уже healed)
-  if (!healChecked) {
-    healChecked = true
-    await healWebhookAllowedUpdates(request)
-  }
+  // v5.77: самолечение webhook-URL (троттлинг 15 мин внутри функции) — раньше
+  // здесь был одноразовый флаг, и бот молчал вечно, пока health никто не пингует
+  await healWebhook(request)
 
   let update: TgUpdate
   try {

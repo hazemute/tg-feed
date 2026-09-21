@@ -37,6 +37,8 @@ export type ParseChannelResult = {
   added: number
   /** рекламных клише-постов пропущено (не создано) */
   adSkipped?: number
+  /** v5.77: иностранных постов пропущено (фильтр «только русский») */
+  langSkipped?: number
   error?: string
 }
 
@@ -59,6 +61,7 @@ export type ParseResult = {
 export type MediaKind =
   | 'image'
   | 'video'
+  | 'circle' // v5.77: кружок (video note) — круглый, отдельно от обычного видео
   | 'gif'
   | 'sticker'
   | 'voice'
@@ -82,6 +85,9 @@ export type MediaItem = {
   site?: string // домен линк-превью
   description?: string // описание линк-превью
   link?: string // URL линк-превью
+  width?: number // v5.77: реальная ширина (px) — честный aspect-ratio на клиенте
+  height?: number // v5.77: реальная высота (px)
+  duration?: number // v5.77: длительность видео/кружка/голосового (сек)
 }
 
 export type ParsedPost = {
@@ -191,6 +197,43 @@ function spoilerNear(block: string, index: number, span = 420): boolean {
   return /tg-spoiler|message_spoiler/.test(scope)
 }
 
+/**
+ * v5.77: фильтр «только русские посты» — требование владельца (аудитория RU).
+ * Считаем долю кириллицы среди букв: ≥30% кириллицы или почти нет букв
+ * (медиа-пост/цифры) → пропускаем. Каналы берутся из русского каталога,
+ * но внешние ссылки/перепосты могут тащить иностранный текст.
+ */
+export function isRussianText(text: string): boolean {
+  const t = text.trim()
+  if (t.length < 3) return true // медиа-пост без текста — язык канала уже русский
+  const letters = t.replace(/[^\p{L}]/gu, '')
+  if (letters.length < 3) return true // только цифры/эмодзи/ссылки
+  const cyr = letters.replace(/[^\p{Script=Cyrillic}]/gu, '').length
+  return cyr / letters.length >= 0.3
+}
+
+/** «0:42» / «1:05:07» → секунды (duration видео/кружка в t.me/s) */
+function parseTgDuration(raw: string): number | null {
+  const parts = raw.trim().split(':').map((p) => Number(p))
+  if (parts.length < 2 || parts.some((n) => !Number.isFinite(n))) return null
+  let sec = 0
+  for (const p of parts) sec = sec * 60 + p
+  return sec > 0 && sec < 24 * 3600 ? sec : null
+}
+
+/** width/height из inline-style («width: 512px; height: 340px») рядом со скоупом */
+function parseWxH(scope: string): { width?: number; height?: number } | null {
+  const w = scope.match(/width\s*:\s*(\d{2,5})px/)?.[1]
+  const h = scope.match(/height\s*:\s*(\d{2,5})px/)?.[1]
+  const width = w ? Number(w) : undefined
+  const height = h ? Number(h) : undefined
+  if (!width && !height) return null
+  // фиксируем только правдоподобные размеры превью (не вёрстку страницы)
+  if (width != null && (width < 40 || width > 4096)) return null
+  if (height != null && (height < 40 || height > 4096)) return null
+  return { ...(width ? { width } : {}), ...(height ? { height } : {}) }
+}
+
 // ------------------------------------------------------------------
 // Прогрев edge-кэша медиа (v5.58)
 // ------------------------------------------------------------------
@@ -253,29 +296,47 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
 
     /* ---------- Фото (возможно альбом: несколько photo_wrap в одном посте) ----------
         Атрибуты и кавычки в разметке t.me/s варьируются — ищем класс,
-        затем url() в ближайших 600 символах (надёжнее одного регэкспа) */
+        затем url() в ближайших 600 символах (надёжнее одного регэкспа).
+        v5.77: photo_wrap несёт inline-style с реальными размерами — сохраняем
+        width/height, чтобы клиент рисовал честные пропорции без растяжения. */
     for (const m of block.matchAll(/tgme_widget_message_photo_wrap/g)) {
       const scope = block.slice(m.index ?? 0, (m.index ?? 0) + 600)
       const url = bgImageOf(scope)
-      if (url)
+      if (url) {
+        const dims = parseWxH(scope)
         gallery.push({
           kind: 'image',
           url,
+          ...(dims?.width ? { width: dims.width } : {}),
+          ...(dims?.height ? { height: dims.height } : {}),
           ...(spoilerNear(block, m.index ?? 0) ? { spoiler: true } : {}),
         })
+      }
     }
 
-    /* ---------- Видео / GIF (прямые <video src>) ---------- */
+    /* ---------- Видео / GIF / КРУЖКИ (прямые <video src>) ----------
+        v5.77: кружок (video note) в веб-превью — video с round-классом
+        (tgme_widget_message_roundvideo / round_video / video_round) либо
+        player-блок с round-маркером. Раньше он безвозвратно склеивался
+        с обычным видео — теперь сохраняем отдельным kind:'circle'. */
     for (const m of block.matchAll(/<video([^>]*)>/g)) {
       const attrs = m[1]
       const src = attrs.match(/\ssrc="([^"]+)"/)?.[1]
       if (!src) continue
       const isGif = /loop|autoplay/i.test(attrs)
       const poster = attrs.match(/\sposter="(https:[^"]+)"/)?.[1]
+      const playerScope = block.slice(Math.max(0, (m.index ?? 0) - 400), (m.index ?? 0) + 900)
+      const isRound = /round[_-]?video|message_roundvideo/i.test(playerScope)
+      const dims = parseWxH(playerScope)
+      const durRaw = playerScope.match(/(?:video|roundvideo)_duration[^>]*>([\d:]+)</)?.[1]
+      const duration = durRaw ? parseTgDuration(durRaw) : null
       gallery.push({
-        kind: isGif ? 'gif' : 'video',
+        kind: isRound ? 'circle' : isGif ? 'gif' : 'video',
         url: decodeEntities(src),
         ...(poster ? { poster: decodeEntities(poster) } : {}),
+        ...(dims?.width ? { width: dims.width } : {}),
+        ...(dims?.height ? { height: dims.height } : {}),
+        ...(duration ? { duration } : {}),
         ...(spoilerNear(block, m.index ?? 0) ? { spoiler: true } : {}),
       })
     }
@@ -337,8 +398,8 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
       })
     }
 
-    /* ---------- Выбор основного медиа (приоритет видео > гиф > фото > …) ---------- */
-    const priority: MediaKind[] = ['video', 'gif', 'image', 'sticker', 'voice', 'audio', 'file', 'poll', 'link']
+    /* ---------- Выбор основного медиа (приоритет кружок > видео > гиф > фото > …) ---------- */
+    const priority: MediaKind[] = ['circle', 'video', 'gif', 'image', 'sticker', 'voice', 'audio', 'file', 'poll', 'link']
     for (const kind of priority) {
       const idx = gallery.findIndex((x) => x.kind === kind && (x.url || x.name || x.question || x.link))
       if (idx !== -1) {
@@ -382,8 +443,9 @@ export function parseChannelHtml(html: string, username: string): ParsedPost[] {
  * маркеры: видео-стикеры → ![ev:ID](…), Lottie (.tgs) → ![el:ID](…) — клиент
  * рендерит <video> / lottie-web. Первый проход по каналу: 1
  * getCustomEmojiStickers на НОВЫЕ id; дальше всё из таблицы — ноль Bot API.
+ * v5.77: export — используется и автосбором (унификация контента).
  */
-async function upgradeCustomEmoji(posts: ParsedPost[]): Promise<ParsedPost[]> {
+export async function upgradeCustomEmoji(posts: ParsedPost[]): Promise<ParsedPost[]> {
   if (!botEnabled()) return posts
   const ids = new Set<string>()
   for (const p of posts) {
@@ -622,8 +684,10 @@ export async function runParser(
       // Премиум-эмодзи: помечаем анимированные видео-стикеры (Bot API, кэш в БД)
       parsed = await upgradeCustomEmoji(parsed)
 
-      /* ---------- История канала: ?before=<id> пагинация ---------- */
-      const maxPages = Math.max(1, Math.min(6, Math.floor(pages)))
+      /* ---------- История канала: ?before=<id> пагинация ----------
+          v5.77: кап поднят 6 → 20 страниц: цель — 1000+ постов на категорию,
+          глубокое начальное заполнение каталога (прогон tools deep). */
+      const maxPages = Math.max(1, Math.min(20, Math.floor(pages)))
       for (let page = 1; page < maxPages && parsed.length > 0; page++) {
         let minId: number | null = null
         for (const p of parsed) {
@@ -725,8 +789,15 @@ export async function runParser(
 
       let added = 0
       let adSkipped = 0 // рекламные клише пропущены (в ленту не попали)
+      let langSkipped = 0 // v5.77: иностранные посты пропущены (только русский)
       for (const p of queue) {
         if (added >= per) break
+        // v5.77: парсим ТОЛЬКО русские посты (текстовые — по кириллице;
+        // медиа без текста проходят, канал уже из русского каталога)
+        if (!isRussianText(p.text)) {
+          langSkipped++
+          continue
+        }
         const primary = p.media
         // mediaMeta — доп. атрибуты основного медиа (файл/аудио/опрос/линк-превью);
         // gallery — остальные элементы (JSON MediaItem[])
@@ -842,7 +913,7 @@ export async function runParser(
       }
       void warmMediaEdge(warmUrls)
 
-      results.push({ username: target, added, adSkipped })
+      results.push({ username: target, added, adSkipped, ...(langSkipped > 0 ? { langSkipped } : {}) })
       processed++
       report(results[results.length - 1], channel.title, processed)
     } catch (e) {

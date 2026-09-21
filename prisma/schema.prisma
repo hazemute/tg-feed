@@ -46,6 +46,10 @@ model User {
   // === Опыт и уровни (v5.75): XP за активность, уровень монотонно растёт (не падает при штрафах) ===
   xp             Int      @default(0)
   level          Int      @default(1)
+  // === Кошелёк v2 (v5.77): адреса двух счетов + кто пригласил (реферальные 5% от трат) ===
+  swipeAddress   String?  @unique // адрес Swipe-счёта (SWP-XXXX-XXXX)
+  rubAddress     String?  @unique // адрес Рубль-счёта (RUB-XXXX-XXXX)
+  referredById   String? // tg_<uid> пригласившего (лениво из GiveawayReferral)
   createdAt      DateTime @default(now())
 
   @@index([tier])
@@ -432,6 +436,29 @@ model BalanceLog {
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+// Кошелёк v2 (v5.77): крипто-стиль журнала переводов. Одна строка = одна
+// транзакция «адрес → адрес» (переводы между пользователями, между своими
+// счетами, реферальные начисления). Внутренние проводки без адресов
+// (пополнения, траты ИИ, задания) живут в BalanceLog; клиент мержит оба
+// журнала в единую «Историю». Без FK — только индексы (журнал растёт всегда).
+model WalletTx {
+  id         String   @id @default(cuid())
+  kind       String // transfer | internal | ref_earn
+  currency   String // swp | rub
+  amount     Int // всегда положительный; направление задают from/to
+  fromAddr   String? // адрес отправителя
+  toAddr     String? // адрес получателя
+  fromUserId String? // tg_<uid> отправителя
+  toUserId   String? // tg_<uid> получателя
+  note       String?
+  createdAt  DateTime @default(now())
+
+  @@index([fromUserId, createdAt])
+  @@index([toUserId, createdAt])
+  @@index([fromAddr])
+  @@index([toAddr])
 }
 
 // Опыт (v5.75): журнал начислений/штрафов XP + база дневных лимитов анти-абуза.

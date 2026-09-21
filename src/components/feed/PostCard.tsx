@@ -123,7 +123,6 @@ function PostText({
   text,
   postId,
   onSummary,
-  onOpenMore,
 }: {
   text: string
   postId: string
@@ -131,44 +130,21 @@ function PostText({
   onOpenMore?: () => void
 }) {
   const t = useT()
-  // На ПК (lg+) текст не обрезаем — читаемость важнее компактности ленты
-  const isDesktop = useIsDesktop()
-  const { ref, cut } = useLineTruncate(text, TEASER_LINES, !isDesktop)
-  const truncated = cut !== null && cut.length < text.length
-
+  /*
+   * v5.77: ПОЛНЫЕ ПОСТЫ — приказ владельца «сделай чтобы посты показывали
+   * полностью». useLineTruncate (14 строк + «ещё») больше не вызывается в
+   * ленте — ни на мобильных, ни на ПК: пост всегда показывается целиком.
+   * Кнопка «ещё» и переход в оверлей по обрезке исчезли сами по построению.
+   */
   const long = text.length > 400
   // Перевод замещает текст на месте (Twitter-style), контрол — строкой под постом
   const tr = useTranslation(postId, text)
   const shown = translatedText(tr, text)
-  // Перевод может быть короче/длиннее оригинала — хук сам пересчитает срез
-  const trResult = useLineTruncate(shown, TEASER_LINES, !isDesktop && shown !== text)
-  const activeCut = shown !== text ? trResult.cut : cut
-  const activeRef = shown !== text ? trResult.ref : ref
-  const activeTruncated = activeCut !== null && activeCut.length < shown.length
 
   return (
     <div className="mt-3">
-      <div ref={activeRef}>
-        <RichText
-          text={activeCut ?? shown}
-          trailing={
-            activeTruncated && (
-              <button
-                type="button"
-                data-noswipe
-                onClick={(e) => {
-                  e.stopPropagation()
-                  haptic('light')
-                  onOpenMore?.()
-                }}
-                aria-label={t('post.readMore')}
-                className="ml-1.5 inline select-none whitespace-nowrap align-baseline text-post font-medium text-tg-hint active:opacity-60"
-              >
-                {t('post.more')}
-              </button>
-            )
-          }
-        />
+      <div>
+        <RichText text={shown} />
       </div>
       {long && onSummary && (
         <button
@@ -329,21 +305,17 @@ function TextActionsRow({
 const FRESH_MS = 2 * 60 * 60 * 1000
 
 /**
- * Причина рекомендации (чип в мета-строке) — прозрачность ленты: читатель видит,
- * ПОЧЕМУ этот пост ему показан. Эвристика на клиенте (серверные сигналы не выдаём):
- * интересы профиля → «по вашим интересам»; высокое вовлечение → «популярно»;
+ * Причина рекомендации (чип в мета-строке).
+ * v5.77: ветка «по вашим интересам» УДАЛЕНА по приказу владельца («убери это»).
+ * Остались только объективные причины: высокое вовлечение → «популярно»;
  * совсем свежий пост → «новое». У подписок и рекламы объяснений не нужно.
  */
 function recommendReason(
   post: PostDTO,
-  interests: string[],
   lang: 'ru' | 'en',
-): { key: 'interests' | 'popular' | 'new'; label: string } | null {
+): { key: 'popular' | 'new'; label: string } | null {
   if (post.sponsored || post.promoted || post.channel.subscribed) return null
   const ageH = Math.max(0, (Date.now() - new Date(post.publishedAt).getTime()) / 3_600_000)
-  const inInterests =
-    post.channel.categorySlug !== null && interests.includes(post.channel.categorySlug)
-  if (inInterests) return { key: 'interests', label: lang === 'ru' ? 'по вашим интересам' : 'for you' }
   const engagement = post.likesCount + post.commentsCount * 3 + post.bookmarksCount * 2
   if (engagement >= 6 && ageH < 48) return { key: 'popular', label: lang === 'ru' ? 'популярно' : 'popular' }
   if (ageH < 3) return { key: 'new', label: lang === 'ru' ? 'новое' : 'new' }
@@ -707,8 +679,10 @@ export function PostCard({
         </div>
       )}
 
-      {/* Мета-строка (ненавязчивая): просмотры — как в оригинальном канале;
-          у длинных текстов — время чтения; справа — «Не интересно» (скрыть пост) */}
+      {/* Мета-строка (ненавязчивая): v5.77 — пересобрана: все текстовые элементы
+          nowrap (раньше «12,3K просмотров» и чип переносились ВНУТРИ себя —
+          «просмотры в столбики»); левая группа — просмотры/чип/время,
+          правая — listen/скрыть/жалоба (ml-auto). */}
       <div
         className={cn(
           'flex items-center gap-1.5 px-4 text-[12.5px] text-tg-hint',
@@ -716,16 +690,16 @@ export function PostCard({
         )}
       >
         <Eye className="h-3.5 w-3.5 shrink-0" aria-hidden />
-        <span className="tabular-nums">
+        <span className="whitespace-nowrap tabular-nums">
           {formatCount(post.viewsCount)}
           {post.viewsTg != null ? ` ${t('card.inChannel')}` : ` ${t('card.views')}`}
         </span>
         {(() => {
-          const reason = recommendReason(post, user?.categories ?? [], lang)
+          const reason = recommendReason(post, lang)
           return (
             reason && (
               <span
-                className="shrink-0 rounded-full bg-tg-link/10 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-tg-link"
+                className="shrink-0 whitespace-nowrap rounded-full bg-tg-link/10 px-1.5 py-0.5 text-[10.5px] font-semibold leading-none text-tg-link"
                 title={t('feed.reasonHint')}
               >
                 {reason.label}
@@ -739,7 +713,7 @@ export function PostCard({
           const mins = post.text.length > 280 ? readingMinutes(post.text) : 0
           return (
             mins > 0 && (
-              <span className="shrink-0 tabular-nums" title={t('feed.minRead')}>
+              <span className="shrink-0 whitespace-nowrap tabular-nums" title={t('feed.minRead')}>
                 · {mins} {t('feed.minRead')}
               </span>
             )

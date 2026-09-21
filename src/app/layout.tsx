@@ -48,7 +48,7 @@ export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: 'Tg Swipe — умная лента Telegram-каналов',
   description:
-    'Умная лента постов из открытых Telegram-каналов по вашим интересам: работает как сайт по домену и как Telegram Mini App. Подписка в один тап, AI-саммари, закладки.',
+    'Умная лента постов из открытых Telegram-каналов: работает как сайт по домену и как Telegram Mini App. Подписка в один тап, AI-саммари, закладки.',
   keywords: ['Telegram', 'лента', 'каналы', 'Tg Swipe', 'сайт', 'Mini App'],
   applicationName: 'Tg Swipe',
   manifest: '/manifest.webmanifest',
@@ -67,7 +67,7 @@ export const metadata: Metadata = {
     siteName: 'Tg Swipe',
     title: 'Tg Swipe — умная лента Telegram-каналов',
     description:
-      'Лента постов по вашим интересам: свайпы, AI-саммари, закладки. Работает как сайт и как Telegram Mini App.',
+      'Игровая лента: свайпы, AI-саммари, закладки. Работает как сайт и как Telegram Mini App.',
     images: [
       {
         url: '/tgswipe-welcome.png',
@@ -81,7 +81,7 @@ export const metadata: Metadata = {
     card: 'summary_large_image',
     title: 'Tg Swipe — умная лента Telegram-каналов',
     description:
-      'Лента постов по вашим интересам: свайпы, AI-саммари, закладки.',
+      'Игровая лента: свайпы, AI-саммари, закладки.',
     images: ['/tgswipe-welcome.png'],
   },
   appleWebApp: {

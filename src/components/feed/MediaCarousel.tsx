@@ -39,6 +39,7 @@ function SlideVisual({
       return n
     })
   if (item.kind === 'video' || item.kind === 'gif') {
+    const videoFit = item.width && item.height ? { aspectRatio: `${item.width} / ${item.height}` } : undefined
     return (
       <video
         src={item.url}
@@ -51,7 +52,26 @@ function SlideVisual({
         preload="metadata"
         onError={hide}
         onClick={onClick}
-        className="mx-auto aspect-[4/5] max-h-[54dvh] w-full cursor-zoom-in rounded-[14px] bg-tg-surface object-cover"
+        style={videoFit}
+        className="mx-auto max-h-[54dvh] w-full cursor-zoom-in rounded-[14px] bg-tg-surface object-cover"
+      />
+    )
+  }
+  if (item.kind === 'circle') {
+    // v5.77: кружок в карусели (редко, но бывает в альбомах) — круглый видеослайд
+    return (
+      <video
+        src={item.url}
+        poster={item.poster}
+        aria-label={`${alt} — кружок ${i + 1}`}
+        muted
+        loop
+        autoPlay
+        playsInline
+        preload="metadata"
+        onError={hide}
+        onClick={onClick}
+        className="mx-auto h-[236px] w-[236px] max-h-[54dvh] cursor-zoom-in rounded-full bg-tg-surface object-cover"
       />
     )
   }
@@ -63,11 +83,19 @@ function SlideVisual({
       draggable={false}
       onClick={onClick}
       onError={hide}
+      // v5.77: честный aspect-ratio из реальных размеров, дефолт — 4/5
+      style={
+        item.width && item.height && item.kind !== 'sticker'
+          ? { aspectRatio: `${item.width} / ${item.height}` }
+          : undefined
+      }
       className={cn(
         'mx-auto max-h-[54dvh] w-full cursor-zoom-in rounded-[14px]',
         item.kind === 'sticker'
           ? 'max-h-[44dvh] max-w-[300px] rounded-[14px]'
-          : 'aspect-[4/5]',
+          : item.width && item.height
+            ? undefined
+            : 'aspect-[4/5]',
       )}
       imgClassName={item.kind === 'sticker' ? 'object-contain' : undefined}
     />

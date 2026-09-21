@@ -50,6 +50,7 @@ export type SubscriptionDTO = {
 export type MediaKind =
   | 'image'
   | 'video'
+  | 'circle' // v5.77: кружок (video note) — круглый виджет как в Telegram
   | 'gif'
   | 'sticker'
   | 'voice'
@@ -75,6 +76,11 @@ export type MediaItemDTO = {
   site?: string
   description?: string
   link?: string
+  /** v5.77: реальные размеры медиа из t.me/s — честный aspect-ratio без деформации */
+  width?: number
+  height?: number
+  /** v5.77: длительность видео/кружка (сек) */
+  duration?: number
 }
 
 export type PostDTO = {

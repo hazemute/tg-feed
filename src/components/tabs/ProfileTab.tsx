@@ -37,8 +37,7 @@ import { THEMES, themeName } from '@/lib/themes'
 import { SupportChat } from '@/components/support/SupportChat'
 import { UserBadges } from '@/components/badges/UserBadges'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
-import { WalletCard } from '@/components/tabs/WalletCard'
-import { TopUpModal } from '@/components/tabs/TopUpModal'
+import { WalletPage } from '@/components/tabs/WalletPage'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 import { LevelBar } from '@/components/profile/LevelBar'
@@ -91,9 +90,8 @@ export function ProfileTab() {
   const [customizerOpen, setCustomizerOpen] = useState(false)
   // v5.75: шит уровня (тап по XP-бару под ником)
   const [levelOpen, setLevelOpen] = useState(false)
-  // Кошелёк (v5.39): шторка пополнения + счётчик изменений для обновления баланса
-  const [topUpOpen, setTopUpOpen] = useState(false)
-  const [walletReload, setWalletReload] = useState(0)
+  // Кошелёк v2 (v5.77): полная страница вместо плашки; пополнение живёт внутри неё
+  const [walletOpen, setWalletOpen] = useState(false)
 
   const reload = () => {
     if (!user) return
@@ -159,10 +157,7 @@ export function ProfileTab() {
   // Тир для UI: если шит тарифов уже грузил свежие данные (GET /api/tiers) —
   // приоритет им, иначе берём тир из стора (UserDTO.tier)
   const headerTier = tiersData?.tier ?? user.tier ?? 'free'
-  // «В Tg Swipe с {месяц год}» — дата регистрации из UserDTO.createdAt (v5.27)
-  const memberSinceLabel = user.createdAt
-    ? new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' }).format(new Date(user.createdAt))
-    : null
+  // v5.77: «В Tg Swipe с …» убрано — memberSinceLabel больше не нужен
 
   const categoryTitle = (slug: string) => categories.find((c) => c.slug === slug)?.title ?? slug
 
@@ -236,10 +231,11 @@ export function ProfileTab() {
               }}
             />
           )}
+          {/* v5.77: строка «В Tg Swipe с …» убрана — приказ «меньше текста везде» */}
           {!user.isGuest && (
             <div className="mt-1 flex items-center gap-1 text-[12px] font-medium text-tg-link">
               <ShieldCheck className="h-3.5 w-3.5" />
-              {memberSinceLabel ? `В Tg Swipe с ${memberSinceLabel}` : 'Telegram подтверждён'}
+              Telegram подтверждён
             </div>
           )}
           {user.isGuest && (
@@ -273,12 +269,22 @@ export function ProfileTab() {
         <StatBlock value={stats?.bookmarks} label="Сохранено" />
       </section>
 
-      {/* Кошелёк (v5.39): рубли + свайпы, вкладки Рубли/Свайпы — только авторизованным */}
+      {/* Кошелёк v2 (v5.77): кнопка вместо плашки — полная страница открывается по тапу */}
       {!user.isGuest && (
-        <WalletCard
-          reloadSignal={walletReload}
-          onTopUp={() => setTopUpOpen(true)}
-        />
+        <button
+          type="button"
+          onClick={() => {
+            haptic('light')
+            setWalletOpen(true)
+          }}
+          className="mx-4 mt-3 flex items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-tg-link/15 text-tg-link">
+            <Wallet className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+          </span>
+          <span className="flex-1 text-[16px] font-semibold text-tg-text">Кошелёк</span>
+          <ChevronRight className="h-5 w-5 text-tg-hint" aria-hidden />
+        </button>
       )}
 
       {/* v5.46: активный розыгрыш — билеты/задания/промокод (скрыт, если розыгрыша нет) */}
@@ -549,15 +555,8 @@ export function ProfileTab() {
       {/* Реквизиты и контакты (требования СБ ЮKassa) */}
       <RequisitesSheet open={requisitesOpen} onClose={() => setRequisitesOpen(false)} />
 
-      {/* Пополнение рублёвого баланса (v5.39): после оплаты обновляем кошелёк */}
-      <TopUpModal
-        open={topUpOpen}
-        onClose={() => setTopUpOpen(false)}
-        onReload={() => {
-          setWalletReload((n) => n + 1)
-          reload()
-        }}
-      />
+      {/* Кошелёк v2 (v5.77): полная страница (баланс, счета с адресами, переводы, рефералка, история) */}
+      <WalletPage open={walletOpen} onClose={() => setWalletOpen(false)} />
 
       {/* Меню «Информация»: соглашение, конфиденциальность, о приложении */}
       <BottomSheet
@@ -663,7 +662,12 @@ export function ProfileTab() {
         zClass={customizerOpen ? 'z-[95]' : undefined}
         onClose={() => setTiersOpen(false)}
         onLoaded={setTiersData}
-        onWalletChanged={() => setWalletReload((v) => v + 1)}
+        onWalletChanged={() => {
+          // v5.77: тихий рефетч баланса в store (покупка тира списала свайпы/₽)
+          api<{ balanceKop: number; swipes: number }>('/api/wallet')
+            .then((r) => useApp.getState().patchBalance({ balanceKop: r.balanceKop, swipes: r.swipes }))
+            .catch(() => {})
+        }}
       />
 
       {/* Оформление профиля: полная страница с вкладками Палитры/Фон/Рамка + кастомные цвета.

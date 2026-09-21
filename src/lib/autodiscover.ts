@@ -2,7 +2,8 @@ import { db } from '@/lib/db'
 import { redis, bumpCache } from '@/lib/redis'
 import { emitAppEvent } from '@/lib/events'
 import { isValidChannelUsername } from '@/lib/server'
-import { parseChannelHtml } from '@/lib/parse-engine'
+import { parseChannelHtml, upgradeCustomEmoji, isRussianText } from '@/lib/parse-engine'
+import { cleanPostText } from '@/lib/text-clean'
 import { getChatInfo, getChatMemberCount } from '@/lib/tg-bot'
 import { classifyChannelsBatch } from '@/lib/classify'
 
@@ -36,7 +37,7 @@ const STALE_MS = 3 * 60 * 1000 // «running» считается зависши�
 const QUEUE_CAP = 1200 // каскад из каталогов: очередь пополняется по мере разбора
 const DEFAULT_MAX_NEW = 60
 const MAX_NEW_LIMIT = 300
-const POSTS_PER_NEW_CHANNEL = 25
+const POSTS_PER_NEW_CHANNEL = 60 // v5.77: глубже с первого раза (цель — 1000+ постов/категорию)
 const MIN_MEMBERS = 100 // фильтр качества: каналы-пустышки не тянут в ленту
 const REFILL_THRESHOLD = 30 // при такой очереди — подпитаться из источников
 
@@ -179,11 +180,11 @@ function extractFromJson(text: string): string[] {
  * так что список можно расширять без риска.
  */
 /*
- * v5.76: КУРАТОРСКИЙ КАТАЛОГ ПОДРОСТКОВОГО КОНТЕНТА.
- * Раньше тут было 16 полит-новостных каналов (риа/тасс/коммерсант…) против
- * 2 юмористических — лента заполнялась «взрослыми» новостями, а первая
- * аудитория приложения — подростки. Пересобрано: игры/мемы/кино/аниме/IT,
- * новости срезаны до «срочного/инцидентов» (mash/baza — читают все).
+ * v5.77: КУРАТОРСКИЙ КАТАЛОГ — ТОЛЬКО ИГРОВЫЕ РУССКИЕ КАНАЛЫ.
+ * Приказ владельца: «парсились пока что только ИГРОВЫЕ КАНАЛЫ и посты».
+ * Раньше было 10 категорий (мемы/кино/аниме/IT/новости…) — теперь одна games.
+ * Ядро — крупнейшие русские игровые медиа; дальший рост — BFS по упоминаниям
+ * (extractCandidates) + автосбор tgstat/combot с games-фильтром (ONLY_SLUG).
  * Несуществующие юзернеймы безвредны: processCandidate проверяет t.me/s
  * (посты + ≥100 подписчиков) и просто не создаёт канал.
  */
@@ -191,6 +192,7 @@ export const CATALOG: Array<{ slug: string; usernames: string[] }> = [
   {
     slug: 'games',
     usernames: [
+      // крупнейшие игровые медиа
       'stopgame_ru',
       'igromania',
       'dtfru',
@@ -199,38 +201,61 @@ export const CATALOG: Array<{ slug: string; usernames: string[] }> = [
       'vgtimes',
       'cybersportru',
       'playgrounderu',
+      'shazoo',
+      'gamemag_ru',
+      'games_mailru',
+      'vesti_games',
+      'ignrussia',
+      // игровые сообщества и дилы
+      'steam_deals_ru',
+      'steam_market_ru',
+      'gamedeals_ru',
+      'freegamesru',
+      'gamewayschannel',
+      'playstateru',
+      'mmotyr',
+      'mmohunt',
+      'playnpost',
+      'zarium',
+      'gamedev_ru',
+      'indiegameru',
+      // игры-сообщества
+      'dota2ru',
+      'cs2_ru',
+      'counterstrike2',
+      'minecraft_ru',
+      'roblox_ru',
+      'fortnite_ru',
+      'gta5online_ru',
+      'tarkovru',
+      'warframe_ru',
+      'genshinimpact_ru',
+      'honkaistarrail_ru',
+      'zenlesszonezero_ru',
+      'wutheringwaves_ru',
+      'brawlstars_ru',
+      'clashroyale_ru',
+      'standoff2_ru',
+      'pubgmobile_ru',
+      'apexlegendsru',
+      'valorantru',
+      'leagueoflegendsru',
+      'hearthstone_ru',
+      'worldoftanksru',
+      'warthunder_ru',
+      'eldenringru',
+      'dark_souls_ru',
+      'pokemongo_ru',
+      'diablo_ru',
+      'lostarkru',
+      'rustyoru',
+      'dayzru',
+      'callofdutyru',
+      'warzonemobile',
+      'pathofexileru',
+      'wowcircle',
     ],
   },
-  {
-    slug: 'humor',
-    usernames: [
-      'lentachold',
-      'ideality',
-      'anekdoty',
-      'mem_express',
-      'memchans',
-      'poshlo_tut',
-      'smeshno',
-    ],
-  },
-  {
-    slug: 'it',
-    usernames: ['proglib', 'tproger', 'habr_com', 'roddel', 'durov', 'telegram', 'tginfo'],
-  },
-  {
-    slug: 'cinema',
-    usernames: ['kinopoisk', 'kinomania_ru', 'filmguru', 'kinoafisha'],
-  },
-  {
-    slug: 'anime',
-    usernames: ['anilibria_tv', 'animegoand', 'anime_news_ru'],
-  },
-  { slug: 'sport', usernames: ['sports_ru', 'matchtv', 'championat'] },
-  { slug: 'crypto', usernames: ['cryptocurrency', 'cointelegraph'] },
-  { slug: 'business', usernames: ['vc_ru'] },
-  // «Минимально новостей»: только инциденты/срочное — без полит-агентств
-  { slug: 'news', usernames: ['mash', 'breakingmash', 'baza'] },
-  { slug: 'music', usernames: ['rap_ru', 'newmusicru', 'zvuk_official'] },
 ]
 
 /** Служебные пути t.me, которые не являются каналами */
@@ -269,6 +294,8 @@ const TG_SERVICE_PATHS = new Set([
 // ------------------------- Классификатор категорий -------------------------
 
 const CATEGORY_HINTS: Array<{ slug: string; re: RegExp }> = [
+  // v5.77: игры — ПЕРВЫЙ хинт (приоритет): их больше всего в автосборе и они целевая категория
+  { slug: 'games', re: /игр|гейм|game|игров|киберсп|esport|e-?sport|steam|playstation|\bxbox\b|nintendo|геймер|геймпад|консол|стрим|летсплей|твич|twitch|dota|cs\b|cs2|вальв|valve|minecraft|роблокс|fortnite|ганшин|genshin|warframe|тарков|tarkov/i },
   { slug: 'news', re: /новост|breaking|срочн|сводк|лентач|mash|риа|відомост|ведомост|коммерсант|газет|agenc|news|media/i },
   { slug: 'crypto', re: /крипт|биткоин|bitcoin|btc|ethereum|eth\b|альткоин|токен|трейд|coin|defi|crypto|blockchain|блокчейн/i },
   { slug: 'it', re: /\bit\b|разработ|программ|код|python|javascript|frontend|backend|нейросет|ии\b|ai\b|gpt|tech|гаджет|стартап-тех|хакер|dev|software|дизайн/i },
@@ -278,6 +305,22 @@ const CATEGORY_HINTS: Array<{ slug: string; re: RegExp }> = [
   { slug: 'food', re: /ед|рецепт|готов|кулинар|кофе|чай|десерт|food|повар/i },
   { slug: 'sport', re: /спорт|футбол|хоккей|баскет|матч|олимпиад|чемпионат|sport|фк\b|ucl|fifa/i },
 ]
+
+/**
+ * v5.77: GAMES-ONLY режим автосбора — SystemSetting 'autodiscover:only_slug'.
+ * Пока задан ('games'): в базу добавляются ТОЛЬКО каналы этой категории
+ * (регэксп-классификация + LLM-уточнение не могут их уводить в другие слиги).
+ * null = без ограничений. Выставляется миграцией content-catalog v2.
+ */
+export async function getOnlySlug(): Promise<string | null> {
+  try {
+    const row = await db.systemSetting.findUnique({ where: { key: 'autodiscover:only_slug' } })
+    const v = row?.value?.trim()
+    return v && v !== '' ? v : null
+  } catch {
+    return null
+  }
+}
 
 function classifyCategory(text: string, fallback = 'other'): string {
   for (const h of CATEGORY_HINTS) if (h.re.test(text)) return h.slug
@@ -649,7 +692,22 @@ async function processCandidate(
   const title = decodeEnt(chat?.title ?? ogTitle) || uname
   const description = chat?.description ? decodeEnt(chat.description) : decodeEnt(ogDesc) || null
   const hint = `${title} ${description ?? ''}`
+
+  // v5.77: только русские каналы — в названии/описании должна быть кириллица
+  // (нет ни одной русской буквы → иностранный канал, отклоняем)
+  if (!/[\p{Script=Cyrillic}]{3,}/u.test(hint)) {
+    return { ok: false, reason: 'не русский канал' }
+  }
+
   const slug = forcedSlug ?? classifyCategory(hint)
+  // v5.77: GAMES-ONLY режим — автосбор пропускает не-игровые каналы
+  // (кураторский каталог с forcedSlug не проверяем — он сам по себе игровой)
+  if (!forcedSlug) {
+    const only = await getOnlySlug()
+    if (only && slug !== only) {
+      return { ok: false, reason: `не ${only} (${slug})` }
+    }
+  }
   const categoryId = forcedSlug ? knownCats.get(forcedSlug) : (knownCats.get(slug) ?? otherId)
 
   // 3) число подписчиков (дешёвый вызов, кэш 24ч) — заодно фильтр качества:
@@ -686,27 +744,35 @@ async function processCandidate(
     return { ok: false, reason: 'уже существует (гонка) или ошибка БД' }
   }
 
-  // 5) посты первой страницы (новейшие до 25)
-  const queue = [...posts]
+  // 5) посты первой страницы (новейшие до POSTS_PER_NEW_CHANNEL)
+  //    v5.77: УНИФИКАЦИЯ с основным парсером: премиум-эмодзи (ID + анимации),
+  //    зачистка текста, русский фильтр, реакции — раньше автосбор сохранял
+  //    «сырые» посты без эмодзи-апгрейда и мусора
+  const upgraded = await upgradeCustomEmoji([...posts])
+  const queue = [...upgraded]
     .sort((a, b) => b.publishedAt.getTime() - a.publishedAt.getTime())
     .slice(0, POSTS_PER_NEW_CHANNEL)
   let addedPosts = 0
   for (const p of queue) {
+    if (!isRussianText(p.text)) continue // только русские посты
     try {
       const primary = p.media
       const extras = primary
         ? (({ url: _u, kind: _k, ...rest }) => (Object.keys(rest).length > 0 ? rest : null))(primary)
         : null
+      const clean = cleanPostText(p.text)
+      if (!clean && !primary && p.gallery.length === 0) continue
       await db.post.create({
         data: {
           tgKey: p.tgKey,
           channelId: channel.id,
-          text: p.text,
+          text: clean,
           mediaUrl: primary?.url ?? null,
           mediaType: primary?.kind ?? 'none',
           mediaMeta: extras ? JSON.stringify(extras) : null,
           gallery: p.gallery.length > 0 ? JSON.stringify(p.gallery) : null,
           viewsTg: p.viewsTg,
+          reactionsTg: p.reactionsTg,
           link: `https://t.me/${p.tgKey.replace(':', '/')}`,
           publishedAt: p.publishedAt,
         },
@@ -778,8 +844,11 @@ async function refineChannelCategory(
     ])
     if (!channel) return
     const map = await classifyChannelsBatch([{ id: channelId, title, username, description }], cats)
-    const slug = map.get(channelId)
+    let slug = map.get(channelId)
     if (!slug) return
+    // v5.77: GAMES-ONLY — нейро-уточнение не уводит канал из целевой категории
+    const only = await getOnlySlug()
+    if (only && slug !== only) slug = only
     const cat = cats.find((c) => c.slug === slug)
     if (!cat || cat.id === channel.categoryId) return
     await db.channel.update({ where: { id: channelId }, data: { categoryId: cat.id } })

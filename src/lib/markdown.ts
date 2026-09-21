@@ -36,7 +36,7 @@ function absolutizeUrl(u: string): string {
 type Mark =
   | { kind: 'inline'; mark: string; tag: string; start: number }
   | { kind: 'link'; href: string; start: number }
-  | { kind: 'pre'; start: number }
+  | { kind: 'pre'; start: number; lang?: string } // v5.77: язык блока кода (как в Telegram)
   | { kind: 'quote'; start: number }
 
 /** Декодирование HTML-сущностей (дублирует логику parse-engine для автономности) */
@@ -138,7 +138,9 @@ export function htmlToMarkdownLite(html: string): string {
         const href = mk.href || 'https://t.me'
         out.push(inner.trim().length > 0 ? `[${inner.trim()}](${href})` : `[${href}](${href})`)
       } else if (mk.kind === 'pre') {
-        out.push('\n```\n')
+        // v5.77: закрывающая ограда несёт язык блока (```ts, ```python) —
+        // раньше язык отбрасывался, и код в постах терял подсветку
+        out.push(`\n\`\`\`${mk.lang ? mk.lang : ''}\n`)
       } else if (mk.kind === 'quote') {
         const inner = out.splice(mk.start).join('')
         out.push(
@@ -244,7 +246,10 @@ export function htmlToMarkdownLite(html: string): string {
       continue
     }
     if (tag === 'pre') {
-      stack.push({ kind: 'pre', start: out.length })
+      // v5.77: язык кода — <pre><code class="language-ts"> (или class на самом pre)
+      const head = html.slice(pos, pos + 320)
+      const lang = head.match(/class="[^"]*language-([\w+#-]{1,20})/)?.[1]
+      stack.push({ kind: 'pre', start: out.length, ...(lang ? { lang } : {}) })
       out.push('\n```\n')
       continue
     }

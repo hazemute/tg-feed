@@ -14,6 +14,12 @@ import {
   walletHistory,
 } from '@/lib/wallet'
 import { cacheBalance } from '@/lib/balance-cache'
+import {
+  ensureWalletAddresses,
+  referralEarnedTotal,
+  walletFeed,
+} from '@/lib/wallet-accounts'
+import { getBotUsername } from '@/lib/tg-bot'
 
 export const dynamic = 'force-dynamic'
 
@@ -55,6 +61,21 @@ export async function GET(request: Request) {
     if (!user) return err('Пользователь не найден', 404)
     // Write-through: свежий баланс → Redis (горячий путь edge-роута /api/wallet/balance)
     void cacheBalance(g.uid, { balanceKop: user.balanceKop, swipes: user.swipes })
+
+    // v5.77: КОШЕЛЁК v2 — адреса счетов (лениво создаются при первом визите),
+    // рефералка (ссылка + статистика) и объединённая история «как в крипте»
+    const [addresses, feed, refEarned, invited, botUsername] = await Promise.all([
+      ensureWalletAddresses(g.uid).catch(() => ({ swipeAddress: null, rubAddress: null })),
+      walletFeed(g.uid, 30),
+      referralEarnedTotal(g.uid).catch(() => 0),
+      db.giveawayReferral
+        .count({ where: { referrerUserId: g.uid, activatedAt: { not: null } } })
+        .catch(() => 0),
+      getBotUsername().catch(() => null),
+    ])
+    // tg_<uid> → числовой id для реферальной ссылки (start=ref_<id>)
+    const numericTgId = g.uid.startsWith('tg_') ? g.uid.slice(3) : null
+
     // v5.49: ETag/304 — кошелёк рендерится из локального кэша мгновенно
     return jsonWithEtag(request, {
       ok: true,
@@ -65,6 +86,14 @@ export async function GET(request: Request) {
       aiPricing: { inSwpPerMtok: AI_MTOK_IN_SWP, outSwpPerMtok: AI_MTOK_OUT_SWP },
       swpConvertMin: SWP_CONVERT_MIN,
       history,
+      // — v2 —
+      swipeAddress: addresses.swipeAddress,
+      rubAddress: addresses.rubAddress,
+      refPercent: 5,
+      refEarned,
+      refInvited: invited,
+      refLink: botUsername && numericTgId ? `https://t.me/${botUsername}?start=ref_${numericTgId}` : null,
+      feed,
     })
   } catch (e) {
     console.error('[wallet GET]', e)

@@ -80,23 +80,23 @@ export function LevelSheet({
   // Свежие данные поверх кэша: levelProgress считаем на клиенте от ответа
   const p = data ? levelProgress(data.xp, data.level) : null
 
-  const earnRows: { Icon: typeof MessageCircle; label: string; hint?: string; value: string; cls: string }[] = [
+  const earnRows: { Icon: typeof MessageCircle; label: string; value: string; cls: string }[] = [
     { Icon: MessageCircle, label: t('level.commentRow'), value: `+${2} XP`, cls: 'text-tg-link' },
     { Icon: Heart, label: t('level.likeRow'), value: `+${1} XP`, cls: 'text-rose-500' },
     { Icon: ListChecks, label: t('level.questRow'), value: `+${5} XP`, cls: 'text-emerald-600' },
     { Icon: CalendarCheck, label: t('level.checkinRow'), value: `+${3} XP`, cls: 'text-emerald-600' },
-    { Icon: Bug, label: t('level.bugRow'), hint: t('level.bugHint'), value: `+10…+${1000}`, cls: 'text-amber-500' },
+    { Icon: Bug, label: t('level.bugRow'), value: `+10…+${1000}`, cls: 'text-amber-500' },
     {
       Icon: ShieldAlert,
       label: t('level.violationRow'),
-      hint: t('level.violationHint'),
       value: `−15 / −50 XP`,
       cls: 'text-red-500',
     },
   ]
 
   return (
-    <BottomSheet open={open} onClose={onClose} title={t('level.title')} subtitle={t('level.subtitle')}>
+    // v5.77: subtitle убран — приказ владельца «убери у ника описания и меньше текста»
+    <BottomSheet open={open} onClose={onClose} title={t('level.title')}>
       {isGuest ? (
         /* Гость: уровни недоступны — зовём на логин (кнопка открывает модалку ProfileTab) */
         <div className="rounded-2xl bg-tg-surface p-4 text-center">
@@ -150,13 +150,7 @@ export function LevelSheet({
                     +{p.nextRewardSwipes} свайпов
                   </span>
                 </div>
-                {/* Дневные лимиты (сегодня засчитано) */}
-                {data && (
-                  <div className="mt-2 text-[11.5px] text-tg-hint">
-                    {t('level.today')}: {t('level.commentRow').toLowerCase()} — {data.today.comment}/
-                    {data.today.commentCap} XP · лайки — {data.today.like}/{data.today.likeCap} XP
-                  </div>
-                )}
+                {/* Дневные лимиты (сегодня засчитано) — v5.77: убрано (лишний текст) */}
               </>
             ) : (
               <div className="tg-shimmer h-20 rounded-xl" aria-hidden />
@@ -169,7 +163,7 @@ export function LevelSheet({
               {t('level.howTo')}
             </h3>
             <div className="overflow-hidden rounded-2xl bg-tg-surface">
-              {earnRows.map(({ Icon, label, hint, value, cls }, i) => (
+              {earnRows.map(({ Icon, label, value, cls }, i) => (
                 <div
                   key={label}
                   className={`flex items-center gap-3 px-3.5 py-2.5 ${
@@ -179,15 +173,12 @@ export function LevelSheet({
                   <Icon className={`h-4.5 w-4.5 shrink-0 ${cls}`} aria-hidden />
                   <div className="min-w-0 flex-1">
                     <div className="truncate text-[13.5px] font-medium text-tg-text">{label}</div>
-                    {hint && <div className="truncate text-[11.5px] text-tg-hint">{hint}</div>}
                   </div>
                   <span className={`shrink-0 text-[13px] font-bold tabular-nums ${amountCls(value)}`}>{value}</span>
                 </div>
               ))}
             </div>
-            <p className="mt-1.5 px-1 text-[11.5px] leading-snug text-tg-hint">
-              {t('level.today')}: комментарии — до 10, лайки — до 30 {t('level.capNote')}
-            </p>
+            {/* v5.77: сноска под списком убрана (лишний текст) */}
           </div>
 
           {/* ---------- История ---------- */}

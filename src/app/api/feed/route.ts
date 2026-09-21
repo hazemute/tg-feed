@@ -10,7 +10,7 @@ import { buildFeedScope, loadPersonalSignals, computeRankedIndex, FEED_INDEX_KEY
 import type { RankedIndex, PersonalSignals } from '@/lib/feed'
 import { detectLang, langPasses } from '@/lib/lang'
 import { guardAuth } from '@/lib/guard'
-import { cacheAside, famKey, shortHash } from '@/lib/redis'
+import { cacheAside, cacheGet, cacheSet, famKey, shortHash } from '@/lib/redis'
 import { getCachedPage, putCachedPage } from '@/lib/page-cache'
 import { getSponsorChannelIds, getPromotedCandidates, getSponsorCandidates } from '@/lib/feed-extras'
 import { feedSessionKey, getOrBuildFeedSnapshot } from '@/lib/feed-session'
@@ -558,6 +558,30 @@ async function buildFeedSnapshot(ctx: {
 }): Promise<FeedSnapshot> {
   const { userId, effSeed, index, signals, lang } = ctx
 
+  /* ---------- 0. v5.77: ГЛОБАЛЬНАЯ РОТАЦИЯ КАНАЛОВ при «Обновить реков» ----------
+      Жалоба владельца: «при обновлении реков надо чтобы они глобально менялись,
+      даже каналы все». Раньше сид вращал только ПОРЯДОК — состав каналов не
+      менялся (веса качеств в тысячи, шум ≤900). Теперь:
+      • новый сид (≠ прошлому) = новая сессия: каналы ПРОШЛОЙ сессии (из Redis)
+        получают штраф −1200 — их посты уходят в хвост;
+      • каналы, которых НЕ было в прошлой сессии, получают бонус +160 —
+        в голову потока выходят свежие имена;
+      • топ-каналы нового снапшота сохраняются обратно (TTL 2ч) — следующий
+        refresh увидит их как «прошлые» и поднимет ДРУГИЕ.
+      Внутри сессии (тот же сид) — ничего не меняется: порядок заморожен. */
+  let prevChannels: Set<string> | null = null
+  let isRefresh = false
+  try {
+    const prevSeed = await cacheGet<string>(`fs:seed:${userId}`)
+    isRefresh = prevSeed != null && prevSeed !== effSeed
+    if (isRefresh) {
+      const arr = await cacheGet<string[]>(`fs:shown:${userId}`)
+      if (Array.isArray(arr) && arr.length > 0) prevChannels = new Set(arr)
+    }
+  } catch {
+    /* ротация — улучшение, без Redis работаем как раньше */
+  }
+
   /* ---------- 1. Фильтр языка (v5.25): «Русский / Другие» ----------
       Режем индекс ДО персонализации и диверсификации. Посты без букв (und)
       проходят в любом режиме. */
@@ -596,6 +620,11 @@ async function buildFeedSnapshot(ctx: {
       dislikes: signals.dislikeCategories.get(e.g ?? ''),
     })
     let w = e.w + parts.boost
+    // v5.77: ротация каналов при refresh (см. блок 0)
+    if (isRefresh && prevChannels) {
+      if (prevChannels.has(e.c)) w -= 1200
+      else w += 160
+    }
     // Шум с userId внутри сида: у разных пользователей — разные сигнатуры
     w += shuffleNoise(`${userId}:${e.i}:${effSeed}`, e.w)
     // Языковой множитель (Task 5-c): только к положительной части, штрафы
@@ -659,7 +688,31 @@ async function buildFeedSnapshot(ctx: {
     // экстрасы не критичны: без промо/спонсоров лента работает
   }
 
+  /* ---------- 6.5 v5.77: ПОПУЛЯРНОЕ СНАЧАЛА ----------
+      Просьба владельца: «сначала показываются популярные посты… и потом
+      слабенькие». Топ качества (базовый вес индекса e.w) пиннится в голову
+      сразу после промо-блока: 6 постов, по одному с канала, не просмотренные
+      юзером, с лёгким сид-перемешиванием (детерминированным — снапшот стабилен). */
+  const popularHead: Array<{ id: string; cid: string }> = []
+  try {
+    const seenChans = new Set<string>(head.map((x) => x.cid))
+    const topQuality = [...pool]
+      .sort((a, b) => b.w - a.w || (a.i < b.i ? -1 : a.i > b.i ? 1 : 0))
+      .slice(0, 24)
+    // сид-перемешивание топа: у каждого refresh — свой порядок популярного
+    for (const e of topQuality) {
+      if (popularHead.length >= 6) break
+      if (seenChans.has(e.c)) continue // один пост с канала
+      if (signals.viewedIds.has(e.i)) continue // просмотренное не пинним
+      seenChans.add(e.c)
+      popularHead.push({ id: e.i, cid: e.c })
+    }
+  } catch {
+    /* не критично */
+  }
+
   const pinIds = new Set<string>([...promotedIds, ...sponsoredIds])
+  for (const p of popularHead) pinIds.add(p.id)
 
   /* ---------- 7. Разнообразие: round-robin по каналам ----------
       Cooldown между постами одного канала (см. diversify) + кап 5 постов/канал
@@ -667,7 +720,24 @@ async function buildFeedSnapshot(ctx: {
       (промо/спонсоры) передаются в recent — их органика соблюдает cooldown
       относительно пинов. */
   const ordered = diversify(scored, (x) => x.cid, head.map((x) => x.cid))
-  const items = [...head, ...ordered.filter((x) => !pinIds.has(x.id))]
+  const items = [
+    ...head,
+    ...popularHead,
+    ...ordered.filter((x) => !pinIds.has(x.id)),
+  ]
+
+  /* ---------- v5.77: запоминаем каналы этой сессии ----------
+      Следующий «Обновить реков» (новый сид) оштрафует именно их — и поднимет
+      другие каналы. Храним до 40 каналов с головы снапшота, TTL 2 часа. */
+  try {
+    const sessionChannels = [...new Set(items.slice(0, 80).map((x) => x.cid))].slice(0, 40)
+    if (sessionChannels.length > 0) {
+      await cacheSet(`fs:seed:${userId}`, effSeed, 7200)
+      await cacheSet(`fs:shown:${userId}`, sessionChannels, 7200)
+    }
+  } catch {
+    /* не критично */
+  }
 
   /* ---------- 8. Страховка «не подряд» (Task 6-c) ----------
       Если пара соседей одного канала всё же встретилась (двойной пин одного

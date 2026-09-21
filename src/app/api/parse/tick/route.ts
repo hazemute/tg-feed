@@ -40,12 +40,15 @@ async function handle(request: Request) {
         за ID, которых ещё нет в реестре. */
     let emojiBackfill: { scanned: number; added: number } | null = null
     const BACKFILL_KEY = 'emoji_backfill_at'
-    const BACKFILL_TTL_MS = 25 * 60_000
+    // v5.77: чаще (25 → 10 мин) и больше скан (600 → 1500) — приказ владельца
+    // «АБСОЛЮТНО ВСЕ премиум-эмодзи с анимациями и айди без исключения»:
+    // реестр догоняет быстрее, посты не остаются статикой надолго
+    const BACKFILL_TTL_MS = 10 * 60_000
     try {
       const last = await db.botSetting.findUnique({ where: { key: BACKFILL_KEY } })
       const lastAt = last ? Date.parse(last.value) : 0
       if (Date.now() - lastAt > BACKFILL_TTL_MS && Date.now() - started < 90_000) {
-        emojiBackfill = await backfillCustomEmoji()
+        emojiBackfill = await backfillCustomEmoji({ scan: 1500 })
         await db.botSetting
           .upsert({
             where: { key: BACKFILL_KEY },
@@ -61,8 +64,8 @@ async function handle(request: Request) {
 
     const batch = await nextAdaptiveBatch()
 
-    // v5.76: миграция контента (отключение новостных → очистка постов →
-    // кураторские игровые/мемные каналы). Троттлинг внутри (≥90с), шаг ≤20с
+    // v5.77: миграция контента v2 (ПОЛНАЯ очистка каналов/постов →
+    // только игровые русские каналы). Троттлинг внутри (≥90с), шаг ≤8с
     try {
       await ensureContentCatalog()
       const catalogStep = await stepContentCatalog()

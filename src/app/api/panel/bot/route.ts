@@ -298,7 +298,15 @@ export async function POST(request: Request) {
     if (d.action === 'setwebhook') {
       const token = process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
       if (!token) return err('TELEGRAM_BOT_TOKEN не задан на сервере', 500)
-      const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || externalOrigin(request)
+      // v5.77: канонический прод-домен ВЫШЕ внешнего origin запроса — раньше
+      // админ, открывший панель с dpl/preview-URL, перерегистрировал вебхук на
+      // мёртвый домен (умирал вместе с деплоем) — бот снова молчал
+      const origin =
+        process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+        (process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
+          ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.trim()}`
+          : '') ||
+        externalOrigin(request)
       const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
       const set = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
         method: 'POST',
@@ -320,9 +328,9 @@ export async function POST(request: Request) {
         .catch(() => null)
       if (set.ok) {
         const now = new Date().toISOString()
-        // Тот же флаг, что и у самолечения в вебхуке — чтобы не дублировал
+        // v3: тот же ключ, что у самолечения в вебхуке (v5.77), — чтобы не дублировал
         await db.botSetting
-          .upsert({ where: { key: 'webhook_selfheal_v1' }, create: { key: 'webhook_selfheal_v1', value: now }, update: { value: now } })
+          .upsert({ where: { key: 'webhook_selfheal_v3' }, create: { key: 'webhook_selfheal_v3', value: now }, update: { value: now } })
           .catch(() => {})
       }
       await logAdmin('bot_setwebhook', origin, { ok: set.ok === true })

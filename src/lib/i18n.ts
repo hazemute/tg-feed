@@ -299,6 +299,9 @@ const DICT = {
   'comments.tooLong': ['Слишком длинный комментарий', 'Comment is too long'],
   'comments.deleted': ['Комментарий удалён', 'Comment deleted'],
   'comments.delete': ['Удалить комментарий', 'Delete comment'],
+  // v5.77: плашка действий долгого нажатия (TikTok-стиль)
+  'comments.copy': ['Копировать', 'Copy'],
+  'comments.copied': ['Скопировано', 'Copied'],
   /* Дерево/лайки комментариев (v5.13, TikTok-стиль) */
   'comments.sortNew': ['Новые', 'New'],
   'comments.sortTop': ['Популярные', 'Top'],

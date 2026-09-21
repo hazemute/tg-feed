@@ -289,6 +289,19 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "XpLog_userId_kind_createdAt_idx" ON "XpLog" ("userId", "kind", "createdAt")`,
     `ALTER TABLE "XpLog" ADD CONSTRAINT "XpLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
   ],
+  // v5.77: КОШЕЛЁК v2 — адреса двух счетов + журнал переводов WalletTx
+  'v5.77-wallet': [
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "swipeAddress" text`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "rubAddress" text`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "referredById" text`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "User_swipeAddress_key" ON "User" ("swipeAddress")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "User_rubAddress_key" ON "User" ("rubAddress")`,
+    `CREATE TABLE IF NOT EXISTS "WalletTx" ("id" text PRIMARY KEY, "kind" text NOT NULL, "currency" text NOT NULL, "amount" integer NOT NULL, "fromAddr" text, "toAddr" text, "fromUserId" text, "toUserId" text, "note" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "WalletTx_fromUserId_createdAt_idx" ON "WalletTx" ("fromUserId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "WalletTx_toUserId_createdAt_idx" ON "WalletTx" ("toUserId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "WalletTx_fromAddr_idx" ON "WalletTx" ("fromAddr")`,
+    `CREATE INDEX IF NOT EXISTS "WalletTx_toAddr_idx" ON "WalletTx" ("toAddr")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -325,6 +338,9 @@ const CRITICAL: Array<[string, string | null]> = [
   ['UserSource', null],
   ['Quest', null],
   ['QuestCompletion', null],
+  ['User', 'swipeAddress'],
+  ['User', 'referredById'],
+  ['WalletTx', null],
   ['ScheduledPost', null],
   ['PromoCode', null],
   ['PromoRedemption', null],

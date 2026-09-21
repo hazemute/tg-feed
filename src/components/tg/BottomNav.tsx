@@ -5,7 +5,8 @@ import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
-import { haptic } from '@/lib/tg'
+import { haptic, userAvatarUrl } from '@/lib/tg'
+import { Avatar } from '@/components/tg/Avatar'
 import type { Tab } from '@/lib/types'
 
 /* v5.58: «Канал» вернулся в навигацию как полноценный раздел для админов —
@@ -33,8 +34,10 @@ const items: {
  * «Промо» стало разделом кабинета «Ваш канал» (ChannelTab), ширина кнопки 64px.
  */
 export function BottomNav() {
-  const { tab, goToTab } = useApp()
+  const { tab, goToTab, user } = useApp()
   const t = useT()
+  // v5.77: в кнопке «Профиль» вместо иконки человека — аватарка пользователя
+  const profileAvatar = user ? userAvatarUrl(user.id, user.photoUrl) : null
 
   return (
     <nav
@@ -70,14 +73,26 @@ export function BottomNav() {
                   className="absolute inset-x-0.5 inset-y-0 rounded-[19px] bg-tg-link/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                 />
               )}
-              <Icon
-                className={cn(
-                  'relative z-10 h-[22px] w-[22px] transition-colors',
-                  active ? 'text-tg-link' : 'text-tg-hint',
-                )}
-                strokeWidth={active ? 2.3 : 1.8}
-                fill={active && fillActive ? 'currentColor' : 'none'}
-              />
+              {id === 'profile' && profileAvatar ? (
+                <span
+                  className={cn(
+                    'relative z-10 flex h-[22px] w-[22px] items-center justify-center overflow-hidden rounded-full transition-colors',
+                    active ? 'ring-2 ring-tg-link/70 ring-offset-1 ring-offset-tg-bg' : '',
+                  )}
+                  aria-hidden
+                >
+                  <Avatar name={user?.firstName ?? 'Профиль'} src={profileAvatar} size={22} />
+                </span>
+              ) : (
+                <Icon
+                  className={cn(
+                    'relative z-10 h-[22px] w-[22px] transition-colors',
+                    active ? 'text-tg-link' : 'text-tg-hint',
+                  )}
+                  strokeWidth={active ? 2.3 : 1.8}
+                  fill={active && fillActive ? 'currentColor' : 'none'}
+                />
+              )}
               <span
                 className={cn(
                   'relative z-10 max-w-full truncate text-[10px] leading-none transition-colors',

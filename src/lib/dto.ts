@@ -15,6 +15,7 @@ type ChannelWithCategory = Channel & {
 const KNOWN_KINDS: MediaKind[] = [
   'image',
   'video',
+  'circle', // v5.77: кружок (video note)
   'gif',
   'sticker',
   'voice',

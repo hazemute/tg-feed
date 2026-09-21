@@ -463,17 +463,18 @@ export function PostOverlay() {
               </div>
             )}
 
-            {/* Полная дата + статистика */}
+            {/* Полная дата + статистика — v5.77: nowrap на числах («просмотры
+                в столбики» отсюда тоже) */}
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 pt-3 text-[12.5px] text-tg-hint">
-              <span>{fullDate}</span>
+              <span className="whitespace-nowrap">{fullDate}</span>
               <span aria-hidden>·</span>
-              <span className="tabular-nums">{formatCount(current.viewsCount)} {t('post.views')}</span>
+              <span className="whitespace-nowrap tabular-nums">{formatCount(current.viewsCount)} {t('post.views')}</span>
               <span aria-hidden>·</span>
-              <span className="tabular-nums">{formatCount(current.likesCount)} {t('post.likes')}</span>
+              <span className="whitespace-nowrap tabular-nums">{formatCount(current.likesCount)} {t('post.likes')}</span>
               {current.bookmarksCount > 0 && (
                 <>
                   <span aria-hidden>·</span>
-                  <span className="tabular-nums">{formatCount(current.bookmarksCount)} {t('post.inBookmarks')}</span>
+                  <span className="whitespace-nowrap tabular-nums">{formatCount(current.bookmarksCount)} {t('post.inBookmarks')}</span>
                 </>
               )}
             </div>

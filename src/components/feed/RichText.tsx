@@ -24,7 +24,8 @@ import { cn } from '@/lib/utils'
 
 const HASHTAG_RE = /#[\wа-яё]{2,30}/gu
 
-function HashtagText({ text, nested }: { text: string; nested?: boolean }) {
+/** v5.77: export — хештеги работают и в комментариях (клик → поиск по тегу) */
+export function HashtagText({ text, nested }: { text: string; nested?: boolean }) {
   const openSearchWith = useApp((s) => s.openSearchWith)
   const parts: Array<string | { tag: string }> = []
   let last = 0

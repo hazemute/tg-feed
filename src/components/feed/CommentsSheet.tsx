@@ -17,6 +17,9 @@ import { BottomSheet } from '@/components/tg/BottomSheet'
 import { emitPostUpdated } from '@/components/feed/PostOverlay'
 import { UserBadges } from '@/components/badges/UserBadges'
 import { ChatInput } from '@/components/ai/ChatInput'
+import { HashtagText } from '@/components/feed/RichText'
+import { formatCount } from '@/lib/format'
+import { Copy, Reply } from 'lucide-react'
 
 /**
  * Комментарии под постом (глобальный шит) — TikTok-стиль (v5.45):
@@ -118,6 +121,8 @@ export function CommentsSheet() {
   const [reporting, setReporting] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [flashId, setFlashId] = useState<string | null>(null)
+  // v5.77: TikTok-стиль — долгое нажатие на комментарий открывает плашку действий
+  const [actionTarget, setActionTarget] = useState<CommentDTO | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const itemsRef = useRef(items)
   itemsRef.current = items
@@ -564,6 +569,12 @@ export function CommentsSheet() {
     >
       {post && (
         <div className="flex flex-col">
+          {/* v5.77: ПОСТ СВЕРХУ, потом комментарии (просьба владельца: «когда в
+              комменты заходишь ты видишь пост а в конце комменты»). Мини-карточка
+              поста: канал + время + текст (3 строки) + медиа-постеры.
+              У заглушки deep-link из уведомлений канала/текста нет — не рисуем. */}
+          {(post.channel.title || post.text) && <PostMiniCard post={post} />}
+
           {/* Сортировка: Новые / Популярные */}
           <div className="mb-2 flex items-center gap-1.5 px-1" role="tablist" aria-label={t('comments.title')}>
             <SortChip active={sort === 'new'} onClick={() => switchSort('new')} label={t('comments.sortNew')} />
@@ -584,7 +595,7 @@ export function CommentsSheet() {
             </button>
           )}
 
-          <div className="max-h-[min(50dvh,440px)] min-h-[120px] overflow-y-auto overscroll-contain" data-noswipe>
+          <div className="max-h-[min(56dvh,520px)] min-h-[120px] overflow-y-auto overscroll-contain" data-noswipe>
             {loading ? (
               <Skeletons />
             ) : error ? (
@@ -623,11 +634,10 @@ export function CommentsSheet() {
                         repliesWord={repliesWord}
                         onLike={doLike}
                         onReply={startReply}
-                        onDelete={doDelete}
                         onToggle={toggleReplies}
                         onLoadMoreReplies={(root) => void loadReplies(root, true)}
                         flashId={flashId}
-                        onReport={setReportTarget}
+                        onLongPress={setActionTarget}
                       />
                     </motion.li>
                   ))}
@@ -696,6 +706,84 @@ export function CommentsSheet() {
         </div>
       )}
     </BottomSheet>
+      {/* v5.77: плашка действий над комментарием (долгое нажатие) — стиль TikTok */}
+      <BottomSheet
+        open={actionTarget !== null}
+        onClose={() => setActionTarget(null)}
+        title={actionTarget?.author.name || 'Комментарий'}
+      >
+        <div className="space-y-1 pb-2">
+          <button
+            type="button"
+            data-noswipe
+            onClick={() => {
+              const c = actionTarget
+              if (!c) return
+              setActionTarget(null)
+              haptic('light')
+              startReply(c)
+            }}
+            className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] font-medium text-tg-text transition active:scale-[0.99] active:bg-tg-surface"
+          >
+            <Reply className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
+            {t('comments.reply')}
+          </button>
+          <button
+            type="button"
+            data-noswipe
+            onClick={() => {
+              const c = actionTarget
+              if (!c) return
+              setActionTarget(null)
+              haptic('success')
+              navigator.clipboard.writeText(c.text).then(
+                () => toast.success(t('comments.copied')),
+                () => toast.error(t('comments.error')),
+              )
+            }}
+            className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] font-medium text-tg-text transition active:scale-[0.99] active:bg-tg-surface"
+          >
+            <Copy className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
+            {t('comments.copy')}
+          </button>
+          {!actionTarget?.own && (
+            <button
+              type="button"
+              data-noswipe
+              onClick={() => {
+                const c = actionTarget
+                if (!c) return
+                setReportTarget(c)
+                setActionTarget(null)
+              }}
+              className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] font-medium text-tg-text transition active:scale-[0.99] active:bg-tg-surface"
+            >
+              <Flag className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
+              {t('feed.reportTitle')}
+            </button>
+          )}
+          {actionTarget?.own && (
+            <button
+              type="button"
+              data-noswipe
+              onClick={() => {
+                const c = actionTarget
+                if (!c) return
+                setActionTarget(null)
+                void doDelete(c)
+              }}
+              className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] font-medium text-tg-like transition active:scale-[0.99] active:bg-tg-surface"
+            >
+              <Trash2 className="h-4.5 w-4.5 shrink-0" aria-hidden />
+              {t('comments.delete')}
+            </button>
+          )}
+          <p className="px-3 pb-1 pt-2 text-[12px] leading-snug text-tg-hint">
+            Зажми комментарий, чтобы открыть это меню. Жалоба анонимна — комментарий
+            скрывается после 3 жалоб от разных людей.
+          </p>
+        </div>
+      </BottomSheet>
       {/* v5.68: шит жалобы на комментарий */}
       <BottomSheet
         open={reportTarget !== null}
@@ -753,26 +841,24 @@ function CommentRow({
   repliesWord,
   onLike,
   onReply,
-  onDelete,
   onToggle,
   onLoadMoreReplies,
   isReply = false,
   flashId = null,
-  onReport,
+  onLongPress,
 }: {
   c: CommentDTO
   expanded?: boolean
   repliesWord?: (n: number) => string
   onLike: (c: CommentDTO, rootId?: string) => void
   onReply: (c: CommentDTO) => void
-  onDelete: (c: CommentDTO) => void
   onToggle?: (root: CommentDTO) => void
   onLoadMoreReplies?: (root: CommentDTO) => void
   isReply?: boolean
   /** id комментария, подсвечиваемого при переходе из уведомлений (deep-link) */
   flashId?: string | null
-  /** v5.68: «Пожаловаться» — открыть шит причин (у чужих комментариев) */
-  onReport?: (c: CommentDTO) => void
+  /** v5.77: долгое нажатие → плашка действий (TikTok-стиль) */
+  onLongPress?: (c: CommentDTO) => void
 }) {
   const t = useT()
   const openUserProfile = useApp((s) => s.openUserProfile)
@@ -782,6 +868,37 @@ function CommentRow({
   // Ширина колонки авы (ава + зазор внешнего gap-2.5): контент корневого
   // коммента сидит на этом отступе, ава вытягивается в него кнопкой автора
   const authorIndent = avatarSize + 10
+
+  /* v5.77: LONG-PRESS 450мс → плашка действий. Отменяется отпусканием,
+     уходом курсора и РЕАЛЬНЫМ движением (скролл) — но не дрожью пальца:
+     сдвиг >10px от точки нажатия. Иконки-действия из мета-строки убраны:
+     удаление/жалоба — только через плашку (как в TikTok). */
+  const pressTimer = useRef<number | null>(null)
+  const pressOrigin = useRef<{ x: number; y: number } | null>(null)
+  const clearPress = () => {
+    if (pressTimer.current !== null) {
+      window.clearTimeout(pressTimer.current)
+      pressTimer.current = null
+    }
+    pressOrigin.current = null
+  }
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (!onLongPress || tmp) return
+    clearPress()
+    pressOrigin.current = { x: e.clientX, y: e.clientY }
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null
+      pressOrigin.current = null
+      haptic('warning')
+      onLongPress(c)
+    }, 450)
+  }
+  const onPointerEnd = () => clearPress()
+  const onPointerMove = (e: React.PointerEvent) => {
+    const o = pressOrigin.current
+    if (!o) return
+    if (Math.abs(e.clientX - o.x) > 10 || Math.abs(e.clientY - o.y) > 10) clearPress()
+  }
 
   // Тап по автору (ава/имя — одна кнопка): у гостя профиля нет, остальным —
   // открываем публичный профиль (глобальный шит UserProfileSheet)
@@ -830,7 +947,8 @@ function CommentRow({
     </motion.button>
   )
 
-  /* Общая шапка строки: имя, бейджи, время, удаление своего */
+  /* Общая шапка строки: имя, бейджи, время. v5.77: иконки удаления/жалобы
+     убраны — все действия в плашке долгого нажатия (TikTok-стиль) */
   const meta = (
     <>
       {c.author.badges && c.author.badges.length > 0 && (
@@ -839,31 +957,6 @@ function CommentRow({
       <time dateTime={c.createdAt} className="shrink-0 text-[11.5px] text-tg-hint">
         {timeAgo(c.createdAt)}
       </time>
-      {c.own && !tmp && (
-        <button
-          type="button"
-          onClick={() => onDelete(c)}
-          aria-label={t('comments.delete')}
-          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-tg-like/10 hover:text-tg-like active:scale-90 motion-reduce:transition-none"
-        >
-          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
-        </button>
-      )}
-      {/* v5.68: «Пожаловаться» — у ЧУЖИХ комментариев (спам/реклама/травля) */}
-      {!c.own && !tmp && onReport && (
-        <button
-          type="button"
-          onClick={() => onReport(c)}
-          aria-label="Пожаловаться на комментарий"
-          title="Пожаловаться"
-          className={cn(
-            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-tg-sep/60 hover:text-tg-text active:scale-90 motion-reduce:transition-none',
-            !c.own && !tmp && 'ml-auto',
-          )}
-        >
-          <Flag className="h-3.5 w-3.5" strokeWidth={1.8} />
-        </button>
-      )}
     </>
   )
 
@@ -897,7 +990,8 @@ function CommentRow({
         isReply ? 'text-[13px]' : 'mt-0.5 text-[14.5px]',
       )}
     >
-      {c.text}
+      {/* v5.77: хештеги в комментариях кликабельны (как в постах) */}
+      <HashtagText text={c.text} />
     </p>
   )
 
@@ -906,8 +1000,13 @@ function CommentRow({
     return (
       <div
         id={`comment-${c.id}`}
+        onPointerDown={onPointerDown}
+        onPointerUp={onPointerEnd}
+        onPointerLeave={onPointerEnd}
+        onPointerCancel={onPointerEnd}
+        onPointerMove={onPointerMove}
         className={cn(
-          'flex gap-2.5 rounded-2xl p-1 -m-1',
+          'flex gap-2.5 rounded-2xl p-1 -m-1 select-none',
           flash && 'bg-tg-link/[0.12] ring-1 ring-tg-link/40 transition-none',
           !flash && 'transition-colors duration-1000',
         )}
@@ -1008,9 +1107,8 @@ function CommentRow({
                         isReply
                         onLike={onLike}
                         onReply={onReply}
-                        onDelete={onDelete}
                         flashId={flashId}
-                        onReport={onReport}
+                        onLongPress={onLongPress}
                       />
                     ))}
                     {/* Подгрузка остальных ответов ветки */}
@@ -1054,8 +1152,13 @@ function CommentRow({
   return (
     <div
       id={`comment-${c.id}`}
+      onPointerDown={onPointerDown}
+      onPointerUp={onPointerEnd}
+      onPointerLeave={onPointerEnd}
+      onPointerCancel={onPointerEnd}
+      onPointerMove={onPointerMove}
       className={cn(
-        'flex gap-2 rounded-2xl p-1 -m-1',
+        'flex gap-2 rounded-2xl p-1 -m-1 select-none',
         flash && 'bg-tg-link/[0.12] ring-1 ring-tg-link/40 transition-none',
         !flash && 'transition-colors duration-1000',
       )}
@@ -1094,4 +1197,48 @@ function CommentRow({
       {likeRail}
     </div>
   )
+}
+
+/* ---------- v5.77: Мини-карточка поста над комментариями ---------- */
+
+function PostMiniCard({ post }: { post: PostDTO }) {
+  const t = useT()
+  const c = post.channel
+  const firstPhoto = postMediaItemsOf(post).find((m) => m.kind === 'image' && m.url)
+  return (
+    <div className="mb-3 rounded-2xl bg-tg-surface/70 p-3" data-noswipe>
+      <div className="flex items-center gap-2.5">
+        <Avatar name={c.title || '—'} src={c.avatarUrl} size={38} />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-[14px] font-semibold text-tg-text">{c.title || 'Пост'}</p>
+          <p className="text-[12px] text-tg-hint">
+            {timeAgo(post.publishedAt)} · <span className="tabular-nums">{formatCount(post.viewsCount)}</span> {t('card.views')}
+          </p>
+        </div>
+      </div>
+      {post.text && (
+        <p className="mt-2 line-clamp-4 whitespace-pre-wrap break-words text-[13.5px] leading-snug text-tg-text2">
+          {post.text}
+        </p>
+      )}
+      {firstPhoto && (
+        <div className="mt-2.5 overflow-hidden rounded-xl bg-tg-surface">
+          <img
+            src={firstPhoto.url}
+            alt=""
+            loading="lazy"
+            className="max-h-[220px] w-full object-cover"
+          />
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** Локальный сборщик медиа поста (без цикла импорта с PostMedia) */
+function postMediaItemsOf(post: PostDTO): Array<{ kind: string; url?: string }> {
+  const items: Array<{ kind: string; url?: string }> = []
+  if (post.media?.url) items.push(post.media)
+  items.push(...post.gallery)
+  return items
 }

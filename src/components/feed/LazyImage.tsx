@@ -35,6 +35,7 @@ export function LazyImage({
   onClick,
   onError,
   imgWidth = 828,
+  style,
 }: {
   src: string
   alt: string
@@ -50,6 +51,8 @@ export function LazyImage({
   onError?: (e: React.SyntheticEvent<HTMLImageElement>) => void
   /** Ширина для /_next/image (устройства с dpr — Optimizer сам отдаст нужную) */
   imgWidth?: number
+  /** v5.77: inline-стили контейнера (aspectRatio из реальных размеров медиа) */
+  style?: React.CSSProperties
 }) {
   const [active, setActive] = useState(Boolean(eager))
   const [loaded, setLoaded] = useState(false)
@@ -141,7 +144,7 @@ export function LazyImage({
   }, [active, loaded, failed, attempt, cur])
 
   return (
-    <div ref={ref} className={cn('relative overflow-hidden bg-tg-surface', className)}>
+    <div ref={ref} className={cn('relative overflow-hidden bg-tg-surface', className)} style={style}>
       {!loaded && !failed && <span className="tg-shimmer absolute inset-0" aria-hidden />}
       {active && !failed && (
         <img
@@ -154,7 +157,10 @@ export function LazyImage({
           onLoad={() => setLoaded(true)}
           onError={handleImgError}
           className={cn(
-            'absolute inset-0 h-full w-full transition-opacity duration-300',
+            // v5.77: object-cover по умолчанию — фото больше НЕ растягивается/
+            // сжимается под контейнер (деформация), а аккуратно кадрируется.
+            // Стикеры/линк-превью со своим fit переопределяют через imgClassName.
+            'absolute inset-0 h-full w-full object-cover transition-opacity duration-300',
             loaded ? 'opacity-100' : 'opacity-0',
             imgClassName,
           )}

@@ -11,7 +11,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: `${SITE_NAME} — умная лента Telegram-каналов`,
     short_name: SITE_NAME,
     description:
-      'Умная лента постов из открытых Telegram-каналов по вашим интересам: свайпы, AI-саммари, закладки и подписка в один тап.',
+      'Игровая лента постов из открытых Telegram-каналов: свайпы, AI-саммари, закладки и подписка в один тап.',
     id: '/',
     start_url: '/',
     scope: '/',

@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { invalidateBalance } from '@/lib/balance-cache'
+import { payReferralKickback } from '@/lib/wallet-accounts'
 
 /**
  * КОШЕЛЁК (v5.38–v5.39) — единая двухвалютная система.
@@ -182,6 +183,8 @@ export async function spendSwipes(
     throw e
   }
   await invalidateBalance(userId) // кэш баланса устарел — edge увидит свежие данные после перечита
+  // v5.77: рефереру — 5% от траты приглашённого (best-effort, не тормозит ответ)
+  void payReferralKickback(userId, cost, note)
   return true
 }
 
@@ -205,6 +208,22 @@ export async function convertSwpToRub(
     if (updated.count === 0) return { ok: false, error: 'Недостаточно свайпов' }
     await log(tx, userId, 'convert', 'swp', -spentSwipes, 'обмен в рубли')
     await log(tx, userId, 'convert', 'rub', rubKop, 'обмен из свайпов')
+    // v5.77: крипто-стиль проводка «адрес → адрес» между своими счетами
+    const me = await tx.user.findUnique({ where: { id: userId }, select: { swipeAddress: true, rubAddress: true } })
+    if (me?.swipeAddress && me?.rubAddress) {
+      await tx.walletTx.create({
+        data: {
+          kind: 'internal',
+          currency: 'swp',
+          amount: spentSwipes,
+          fromAddr: me.swipeAddress,
+          toAddr: me.rubAddress,
+          fromUserId: userId,
+          toUserId: userId,
+          note: 'Swipe-счёт → Рубль-счёт',
+        },
+      })
+    }
     return { ok: true, rubKop, spentSwipes }
   })
   if (res.ok) await invalidateBalance(userId)
@@ -227,6 +246,22 @@ export async function convertRubToSwp(
     if (updated.count === 0) return { ok: false, error: 'Недостаточно рублей на балансе' }
     await log(tx, userId, 'convert', 'rub', -kop, 'обмен в свайпы')
     await log(tx, userId, 'convert', 'swp', kopToSwp(kop), 'обмен из рублей')
+    // v5.77: крипто-стиль проводка «адрес → адрес» между своими счетами
+    const me = await tx.user.findUnique({ where: { id: userId }, select: { swipeAddress: true, rubAddress: true } })
+    if (me?.swipeAddress && me?.rubAddress) {
+      await tx.walletTx.create({
+        data: {
+          kind: 'internal',
+          currency: 'rub',
+          amount: kop,
+          fromAddr: me.rubAddress,
+          toAddr: me.swipeAddress,
+          fromUserId: userId,
+          toUserId: userId,
+          note: 'Рубль-счёт → Swipe-счёт',
+        },
+      })
+    }
     return { ok: true, swipes: kopToSwp(kop) }
   })
   if (res.ok) await invalidateBalance(userId)
