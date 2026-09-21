@@ -162,24 +162,28 @@ export async function stepContentCatalog(): Promise<string> {
       return `purge_user: -${n1.count + n2.count}`
     }
 
-    /* ---------- 2. ПОСТЫ ВСЕ (каскад: лайки/вью/комменты/жалобы) ---------- */
+    /* ---------- 2. ПОСТЫ ВСЕ (каскад: лайки/вью/комменты/жалобы) ----------
+        v5.77.2: TRUNCATE одной командой — батчи по 400 при троттлинге 90с
+        чистили десятки тысяч постов часами. Юзерские данные не трогаем. */
     if (s.phase === 'purge_posts') {
-      // постранично по publishedAt, чтобы не удерживать один DELETE на всю таблицу
-      const batch = await db.post.findMany({ select: { id: true }, take: 400 })
-      if (batch.length === 0) {
-        s.phase = 'purge_channels'
-        log(s, 'purge_posts: посты удалены полностью')
-        await saveState(s)
-        return 'purge_posts: done'
-      }
-      await db.post.deleteMany({ where: { id: { in: batch.map((p) => p.id) } } })
-      log(s, `purge_posts: −${batch.length} (продолжение)`)
+      await db.$executeRawUnsafe(
+        `TRUNCATE TABLE "Post", "Like", "PostView", "Bookmark", "PostHide", "PostReport",
+          "Comment", "CommentLike", "CommentReport", "HashtagClick", "TranslationLog" CASCADE`,
+      )
+      s.phase = 'purge_channels'
+      log(s, 'purge_posts: посты и взаимодействия удалены (TRUNCATE)')
       await saveState(s)
-      return `purge_posts: -${batch.length}`
+      return 'purge_posts: done'
     }
 
-    /* ---------- 3. КАНАЛЫ ВСЕ + хвосты ---------- */
+    /* ---------- 3. КАНАЛЫ ВСЕ + хвосты ----------
+        v5.77.2: НЕ TRUNCATE — на Channel ссылается AdCampaign (ON DELETE SET NULL):
+        CASCADE снёс бы рекламные кампании с деньгами. deleteMany делает честный
+        DELETE + SET NULL: кампании сохраняются, привязка канала обнуляется.
+        Post к этому моменту пуст (TRUNCATE выше) — удаление быстрое. */
     if (s.phase === 'purge_channels') {
+      await db.subscription.deleteMany({})
+      await db.channelMute.deleteMany({})
       await db.scheduledPost.deleteMany({})
       await db.userSource.deleteMany({})
       const n = await db.channel.deleteMany({})
