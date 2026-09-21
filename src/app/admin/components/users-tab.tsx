@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Ban,
   BadgeCheck,
+  Banknote,
   CalendarClock,
   ClipboardCheck,
   Code2,
@@ -150,6 +151,8 @@ export function UsersTab({ tick, onSettled }: TabProps) {
   const [actionUser, setActionUser] = useState<PanelUser | null>(null)
   const [banReason, setBanReason] = useState('')
   const [swipesInput, setSwipesInput] = useState('')
+  // v5.61: рублёвый баланс (ввод в ₽ с копейками, храним строкой из-за десятичной запятой)
+  const [balanceInput, setBalanceInput] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
   // v5.18: выдача подписки в модалке
   const [tierPlan, setTierPlan] = useState<'plus' | 'pro'>('plus')
@@ -257,6 +260,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
   const openAction = (u: PanelUser) => {
     setBanReason(u.banReason ?? '')
     setSwipesInput(u.swipes != null ? String(u.swipes) : '')
+    setBalanceInput(u.balanceKop != null ? (u.balanceKop / 100).toFixed(2) : '')
     // Подписка: план/срок прематчиваем по текущему состоянию
     setTierPlan(u.tier === 'pro' ? 'pro' : 'plus')
     setTierDays('30')
@@ -361,7 +365,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
               {/* Десктоп: таблица */}
               <div className="hidden md:block">
                 <div className="admin-scroll max-h-[560px] overflow-auto rounded-md border border-slate-200">
-                  <Table className="min-w-[980px]">
+                  <Table className="min-w-[1060px]">
                     <TableHeader>
                       <TableRow className="border-slate-200 hover:bg-transparent">
                         <TableHead className="text-xs text-slate-500">ID</TableHead>
@@ -374,6 +378,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                         <TableHead className="text-right text-xs text-slate-500">Закладки</TableHead>
                         <TableHead className="text-right text-xs text-slate-500">Просмотры</TableHead>
                         <TableHead className="text-right text-xs text-slate-500">Свайпы</TableHead>
+                        <TableHead className="text-right text-xs text-slate-500">Рубли</TableHead>
                         <TableHead className="text-center text-xs text-slate-500">Статус</TableHead>
                         <TableHead className="text-center text-xs text-slate-500">Допуск</TableHead>
                         <TableHead className="text-center text-xs text-slate-500">Действия</TableHead>
@@ -426,6 +431,14 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                           </TableCell>
                           <TableCell className="text-right tabular-nums text-slate-700">
                             {u.swipes != null ? fmtNum(u.swipes) : '—'}
+                          </TableCell>
+                          <TableCell className="text-right tabular-nums text-slate-700">
+                            {u.balanceKop != null
+                              ? (u.balanceKop / 100).toLocaleString('ru-RU', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })
+                              : '—'}
                           </TableCell>
                           <TableCell className="text-center">
                             {u.bannedAt ? (
@@ -489,17 +502,20 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                         aria-label={`Допуск мимо техработ: ${displayName(u)}`}
                       />
                     </div>
-                    <div className="mt-2 grid grid-cols-4 gap-1 text-center">
+                    <div className="mt-2 grid grid-cols-5 gap-1 text-center">
                       {(
                         [
                           ['Лайки', u.likes],
                           ['Закл.', u.bookmarks],
                           ['Взгл.', u.views],
                           ['Свайпы', u.swipes ?? 0],
+                          ['Рубли', u.balanceKop != null ? u.balanceKop / 100 : 0],
                         ] as const
                       ).map(([label, v]) => (
                         <div key={label} className="rounded-lg bg-slate-50 py-1">
-                          <div className="text-sm font-semibold tabular-nums text-slate-800">{fmtNum(v)}</div>
+                          <div className="text-sm font-semibold tabular-nums text-slate-800">
+                            {label === 'Рубли' ? Number(v).toFixed(2) : fmtNum(v)}
+                          </div>
                           <div className="text-[11px] text-slate-500">{label}</div>
                         </div>
                       ))}
@@ -796,6 +812,53 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                   Сохранить
                 </Button>
               </div>
+            </div>
+
+            {/* Баланс рублей (v5.61) */}
+            <div className="mt-4">
+              <label className="text-xs font-semibold text-slate-700" htmlFor="balance-input">
+                <Banknote className="mr-1 inline size-3.5 text-emerald-600" aria-hidden /> Баланс рублей — кошелёк (сейчас{' '}
+                {((actionUser.balanceKop ?? 0) / 100).toLocaleString('ru-RU', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}{' '}
+                ₽)
+              </label>
+              <div className="mt-1.5 flex gap-2">
+                <Input
+                  id="balance-input"
+                  type="number"
+                  min={0}
+                  max={1000000}
+                  step={0.01}
+                  value={balanceInput}
+                  onChange={(e) => setBalanceInput(e.target.value)}
+                  className={cn('h-9 flex-1 text-sm', inputDark)}
+                  aria-label="Новый рублёвый баланс в рублях"
+                  placeholder="0.00"
+                />
+                <Button
+                  size="sm"
+                  disabled={actionBusy || balanceInput === '' || Math.round(Number(balanceInput.replace(',', '.')) * 100) === (actionUser.balanceKop ?? 0)}
+                  onClick={() => {
+                    const kop = Math.round(Number(balanceInput.replace(',', '.')) * 100)
+                    if (!Number.isFinite(kop) || kop < 0) return
+                    if (actionUser)
+                      void runUserAction(
+                        actionUser,
+                        { action: 'balance', userId: actionUser.id, balanceKop: kop },
+                        `Рублёвый баланс изменён на ${(kop / 100).toFixed(2)} ₽`,
+                        { balanceKop: kop },
+                      )
+                  }}
+                  className="h-9 bg-slate-800 text-white hover:bg-slate-900"
+                >
+                  Сохранить
+                </Button>
+              </div>
+              <p className="mt-1 text-[11px] leading-snug text-slate-500">
+                Компенсации и корректировки кошелька. Юзер увидит операцию в истории кошелька.
+              </p>
             </div>
 
             {/* Telegram Premium (флаг) */}

@@ -2,7 +2,7 @@
  * v5.53 Крупный багфикс: smoke-тест ВСЕХ API-роутов.
  * Проверяем статус-коды и базовую структуру ответов под Bearer-сессией.
  */
-const BASE = 'http://localhost:3000'
+const BASE = 'http://127.0.0.1:3000'
 const TOKEN = process.env.TG_TOKEN || (await Bun.file('/tmp/token.txt').text()).trim()
 const UID = 'tg_777000'
 const H = { Authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' }

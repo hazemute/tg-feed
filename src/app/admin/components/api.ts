@@ -155,6 +155,8 @@ export interface PanelUser {
   bannedAt?: string | null
   banReason?: string | null
   swipes?: number
+  /** v5.61: рублёвый баланс кошелька (User.balanceKop, копейки) */
+  balanceKop?: number
   /** v5.18: подписка Snap (tier — действующий, истёкший приходит как 'free') */
   tier?: 'free' | 'plus' | 'pro'
   tierUntil?: string | null
@@ -555,6 +557,7 @@ export async function userAction(
     | { action: 'ban'; userId: string; reason?: string }
     | { action: 'unban'; userId: string }
     | { action: 'swipes'; userId: string; swipes: number }
+    | { action: 'balance'; userId: string; balanceKop: number }
     | { action: 'premium'; userId: string }
     | { action: 'tier'; userId: string; tier: 'plus' | 'pro'; days: number; mode: 'grant' }
     | { action: 'tier'; userId: string; mode: 'revoke' }

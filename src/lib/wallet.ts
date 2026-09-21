@@ -11,13 +11,19 @@ import { invalidateBalance } from '@/lib/balance-cache'
  *    ЦЕНЫ ПО ТОКЕНАМ (v5.40): с курсом 500 свайпов/₽ те же AI_MTOK_*_SWP
  *    дают владельцу ×5 выручку в рублях за те же токены.
  *
- * КУРС (v5.40): 500 свайпов = 1 ₽ (1 свайп = 0,2 копейки).
+ * КУРС (v5.40): 500 свайпов = 1 ₽ (1 свайп = 0,2 копейки, 1 копейка = 5 свайпов).
  *
  * Все операции атомарны (транзакции), ведутся в BalanceLog (журнал кошелька).
  * Инвариант: balanceKop ≥ 0, swipes ≥ 0 — условные декременты не дают уйти в минус.
+ *
+ * v5.61: КРИТИЧЕСКИЙ ФИКС — повсюду путались РУБЛИ и КОПЕЙКИ (×100 ошибка):
+ * обмен 100 000 свайпов начислял 200 КОПЕЕК (2 ₽) вместо 200 ₽. Единая точка
+ * правды — SWP_PER_KOP: все переводы валют идут только через kop↔swp хелперы.
  */
 
 export const SWP_PER_RUB = 500
+/** Свайпов в ОДНОЙ копейке: 500 свайпов/₽ ÷ 100 копеек = 5 свайпов за копейку */
+export const SWP_PER_KOP = SWP_PER_RUB / 100
 /** Минимум свайпов для конвертации в рубли */
 export const SWP_CONVERT_MIN = SWP_PER_RUB
 
@@ -59,11 +65,13 @@ export function estimateAiSwipes(inputChars: number, maxTokens: number): number 
 
 export type Wallet = { balanceKop: number; swipes: number }
 
+/** Свайпы → копейки: 500 свайпов = 100 копеек = 1 ₽ (округляем вверх, дробных копеек нет) */
 export function swpToKop(swipes: number): number {
-  return Math.ceil(swipes / SWP_PER_RUB) // 500 свайпов = 1 ₽; дробных копеек нет — округляем вверх
+  return Math.ceil(swipes / SWP_PER_KOP) // 500 свайпов → 100 коп.
 }
+/** Копейки → свайпы: 1 копейка = 5 свайпов */
 export function kopToSwp(kop: number): number {
-  return Math.round(kop) * SWP_PER_RUB
+  return Math.floor(kop * SWP_PER_KOP) // 100 коп. → 500 свайпов
 }
 
 /** Формат ₽ из копеек: 123456 → «1 234,56 ₽» (тонкий пробел-разделитель тысяч) */
@@ -129,7 +137,7 @@ export async function spendSwipes(
         return
       }
 
-      // Не хватает свайпов — докупаем с рублёвого баланса по курсу SWP_PER_RUB
+      // Не хватает свайпов — докупаем с рублёвого баланса по курсу 500 свайпов = 1 ₽
       const deficit = cost - u.swipes
       // Пакет докупки: кратен 500, но не меньше дефицита; если денег впритык — берём ровно дефицит
       const buy = Math.max(
@@ -176,8 +184,10 @@ export async function convertSwpToRub(
   if (!Number.isInteger(swipes) || swipes < SWP_CONVERT_MIN) {
     return { ok: false, error: `Минимум ${SWP_CONVERT_MIN} свайпов` }
   }
-  const rubKop = Math.floor(swipes / SWP_PER_RUB) // целые рубли
-  const spentSwipes = rubKop * SWP_PER_RUB
+  // v5.61 фикс ×100: rubKop — это КОПЕЙКИ. 100 000 свайпов = 20 000 коп. = 200 ₽.
+  // Раньше здесь писали rubles-число в копеечное поле → юзер получал в 100 раз меньше.
+  const rubKop = Math.floor(swipes / SWP_PER_KOP) // копейки: floor(100000/5)=20000
+  const spentSwipes = rubKop * SWP_PER_KOP // списываем ровно столько свайпов, сколько начислили (остаток <500 остаётся)
   const res = await db.$transaction(async (tx) => {
     const updated = await tx.user.updateMany({
       where: { id: userId, swipes: { gte: spentSwipes } },
@@ -305,7 +315,8 @@ export async function aiCanAfford(userId: string, estSwipes: number): Promise<bo
     select: { swipes: true, balanceKop: true },
   })
   if (!u) return false
-  return u.swipes + u.balanceKop * SWP_PER_RUB >= estSwipes // 1 копейка = 500 свайпов
+  // 1 копейка = 5 свайпов (SWP_PER_KOP); раньше множили на 500 — переоценка в 100 раз
+  return u.swipes + u.balanceKop * SWP_PER_KOP >= estSwipes
 }
 
 /**

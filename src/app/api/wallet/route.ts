@@ -24,7 +24,7 @@ export const dynamic = 'force-dynamic'
  * POST /api/wallet { action: 'swp2rub' | 'rub2swp', amount } — конвертация.
  *   • swp2rub: amount в свайпах (≥500) → рубли по курсу 500 свайпов = 1 ₽,
  *     остаток < 100 остаётся свайпами;
- *   • rub2swp: amount в КОПЕЙКАХ (1 копейка = 1 свайп) → свайпы.
+ *   • rub2swp: amount в КОПЕЙКАХ (1 копейка = 5 свайпов, 100 копеек = 500 свайпов = 1 ₽) → свайпы.
  */
 
 const postSchema = z.discriminatedUnion('action', [

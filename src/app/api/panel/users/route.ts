@@ -94,6 +94,7 @@ export async function GET(request: Request) {
           badges: true,
           createdAt: true,
           swipes: true,
+          balanceKop: true,
           _count: { select: { likes: true, subscriptions: true, bookmarks: true, views: true } },
         },
         orderBy:
@@ -126,6 +127,9 @@ export async function GET(request: Request) {
           // Раньше колонка показывала рекламный баланс AdvertiserAccount —
           // из-за этого выданные панелью свайпы «не появлялись» в кошельке.
           swipes: u.swipes,
+          // v5.61: рублёвый баланс кошелька (User.balanceKop, копейки) —
+          // редактируется в модалке («Баланс рублей»), нужен для компенсаций
+          balanceKop: u.balanceKop,
           createdAt: u.createdAt.toISOString(),
           likes: u._count.likes,
           subscriptions: u._count.subscriptions,
@@ -162,6 +166,7 @@ export async function PATCH(request: Request) {
       bypassMaintenance?: unknown
       action?: unknown
       swipes?: unknown
+      balanceKop?: unknown
       reason?: unknown
       tier?: unknown
       days?: unknown
@@ -251,6 +256,66 @@ export async function PATCH(request: Request) {
       await invalidateBalance(userId)
       await logAdmin('swipes', userId, { swipes, delta })
       return NextResponse.json({ ok: true, userId, swipes: updated.swipes })
+    }
+    if (action === 'balance') {
+      // v5.61: правка РУБЛЁВОГО кошелька (User.balanceKop, копейки).
+      // Компенсации/корректировки после косяков конвертации и т.п.
+      // Атомарный increment дельты — как в ветке 'swipes' (см. v5.54).
+      const balanceKop = typeof body.balanceKop === 'number' ? Math.round(body.balanceKop) : NaN
+      if (!Number.isFinite(balanceKop) || balanceKop < 0 || balanceKop > 100_000_000) {
+        return err('balanceKop must be 0..100000000 (≤ 1 млн ₽)')
+      }
+      const before = await db.user.findUnique({
+        where: { id: userId },
+        select: { balanceKop: true },
+      })
+      if (!before) return err('user not found', 404)
+      const delta = balanceKop - before.balanceKop
+      let updated =
+        delta === 0
+          ? { balanceKop: before.balanceKop }
+          : await db.user.update({
+              where: { id: userId },
+              data: { balanceKop: { increment: delta } },
+              select: { balanceKop: true },
+            })
+      if (updated.balanceKop < 0) {
+        updated = await db.user.update({ where: { id: userId }, data: { balanceKop: 0 }, select: { balanceKop: true } })
+      }
+      if (delta !== 0) {
+        // Журнал кошелька — виден юзеру в истории операций
+        await db.balanceLog
+          .create({
+            data: {
+              userId,
+              kind: 'admin',
+              currency: 'rub',
+              amount: delta,
+              note:
+                delta > 0
+                  ? `Начислено администратором (баланс ${(updated.balanceKop / 100).toFixed(2)} ₽)`
+                  : `Баланс установлен администратором (${(updated.balanceKop / 100).toFixed(2)} ₽)`,
+            },
+          })
+          .catch(() => {})
+        try {
+          const num = (updated.balanceKop / 100).toLocaleString('ru-RU', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2,
+          })
+          const title =
+            delta > 0 ? 'Вам начислен рублёвый баланс' : 'Рублёвый баланс изменён администратором'
+          const body = `Новый баланс: ${num} ₽. Удачного сёрфинга!`
+          await db.notification.create({ data: { userId, type: 'system', title, body } })
+          emitAppEvent('notif:new', { userId })
+          sendBotNotification({ userId, type: 'system', title, body })
+        } catch (ne) {
+          console.error('[panel/users balance] notify failed', (ne as Error).message)
+        }
+      }
+      await invalidateBalance(userId)
+      await logAdmin('balance', userId, { balanceKop, delta })
+      return NextResponse.json({ ok: true, userId, balanceKop: updated.balanceKop })
     }
     if (action === 'premium') {
       const u = await db.user.findUnique({ where: { id: userId }, select: { isPremium: true } })
