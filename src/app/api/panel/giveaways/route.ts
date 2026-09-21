@@ -85,20 +85,30 @@ export async function GET(request: Request) {
   const g = guardAdmin(request, { limit: 60, windowMs: 60_000 })
   if (!g.ok) return g.res
   try {
-    // ?entries=<giveawayId> — участники розыгрыша с билетами (v5.46)
+    // ?entries=<giveawayId> — участники розыгрыша с билетами (v5.46).
+    // v5.71: ПАГИНАЦИЯ (limit/offset) — при 5000 заявок полный слепок давал
+    // ~МБ ответа и 5000 DOM-строк; по умолчанию 200, кнопка «ещё» в панели.
     const url = new URL(request.url)
     const entriesOf = (url.searchParams.get('entries') ?? '').trim()
     if (/^[a-z0-9]{10,40}$/i.test(entriesOf)) {
+      const limitRaw = Number(url.searchParams.get('limit') ?? '200')
+      const offsetRaw = Number(url.searchParams.get('offset') ?? '0')
+      const limit = Math.min(500, Math.max(1, Number.isFinite(limitRaw) ? Math.floor(limitRaw) : 200))
+      const offset = Math.max(0, Number.isFinite(offsetRaw) ? Math.floor(offsetRaw) : 0)
       const gw = await db.giveaway.findUnique({
         where: { id: entriesOf },
         select: { id: true, title: true, status: true, winners: true, losersRewardSwipes: true },
       })
       if (!gw) return err('Розыгрыш не найден', 404)
-      const rows = await db.giveawayEntry.findMany({
-        where: { giveawayId: entriesOf },
-        orderBy: [{ ticketsCount: 'desc' }, { createdAt: 'asc' }],
-        take: 5000,
-      })
+      const [rows, total] = await Promise.all([
+        db.giveawayEntry.findMany({
+          where: { giveawayId: entriesOf },
+          orderBy: [{ ticketsCount: 'desc' }, { createdAt: 'asc' }],
+          take: limit,
+          skip: offset,
+        }),
+        db.giveawayEntry.count({ where: { giveawayId: entriesOf } }),
+      ])
       const userIds = [...new Set(rows.map((r) => r.userId))]
       const users = await db.user.findMany({
         where: { id: { in: userIds } },
@@ -108,6 +118,9 @@ export async function GET(request: Request) {
       const winnerIds = new Set(parseWinners(gw.winners).map((w) => w.userId))
       return NextResponse.json({
         giveaway: { id: gw.id, title: gw.title, status: gw.status, losersRewardSwipes: gw.losersRewardSwipes },
+        total,
+        limit,
+        offset,
         entries: rows.map((r) => ({
           userId: r.userId,
           name:
@@ -237,13 +250,25 @@ export async function POST(request: Request) {
         })
       }
 
+      // v5.71: claim ДО публикации (draft/scheduled → active) — панель и параллельный
+      // тик планировщика не могут задвоить пост в канале
+      const claim = await db.giveaway.updateMany({
+        where: { id: gw.id, status: gw.status },
+        data: { status: 'active' },
+      })
+      if (claim.count === 0) return err('Розыгрыш уже публикуется другим процессом')
+
       const r = await publishGiveawayPost(gw)
       if (!r.ok || !r.chatId || !r.messageId) {
+        // откат в исходный статус — ретрай возможен
+        await db.giveaway
+          .updateMany({ where: { id: gw.id, status: 'active', messageId: null }, data: { status: gw.status } })
+          .catch(() => {})
         return err(r.error ?? 'Telegram отклонил публикацию')
       }
       await db.giveaway.update({
         where: { id: gw.id },
-        data: { status: 'active', chatId: r.chatId, messageId: r.messageId },
+        data: { chatId: r.chatId, messageId: r.messageId },
       })
       await logAdmin('ops', 'giveaway:publish', { id: gw.id, messageId: r.messageId }).catch(() => {})
       invalidateAiKnowledge()

@@ -6,6 +6,8 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { isValidChannelUsername } from '@/lib/server'
+import { ogAvatarOf, syncChannelAvatar } from '@/lib/avatar-store'
+import { getChatPhotoFileId } from '@/lib/tg-bot'
 import {
   PRO_PROMOTE_HOT_BOOST,
   PRO_PROMOTE_MONTHLY_LIMIT,
@@ -77,6 +79,46 @@ function normalizeUsername(raw: string): string {
     .toLowerCase() // в БД username хранится в lowercase (Telegram-имена регистронезависимы)
 }
 
+/**
+ * Ленивое лечение аватарки claimed-канала (v5.71).
+ *
+ * Канал, привязанный через «Мой канал», создаётся БЕЗ аватарки, а парсер
+ * t.me/s такие каналы (особенно в статусе moderation) не обходит — аватар
+ * не появлялся НИКОГДА (серые инициалы в «Мой канал», ленте, поиске —
+ * баг «аватарки не отображаются»). Хилим: og:image из HTML t.me/s +
+ * Bot API getChat (photoFileId, вечный) фолбэком. Троттлинг в памяти
+ * 10 мин на канал, fire-and-forget — GET кабинета не ждёт сеть.
+ */
+const UA_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+} as const
+const avatarHealAt = new Map<string, number>()
+
+async function healChannelAvatar(channelId: string, username: string): Promise<void> {
+  const now = Date.now()
+  if (now - (avatarHealAt.get(channelId) ?? 0) < 10 * 60_000) return
+  avatarHealAt.set(channelId, now)
+  try {
+    const res = await fetch(`https://t.me/s/${username}`, {
+      headers: UA_HEADERS,
+      signal: AbortSignal.timeout(12_000),
+    }).catch(() => null)
+    if (res?.ok) {
+      const html = await res.text()
+      await syncChannelAvatar(channelId, html).catch(() => {})
+    }
+    const fileId = await getChatPhotoFileId(username)
+    if (fileId) {
+      await db.channel
+        .update({ where: { id: channelId }, data: { photoFileId: fileId, avatarFetchedAt: new Date() } })
+        .catch(() => {})
+    }
+  } catch {
+    // best-effort — в следующий GET попробуем снова (после троттлинга)
+  }
+}
+
 /** Код-слово владения каналом: детерминированный, без хранения в БД */
 function claimCodeFor(channelId: string): string {
   // v5.54: 'tgswipe'-фолбэк — только в dev; в проде константа позволяла
@@ -141,6 +183,17 @@ export async function GET(request: Request) {
         select: { promoteFreeMonth: true, promoteCredits: true },
       }),
     ])
+
+    // v5.71: ленивая докачка аватарок — claimed-каналы исторически создавались
+    // без avatarUrl/photoFileId (серые инициалы), а у легаси-каналов avatarUrl —
+    // мёртвая ссылка Supabase (хост удалён, DTO рисует по ней null). Хилим в фоне.
+    for (const c of channels) {
+      const avatarDead =
+        (!c.avatarUrl || c.avatarUrl.includes('.supabase.co/')) && !c.photoFileId
+      if (avatarDead && c.username) {
+        void healChannelAvatar(c.id, c.username)
+      }
+    }
 
     const result = await Promise.all(
       channels.map(async (c) => {
@@ -289,6 +342,9 @@ export async function POST(request: Request) {
         const title =
           html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] ??
           uname
+        // v5.71: аватарка СРАЗУ из og:image этого же HTML — до фикса канал
+        // создавался без аватара и навсегда оставался с серыми инициалами
+        const ogAvatar = ogAvatarOf(html)
         const fallback =
           (await db.category.findFirst({ orderBy: { order: 'asc' } })) ??
           (await db.category.create({ data: { slug: 'other', title: 'Другое', emoji: '', order: 99 } }))
@@ -298,6 +354,7 @@ export async function POST(request: Request) {
             title,
             username: uname,
             avatarColor: '#3390ec',
+            ...(ogAvatar ? { avatarUrl: ogAvatar, avatarFetchedAt: new Date() } : {}),
             categoryId: fallback.id,
             // v5.48: НЕ active — иначе новый канал попадает в каталог/ленту
             // до проверки владения (обход модерации). Активируем в claimVerify,
@@ -354,6 +411,9 @@ export async function POST(request: Request) {
         // (и только здесь); вместе с правами владельца
         data: { claimedById: g.uid, claimedAt: new Date(), status: 'active' },
       })
+      // v5.71: докачиваем вечную аватарку (photoFileId) в фоне — og:image
+      // мог не найтись, а Bot API отдаёт файл, который не протухает
+      void healChannelAvatar(channel.id, uname)
       return NextResponse.json({ ok: true, channelId: channel.id })
     }
 

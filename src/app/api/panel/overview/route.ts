@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { channelAvatarUrl } from '@/lib/media'
 
 export const dynamic = 'force-dynamic'
 
@@ -77,7 +78,7 @@ export async function GET(request: Request) {
           text: true,
           mediaUrl: true,
           publishedAt: true,
-          channel: { select: { id: true, title: true, username: true, avatarColor: true, photoFileId: true } },
+          channel: { select: { id: true, title: true, username: true, avatarColor: true, photoFileId: true, avatarUrl: true } },
         },
       }),
       db.user.findMany({
@@ -94,6 +95,7 @@ export async function GET(request: Request) {
           username: true,
           avatarColor: true,
           photoFileId: true,
+          avatarUrl: true,
           subscribersCount: true,
           _count: { select: { posts: true } },
         },
@@ -148,7 +150,8 @@ export async function GET(request: Request) {
         channelTitle: p.channel.title,
         channelUsername: p.channel.username,
         avatarColor: p.channel.avatarColor,
-        avatarUrl: p.channel.photoFileId ? `/api/avatar/c_${p.channel.id}` : null,
+        // v5.71: единый хелпер — каналы без photoFileId (но с живой og:image) больше не безаватарные
+        avatarUrl: channelAvatarUrl(p.channel.avatarUrl, p.channel.photoFileId, p.channel.id),
         text: p.text.slice(0, 220),
         publishedAt: p.publishedAt.toISOString(),
         mediaUrl: p.mediaUrl,
@@ -164,7 +167,7 @@ export async function GET(request: Request) {
         title: c.title,
         username: c.username,
         avatarColor: c.avatarColor,
-        avatarUrl: c.photoFileId ? `/api/avatar/c_${c.id}` : null,
+        avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
         subscribersCount: c.subscribersCount,
         postsCount: c._count.posts,
       })),

@@ -68,6 +68,11 @@ export function AdCard({ ad }: { ad: AdDTO }) {
             alt={`Реклама: ${ad.title}`}
             className="h-36 w-full object-cover"
             loading="lazy"
+            /* Битая картинка рекламодателя не должна рисовать иконку сломанного
+             * изображения в ленте — карточка деградирует до текст+CTA (Task 8-a) */
+            onError={(e) => {
+              e.currentTarget.style.display = 'none'
+            }}
           />
         )}
         <div className="p-4">

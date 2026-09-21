@@ -6,7 +6,7 @@ import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { diversify, personalScoreParts, shuffleNoise, FOREIGN_LANG_MULTIPLIER, UNDETECTED_FROM_FOREIGN_CHANNEL_MULTIPLIER, isForeignForRanking } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
-import { buildFeedScope, loadPersonalSignals, computeRankedIndex } from '@/lib/feed'
+import { buildFeedScope, loadPersonalSignals, computeRankedIndex, FEED_INDEX_KEY_V } from '@/lib/feed'
 import type { RankedIndex, PersonalSignals } from '@/lib/feed'
 import { detectLang, langPasses } from '@/lib/lang'
 import { guardAuth } from '@/lib/guard'
@@ -305,14 +305,30 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
   }
   // Слой 2: недостающие одним запросом (Postgres raw / SQLite Prisma)
   if (missing.length > 0) {
-    const fetched = IS_SQLITE ? await fetchBaseRowsSqlite(missing) : await fetchBaseRowsPostgres(missing)
-    baseRowPut(fetched)
-    base.push(...fetched)
+    /*
+     * Task 8-b (пик 70к) — ДЕГРАДАЦИЯ вместо 500: если БД подтормаживает
+     * (пул вымотан бёрстом, Supabase лёг), отдаём страницу из того, что есть
+     * в L1 (частичная, без вымерших строк) с нейтральными флагами, а не
+     * «feed failed». Пользователь видит ленту; L0 page-cache дальше отдаёт её
+     * 90с без БД; флаги лайков/закладок догорят следующим запросом.
+     */
+    try {
+      const fetched = IS_SQLITE ? await fetchBaseRowsSqlite(missing) : await fetchBaseRowsPostgres(missing)
+      baseRowPut(fetched)
+      base.push(...fetched)
+    } catch (e) {
+      console.error(`[feed] base-rows degraded to cache-only (missing=${missing.length})`, e)
+    }
   }
   const byId = new Map(base.map((r) => [r.id, r]))
 
-  // Личные флаги — один лёгкий батч по id страницы
-  const flags = await fetchUserFlags(ids, userId)
+  // Личные флаги — один лёгкий батч по id страницы; при сбое — нейтральные
+  let flags = { liked: new Set<string>(), bookmarked: new Set<string>() }
+  try {
+    flags = await fetchUserFlags(ids, userId)
+  } catch (e) {
+    console.error('[feed] user flags degraded to neutral', e)
+  }
 
   return ids
     .map((id) => byId.get(id))
@@ -418,7 +434,7 @@ export async function GET(request: Request) {
         v5.48: discover кэшируется ТОЖЕ — сигнатура скоупа строится из
         фактического where (v7), одинаковый where → одинаковый индекс. */
     const indexKey = scope.sig
-      ? await famKey('feed', `${category}:v8:${shortHash(scope.sig)}`)
+      ? await famKey('feed', `${category}:${FEED_INDEX_KEY_V}:${shortHash(scope.sig)}`)
       : null // сигнатуры нет только при ошибке скоупа (не бывает на этом пути)
 
     const loadIndex = () => computeRankedIndex(scope.where)

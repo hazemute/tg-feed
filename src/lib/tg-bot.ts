@@ -22,7 +22,11 @@ import { cacheGet, cacheSet } from '@/lib/redis'
 
 type MemEntry = { v: string | null; exp: number }
 const mem = new Map<string, MemEntry>()
-const MEM_MAX = 600
+// v5.71 (пик 70к): было 600 слотов — при розыгрыше тысячи УНИКАЛЬНЫХ пар
+// «канал:юзер» (cm:*) вымывали кэш за секунды, повторный тап «Участвовать»
+// уходил в Bot API (риск 429 → юзер без билета). 5000 слотов (~сотни КБ)
+// держат весь пик; Map.delete+Map.set — O(1), накладных расходов нет.
+const MEM_MAX = 5000
 
 /** undefined — нет записи; null — закэшированный «нет данных» */
 function memGet(key: string): string | null | undefined {
@@ -31,6 +35,13 @@ function memGet(key: string): string | null | undefined {
   if (e.exp <= Date.now()) {
     mem.delete(key)
     return undefined
+  }
+  // LRU: свежий хит переставляется в конец Map (вытесняется последним).
+  // Раньше вытеснение было FIFO — долго живущий «горячий» ключ (канал
+  // розыгрыша) вымывался свежими записями и кэш молотил Bot API впустую.
+  if (mem.size > 1) {
+    mem.delete(key)
+    mem.set(key, e)
   }
   return e.v
 }
@@ -473,15 +484,28 @@ export async function getUserPhotoFileId(tgUserId: number): Promise<string | nul
   }
 }
 
+/** In-flight getChatMember: ключ «цель:юзер» → общий промис всех параллельных проверок */
+const memberInflight = new Map<string, Promise<boolean | null>>()
+
 /**
  * Состоит ли пользователь в публичном канале? Bot API getChatMember.
  *
  * Нюансы доступа: боту разрешено запрашивать участников канала, только если
  * сам бот в нём состоит (обычно админ). Поэтому:
- *  - true/false — бот видит чат и ответил точно (кэш в памяти 5 мин);
+ *  - true/false — бот видит чат и ответил точно;
  *  - null — проверить нечем (бота нет в канале / чат не найдён / нет токена).
  * Используется для подтверждения «подписки в один тап»: миниапп открывает
  * канал в клиенте Telegram, а после возврата мы сверяем членство.
+ *
+ * ПИКОВАЯ НАГРУЗКА (розыгрыши): тысячи юзеров одновременно жмут «Участвовать»/
+ * «Проверить». Защита Bot API от 429:
+ *  1) single-flight — параллельные проверки ОДНОЙ пары (цель, юзер) склеиваются
+ *     в ОДИН вызов Bot API (тап-спам «Участвовать» ×20 → один getChatMember);
+ *  2) кэш в памяти: позитив (состоит) 5 мин, НЕГАТИВ (не состоит) 20с — юзер,
+ *     подписавшийся и тут же тапнувший снова, не ждёт 5 минут; «нечем
+ *     проверить» — 60с (внешний канал могли добавить админом — быстро recovered);
+ *  3) глобальная пауза botBanned(): во время 429-бана вызовы не тратятся
+ *     (каждый вызов во время бана продлевает наказание) — отдаём null.
  */
 export async function isTelegramMember(
   username: string,
@@ -489,6 +513,7 @@ export async function isTelegramMember(
   opts?: { fresh?: boolean },
 ): Promise<boolean | null> {
   if (!botEnabled()) return null
+  if (botBanned()) return null
   // v5.70: цель может быть числовым chat_id (приватный чат из BotChat) —
   // getChatMember вызывается по Number, а не по @username
   const raw = username.trim()
@@ -504,33 +529,45 @@ export async function isTelegramMember(
     if (local !== undefined) return local === '1' ? true : local === '0' ? false : null
   }
 
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMember`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: isNumericChat ? Number(clean) : `@${clean}`, user_id: tgUserId }),
-      signal: AbortSignal.timeout(8000),
-    })
-    const data = (await res.json()) as {
-      ok?: boolean
-      result?: { status?: string; is_member?: boolean }
+  // single-flight: параллельные проверки той же пары ждут первый запрос,
+  // вместо N одновременных getChatMember (каждый — риск 429)
+  const running = memberInflight.get(mk)
+  if (running) return running
+
+  const p = (async (): Promise<boolean | null> => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMember`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: isNumericChat ? Number(clean) : `@${clean}`, user_id: tgUserId }),
+        signal: AbortSignal.timeout(8000),
+      })
+      const data = (await res.json()) as {
+        ok?: boolean
+        result?: { status?: string; is_member?: boolean }
+      }
+      if (data?.ok) {
+        const status = data.result?.status
+        const member =
+          status === 'creator' ||
+          status === 'administrator' ||
+          status === 'member' ||
+          (status === 'restricted' && data.result?.is_member === true)
+        memSet(mk, member ? '1' : '0', member ? 5 * 60_000 : 20_000)
+        return member
+      }
+      // «bot is not a member» / «chat not found» — проверка недоступна
+      memSet(mk, 'none', 60_000)
+      return null
+    } catch {
+      // сеть моргнула — не кэшируем, следующий запрос попробует снова
+      return null
+    } finally {
+      memberInflight.delete(mk)
     }
-    if (data?.ok) {
-      const status = data.result?.status
-      const member =
-        status === 'creator' ||
-        status === 'administrator' ||
-        status === 'member' ||
-        (status === 'restricted' && data.result?.is_member === true)
-      memSet(mk, member ? '1' : '0', 5 * 60_000)
-      return member
-    }
-    // «bot is not a member» / «chat not found» — проверка недоступна
-    memSet(mk, 'none', 5 * 60_000)
-    return null
-  } catch {
-    return null
-  }
+  })()
+  memberInflight.set(mk, p)
+  return p
 }
 
 /**
@@ -538,50 +575,68 @@ export async function isTelegramMember(
  * Используется заданием розыгрыша «отдай Premium-голос за канал»: бот должен
  * быть АДМИНИСТРАТОРОМ канала, иначе Bot API вернёт ошибку.
  * Возвращает null, если проверить нечем (бот не админ / нет токена / 429).
+ *
+ * ПИКОВАЯ НАГРУЗКА: single-flight по паре (канал, юзер) + кэш в памяти —
+ * позитив (есть буст) 5 мин, НЕГАТИВ (буста нет) 20с — юзер, добавивший
+ * канал в бусты и тут же тапнувший «Проверить», не ждёт 5 минут.
  */
 export async function getUserChatBoosts(
   username: string,
   tgUserId: number,
 ): Promise<number | null> {
   if (!botEnabled()) return null
+  if (botBanned()) return null
   const clean = username.replace(/^@/, '')
 
-  // Кэш 5 минут (память): проверка дёргается кнопкой «Проверить буст»,
+  // Кэш (память): проверка дёргается кнопкой «Проверить буст»,
   // повторные тапы не должны молотить Bot API
   const mk = `gb:${clean}:${tgUserId}`
   const local = memGet(mk)
   if (local !== undefined) return local === 'none' ? null : Number(local)
 
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getUserChatBoosts`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: `@${clean}`, user_id: tgUserId }),
-      signal: AbortSignal.timeout(8000),
-    })
-    const data = (await res.json().catch(() => null)) as {
-      ok?: boolean
-      result?: { boosts?: Array<{ user?: { id?: number }; expiration_date?: number }> }
-      description?: string
-    } | null
-    if (!data?.ok) {
-      // «bot is not a member / not enough rights» — проверка недоступна
-      memSet(mk, 'none', 5 * 60_000)
+  // single-flight: параллельные проверки той же пары → один вызов Bot API
+  const running = boostInflight.get(mk)
+  if (running) return running
+
+  const p = (async (): Promise<number | null> => {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getUserChatBoosts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: `@${clean}`, user_id: tgUserId }),
+        signal: AbortSignal.timeout(8000),
+      })
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean
+        result?: { boosts?: Array<{ user?: { id?: number }; expiration_date?: number }> }
+        description?: string
+      } | null
+      if (!data?.ok) {
+        // «bot is not a member / not enough rights» — проверка недоступна
+        memSet(mk, 'none', 60_000)
+        return null
+      }
+      const now = Date.now()
+      const active = (data.result?.boosts ?? []).filter(
+        (b) =>
+          b.user?.id === tgUserId &&
+          typeof b.expiration_date === 'number' &&
+          b.expiration_date * 1000 > now,
+      ).length
+      memSet(mk, String(active), active > 0 ? 5 * 60_000 : 20_000)
+      return active
+    } catch {
       return null
+    } finally {
+      boostInflight.delete(mk)
     }
-    const now = Date.now()
-    const active = (data.result?.boosts ?? []).filter(
-      (b) =>
-        b.user?.id === tgUserId &&
-        typeof b.expiration_date === 'number' &&
-        b.expiration_date * 1000 > now,
-    ).length
-    memSet(mk, String(active), 5 * 60_000)
-    return active
-  } catch {
-    return null
-  }
+  })()
+  boostInflight.set(mk, p)
+  return p
 }
+
+/** In-flight getUserChatBoosts: ключ «канал:юзер» → общий промис параллельных проверок */
+const boostInflight = new Map<string, Promise<number | null>>()
 
 // --- getFile: file_id → временный CDN-URL ---
 // Кэш: память 40мин → Redis 45мин (URL живёт ~1 час), общий для всех инстансов —

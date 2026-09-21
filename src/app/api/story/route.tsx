@@ -346,9 +346,19 @@ export async function GET(request: Request) {
   const accent = ch.avatarColor || '#3390ec'
   const views = post.viewsTg ?? post.viewsCount
 
-  /* Картинки: аватар канала + первое фото/постер (параллельно, best-effort) */
+  /* Картинки: аватар канала + первое фото/постер (параллельно, best-effort).
+   * Task 8-a — ПРИОРИТЕТ ВЕЧНОГО ИСТОЧНИКА: photoFileId (Bot API) не протухает;
+   * раньше первым шёл avatarUrl (эфемерный og:image, Telegram ротирует — 404
+   * через дни), при смерти которого photoFileId вообще не пробовался → аватар
+   * пропадал с OG-картинок историй. Мёртвые легаси *.supabase.co отсекаем. */
   const [avatarUri, mediaUri] = await Promise.all([
-    toDataUri(ch.avatarUrl ?? (ch.photoFileId ? `tgfile:${ch.photoFileId}` : null)),
+    toDataUri(
+      ch.photoFileId
+        ? `tgfile:${ch.photoFileId}`
+        : ch.avatarUrl && !ch.avatarUrl.includes('.supabase.co/')
+          ? ch.avatarUrl
+          : null,
+    ),
     (async () => {
       // Кандидаты: фото → постер видео/гиф → картинки галереи → постеры галереи
       let meta: { poster?: string; url?: string } | null = null

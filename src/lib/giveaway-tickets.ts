@@ -248,20 +248,40 @@ export async function awardTicket(opts: {
     }
   }
 
-  // Тикет: уникальность (giveawayId, userId, task) = защита от повторной выдачи
-  try {
-    await db.giveawayTicket.create({
-      data: {
-        giveawayId: g.id,
-        entryId: entry.id,
-        userId: opts.userId,
-        task: opts.task,
-        tickets,
-        note: opts.note?.slice(0, 200) ?? null,
-      },
+  // Тикет: уникальность (giveawayId, userId, task) = защита от повторной выдачи.
+  // v5.71: тикет + increment ticketsCount + журнал tasksDone — ОДНА транзакция:
+  // раньше сбой процесса между create тикета и increment оставлял билет без веса
+  // (юзер терял шанс в рандоме), а rescue-прогон уже не дочищал (тикет-то есть).
+  const insertTicketTx = (): Promise<number> =>
+    db.$transaction(async (tx) => {
+      await tx.giveawayTicket.create({
+        data: {
+          giveawayId: g.id,
+          entryId: entry.id,
+          userId: opts.userId,
+          task: opts.task,
+          tickets,
+          note: opts.note?.slice(0, 200) ?? null,
+        },
+      })
+      // свежий срез журнала уже после вставки тикета — минимизирует lost-update
+      // при параллельном выполнении ДРУГОГО задания тем же юзером
+      const freshEntry = await tx.giveawayEntry.findUniqueOrThrow({
+        where: { id: entry.id },
+        select: { tasksDone: true },
+      })
+      const done = parseTasksDone(freshEntry.tasksDone)
+      done.push({ task: opts.task, tickets, at: new Date().toISOString() })
+      const updated = await tx.giveawayEntry.update({
+        where: { id: entry.id },
+        data: { ticketsCount: { increment: tickets }, tasksDone: JSON.stringify(done) },
+        select: { ticketsCount: true },
+      })
+      return updated.ticketsCount
     })
-  } catch {
-    // P2002 — задание уже выполнено
+
+  /** «уже было» — сверяемся с БД и возвращаем актуальный баланс */
+  const alreadyResult = async (): Promise<AwardResult> => {
     const fresh = await db.giveawayEntry.findUnique({
       where: { giveawayId_userId: { giveawayId: g.id, userId: opts.userId } },
       select: { ticketsCount: true },
@@ -269,19 +289,32 @@ export async function awardTicket(opts: {
     return { ok: true, awarded: false, reason: 'already', ticketsCount: fresh?.ticketsCount ?? 0 }
   }
 
-  // Баланс билетов + журнал выполненных заданий
-  const done = parseTasksDone(entry.tasksDone)
-  done.push({ task: opts.task, tickets, at: new Date().toISOString() })
-  const updated = await db.giveawayEntry.update({
-    where: { id: entry.id },
-    data: { ticketsCount: { increment: tickets }, tasksDone: JSON.stringify(done) },
-    select: { ticketsCount: true },
-  })
+  let ticketsCountNew: number
+  try {
+    ticketsCountNew = await insertTicketTx()
+  } catch {
+    // v5.71 (70k): падение транзакции — НЕ всегда P2002 «уже было»: под пиком
+    // бывает таймаут пула/транзакции, и тогда тикета НЕТ — прежний код отвечал
+    // «already» и юзер МОЛЧА ТЕРЯЛ билет. Сверяемся с БД: тикет есть → already;
+    // нет → ОДИН ретрай (безопасен: уникальность тикета отсечёт гонку), иначе
+    // честный отказ 'db' — вызывающий покажет «попробуй ещё раз».
+    try {
+      if (await hasTicket(g.id, opts.userId, opts.task)) return await alreadyResult()
+      ticketsCountNew = await insertTicketTx()
+    } catch {
+      if (await hasTicket(g.id, opts.userId, opts.task)) return await alreadyResult()
+      const fresh = await db.giveawayEntry.findUnique({
+        where: { giveawayId_userId: { giveawayId: g.id, userId: opts.userId } },
+        select: { ticketsCount: true },
+      })
+      return { ok: false, awarded: false, reason: 'db', ticketsCount: fresh?.ticketsCount ?? 0 }
+    }
+  }
 
   // Инбокс миниаппа + ЛС бота (fire-and-forget)
   notifyTicket(opts.userId, g.title, tickets, opts.task)
 
-  return { ok: true, awarded: true, ticketsCount: updated.ticketsCount, giveawayTitle: g.title }
+  return { ok: true, awarded: true, ticketsCount: ticketsCountNew, giveawayTitle: g.title }
 }
 
 function notifyTicket(
@@ -450,6 +483,11 @@ export async function checkBoostTask(
     firstName: user.firstName,
     note: `boosts=${boosts} @${cfg.boostChannel || DEFAULT_BOOST_CHANNEL}`,
   })
+  if (!r.ok) {
+    // v5.71 (70k): запись тикета не удалась (ретрай тоже) — НЕ говорим «уже
+    // засчитан», иначе юзер уходит без билета и с ложной уверенностью
+    return { ok: false, message: '⏳ Не получилось записать билет — попробуй ещё раз через минуту' }
+  }
   if (r.awarded) return { ok: true, message: `✅ Буст засчитан — +${cfg.tickets} 🎫!` }
   return { ok: true, message: 'Буст уже был засчитан ранее' }
 }
@@ -482,6 +520,11 @@ export async function redeemPromoCode(
     firstName: user.firstName,
     note: clean,
   })
+  if (!r.ok) {
+    // v5.71 (70k): честный отказ при сбое записи (см. awardTicket) — код верный,
+    // билет не записан; повторный ввод промокода безопасен (уникальность тикета)
+    return { ok: false, message: '⏳ Не получилось записать билет — введи промокод ещё раз через минуту' }
+  }
   if (r.awarded) {
     const cfg = parseTasks(g.tasks).find((t) => t.kind === 'promo' && t.enabled)
     return { ok: true, message: `✅ Промокод принят: +${cfg?.tickets ?? 1} 🎫!`, ticketsCount: r.ticketsCount }
@@ -597,12 +640,14 @@ export function pickWinnersWeighted<T extends WeightedCandidate>(
   if (candidates.length === 0) return winners
   const taken = new Set<string>()
 
+  // v5.71 (70k): совокупный вес ведётся ИНКРЕМЕНТНО (вычитаем вес изъятого
+  // победителя) — раньше total пересчитывался полным проходом на КАЖДОЕ место:
+  // 2000 мест × 70 000 кандидатов = сотни миллионов итераций в serverless.
+  // Распределение не меняется (математика броска та же).
+  let total = 0
+  for (const c of candidates) total += c.tickets
+
   while (winners.length < seats && taken.size < candidates.length) {
-    let total = 0
-    for (const c of candidates) {
-      if (taken.has(c.userId)) continue
-      total += c.tickets
-    }
     if (total <= 0) break
     // randomInt — криптостойкий генератор [0, total)
     let roll = randomInt(0, total)
@@ -624,6 +669,7 @@ export function pickWinnersWeighted<T extends WeightedCandidate>(
     // Строгая уникальность победителей
     if (taken.has(chosen.userId)) continue
     taken.add(chosen.userId)
+    total -= chosen.tickets // изъятие из пула — вес уходит из общего котла
     winners.push(chosen)
   }
   return winners

@@ -15,14 +15,39 @@ const buckets = new Map<string, Bucket>()
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 let lastCleanup = Date.now()
 
-function maybeCleanup(): void {
-  const now = Date.now()
-  if (now - lastCleanup < CLEANUP_INTERVAL_MS) return
-  lastCleanup = now
+/*
+ * Task 8-b (пик 70к): кап на число бакетов + учащённая чистка под давлением.
+ * Прежде чистка была только по времени (раз в 5 минут): розыгрыш приносит
+ * десятки тысяч уникальных ключей за минуты, и hits-массивы успевали
+ * разрастись (до limit таймстампов на пользователя). Теперь:
+ *  - при размере > SWEEP_PRESSURE чистка запускается раз в 30с (а не 5 мин);
+ *  - при переполнении сверх BUCKETS_MAX после чистки — FIFO-тримминг
+ *    (новые пользователи вытесняют старые записи; лимиты по-прежнему
+ *    консервативны: вытеснение лишь сбрасывает счётчик, не повышает лимит).
+ */
+const BUCKETS_MAX = 100_000
+const SWEEP_PRESSURE = 20_000
+const SWEEP_PRESSURE_INTERVAL_MS = 30_000
+
+function sweepBuckets(now: number): void {
   for (const [key, bucket] of buckets) {
     const fresh = bucket.hits.filter((t) => now - t < bucket.windowMs)
     if (fresh.length === 0) buckets.delete(key)
     else bucket.hits = fresh
+  }
+}
+
+function maybeCleanup(): void {
+  const now = Date.now()
+  const pressure = buckets.size > SWEEP_PRESSURE
+  if (now - lastCleanup < (pressure ? SWEEP_PRESSURE_INTERVAL_MS : CLEANUP_INTERVAL_MS)) return
+  lastCleanup = now
+  sweepBuckets(now)
+  // FIFO-тримминг при переполнении: память важнее точности счётчика
+  while (buckets.size > BUCKETS_MAX) {
+    const first = buckets.keys().next().value
+    if (first === undefined) break
+    buckets.delete(first)
   }
 }
 

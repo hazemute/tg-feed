@@ -420,7 +420,9 @@ export function WalletCard({
                         >
                           {plus ? '+' : '−'}
                           {isRub ? (
-                            fmtRub(h.amount)
+                            // сумма может быть отрицательной, а знак уже выведен выше —
+                            // fmtRub передаём модуль, иначе было «−−199,00 ₽»
+                            fmtRub(Math.abs(h.amount))
                           ) : (
                             <span className="inline-flex items-center gap-1">
                               <SwipeIcon className="h-3 w-3" size={12} />

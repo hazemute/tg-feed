@@ -28,6 +28,17 @@ export const dynamic = 'force-dynamic'
  * лежит в L0-кэше процесса и edge-кэше Vercel 30 дней.
  */
 
+/**
+ * Кэш ОШИБОК прокси (v5.71) — иначе одна протухшая telesco-ссылка «консервирует»
+ * битое медиа на дни: браузер ≤60с, edge ≤300с — окно небольшое, самолечение
+ * (heal) и ротация ссылок парсером успевают обновить URL.
+ */
+const MEDIA_ERR_CC = 'public, max-age=30, s-maxage=60, stale-while-revalidate=0'
+const MEDIA_ERR_HEADERS: Record<string, string> = {
+  'Cache-Control': MEDIA_ERR_CC,
+  'Vercel-CDN-Cache-Control': 'public, s-maxage=60, stale-while-revalidate=0',
+}
+
 const BROWSER_UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 
@@ -184,7 +195,10 @@ export async function GET(request: Request) {
   const wantQ = Math.max(30, Math.min(90, Number(searchParams.get('q')) || 70))
   const resizeKey = wantW ? `w${wantW}q${wantQ}` : ''
   if (!raw || !isTrustedMediaUrl(raw)) {
-    return new NextResponse('bad url', { status: 400 })
+    return new NextResponse('bad url', {
+      status: 400,
+      headers: { 'Cache-Control': 'no-store', 'CDN-Cache-Control': 'no-store' },
+    })
   }
 
   const range = request.headers.get('range') ?? undefined
@@ -254,14 +268,14 @@ export async function GET(request: Request) {
   /** Обычный стрим (фолбэк и мелкие файлы) с долгим кэшем */
   const serveUpstream = async (upstream: Response, source: string): Promise<NextResponse> => {
     if (!upstream.ok && upstream.status !== 206) {
-      // Негативный кэш КРОТКИЙ (30с): healed-URL мог появиться только что,
-      // не кэшируем смерть надолго ни в браузере, ни на edge
+      // Ошибка апстрима (404/403/410 от Telegram = ротация токена) — КОРОТКИЙ
+      // кэш (см. MEDIA_ERR_HEADERS): healed-URL мог появиться только что
       return new NextResponse('upstream error', {
         status: upstream.status === 404 ? 404 : 502,
-        headers: { 'Cache-Control': 'public, max-age=30' },
+        headers: MEDIA_ERR_HEADERS,
       })
     }
-    if (!upstream.body) return new NextResponse('empty', { status: 502, headers: { 'Cache-Control': 'public, max-age=30' } })
+    if (!upstream.body) return new NextResponse('empty', { status: 502, headers: MEDIA_ERR_HEADERS })
 
     // Клиент ушёл (закрыл вкладку/листнул дальше) — не качаем хвост у Telegram
     request.signal.addEventListener('abort', () => {
@@ -332,8 +346,9 @@ export async function GET(request: Request) {
       upstream = await fetchUpstream(raw) // один тихий ретрай
     }
 
-    // Мёртвый URL → лечение (один раз на файл, дальше edge-кэш 30 дней)
-    if (upstream.status === 404 || upstream.status === 403) {
+    // Мёртвый URL → лечение (один раз на файл, дальше edge-кэш 30 дней).
+    // v5.71: + 410 Gone — Telegram отдаёт его на отозванных токенах.
+    if (upstream.status === 404 || upstream.status === 403 || upstream.status === 410) {
       try {
         upstream.body?.cancel().catch(() => {})
       } catch {
@@ -380,7 +395,7 @@ export async function GET(request: Request) {
         try {
           upstream = await fetchUpstream(targetUrl)
         } catch {
-          return new NextResponse('proxy failed', { status: 502, headers: { 'Cache-Control': 'public, max-age=30' } })
+          return new NextResponse('proxy failed', { status: 502, headers: MEDIA_ERR_HEADERS })
         }
       } else if (upstream.status === 200 && len > 0 && len < PARALLEL_MIN_BYTES) {
         // Мелкий файл: забираем целиком в L0 — повторные запросы мгновенны
@@ -390,7 +405,7 @@ export async function GET(request: Request) {
           return await serveResizedOrRaw({ buf, type }, targetUrl)
         } catch {
           /* клиент ушёл — стрим уже не восстановить, отдадим ошибку */
-          return new NextResponse('upstream error', { status: 502, headers: { 'Cache-Control': 'public, max-age=30' } })
+          return new NextResponse('upstream error', { status: 502, headers: MEDIA_ERR_HEADERS })
         }
       }
     }
@@ -398,6 +413,9 @@ export async function GET(request: Request) {
     return await serveUpstream(upstream, targetUrl)
   } catch (e) {
     console.error('[media] proxy failed', (e as Error)?.message)
-    return new NextResponse('proxy failed', { status: 502 })
+    return new NextResponse('proxy failed', {
+      status: 502,
+      headers: { ...MEDIA_ERR_HEADERS, 'CDN-Cache-Control': 'no-store' },
+    })
   }
 }

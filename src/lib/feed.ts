@@ -53,6 +53,15 @@ export function feedScopeSignature(category: string, whereChannel: unknown): str
   return `${category}|${JSON.stringify(whereChannel)}`
 }
 
+/**
+ * Версия ключа глобального индекса ленты (Task 8-b). Прежде «v8» дублировалась
+ * строкой в /api/feed и строкой «v7» в feed-warm — прогрев молча грел
+ * НЕ ТЕ ключи (feed читал v8, warm писал v7), и при наплыве (розыгрыш)
+ * первый бёрст пользователей запускал тяжёлую пересборку индекса на пуле.
+ * Единая константа делает расхождение невозможным по построению.
+ */
+export const FEED_INDEX_KEY_V = 'v8'
+
 /** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
 type IndexWhere = {
   channel: {

@@ -4,6 +4,7 @@ import { cronAuthorized } from '@/lib/guard'
 import { summarizePostCached, translatePostCached } from '@/lib/ai'
 import { runAiModeration } from '@/lib/ai-moderate'
 import { warmFeedIndexes } from '@/lib/feed-warm'
+import { getAiKnowledge } from '@/lib/ai-knowledge'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -60,6 +61,20 @@ export async function POST(request: Request) {
       /* прогрев индексов не влияет на остальной warm */
     }
 
+    /* ---------- База знаний ИИ (Task 8-b): в т.ч. активные розыгрыши ----------
+        Снапшот строится один раз и живёт в БД; перед розыгрышем (наплыв
+        обращений к ИИ-поиску/ассистенту/поддержке с вопросами про конкурс)
+        база уже должна содержать актуальные активные розыгрыши — считаем
+        её здесь, а не на первом пользовательском запросе. single-flight
+        внутри getAiKnowledge делает вызов безопасным при любом параллелизме. */
+    let knowledge = false
+    try {
+      await getAiKnowledge()
+      knowledge = true
+    } catch {
+      /* база знаний не критична для остального warm */
+    }
+
     /* ---------- Озвучка: УДАЛЕНО (v5.35) ----------
      * base64-блобы в Post.ttsAudio — главный жор Supabase; /api/tts теперь
      * генерирует компактный MP3 по запросу с кэшем в памяти. */
@@ -109,7 +124,7 @@ export async function POST(request: Request) {
 
     if (tts + translated + summarized + warmed + moderated > 0) {
       console.log(
-        `[warm] moder:+${moderated}${mod ? `/${mod.batches}б` : ''} tts:+${tts} translate:+${translated} summary:+${summarized} feed-indexes:+${warmed}`,
+        `[warm] moder:+${moderated}${mod ? `/${mod.batches}б` : ''} tts:+${tts} translate:+${translated} summary:+${summarized} feed-indexes:+${warmed} kb:${knowledge}`,
       )
     }
     return NextResponse.json({
@@ -122,6 +137,7 @@ export async function POST(request: Request) {
       translated,
       summarized,
       warmed,
+      knowledge,
     })
   } catch (e) {
     console.error('[warm]', e)

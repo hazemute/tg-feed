@@ -23,6 +23,17 @@ async function resizeAvatarWebp(raw: Buffer): Promise<Buffer | null> {
 export const dynamic = 'force-dynamic'
 
 /**
+ * 404-ответ «фото нет»: STRICT no-store.
+ *
+ * ИНАЧЕ одна «пустая» выдача залипает: Vercel CDN кэширует 404, если
+ * Cache-Control разрешает, а браузер может эвристически запомнить ответ —
+ * и аватарка НЕ ПОЯВИТСЯ даже после того, как фото у юзера/канала возникнет
+ * (первый вход, только что привязанный канал, загруженная аватарка).
+ * v5.71: явно запрещаем кэш ЛЮБОГО уровня на негатив (негативный кэш 60с
+ * остаётся только в памяти процесса — он и был задуман).
+ */
+
+/**
  * GET /api/avatar/[uid] — аватар пользователя или канала.
  *
  * <img> не умеет Authorization, поэтому роут публичный (uid — не секрет,
@@ -52,6 +63,13 @@ const STORAGE_HOST = (() => {
     return null
   }
 })()
+
+function notFound(): NextResponse {
+  return new NextResponse('not found', {
+    status: 404,
+    headers: { 'Cache-Control': 'no-store', 'CDN-Cache-Control': 'no-store' },
+  })
+}
 
 function isSafePhotoUrl(raw: string): boolean {
   try {
@@ -178,15 +196,14 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
   if (!ip.ok) return ip.res
 
   const { uid } = await ctx.params
-  if (!uid.startsWith('tg_') && !uid.startsWith('c_'))
-    return new NextResponse('not found', { status: 404 })
+  if (!uid.startsWith('tg_') && !uid.startsWith('c_')) return notFound()
 
   try {
     /* Источник photoUrl: пользователь (tgfile:/https) или канал (Storage/tgfile:) */
     if (uid.startsWith('c_')) {
       const channelId = uid.slice('c_'.length)
       const channel = await channelPhotoOf(channelId)
-      if (!channel) return new NextResponse('not found', { status: 404 })
+      if (!channel) return notFound()
 
       /*
        * v5.59 — ПРИОРИТЕТ ВЕЧНОГО ИСТОЧНИКА: photoFileId (Bot API) не протухает,
@@ -252,30 +269,46 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
         !channel.avatarUrl.includes('.supabase.co/') &&
         isSafeChannelAvatarUrl(channel.avatarUrl)
       ) {
-        return NextResponse.redirect(channel.avatarUrl, {
-          headers: {
-            'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
-            // v5.58: edge-кэш редиректа (динамическим роутам s-maxage срезается)
-            'Vercel-CDN-Cache-Control': 'public, s-maxage=86400, stale-while-revalidate=604800',
+        // v5.71: фолбэк-редирект тоже через НАШ прокси (самолечение при
+        // ротации + байты в edge-кэше), указатель кэшируем всего час —
+        // og:image обновляется парсером каждый тик, сутки кэша ранее
+        // консервировали ссылку, которую Telegram мог уже отозвать
+        const origin = new URL(request.url).origin
+        return NextResponse.redirect(
+          `${origin}/api/media?u=${encodeURIComponent(channel.avatarUrl)}`,
+          {
+            headers: {
+              'Cache-Control': 'public, max-age=3600, s-maxage=3600',
+              'Vercel-CDN-Cache-Control': 'public, s-maxage=3600',
+            },
           },
-        })
+        )
       }
-      return new NextResponse('not found', { status: 404 })
+      return new NextResponse('not found', {
+        status: 404,
+        headers: { 'Cache-Control': 'no-store', 'CDN-Cache-Control': 'no-store' },
+      })
     }
 
     // --- пользователь tg_<id> ---
     const user = await db.user.findUnique({ where: { id: uid }, select: { photoUrl: true } })
     const photo = user?.photoUrl ?? null
-    if (!photo) return new NextResponse('not found', { status: 404 })
+    if (!photo) return notFound()
 
     if (photo.startsWith('http')) {
-      if (!isSafePhotoUrl(photo)) return new NextResponse('not found', { status: 404 })
-      return NextResponse.redirect(photo, {
+      if (!isSafePhotoUrl(photo)) return notFound()
+      // v5.71: раньше — 302 ПРЯМО на сырую ссылку (живёт ~час) с кэшем сутки:
+      // после ротации токена Telegram все, кто следует кэшированному 302,
+      // получали 404 напрямую от Telegram — аватарка «слетала» на весь день.
+      // Теперь редирект-указатель короткий (5 мин) и ведёт на НАШ прокси
+      // /api/media: байты кэшируются edge'ом на 30 дней, а при мёртвом
+      // апстриме срабатывает самолечение (heal в /api/media). Попутно это
+      // закрывает и open-redirect — наружу больше не редиректим вообще.
+      const origin = new URL(request.url).origin
+      return NextResponse.redirect(`${origin}/api/media?u=${encodeURIComponent(photo)}`, {
         headers: {
-          // v5.33: фото-URL из initData живёт ~час, file_id — вечный; кэшируем
-          // смелее (сутки в браузере + сутки на edge Vercel) — аватар профиля
-          // появляется мгновенно и не дёргает origin на каждой загрузке
-          'Cache-Control': 'public, max-age=86400, s-maxage=86400, stale-while-revalidate=604800',
+          'Cache-Control': 'public, max-age=300, s-maxage=300',
+          'Vercel-CDN-Cache-Control': 'public, s-maxage=300',
         },
       })
     }
@@ -283,9 +316,9 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
     if (photo.startsWith('tgfile:')) {
       const fileId = photo.slice('tgfile:'.length)
       const url = await resolveTelegramFileUrl(fileId)
-      if (!url) return new NextResponse('not found', { status: 404 })
+      if (!url) return notFound()
       const img = await fetch(url, { signal: AbortSignal.timeout(10_000) })
-      if (!img.ok || !img.body) return new NextResponse('not found', { status: 404 })
+      if (!img.ok || !img.body) return notFound()
       const buf = await img.arrayBuffer()
       // Telegram иногда отдаёт application/octet-stream — нормализуем по расширению
       const rawType = img.headers.get('content-type') ?? ''
@@ -308,9 +341,13 @@ export async function GET(request: Request, ctx: { params: Promise<{ uid: string
       })
     }
 
-    return new NextResponse('not found', { status: 404 })
+    return notFound()
   } catch (e) {
     console.error('[avatar]', e)
-    return new NextResponse('failed', { status: 500 })
+    // 500 тоже не кэшируем: сбой пула/сети не должен «консервировать» пустую аватарку
+    return new NextResponse('failed', {
+      status: 500,
+      headers: { 'Cache-Control': 'no-store', 'CDN-Cache-Control': 'no-store' },
+    })
   }
 }

@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { err, IS_SQLITE } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
 import { stripMarkdown } from '@/lib/markdown'
+import { proxiedMediaUrl } from '@/lib/media'
 import type { ChannelStatsDTO, TopPostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -194,7 +195,10 @@ function topDto(p: {
     id: p.id,
     // stripMarkdown: маркеры премиум-эмодзи ![e:ID](…) и разметка не утекают в сниппет
     text: stripMarkdown(p.text).replace(/\s+/g, ' ').trim().slice(0, 220),
-    mediaUrl: p.mediaUrl,
+    // v5.71: сырой telesco.pe-URL протухает (ротация токенов Telegram) и
+    // блокируется у части провайдеров — превью «топ постов» в кабинете
+    // заворачиваем в наш прокси, как во всей ленте
+    mediaUrl: proxiedMediaUrl(p.mediaUrl) ?? p.mediaUrl,
     mediaType: p.mediaType,
     views: p.viewsTg ?? p.viewsCount,
     reactions: p.reactionsTg,

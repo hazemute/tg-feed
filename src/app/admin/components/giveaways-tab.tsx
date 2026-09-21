@@ -18,6 +18,7 @@ import {
   AlertTriangle,
   Ban,
   CalendarDays,
+  ChevronDown,
   ExternalLink,
   Gift,
   Loader2,
@@ -163,9 +164,19 @@ interface GiveawayEntryRow {
   createdAt: string
 }
 
-async function fetchGiveawayEntries(id: string): Promise<{ giveaway: { title: string; status: string }; entries: GiveawayEntryRow[] }> {
-  return panelFetch<{ giveaway: { title: string; status: string }; entries: GiveawayEntryRow[] }>(
-    `/api/panel/giveaways?entries=${encodeURIComponent(id)}`,
+async function fetchGiveawayEntries(
+  id: string,
+  offset = 0,
+  limit = 200,
+): Promise<{ giveaway: { title: string; status: string }; entries: GiveawayEntryRow[]; total: number; limit: number; offset: number }> {
+  return panelFetch<{
+    giveaway: { title: string; status: string }
+    entries: GiveawayEntryRow[]
+    total: number
+    limit: number
+    offset: number
+  }>(
+    `/api/panel/giveaways?entries=${encodeURIComponent(id)}&offset=${offset}&limit=${limit}`,
   )
 }
 
@@ -485,10 +496,12 @@ export function GiveawaysTab({ tick, onSettled }: TabProps) {
   const [previewHtml, setPreviewHtml] = useState<string | null>(null)
   const [previewBusy, setPreviewBusy] = useState(false)
 
-  // v5.46: участники розыгрыша (модал с билетами)
+  // v5.46: участники розыгрыша (модал с билетами). v5.71: пагинация по 200
   const [pModal, setPModal] = useState<GiveawayItem | null>(null)
   const [pEntries, setPEntries] = useState<GiveawayEntryRow[] | null>(null)
+  const [pTotal, setPTotal] = useState(0)
   const [pLoading, setPLoading] = useState(false)
+  const [pMore, setPMore] = useState(false)
   const [pError, setPError] = useState<string | null>(null)
 
   const load = async () => {
@@ -509,19 +522,35 @@ export function GiveawaysTab({ tick, onSettled }: TabProps) {
     }
   }
 
-  // v5.46: открыть модал участников
+  // v5.46: открыть модал участников (первые 200; далее «Показать ещё»)
   const openParticipants = async (item: GiveawayItem) => {
     setPModal(item)
     setPEntries(null)
+    setPTotal(0)
     setPError(null)
     setPLoading(true)
     try {
-      const d = await fetchGiveawayEntries(item.id)
+      const d = await fetchGiveawayEntries(item.id, 0)
       setPEntries(d.entries)
+      setPTotal(d.total)
     } catch (e) {
       setPError(e instanceof PanelError ? e.message : 'Не удалось загрузить участников')
     } finally {
       setPLoading(false)
+    }
+  }
+
+  const loadMoreParticipants = async () => {
+    if (!pModal || !pEntries || pMore) return
+    setPMore(true)
+    try {
+      const d = await fetchGiveawayEntries(pModal.id, pEntries.length)
+      setPEntries((prev) => (prev ? [...prev, ...d.entries] : d.entries))
+      setPTotal(d.total)
+    } catch {
+      toast.error('Не удалось дозагрузить участников')
+    } finally {
+      setPMore(false)
     }
   }
 
@@ -983,7 +1012,7 @@ export function GiveawaysTab({ tick, onSettled }: TabProps) {
               <div className="min-w-0 flex-1">
                 <p className="truncate text-sm font-semibold text-slate-900">Участники · {pModal.title}</p>
                 <p className="text-xs text-slate-500">
-                  {pEntries ? `${pEntries.length} заявок · сортировка по билетам` : 'Загрузка…'}
+                  {pEntries ? `${pEntries.length} из ${pTotal} заявок · сортировка по билетам` : 'Загрузка…'}
                   {typeof pModal.losersRewardSwipes === 'number' && pModal.losersRewardSwipes > 0
                     ? ` · утешение ${pModal.losersRewardSwipes} свайпов`
                     : ''}
@@ -1051,6 +1080,14 @@ export function GiveawaysTab({ tick, onSettled }: TabProps) {
                     </li>
                   ))}
                 </ul>
+              )}
+              {!pLoading && !pError && pEntries && pTotal > pEntries.length && (
+                <div className="flex justify-center py-3">
+                  <Button variant="outline" size="sm" disabled={pMore} onClick={() => void loadMoreParticipants()} className={btnOutlineDark}>
+                    {pMore ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ChevronDown aria-hidden />}
+                    Показать ещё ({pTotal - pEntries.length})
+                  </Button>
+                </div>
               )}
             </div>
           </div>

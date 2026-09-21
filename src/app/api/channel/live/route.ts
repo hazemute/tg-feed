@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
-import { proxiedMediaUrl } from '@/lib/media'
+import { channelAvatarUrl, proxiedMediaUrl } from '@/lib/media'
 import { SITE_URL } from '@/lib/site'
 import {
   botDeleteChannelMessage,
@@ -157,7 +157,9 @@ export async function GET(request: Request) {
         username: ch.username,
         title: ch.title,
         description: ch.description,
-        avatarUrl: proxiedMediaUrl(ch.avatarUrl) ?? (ch.photoFileId ? `/api/avatar/c_${ch.id}` : null),
+        // v5.71: единый channelAvatarUrl — вечный photoFileId приоритетнее сырой
+        // telesco-ссылки (раньше сырая выигрывала, ротировалась и «слетала»)
+        avatarUrl: channelAvatarUrl(ch.avatarUrl, ch.photoFileId, ch.id),
         subscribers: ch.membersCount ?? ch.subscribersCount,
         ctaLabel: ch.ctaLabel,
         ctaUrl: ch.ctaUrl,

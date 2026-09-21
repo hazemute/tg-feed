@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { Sparkles } from 'lucide-react'
 import { apiStream } from '@/lib/api'
+import { stripMarkdown } from '@/lib/markdown'
 import { useBackButton } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
 import type { PostDTO } from '@/lib/types'
@@ -57,7 +58,9 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
     apiStream('/api/summary/stream', { postId: pid }, (type, d) => {
       if (cancelled) return
       if (type === 'cached' || type === 'done') {
-        const items = Array.isArray(d.items) ? (d.items as string[]) : []
+        const items = (Array.isArray(d.items) ? (d.items as string[]) : []).map((s) =>
+          stripMarkdown(String(s)).trim(),
+        )
         setData({
           postId: pid,
           lines: items,
@@ -163,7 +166,7 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
                       <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-tg-link/10 text-[12px] font-bold text-tg-link">
                         {i + 1}
                       </span>
-                      <p className="text-snippet leading-snug text-tg-text">{b}</p>
+                      <p className="text-snippet leading-snug text-tg-text">{stripMarkdown(b)}</p>
                     </motion.div>
                   ))}
                   {/* Строка, которую модель печатает прямо сейчас — эффект «живой генерации» */}
@@ -173,7 +176,7 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
                         {lines.length + 1}
                       </span>
                       <p className="text-snippet leading-snug text-tg-text2">
-                        {partial || t('summary.generating')}
+                        {stripMarkdown(partial) || t('summary.generating')}
                         <span className="ml-0.5 inline-block h-3.5 w-[2px] animate-pulse bg-tg-link align-middle" aria-hidden />
                       </p>
                     </div>

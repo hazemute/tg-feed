@@ -34,6 +34,19 @@ export async function invalidateBalance(uid: string): Promise<void> {
   await cacheDel(balKeyOf(uid))
 }
 
+/**
+ * Массовая инвалидация (финализация розыгрышей: утешительные свайпы сотням/
+ * тысячам проигравших одним махом). Один DEL со списком ключей вместо тысячи
+ * отдельных команд — Upstash тарифицирует каждую команду, а updateMany +
+ * createMany уже прошли; чанки по 500 — с запасом ниже лимитов REST-запроса.
+ */
+export async function invalidateBalancesMany(uids: string[]): Promise<void> {
+  const CHUNK = 500
+  for (let i = 0; i < uids.length; i += CHUNK) {
+    await cacheDel(...uids.slice(i, i + CHUNK).map(balKeyOf)).catch(() => {})
+  }
+}
+
 /** Только для edge-роута: читаем ключ и строго проверяем форму данных */
 export async function readCachedBalance(uid: string): Promise<CachedBalance | null> {
   const v = await cacheGet<CachedBalance>(balKeyOf(uid))

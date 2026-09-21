@@ -316,9 +316,24 @@ const CRITICAL: Array<[string, string | null]> = [
 
 export type SchemaState = { ok: boolean; missing: string[] }
 
+/*
+ * Task 8-b: кэш проверки 30с. /api/health зовёт checkSchema на каждый запрос
+ * (мониторы/cron долбят её и в спокойствии, и тем более под наплывом) —
+ * information_schema-SELECT на каждый пинг не нужен: схема меняется только
+ * миграциями/панелью, обе точки сбрасывают кэш (invalidateSchemaCheck).
+ */
+let checkCache: { state: SchemaState; exp: number } | null = null
+const CHECK_TTL_MS = 30_000
+
+/** Сбросить кэш проверки схемы (после миграций/ALTER'ов) */
+export function invalidateSchemaCheck(): void {
+  checkCache = null
+}
+
 /** Проверка критичных объектов схемы (Postgres; в SQLite-песочнице всегда ok) */
 export async function checkSchema(): Promise<SchemaState> {
   if (isSqlite()) return { ok: true, missing: [] }
+  if (checkCache && checkCache.exp > Date.now()) return checkCache.state
   try {
     type Row = { table_name: string; column_name: string }
     const rows = await db.$queryRawUnsafe<Row[]>(`
@@ -348,7 +363,9 @@ export async function checkSchema(): Promise<SchemaState> {
     const missing = CRITICAL.filter(([t, c]) => (c ? !cols.has(`${t}.${c}`) : !tables.has(t))).map(([t, c]) =>
       c ? `${t}.${c}` : t,
     )
-    return { ok: missing.length === 0, missing }
+    const state: SchemaState = { ok: missing.length === 0, missing }
+    checkCache = { state, exp: Date.now() + CHECK_TTL_MS }
+    return state
   } catch (e) {
     console.error('[schema/check]', e)
     return { ok: false, missing: ['<check failed>'] }
@@ -380,6 +397,7 @@ export async function ensureAppSchema(opts?: { force?: boolean }): Promise<{ ok:
       console.error('[ensure-schema]', (e as Error).message)
     }
   }
+  invalidateSchemaCheck() // ALTER'ы выполнены — кэш проверки больше не актуален
   const st = await checkSchema()
   ensuredOk = st.ok
   return { ok: st.ok, applied, missing: st.missing }
@@ -395,5 +413,6 @@ export async function applyNamedMigration(version: string): Promise<number> {
     applied++
   }
   ensuredOk = false // схема изменилась — кэш проверки сбрасываем
+  invalidateSchemaCheck()
   return applied
 }

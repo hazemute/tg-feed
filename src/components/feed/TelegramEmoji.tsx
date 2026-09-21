@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { cn } from '@/lib/utils'
+import { proxiedMediaUrl } from '@/lib/media'
 
 /**
  * TelegramEmojiRenderer — переиспользуемый рендерер премиум-эмодзи Telegram.
@@ -209,6 +210,13 @@ export function TgEmoji({
   /* v5.26: гейтинг тиров снят по приказу владельца — анимации (видео/Lottie)
    * видны ВСЕМ: это контент каналов, а не фича подписки. */
 
+  /* Task 8-a: thumb-ссылки в маркерах ![e:ID](url) лежат в БД СЫРЫМИ
+   * (cdn*.telesco.pe из og-разметки t.me/s) — у части провайдеров (РФ) прямой
+   * CDN заблокирован, картинка не грузится. Заворачиваем в /api/media на рендере
+   * (media.ts изоморфный): доверенные хосты идут через прокси с edge-кэшем,
+   * чужие/уже проксированные — без изменений (идемпотентность). */
+  const thumbUrl = proxiedMediaUrl(url) ?? url
+
   // Пауза вне зоны видимости / автозапуск при появлении (autoplay + loop)
   useEffect(() => {
     const v = videoRef.current
@@ -222,7 +230,7 @@ export function TgEmoji({
   const wantVideo = animated && id && !broken
   const wantLottie = lottie && id && !broken && CAN_GZIP
 
-  if (wantLottie) return <LottieEmoji id={id} fallbackUrl={url} />
+  if (wantLottie) return <LottieEmoji id={id} fallbackUrl={thumbUrl} />
 
   return (
     <span ref={ref} className="inline-block leading-none">
@@ -240,9 +248,9 @@ export function TgEmoji({
           className={EMOJI_CLS}
           onError={() => setBroken(true)}
         />
-      ) : url && !broken ? (
+      ) : thumbUrl && !broken ? (
         <img
-          src={url}
+          src={thumbUrl}
           alt="эмодзи"
           loading="lazy"
           decoding="async"

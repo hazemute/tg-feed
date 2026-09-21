@@ -17,8 +17,10 @@ import { bearerToken, verifySessionEdge } from '@/lib/session-edge'
  *    нельзя). HSTS на /api не дублируем (ставит платформа), для HTML тоже
  *    не дублируем — next.config.ts уже ставит глобальный max-age=63072000.
  *
- * 1) Глобальный анти-флуд (in-memory, слой 0): окно 60с, 300 req/мин с IP
- *    на ВСЕ /api/* — ноль команд Redis, ловит дудос-флуд до любых расходов.
+ * 1) Глобальный анти-флуд (in-memory, слой 0): окно 60с, 600 req/мин с IP
+ *    (Task 8-b: было 300 — под CGNAT-кластеры мобильных операторов на пике
+ *    розыгрыша; 600 для живого юзера по-прежнему недостижимо) на ВСЕ /api/* —
+ *    ноль команд Redis, ловит дудос-флуд до любых расходов.
  *    POST/PUT/DELETE считаются за 2 запроса (апишные мутации дороже GET —
  *    запись в БД/Redis), GET/HEAD за 1.
  *    Redis-лимиты чувствительных эндпоинтов остаются слоем 1 (единый лимит
@@ -90,31 +92,51 @@ const SOFT_FACTOR = 0.6
 type SoftEntry = { count: number; windowStart: number }
 const soft = new Map<string, SoftEntry>()
 
+/*
+ * Task 8-b: чистка ПО ВРЕМЕНИ (time-based). Прежде чистка была «амортизированной»
+ * (каждые 2048/4096-й хит при переполнении) — под бёрстом розыгрыша (десятки
+ * тысяч уникальных IP) карта могла вырасти до сотен тысяч записей между
+ * случайными триггерами. Теперь два триггера: размер переполнен И прошло ≥30с
+ * с последней чистки — разово выметаем всё, что старше 2 окон.
+ */
+let lastSoftSweep = 0
+
 function softCountAndIncr(key: string): number {
   const now = Date.now()
   const e = soft.get(key)
   if (!e || now - e.windowStart >= WINDOW_SEC * 1000) {
+    if (soft.size > 3000 && now - lastSoftSweep > 30_000) {
+      lastSoftSweep = now
+      for (const [k, v] of soft) {
+        if (now - v.windowStart > WINDOW_SEC * 2000) soft.delete(k)
+      }
+    }
     soft.set(key, { count: 1, windowStart: now })
     return 0 // предыдущих хитов в этом окне не было
   }
   const prev = e.count
   e.count += 1
-  // амортизированная чистка одноразовых IP
-  if (soft.size > 3000 && e.count % 2048 === 0) {
-    for (const [k, v] of soft) {
-      if (now - v.windowStart > WINDOW_SEC * 2000) soft.delete(k)
-    }
-  }
   return prev
 }
 
 // ----------------- Слой 0: in-memory анти-флуд (без Redis) -----------------
 
-const FLOOD_LIMIT = 300 // req/мин с одного IP на инстанс
+const FLOOD_LIMIT = 600 // req/мин с одного IP на инстанс (Task 8-b: 300 → 600)
+/*
+ * Task 8-b (пик 70к): 300 → 600. Аудитория розыгрыша — Telegram-мобильные
+ * пользователи, большая часть за CGNAT операторов (сотни юзеров на публичный
+ * IP): при 300/мин кластер NAT мог упереться в лимит ЛЕГИТИМНЫм трафиком и
+ * ловить 429/блок на минуту. 600/мин на инстанс по-прежнему отрезает любой
+ * флуд (10 rps с одного IP на инстанс — недостижимо для живого юзера), а
+ * агрегат по IP делится между инстансами (карта in-memory на контейнер).
+ * POST-вес 2 сохранён: мутации по-прежнему упираются вдвое быстрее.
+ */
 const FLOOD_BLOCK_MS = 60_000 // повторное окно после срабатывания
 
 type FloodEntry = { count: number; windowStart: number; blockedUntil: number }
 const flood = new Map<string, FloodEntry>()
+
+let lastFloodSweep = 0
 
 /**
  * weight: GET/HEAD = 1, POST/PUT/DELETE = 2 — мутации дороже (БД/Redis-запись),
@@ -122,6 +144,14 @@ const flood = new Map<string, FloodEntry>()
  */
 function floodAllowed(ip: string, weight = 1): boolean {
   const now = Date.now()
+  // Task 8-b: честовая чистка карты (см. softCountAndIncr) — карта не растёт
+  // безгранично под бёрстом уникальных IP
+  if (flood.size > 4000 && now - lastFloodSweep > 30_000) {
+    lastFloodSweep = now
+    for (const [k, v] of flood) {
+      if (v.blockedUntil < now && now - v.windowStart > WINDOW_SEC * 2000) flood.delete(k)
+    }
+  }
   const e = flood.get(ip)
   if (!e) {
     flood.set(ip, { count: weight, windowStart: now, blockedUntil: 0 })
@@ -136,12 +166,6 @@ function floodAllowed(ip: string, weight = 1): boolean {
   if (e.count > FLOOD_LIMIT) {
     e.blockedUntil = now + FLOOD_BLOCK_MS
     return false
-  }
-  // чистка карты от одноразовых IP (каждые ~4096 запросов)
-  if (flood.size > 5000 && e.count % 4096 === 0) {
-    for (const [k, v] of flood) {
-      if (v.blockedUntil < now && now - v.windowStart > WINDOW_SEC * 2000) flood.delete(k)
-    }
   }
   return true
 }

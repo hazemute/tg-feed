@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { proxiedMediaUrl } from '@/lib/media'
+import { channelAvatarUrl, proxiedMediaUrl } from '@/lib/media'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
@@ -162,7 +162,8 @@ export async function GET(request: Request) {
       list.push({
         id: p.id,
         textPreview: truncate(stripMarkdown(p.text)),
-        mediaUrl: p.mediaUrl,
+        // v5.71: сырой telesco.pe-URL протухает/блокируется — через общий прокси
+        mediaUrl: proxiedMediaUrl(p.mediaUrl) ?? p.mediaUrl,
         publishedAt: p.publishedAt.toISOString(),
       })
     }
@@ -175,7 +176,10 @@ export async function GET(request: Request) {
         isPremium: ch.isPremium,
         avatarColor: ch.avatarColor,
         // v5.33: Storage-аватарка через /api/media (CDN-кэш, экономия egress Supabase)
-        avatarUrl: proxiedMediaUrl(ch.avatarUrl) ?? (ch.photoFileId ? `/api/avatar/c_${ch.id}` : null),
+        // v5.71: единый channelAvatarUrl — ВЕЧНЫЙ photoFileId (Bot API) приоритетнее
+        // сырой telesco-ссылки (раньше сырая выигрывала и протухала через дни:
+        // «аватарки в уведомлениях слетают»)
+        avatarUrl: channelAvatarUrl(ch.avatarUrl, ch.photoFileId, ch.id),
         categorySlug: ch.category?.slug ?? null,
         count: groupPosts.length,
         posts: groupPosts,

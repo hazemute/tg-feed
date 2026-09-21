@@ -1467,7 +1467,9 @@ export function FeedView() {
             </span>
             <p className="text-[15px] font-semibold text-tg-text">Здесь пока пусто</p>
             <p className="text-snippet text-tg-hint">
-              Подпишитесь на каналы или посмотрите популярные
+              {lang !== 'any'
+                ? `Для фильтра языка «${langLabel}» постов не нашлось. Нажмите «Язык» в тулбаре, чтобы показать все языки`
+                : 'Подпишитесь на каналы или посмотрите популярные'}
             </p>
             <button
               type="button"

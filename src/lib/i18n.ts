@@ -137,6 +137,11 @@ const DICT = {
   'profile.addFail': ['Не удалось добавить канал', "Couldn't add the channel"],
   'profile.settings': ['Настройки', 'Settings'],
   /* Настройки */
+  'settings.subtitle': ['Оформление, тариф и информация — всё здесь', 'Appearance, plan and info — all in one place'],
+  'settings.theme': ['Тема', 'Theme'],
+  'settings.allThemes': ['Все темы', 'All themes'],
+  'settings.tier': ['Тариф Snap', 'Snap plan'],
+  'settings.legal': ['Соглашение · конфиденциальность', 'Terms · privacy'],
   'settings.font': ['Размер шрифта постов', 'Post font size'],
   'settings.fontSm': ['Мелкий шрифт', 'Small font'],
   'settings.fontMd': ['Средний шрифт', 'Medium font'],

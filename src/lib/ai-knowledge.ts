@@ -203,13 +203,28 @@ async function buildKnowledge(): Promise<AiKnowledge> {
 /* ============================ публичный API ============================ */
 
 let mem: { at: number; data: AiKnowledge } | null = null
+/*
+ * Task 8-b: single-flight сборки. Прежде при истечении 45с-кэша каждый
+ * параллельный запрос запускал СВОЮ сборку (~8 SQL-запросов: count каналов/
+ * постов/юзеров + розыгрыши) — под наплывом это серийный удар по пулу ровно
+ * в момент пиковой нагрузки. Теперь бёрст ждёт одну сборку.
+ */
+let building: Promise<AiKnowledge> | null = null
 
 /** База знаний с двухуровневым кэшем (память 45с → БД → пересборка) */
 export async function getAiKnowledge(): Promise<AiKnowledge> {
   if (mem && Date.now() - mem.at < MEM_TTL_MS) return mem.data
-  const data = await buildKnowledge()
-  mem = { at: Date.now(), data }
-  return data
+  if (building) return building
+  building = (async () => {
+    const data = await buildKnowledge()
+    mem = { at: Date.now(), data }
+    return data
+  })()
+  try {
+    return await building
+  } finally {
+    building = null
+  }
 }
 
 /** Мгновенный сброс кэша — вызывать после изменения розыгрышей/тарифов/настроек */

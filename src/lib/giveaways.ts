@@ -5,7 +5,7 @@ import { premiumText, stripTgEmoji, premiumMap } from '@/lib/tg-emoji'
 import { buildPlainKeyboard, type BotButton } from '@/lib/tg-buttons'
 import { fmtRub, SWP_PER_RUB } from '@/lib/wallet'
 import { tierExpiryFor } from '@/lib/tiers'
-import { invalidateBalance } from '@/lib/balance-cache'
+import { invalidateBalance, invalidateBalancesMany } from '@/lib/balance-cache'
 import { cacheIncr, cacheExpire, cacheSet } from '@/lib/redis'
 import {
   parseTasks,
@@ -379,7 +379,9 @@ export async function joinGiveaway(
 ): Promise<JoinResult> {
   const g = await db.giveaway.findUnique({ where: { id: giveawayId } })
   if (!g) return { ok: false, reason: 'not_active', message: 'Розыгрыш не найден' }
-  if (g.status === 'finished' || g.status === 'cancelled' || g.status === 'draft') {
+  // v5.71: строго active — scheduled (ещё не опубликован), draft, cancelled и
+  // finished не принимают заявки (раньше scheduled пропускал endAt-проверку)
+  if (g.status !== 'active') {
     return { ok: false, reason: 'not_active', message: 'Розыгрыш уже не активен' }
   }
   if (g.endAt.getTime() <= Date.now()) {
@@ -631,9 +633,18 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
     select: { userId: true, tgId: true, username: true, firstName: true, ticketsCount: true },
   })
 
-  // Погружаем имена из User (гость мог не иметь firstName в заявке)
+  // Погружаем имена из User (гость мог не иметь firstName в заявке).
+  // v5.71 (70к): ЧАНКАМИ — один `in` с >65к id роняет Postgres (лимит
+  // bind-параметров), финализация падала бы ДО выбора победителей.
   const userIds = [...new Set(entries.map((e) => e.userId))]
-  const users = await db.user.findMany({ where: { id: { in: userIds } }, select: { id: true, firstName: true, username: true } })
+  const users: Array<{ id: string; firstName: string | null; username: string | null }> = []
+  for (let i = 0; i < userIds.length; i += IN_CHUNK) {
+    const part = await db.user.findMany({
+      where: { id: { in: userIds.slice(i, i + IN_CHUNK) } },
+      select: { id: true, firstName: true, username: true },
+    })
+    users.push(...part)
+  }
   const userById = new Map(users.map((u) => [u.id, u]))
 
   const prizes = parsePrizes(g.prizes)
@@ -689,8 +700,10 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
 
     // v5.54: АТОМАРНЫЙ ЗАХВАТ — статус → finished + фиксация победителей ДО начислений.
     // Проигравший гонку выходит сразу и НЕ начисляет (иначе — двойная выплата).
+    // v5.71: claim строго из 'active' (а не { not: 'finished' }) — отменённый
+    // (cancelled)/черновик не могут быть «зафинализированы» даже прямым вызовом.
     const claim = await db.giveaway.updateMany({
-      where: { id: g.id, status: { not: 'finished' } },
+      where: { id: g.id, status: 'active' },
       data: { status: 'finished', winners: JSON.stringify(participants) },
     })
     if (claim.count === 0) {
@@ -716,42 +729,64 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
   // без победы) + ЛС-уведомление. Призёры с ticketsCount = 0 (кликнули и ушли без
   // единого билета) — не считаем участниками розыгрыша, ничего не начисляем.
   // v5.54: идемпотентно — начисляем только тем, у кого ещё нет записи в журнале.
+  // v5.71 (пик 70к): всё батчами — updateMany/findMany чанками (см. IN_CHUNK),
+  // createMany инбокса чанками, одна массовая инвалидация балансов. Раньше 5000
+  // проигравших = 5000 ПОСЛЕДОВАТЕЛЬНЫХ awaited-insert'ов (минуты в serverless →
+  // таймаут функции и оборванная финализация).
   const winnersIds = new Set(participants.map((p) => p.userId))
   const loserReward = g.losersRewardSwipes ?? 0
   if (loserReward > 0) {
     const losers = entries.filter((e) => e.ticketsCount > 0 && !winnersIds.has(e.userId))
     if (losers.length > 0) {
       const loserNote = `Утешительный приз — розыгрыш «${g.title}»`
-      const paid = await db.balanceLog
-        .findMany({
-          where: { userId: { in: losers.map((l) => l.userId) }, kind: 'admin', currency: 'swp', amount: loserReward, note: loserNote },
-          select: { userId: true },
-        })
-        .catch(() => [] as Array<{ userId: string }>)
-      const paidSet = new Set(paid.map((p) => p.userId))
+      // v5.71 (70к): проверка журнала и начисление — ЧАНКАМИ (IN_CHUNK):
+      // один `in` на 70к id роняет Postgres-запрос, а это случилось бы ПОСЛЕ
+      // захвата финализации — rescue повторял бы падение бесконечно.
+      const paidSet = new Set<string>()
+      const loserIds = losers.map((l) => l.userId)
+      try {
+        for (let i = 0; i < loserIds.length; i += IN_CHUNK) {
+          const paid = await db.balanceLog.findMany({
+            where: { userId: { in: loserIds.slice(i, i + IN_CHUNK) }, kind: 'admin', currency: 'swp', amount: loserReward, note: loserNote },
+            select: { userId: true },
+          })
+          for (const p of paid) paidSet.add(p.userId)
+        }
+      } catch (e) {
+        // журнал недоступен — считаем всех неплаченными (как раньше .catch([])):
+        // маркеры идемпотентности всё равно пишутся ниже, окно гонки мало
+        console.error('[giveaway] losers paidSet', e)
+      }
       const pending = losers.filter((l) => !paidSet.has(l.userId))
       if (pending.length > 0) {
-        await db.user.updateMany({
-          where: { id: { in: pending.map((l) => l.userId) } },
-          data: { swipes: { increment: loserReward } },
-        })
-        await db.balanceLog
-          .createMany({
-            data: pending.map((l) => ({
-              userId: l.userId,
-              kind: 'admin',
-              currency: 'swp',
-              amount: loserReward,
-              note: loserNote,
-            })),
+        // 1) свайпы UPDATE'ом (баланс ≥ 0 по определению — только increment), чанками
+        const pendingIds = pending.map((l) => l.userId)
+        for (let i = 0; i < pendingIds.length; i += IN_CHUNK) {
+          await db.user.updateMany({
+            where: { id: { in: pendingIds.slice(i, i + IN_CHUNK) } },
+            data: { swipes: { increment: loserReward } },
           })
-          .catch(() => {})
-        await Promise.allSettled(pending.map((l) => invalidateBalance(l.userId)))
-        creditedNow = true
-        for (const l of pending) {
-          // Инбокс + ЛС бота (очередь внутри sendBotNotification)
-          await notifyLoser(l.userId, g.title, loserReward).catch(() => {})
         }
+        // 2) журнал-маркер идемпотентности — чанками (rescue не задвоит)
+        for (let i = 0; i < pending.length; i += 500) {
+          await db.balanceLog
+            .createMany({
+              data: pending.slice(i, i + 500).map((l) => ({
+                userId: l.userId,
+                kind: 'admin',
+                currency: 'swp',
+                amount: loserReward,
+                note: loserNote,
+              })),
+            })
+            .catch(() => {})
+        }
+        // 3) кэши балансов — пачка DEL вместо тысячи команд Redis
+        await invalidateBalancesMany(pending.map((l) => l.userId)).catch(() => {})
+        creditedNow = true
+        // 4) инбокс миниаппа — пакетно (ДОЛЖЕН пережить рестарт: это единственный
+        //    гарантированный канал), затем ЛС/SSE — fire-and-forget
+        await notifyLosersBatch(pending.map((l) => l.userId), g.title, loserReward)
       }
     }
   }
@@ -785,12 +820,18 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
   }
 
   // ЛС победителям — только если что-то начисляли сейчас (rescue-прогон без
-  // новых начислений не спамит повторными поздравлениями)
+  // новых начислений не спамит повторными поздравлениями).
+  // v5.71: инбокс пакетно (awaited — долен записаться ДО ответа), ЛС/SSE —
+  // fire-and-forget через очередь bot-notify с rate-limit.
   if (participants.length > 0 && creditedNow) {
-    for (const w of participants) {
-      const prize = prizes[w.prizeIndex]
-      notifyWinner(w.userId, g.title, prize?.label ?? 'приз')
-    }
+    await notifyWinnersBatch(
+      participants.map((w, i) => ({
+        userId: w.userId,
+        prizeLabel: prizes[w.prizeIndex]?.label ?? 'приз',
+        place: i + 1,
+      })),
+      g.title,
+    )
   }
 
   return { ok: true, winners: participants.length }
@@ -806,49 +847,87 @@ function pickUniform(entries: Array<{ userId: string }>, seats: number): string[
   return pool.slice(0, seats).map((p) => p.userId)
 }
 
-/** ЛС + инбокс победителю (fire-and-forget, не роняет финализацию) */
-async function notifyWinner(userId: string, title: string, prizeLabel: string): Promise<void> {
+/**
+ * Чанк IN-списка (v5.71, пик 70к): 1 id = 1 bind-параметр, лимит протокола
+ * Postgres — 65535 на запрос. При 70 000 заявок ОДИН findMany/updateMany
+ * c `in: allIds` уронил бы финализацию целиком (а rescue упал бы на том же
+ * месте бесконечно). Чанки по 20 000 — с большим запасом.
+ */
+const IN_CHUNK = 20_000
+
+/** Порог чанка для пакетных вставок инбокса (лимит переменных SQLite/параметров) */
+const INBOX_CHUNK = 500
+
+/**
+ * Инбокс + ЛС ПОБЕДИТЕЛЯМ — пакетно (v5.71).
+ * Инбокс пишется ОДНИМ createMany (awaited — это единственный гарантированный
+ * канал, переживающий рестарт инстанса). ЛС бота и SSE-события — fire-and-forget:
+ * очередь bot-notify отправляет с rate-limit (SEND_INTERVAL_MS), при рестарте
+ * инстанса недоставленные ЛС не теряют ничего критичного — приз уже на балансе
+ * (маркер в BalanceLog) и уведомление в инбоксе миниаппа.
+ */
+async function notifyWinnersBatch(
+  winners: Array<{ userId: string; prizeLabel: string; place: number }>,
+  title: string,
+): Promise<void> {
   try {
-    await db.notification.create({
-      data: {
-        userId,
+    if (winners.length === 0) return
+    for (let i = 0; i < winners.length; i += INBOX_CHUNK) {
+      await db.notification
+        .createMany({
+          data: winners.slice(i, i + INBOX_CHUNK).map((w) => ({
+            userId: w.userId,
+            type: 'system',
+            title: '🏆 Ты победил в розыгрыше!',
+            body: `«${title}» — приз: ${w.prizeLabel}. Уже на твоём балансе!`.slice(0, 200),
+          })),
+        })
+        .catch(() => {})
+    }
+    for (const w of winners) {
+      emitAppEvent('notif:new', { userId: w.userId })
+      sendBotNotification({
+        userId: w.userId,
         type: 'system',
         title: '🏆 Ты победил в розыгрыше!',
-        body: `«${title}» — приз: ${prizeLabel}. Уже на твоём балансе!`.slice(0, 200),
-      },
-    }).catch(() => {})
-    emitAppEvent('notif:new', { userId })
-    sendBotNotification({
-      userId,
-      type: 'system',
-      title: '🏆 Ты победил в розыгрыше!',
-      body: `«${title}» — твой приз: ${prizeLabel}. Проверь баланс в приложении! 🎉`,
-    })
+        body: `«${title}» — твой приз: ${w.prizeLabel}. Проверь баланс в приложении! 🎉`,
+      })
+    }
   } catch (e) {
-    console.error('[giveaway] notifyWinner', e)
+    console.error('[giveaway] notifyWinnersBatch', e)
   }
 }
 
-/** ЛС + инбокс с утешительными свайпами (fire-and-forget) */
-async function notifyLoser(userId: string, title: string, swipes: number): Promise<void> {
+/**
+ * Инбокс + ЛС ПРОИГРАВШИМ с утешительными свайпами — пакетно (v5.71).
+ * 5000 проигравших = 10 createMany вместо 5000 последовательных awaited-insert'ов.
+ */
+async function notifyLosersBatch(userIds: string[], title: string, swipes: number): Promise<void> {
   try {
-    await db.notification.create({
-      data: {
+    if (userIds.length === 0) return
+    for (let i = 0; i < userIds.length; i += INBOX_CHUNK) {
+      await db.notification
+        .createMany({
+          data: userIds.slice(i, i + INBOX_CHUNK).map((userId) => ({
+            userId,
+            type: 'system',
+            title: '💜 Утешительный приз',
+            body: `Розыгрыш «${title}»: +${swipes} свайпов уже на твоём балансе. В этот раз не повезло — впереди новые розыгрыши!`.slice(0, 200),
+          })),
+        })
+        .catch(() => {})
+    }
+    for (const userId of userIds) {
+      emitAppEvent('notif:new', { userId })
+      sendBotNotification({
         userId,
         type: 'system',
-        title: '💜 Утешительный приз',
-        body: `Розыгрыш «${title}»: +${swipes} свайпов уже на твоём балансе. В этот раз не повезло — впереди новые розыгрыши!`.slice(0, 200),
-      },
-    }).catch(() => {})
-    emitAppEvent('notif:new', { userId })
-    sendBotNotification({
-      userId,
-      type: 'system',
-      title: '💜 Утешительный приз за участие',
-      body: `Розыгрыш «${title}»: +${swipes} свайпов уже на твоём балансе. Удача любит упорных — участвуй снова!`,
-    })
+        title: '💜 Утешительный приз за участие',
+        body: `Розыгрыш «${title}»: +${swipes} свайпов уже на твоём балансе. Удача любит упорных — участвуй снова!`,
+      })
+    }
   } catch (e) {
-    console.error('[giveaway] notifyLoser', e)
+    console.error('[giveaway] notifyLosersBatch', e)
   }
 }
 
@@ -856,38 +935,53 @@ async function notifyLoser(userId: string, title: string, swipes: number): Promi
  * Ленивый планировщик: опубликовать запланированные (startAt <= now) и
  * завершить просроченные (endAt <= now). Вызывается из вебхука (троттлинг),
  * панели и daily-cron. Redis-лок от параллельных инстансов.
+ *
+ * v5.71 (гонка тиков): ПАРАЛЛЕЛЬНЫЕ инстансы (cron × вебхук × панель) больше не
+ * могут задвоить публикацию поста — перед publishGiveawayPost идёт условный
+ * updateMany (claim scheduled→active): пост ставит ровно один инстанс.
+ * Финализация защищена своим claim'ом внутри finalizeGiveaway (active→finished).
+ * Исправлен LIMBO: scheduled-розыгрыш с прошедшим endAt раньше застревал навсегда
+ * (в публикацию не попадал из-за notIn-фильтра, финализация отказывала в
+ * 'scheduled') — теперь он активируется и финализируется без поста.
  */
 export async function checkDueGiveaways(): Promise<{ published: number; finished: number }> {
   const now = new Date()
   let published = 0
   let finished = 0
 
-  // 1) Запланированные → активные (публикация поста)
-  const due = await db.giveaway.findMany({
-    where: { status: { in: ['scheduled', 'active'] }, startAt: { lte: now }, endAt: { lte: now } },
-    select: { id: true },
-  })
-  const expiredIds = due.map((d) => d.id)
-
+  // 1) Запланированные → активные (публикация поста).
+  //    Просроченные до публикации — тоже сюда: активируем и сразу финализируем
+  //    без поста (пост после дедлайна только путал бы участников).
   const toPublish = await db.giveaway.findMany({
-    where: { status: 'scheduled', startAt: { lte: now }, id: { notIn: expiredIds } },
+    where: { status: 'scheduled', startAt: { lte: now } },
   })
+  const handled = new Set<string>()
   for (const g of toPublish) {
     if (g.endAt.getTime() <= now.getTime()) {
-      // уже просрочен до публикации — просто активируем, финализация ниже
+      // просрочен до публикации — просто активируем, финализация ниже
       await db.giveaway.updateMany({ where: { id: g.id, status: 'scheduled' }, data: { status: 'active' } })
+      handled.add(g.id)
       finished += await finishOne(g.id)
       continue
     }
+    // v5.71: claim ДО публикации — параллельный тик/панель не задвоят пост
+    const claim = await db.giveaway.updateMany({
+      where: { id: g.id, status: 'scheduled' },
+      data: { status: 'active' },
+    })
+    if (claim.count === 0) continue // другой инстанс уже публикует
     const r = await publishGiveawayPost(g)
     if (r.ok && r.chatId && r.messageId) {
       await db.giveaway.update({
         where: { id: g.id },
-        data: { status: 'active', chatId: r.chatId, messageId: r.messageId },
+        data: { chatId: r.chatId, messageId: r.messageId },
       })
       published++
     } else {
-      // публикация не прошла — оставляем scheduled (ретрай на следующем тике)
+      // публикация не прошла — возвращаем в scheduled (ретрай на следующем тике)
+      await db.giveaway
+        .updateMany({ where: { id: g.id, status: 'active', messageId: null }, data: { status: 'scheduled' } })
+        .catch(() => {})
       console.error('[giveaway] publish failed', g.id, r.error)
     }
   }
@@ -897,8 +991,11 @@ export async function checkDueGiveaways(): Promise<{ published: number; finished
     where: { status: 'active', endAt: { lte: now } },
     select: { id: true },
   })
-  for (const a of active) finished += await finishOne(a.id)
-  for (const id of expiredIds) finished += await finishOne(id)
+  for (const a of active) {
+    if (handled.has(a.id)) continue
+    handled.add(a.id)
+    finished += await finishOne(a.id)
+  }
 
   // 3) v5.54: RESCUE — финализация захвачена (status finished, победители записаны),
   // но процесс оборвался до поста (messageId нет): дочищаем начисления/пост —
@@ -915,7 +1012,11 @@ export async function checkDueGiveaways(): Promise<{ published: number; finished
       take: 3,
     })
     .catch(() => [] as Array<{ id: string }>)
-  for (const s of stuck) finished += await finishOne(s.id)
+  for (const s of stuck) {
+    if (handled.has(s.id)) continue
+    handled.add(s.id)
+    finished += await finishOne(s.id)
+  }
 
   return { published, finished }
 }

@@ -45,11 +45,12 @@ export function isTrustedMediaUrl(raw: string): boolean {
   }
 }
 
-/** Заворачивает доверенный Telegram-CDN URL в наш прокси; остальное — как есть */
+/** Заворачивает доверенный Telegram-CDN URL в наш прокси; остальное — как есть.
+ *  Уже проксированные /api/media-ссылки не трогаем (идемпотентность). */
 export function proxiedMediaUrl(url: string | null | undefined): string | null | undefined {
   if (!url) return url
+  if (url.startsWith('/api/media?u=') || url.includes('/api/media?u=')) return url // уже проксирован
   if (!url.startsWith('https://')) return url
-  if (url.includes('/api/media?u=')) return url // уже проксирован
   if (!isTrustedMediaUrl(url)) return url
   return `/api/media?u=${encodeURIComponent(url)}`
 }
@@ -88,6 +89,11 @@ export function channelAvatarUrl(
   photoFileId: string | null | undefined,
   channelId: string,
 ): string | null {
+  // Идемпотентность: на вход мог прийти уже готовый клиентский URL (DTO → DTO,
+  // клиентский ретрай-хелпер и т.п.) — возвращаем как есть, не ломаем
+  if (avatarUrl && (avatarUrl.startsWith('/api/avatar/') || avatarUrl.includes('/api/media?u='))) {
+    return avatarUrl
+  }
   if (photoFileId) return `/api/avatar/c_${channelId}`
   const raw = avatarUrl && avatarUrl.includes('.supabase.co/') ? null : avatarUrl
   return proxiedMediaUrl(raw) ?? null
@@ -111,6 +117,13 @@ export function userAvatarProxyUrl(
   photoUrl: string | null | undefined,
 ): string | null {
   if (!photoUrl) return null
+  // Идемпотентность (КРИТИЧНО, v5.71): DTO /api/auth, /api/user/[uid] и др.
+  // отдают УЖЕ проксированный URL (страница/стор клиента хранит именно его),
+  // а клиентские компоненты (Sidebar, ProfileTab, UserProfileSheet,
+  // CommentsSheet, ProfileCustomizer) прогоняют его через хелпер ВТОРОЙ раз.
+  // Без этой ветки повторный вызов возвращал null → аватарка «слетала» на
+  // инициалы во всех этих местах (баг «не отображаются в Мой канал и много где»).
+  if (photoUrl.startsWith('/api/avatar/') || photoUrl.includes('/api/media?u=')) return photoUrl
   if (photoUrl.startsWith('tgfile:')) return `/api/avatar/${userId}`
   if (photoUrl.startsWith('https://')) {
     const proxied = proxiedMediaUrl(photoUrl)

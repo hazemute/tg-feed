@@ -332,8 +332,8 @@ export function ProfileTab() {
       <BottomSheet
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        title="Настройки"
-        subtitle="Оформление, тариф и информация — всё здесь"
+        title={t('profile.settings')}
+        subtitle={t('settings.subtitle')}
         variant="full"
       >
         <div className="space-y-4">
@@ -345,10 +345,10 @@ export function ProfileTab() {
             }}
             className="w-full rounded-2xl bg-tg-surface p-3.5 text-left active:opacity-80"
           >
-            <span className="block text-[13px] font-medium text-tg-hint">Тема</span>
+            <span className="block text-[13px] font-medium text-tg-hint">{t('settings.theme')}</span>
             <span className="mt-0.5 flex items-center justify-between">
               <span className="text-[16px] font-semibold text-tg-text">{themeName(theme)}</span>
-              <span className="text-[14px] font-medium text-tg-link">Все темы ({THEMES.length})</span>
+              <span className="text-[14px] font-medium text-tg-link">{t('settings.allThemes')} ({THEMES.length})</span>
             </span>
           </button>
           {/* v5.68: тариф и информация переехали сюда из профиля (дубли убраны) */}
@@ -362,7 +362,7 @@ export function ProfileTab() {
           >
             <Sparkles className="h-[20px] w-[20px] shrink-0 text-tg-star" aria-hidden />
             <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-medium text-tg-hint">Тариф Snap</span>
+              <span className="block text-[13px] font-medium text-tg-hint">{t('settings.tier')}</span>
               <span className="mt-0.5 block text-[16px] font-semibold text-tg-text">
                 {TIER_NAMES[headerTier] ?? headerTier}
               </span>
@@ -379,8 +379,8 @@ export function ProfileTab() {
           >
             <Info className="h-[20px] w-[20px] shrink-0 text-tg-hint" aria-hidden />
             <span className="min-w-0 flex-1">
-              <span className="block text-[13px] font-medium text-tg-hint">Информация</span>
-              <span className="mt-0.5 block truncate text-[16px] font-semibold text-tg-text">Соглашение · конфиденциальность</span>
+              <span className="block text-[13px] font-medium text-tg-hint">{t('profile.infoRow')}</span>
+              <span className="mt-0.5 block truncate text-[16px] font-semibold text-tg-text">{t('settings.legal')}</span>
             </span>
             <ChevronRight className="h-4 w-4 shrink-0 text-tg-hint" aria-hidden />
           </button>

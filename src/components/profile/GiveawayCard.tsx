@@ -150,6 +150,14 @@ export function GiveawayCard() {
   }
 
   const hoursLeft = Math.max(0, Math.floor((new Date(g.endAt).getTime() - Date.now()) / 3600_000))
+  // Абсолютное время итогов в ЧАСОВОМ ПОЯСЕ устройства (ISO с сервера → Date →
+  // toLocaleString) — сдвига на 3 часа нет ни у московского, ни у любого другого юзера
+  const endAtLocal = new Date(g.endAt).toLocaleString('ru-RU', {
+    day: 'numeric',
+    month: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
 
   return (
     <section className="pt-7" aria-label="Розыгрыш">
@@ -167,6 +175,7 @@ export function GiveawayCard() {
             <p className="truncate text-[15.5px] font-bold leading-tight text-tg-text">{g.title}</p>
             <p className="text-[12.5px] text-tg-hint">
               итоги через {hoursLeft >= 24 ? `${Math.floor(hoursLeft / 24)} дн. ${hoursLeft % 24} ч` : `${hoursLeft} ч`}
+              {' · '}{endAtLocal}
             </p>
           </div>
           <span className="flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[13px] font-bold text-amber-800 tabular-nums dark:bg-amber-500/15 dark:text-amber-300">
@@ -174,6 +183,13 @@ export function GiveawayCard() {
             {tickets}
           </span>
         </div>
+
+        {/* Пояснение механики: без ≥1 билета юзер пока не участвует в выборе */}
+        {tickets === 0 && (
+          <p className="mt-2.5 px-4 text-[12px] leading-snug text-amber-700/90 dark:text-amber-300/90">
+            Вы в списке заявок, но билетов пока 0 — в розыгрыше участвуют те, кто выполнил хотя бы одно задание. Выполните любое ниже — появится шанс!
+          </p>
+        )}
 
         {/* Задания */}
         {g.tasks.length > 0 && (
