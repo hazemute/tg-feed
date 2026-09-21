@@ -716,7 +716,9 @@ export function PostCard({
 
   // Stagger-появление: только для первой партии постов при первичной загрузке
   // (appearDelay приходит из FeedView), остальные посты — без анимации.
-  const cardShell = cn('pb-5 pt-4', post.promoted && 'promoted-card')
+  // v5.58 (60 FPS): feed-card = content-visibility:auto — офф-скрин карточки
+  // не участвуют в layout/paint, скролл длинной ленты остаётся плавным.
+  const cardShell = cn('feed-card pb-5 pt-4', post.promoted && 'promoted-card')
   return appear >= 0 ? (
     <motion.article
       ref={rootRef}

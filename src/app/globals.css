@@ -651,3 +651,36 @@ button {
     opacity: 0.6;
   }
 }
+
+/* ═══ v5.58 PERFORMANCE (60 FPS) ═══ */
+
+/* 1) Офф-скрин карточки ленты исключаются из layout/paint (content-visibility).
+ * Браузер резервирует примерную высоту (contain-intrinsic-size), поэтому
+ * скроллбар не прыгает, а дальние посты почти ничего не стоят при рендере. */
+.feed-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 360px;
+}
+/* Внутри видимой карточки включаем лейаут-контейнмент — пересчёт раскладки
+ * одного поста не перекидывается на соседние */
+.feed-card > * {
+  contain: layout style;
+}
+
+/* 2) Переход вкладок и пилюли анимируются ТОЛЬКО композитором (transform/opacity):
+ * подсказка браузеру поднять слой заранее — без репейнтов на каждый кадр. */
+.app-shell main {
+  will-change: transform, opacity;
+}
+
+/* 3) Медиа карточек декодируется в фоне (без блокировки главного потока) */
+.feed-card img {
+  content-visibility: visible;
+}
+
+/* 4) Уважение к reduced-motion — системно, для всех новых анимаций v5.58 */
+@media (prefers-reduced-motion: reduce) {
+  .feed-card {
+    content-visibility: visible;
+  }
+}

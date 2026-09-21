@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowRight, Bot, ChevronDown, ListChecks, Megaphone, Search, Sparkles, UserRound, Zap } from 'lucide-react'
+import { ArrowRight, ChevronDown, ListChecks, Megaphone, Search, Sparkles, UserRound, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
 import { SwipeIcon } from '@/components/tg/SwipeIcon'
