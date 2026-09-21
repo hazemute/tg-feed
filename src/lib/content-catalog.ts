@@ -93,41 +93,64 @@ export async function ensureContentCatalog(): Promise<{ started: boolean }> {
   // SQLite-песочница (локальный QA): миграция контента — только для прода
   if ((process.env.DATABASE_URL ?? '').startsWith('file:')) return { started: false }
   const flag = await db.botSetting.findUnique({ where: { key: FLAG_KEY } })
-  if (flag) return { started: false }
-
-  for (const c of NEW_CATEGORIES) {
-    await db.category.upsert({
-      where: { slug: c.slug },
-      create: c,
-      update: { title: c.title, emoji: c.emoji, order: c.order },
-    })
-  }
-  // GAMES-ONLY автосбор: пока флаг активен — только игровые каналы
-  await db.systemSetting.upsert({
-    where: { key: 'autodiscover:only_slug' },
-    create: { key: 'autodiscover:only_slug', value: 'games' },
-    update: { value: 'games' },
-  })
-  await db.botSetting.upsert({
-    where: { key: FLAG_KEY },
-    create: { key: FLAG_KEY, value: new Date().toISOString() },
-    update: { value: new Date().toISOString() },
-  })
-  const existing = await loadState()
-  if (!existing || existing.phase === 'done' || existing.phase?.startsWith('purge') === false) {
-    // существующий state v1 (news/cleanup/discover/done) несовместим — перезапускаем с purge
-    const fresh: CatalogState = {
-      phase: 'purge_user',
-      queue: CURATED.map((c) => c.username),
-      attempts: {},
-      done: [],
-      failed: [],
-      log: [`миграция v2 (полная перезагрузка контента) инициализирована ${new Date().toISOString().slice(0, 16)}`],
+  if (!flag) {
+    for (const c of NEW_CATEGORIES) {
+      await db.category.upsert({
+        where: { slug: c.slug },
+        create: c,
+        update: { title: c.title, emoji: c.emoji, order: c.order },
+      })
     }
-    await saveState(fresh)
+    // GAMES-ONLY автосбор: пока флаг активен — только игровые каналы
+    await db.systemSetting.upsert({
+      where: { key: 'autodiscover:only_slug' },
+      create: { key: 'autodiscover:only_slug', value: 'games' },
+      update: { value: 'games' },
+    })
+    await db.botSetting.upsert({
+      where: { key: FLAG_KEY },
+      create: { key: FLAG_KEY, value: new Date().toISOString() },
+      update: { value: new Date().toISOString() },
+    })
+    const existing = await loadState()
+    if (!existing || existing.phase === 'done' || existing.phase?.startsWith('purge') === false) {
+      // существующий state v1 (news/cleanup/discover/done) несовместим — перезапускаем с purge
+      const fresh: CatalogState = {
+        phase: 'purge_user',
+        queue: CURATED.map((c) => c.username),
+        attempts: {},
+        done: [],
+        failed: [],
+        log: [`миграция v2 (полная перезагрузка контента) инициализирована ${new Date().toISOString().slice(0, 16)}`],
+      }
+      await saveState(fresh)
+    }
+    console.log('[content-catalog] v2 запущена (purge → games discover)')
+    return { started: true }
   }
-  console.log('[content-catalog] v2 запущена (purge → games discover)')
-  return { started: true }
+
+  // v5.77.4: каталог пополняется между релизами — домёрдживаем новые кураторские
+  // username в ЖИВУЮ очередь discover (без сброса прогресса purge/done)
+  try {
+    const s = await loadState()
+    if (s && s.phase === 'discover') {
+      const processed = new Set<string>([
+        ...s.done.map((d) => d.username),
+        ...s.failed.map((f) => f.username),
+        ...Object.keys(s.attempts),
+        ...s.queue,
+      ])
+      const missing = CURATED.map((c) => c.username).filter((u) => !processed.has(u))
+      if (missing.length > 0) {
+        s.queue.push(...missing)
+        log(s, `очередь дополнена каталогом: +${missing.length}`)
+        await saveState(s)
+      }
+    }
+  } catch {
+    /* мердж не критичен */
+  }
+  return { started: false }
 }
 
 /**

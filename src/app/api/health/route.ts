@@ -153,7 +153,37 @@ export async function GET(request: Request) {
   let catalogDiag: Record<string, unknown> | null = null
   try {
     await ensureContentCatalog()
-    after(() => stepContentCatalog().catch((e) => console.error('[health] catalog step', e)))
+    after(async () => {
+      stepContentCatalog().catch((e) => console.error('[health] catalog step', e))
+      // v5.77.4: ФОНОВЫЙ АВТОПАРСИНГ при health (троттлинг 10 мин, cross-instance).
+      // Vercel cron на Hobby — раз в сутки, этого мало для роста ленты (цель:
+      // 1000+ постов в категории). GH Actions пингует health каждые 5 минут —
+      // ротационная партия шедулера (8+3 канала) непрерывно обновляет посты,
+      // просмотры и аватарки без внешних cron-сервисов.
+      try {
+        const last = await db.botSetting.findUnique({ where: { key: 'health_parse_at' } })
+        const lastAt = last ? Date.parse(last.value) : 0
+        if (Date.now() - lastAt < 10 * 60_000) return
+        await db.botSetting
+          .upsert({
+            where: { key: 'health_parse_at' },
+            create: { key: 'health_parse_at', value: new Date().toISOString() },
+            update: { value: new Date().toISOString() },
+          })
+          .catch(() => {})
+        const [{ nextAdaptiveBatch }, { runParser }] = await Promise.all([
+          import('@/lib/parse-scheduler'),
+          import('@/lib/parse-engine'),
+        ])
+        const batch = await nextAdaptiveBatch()
+        if (batch.length > 0) {
+          const r = await runParser(6, undefined, batch.length, 25_000, 2, batch)
+          if (r.newPosts.length > 0) console.log('[health] auto-parse: +' + r.newPosts.length, 'posts')
+        }
+      } catch (e) {
+        console.error('[health] auto-parse failed', e)
+      }
+    })
     // v5.77: публичная диагностика фазы (phase/счётчики/хвост лога — без секретов):
     // без неё невозможно увидеть, почему discover не добавляет каналы
     try {
