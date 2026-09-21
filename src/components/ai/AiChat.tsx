@@ -79,8 +79,8 @@ const SUGGESTIONS: Record<AiChatKind, string[]> = {
   assistant: [
     'Напиши пост на актуальную тему',
     'Разбери статистику канала: что улучшить?',
-    'Нарисуй обложку к посту',
-    'Что сейчас в тренде ленты?',
+    'Удали последние два поста',
+    'Поменяй описание канала',
   ],
   search: [
     'Что нового в ленте за сутки?',
@@ -337,7 +337,7 @@ export function AiChat({
           // v5.39: тарификация по токенам — сервер вернул фактическую списанную сумму
           const sw = Number(data.swipes ?? 0)
           if (sw > 0) {
-            toast(`−${sw} ${pluralRu(sw, 'свайп', 'свайпа', 'свайпов')} за запрос к ИИ`, { icon: '⚡' })
+            toast(`−${sw.toLocaleString('ru-RU')} ${pluralRu(sw, 'свайп', 'свайпа', 'свайпов')} за запрос к ИИ`, { icon: '⚡' })
             // v5.54: баланс в общем сторе синхронизируется мгновенно (кошелёк не устаревает)
             const cur = useApp.getState().balance
             useApp.getState().patchBalance({ swipes: Math.max(0, (cur?.swipes ?? 0) - sw) })

@@ -435,6 +435,197 @@ const analyzeStyleTool: ToolDef = {
   },
 }
 
+/* ============================ управление каналом (v5.58) ============================ */
+
+/** Список последних постов канала — подготовка к удалению/ревизии («полный цикл модерации») */
+const listMyPosts: ToolDef = {
+  name: 'list_my_posts',
+  label: 'Просматриваю посты канала…',
+  description:
+    'Последние посты канала автора (id, дата, просмотры, начало текста). Вызывай ПЕРЕД удалением: ' +
+    '«удали пост про X» → сначала list_my_posts, покажи кандидатов списком, уточни у автора, ' +
+    'потом удаляй через delete_posts (только после явного подтверждения).',
+  parameters: {
+    type: 'object',
+    properties: {
+      limit: { type: 'number', description: 'Сколько постов показать (по умолчанию 10, максимум 30)' },
+    },
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const limitRaw = typeof args.limit === 'number' ? args.limit : 10
+    const limit = Math.min(Math.max(Math.round(limitRaw) || 10, 1), 30)
+    const posts = await db.post.findMany({
+      where: { channelId: ctx.channelId },
+      orderBy: { publishedAt: 'desc' },
+      take: limit,
+      select: { id: true, tgKey: true, text: true, viewsCount: true, publishedAt: true },
+    })
+    if (posts.length === 0) return { ok: true, data: 'У канала пока нет постов в ленте Tg Swipe.' }
+    const data = posts
+      .map((p, i) => {
+        const preview = stripMarkdown(p.text).replace(/\s+/g, ' ').trim().slice(0, 90) || 'медиа-пост'
+        return `${i + 1}. id=${p.id} | ${p.publishedAt.toISOString().slice(0, 10)} | ${p.viewsCount} просм. — ${preview}`
+      })
+      .join('\n')
+    return { ok: true, data }
+  },
+}
+
+/**
+ * Удаление постов по id (в Telegram + из ленты Tg Swipe). Модель обязана
+ * сначала показать кандидатов (list_my_posts) и получить ЯВНОЕ подтверждение.
+ */
+const deletePosts: ToolDef = {
+  name: 'delete_posts',
+  label: 'Удаляю посты…',
+  description:
+    'УДАЛЯЕТ посты канала: и в Telegram (если бот админ), и из ленты Tg Swipe. Параметр postIds — ' +
+    'массив id из list_my_posts. ВАЖНО: сначала найди посты (list_my_posts), покажи их автору ' +
+    'и удаляй ТОЛЬКО после явного подтверждения («да, удали»). Без подтверждения НЕ вызывай.',
+  parameters: {
+    type: 'object',
+    properties: {
+      postIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Массив id постов из list_my_posts (1–20 штук)',
+      },
+    },
+    required: ['postIds'],
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const raw = Array.isArray(args.postIds) ? args.postIds : []
+    const ids = raw.filter((v): v is string => typeof v === 'string' && v.length > 0).slice(0, 20)
+    if (ids.length === 0) return { ok: false, data: 'Ошибка: не переданы id постов.' }
+    const ch = await db.channel.findUnique({
+      where: { id: ctx.channelId },
+      select: { username: true, claimedById: true },
+    })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+    // Удаляем только посты ЭТОГО канала (защита от чужих id)
+    const posts = await db.post.findMany({
+      where: { id: { in: ids }, channelId: ctx.channelId },
+      select: { id: true, tgKey: true },
+    })
+    if (posts.length === 0) return { ok: false, data: 'Посты с такими id не найдены в канале.' }
+
+    // 1) Telegram: удаляем оригинальные сообщения (bot admin — best effort)
+    const { botDeleteChannelMessage } = await import('@/lib/tg-bot')
+    let tgDeleted = 0
+    for (const p of posts) {
+      const messageId = Number(p.tgKey.split(':')[1])
+      if (Number.isFinite(messageId) && messageId > 0) {
+        const r = await botDeleteChannelMessage(ch.username, messageId).catch(() => ({ ok: false as const }))
+        if (r.ok) tgDeleted++
+      }
+    }
+
+    // 2) БД: пост исчезает из ленты Tg Swipe (каскад сотрёт лайки/закладки/комментарии)
+    const del = await db.post.deleteMany({ where: { id: { in: posts.map((p) => p.id) } } })
+
+    return {
+      ok: true,
+      data:
+        `Удалено постов: ${del.count} из ленты Tg Swipe` +
+        (tgDeleted > 0 ? `, ${tgDeleted} — также из Telegram-канала` : '') +
+        (tgDeleted < del.count
+          ? '. Часть постов не удалена в самом Telegram — добавь бота администратором канала с правом удаления сообщений.'
+          : '') +
+        '. Скажи автору, сколько постов удалено.',
+    }
+  },
+}
+
+/**
+ * Смена названия/описания/аватара канала (в Telegram + карточке в Tg Swipe).
+ * Аватар — по https-URL картинки (можно сгенерировать generate_image).
+ */
+const updateChannelInfo: ToolDef = {
+  name: 'update_channel_info',
+  label: 'Обновляю канал…',
+  description:
+    'Меняет НАЗВАНИЕ, ОПИСАНИЕ и/или АВАТАРА канала — и в Telegram, и в карточке ленты. ' +
+    'Передавай только то, что попросил автор (title/description/avatarUrl). Смена названия/аватара — ' +
+    'серьёзный шаг: покажи итоговый вариант и убедись, что автор подтвердил. avatarUrl — прямая ' +
+    'https-ссылка на картинку (можешь взять из generate_image).',
+  parameters: {
+    type: 'object',
+    properties: {
+      title: { type: 'string', description: 'Новое название канала (2–128 символов)' },
+      description: { type: 'string', description: 'Новое описание канала (до 255 символов)' },
+      avatarUrl: { type: 'string', description: 'https-URL новой аватарки' },
+    },
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const ch = await db.channel.findUnique({
+      where: { id: ctx.channelId },
+      select: { username: true, title: true, description: true, avatarUrl: true },
+    })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+
+    const title = str(args.title, 200)
+    const description = str(args.description, 600)
+    const avatarUrlRaw = str(args.avatarUrl, 600)
+    const avatarUrl = /^https:\/\//i.test(avatarUrlRaw) ? avatarUrlRaw : null
+    if (!title && !description && !avatarUrl) {
+      return { ok: false, data: 'Ошибка: передай хотя бы одно поле (title/description/avatarUrl).' }
+    }
+    if (title && title.length < 2) return { ok: false, data: 'Ошибка: название слишком короткое.' }
+
+    const { botSetChatTitle, botSetChatDescription, botSetChatPhoto } = await import('@/lib/tg-bot')
+    const results: string[] = []
+    let dbTitle = ch.title
+    let dbDesc = ch.description
+    let dbAvatar = ch.avatarUrl
+
+    if (title) {
+      const r = await botSetChatTitle(ch.username, title).catch(() => ({ ok: false as const, error: 'Ошибка Bot API' }))
+      if (r.ok) {
+        dbTitle = title
+        results.push(`название → «${title}» (Telegram + лента)`)
+      } else {
+        // Telegram отказал (нет прав) — карточку ленты всё равно обновляем
+        dbTitle = title
+        results.push(`название → «${title}» (в ленте; в Telegram не вышло: ${r.error ?? 'нет прав'} — добавь бота админом с правом change_channel_info)`)
+      }
+    }
+    if (description) {
+      const r = await botSetChatDescription(ch.username, description).catch(() => ({ ok: false as const, error: 'Ошибка Bot API' }))
+      if (r.ok) {
+        dbDesc = description
+        results.push('описание обновлено (Telegram + лента)')
+      } else {
+        dbDesc = description
+        results.push(`описание обновлено в ленте; в Telegram не вышло (${r.error ?? 'нет прав'})`)
+      }
+    }
+    if (avatarUrl) {
+      const r = await botSetChatPhoto(ch.username, avatarUrl).catch(() => ({ ok: false as const, error: 'Ошибка Bot API' }))
+      if (r.ok) {
+        dbAvatar = avatarUrl
+        results.push('аватар обновлён (Telegram + лента)')
+      } else {
+        results.push(`аватар в Telegram не обновился (${r.error ?? 'ошибка'}); попробуй другую картинку`)
+      }
+    }
+
+    // Карточка канала в ленте Tg Swipe (клиентские кэши короткоживущие —
+    // обновлённая карточка появится при следующем запросе сама)
+    await db.channel.update({
+      where: { id: ctx.channelId },
+      data: {
+        ...(title ? { title: dbTitle } : {}),
+        ...(description ? { description: dbDesc } : {}),
+        ...(dbAvatar ? { avatarUrl: dbAvatar } : {}),
+      },
+    })
+    return { ok: true, data: `Готово: ${results.join('; ')}.` }
+  },
+}
+
 /* ============================ реестры ============================ */
 
 /** Живые факты сервиса из базы знаний (кэш 45с — вызов почти бесплатный) */
@@ -509,7 +700,18 @@ const searchChannels: ToolDef = {
 }
 
 const SEARCH_TOOLS: ToolDef[] = [getTrending, searchPosts, readPost, searchChannels, getServiceFacts]
-const ASSISTANT_TOOLS: ToolDef[] = [getTrending, getChannelStats, createPostDraft, generateImage, publishPost, analyzeStyleTool, getServiceFacts]
+const ASSISTANT_TOOLS: ToolDef[] = [
+  getTrending,
+  getChannelStats,
+  createPostDraft,
+  generateImage,
+  publishPost,
+  listMyPosts,
+  deletePosts,
+  updateChannelInfo,
+  analyzeStyleTool,
+  getServiceFacts,
+]
 
 export function toolsFor(kind: ToolCtx['kind']): ToolDef[] {
   return kind === 'assistant' ? ASSISTANT_TOOLS : SEARCH_TOOLS
@@ -578,8 +780,8 @@ export function assistantSystemPrompt(ctx: {
     ? `в ленте с ${ctx.createdAt.toISOString().slice(0, 10)}`
     : ''
   return [
-    'Ты — Snap Ассистент — личный ИИ-ассистент автора Telegram-канала внутри Telegram Mini App «Tg Swipe».',
-    'Ты помогаешь придумывать посты, рисовать картинки к ним, смотреть статистику канала и публиковать готовые посты.',
+    'Ты — Snap Ассистент — личный ИИ-управляющий Telegram-канала автора внутри Telegram Mini App «Tg Swipe».',
+    'Ты помогаешь придумывать посты, рисовать картинки к ним, смотреть статистику, публиковать готовые посты — и ПОЛНОСТЬЮ управлять каналом: удалять посты, менять название/описание/аватар по словесной инструкции админа.',
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}). Автор: ${ctx.userName}, тариф: ${ctx.tier}.`,
     `Канал автора: «${ctx.channelTitle}» (@${ctx.channelUsername})${ctx.categoryTitle ? `, категория: ${ctx.categoryTitle}` : ''}${age ? `, ${age}` : ''}${ctx.channelDescription ? `. Описание: ${ctx.channelDescription.slice(0, 160)}` : ''}.`,
     ctx.cta.label && ctx.cta.url
@@ -600,10 +802,12 @@ export function assistantSystemPrompt(ctx: {
     '1. Просьба «напиши пост…» → продумай текст в стиле автора и вызови create_post_draft (в text — готовый пост). Затем коротко скажи, что готово, и предложи доработки.',
     '2. Просьба про картинку/обложку/иллюстрацию → вызови generate_image с подробным английским промптом (сюжет, окружение, стиль, свет, палитра, композиция).',
     '3. Явная просьба «опубликуй» → если текст ещё не показан, покажи его в ответе и вызови publish_post.',
-    '4. Вопросы про цифры → отвечай ИЗ данных канала выше; нужен самый свежий срез или топ постов → get_channel_stats; «что сейчас в тренде» → get_trending.',
-    '5. Дай совет по каналу, если автор просит «что улучшить» — опирайся на реальные цифры (вовлечённость, динамика 7 дней, топ посты).',
-    '6. Вопросы о СЕРВИСЕ (тарифы, свайпы, розыгрыши, лимиты, возможности приложения) → отвечай из базы знаний в системном промпте; самый свежий срез → get_service_facts.',
-    '7. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
-    '8. Формат ответов КАК В CHATGPT: markdown с заголовками ##/### при уместности, **жирный**, списки «- », нумерованные шаги, таблицы для сравнений, ```блоки кода``` для кода. Уместно используй эмодзи (🎉🔥✨⚡💡) — они отображаются премиум-анимациями. Без выдуманных фактов и цифр.',
+    '4. УДАЛЕНИЕ ПОСТОВ («удали пост/посты…») → ОБЯЗАТЕЛЬНО: сначала list_my_posts → покажи кандидатов списком (дата/просмотры/начало текста) → получи ЯВНОЕ подтверждение автора → только потом delete_posts. Никогда не удаляй без подтверждения. Если автор хочет удалить «последние N постов» — всё равно покажи список и подтверди.',
+    '5. ИЗМЕНЕНИЕ КАНАЛА («поменяй название/описание/аватар») → предложи конкретный вариант, получи подтверждение, вызови update_channel_info (title/description/avatarUrl — только запрошенные поля). Для аватара: сгенерируй картинку (generate_image) и передай её URL как avatarUrl.',
+    '6. Вопросы про цифры → отвечай ИЗ данных канала выше; нужен самый свежий срез или топ постов → get_channel_stats; «что сейчас в тренде» → get_trending.',
+    '7. Дай совет по каналу, если автор просит «что улучшить» — опирайся на реальные цифры (вовлечённость, динамика 7 дней, топ посты).',
+    '8. Вопросы о СЕРВИСЕ (тарифы, свайпы, розыгрыши, лимиты, возможности приложения) → отвечай из базы знаний в системном промпте; самый свежий срез → get_service_facts.',
+    '9. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
+    '10. Формат ответов КАК В CHATGPT: markdown с заголовками ##/### при уместности, **жирный**, списки «- », нумерованные шаги, таблицы для сравнений, ```блоки кода``` для кода. Уместно используй эмодзи (🎉🔥✨⚡💡) — они отображаются премиум-анимациями. Без выдуманных фактов и цифр.',
   ].join('\n')
 }

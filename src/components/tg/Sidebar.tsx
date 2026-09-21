@@ -1,6 +1,6 @@
 'use client'
 
-import { Heart, Home, ListChecks, Search, UserRound } from 'lucide-react'
+import { Heart, Home, ListChecks, Megaphone, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -10,11 +10,15 @@ import { Avatar } from '@/components/tg/Avatar'
 import { APP_VERSION } from '@/lib/version'
 import type { Tab } from '@/lib/types'
 
-/* «Мой канал» убран из навигации (запрос владельца: разгрузка интерфейса) —
- * строка «Мой канал» переехала в низ профиля. */
-const items: { id: Tab; labelKey: 'nav.feed' | 'nav.quests' | 'nav.search' | 'nav.profile'; icon: typeof Home }[] = [
+/* v5.58: «Канал» — рабочий стол админа (управление + статистика + ИИ-ассистент). */
+const items: {
+  id: Tab
+  labelKey: 'nav.feed' | 'nav.quests' | 'nav.channel' | 'nav.search' | 'nav.profile'
+  icon: typeof Home
+}[] = [
   { id: 'feed', labelKey: 'nav.feed', icon: Home },
   { id: 'quests', labelKey: 'nav.quests', icon: ListChecks },
+  { id: 'channel', labelKey: 'nav.channel', icon: Megaphone },
   { id: 'search', labelKey: 'nav.search', icon: Search },
   { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]

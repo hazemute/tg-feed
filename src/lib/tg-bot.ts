@@ -706,6 +706,90 @@ export async function botPublishToChannel(
   return { ok: true, link: `https://t.me/${username.replace(/^@/, '')}/${r.messageId}` }
 }
 
+/* ===================== Управление каналом (v5.58, Snap Ассистент) ===================== */
+
+type BotCallResult = { ok: boolean; error?: string }
+
+/** Базовый вызов Bot API с флуд-предохранителем и таймаутом (для методов управления) */
+async function botManageCall(method: string, body: Record<string, unknown>): Promise<BotCallResult> {
+  if (!botEnabled()) return { ok: false, error: 'Бот не настроен' }
+  if (botBanned()) return { ok: false, error: 'Telegram временно ограничил Bot API — попробуйте чуть позже' }
+  await hydrateBotBan()
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = (await res.json().catch(() => null)) as { ok?: boolean; description?: string } | null
+    if (res.status === 429) {
+      const retry = Number((data as { parameters?: { retry_after?: number } } | null)?.parameters?.retry_after ?? 30)
+      await markBotBan(retry)
+    }
+    if (data?.ok) return { ok: true }
+    return { ok: false, error: data?.description ?? `HTTP ${res.status}` }
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message ?? e) }
+  }
+}
+
+/**
+ * Удаление сообщения в канале (Snap Ассистент v5.58: «удали пост …»).
+ * Бот должен быть админом канала с правом delete_messages.
+ */
+export async function botDeleteChannelMessage(username: string, messageId: number): Promise<BotCallResult> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  return botManageCall('deleteMessage', { chat_id: chatId, message_id: messageId })
+}
+
+/** Смена названия канала (1–128 символов, право change_channel_info) */
+export async function botSetChatTitle(username: string, title: string): Promise<BotCallResult> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  return botManageCall('setChatTitle', { chat_id: chatId, title: title.slice(0, 128) })
+}
+
+/** Смена описания канала (до 255 символов, право change_channel_info) */
+export async function botSetChatDescription(username: string, description: string): Promise<BotCallResult> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  return botManageCall('setChatDescription', { chat_id: chatId, description: description.slice(0, 255) })
+}
+
+/**
+ * Смена аватара канала по прямой https-ссылке на картинку.
+ * Bot API требует МУЛЬТИПАРТ-загрузку: скачиваем файл и отправляем формой
+ * (setChatPhoto не принимает URL в отличие от sendPhoto).
+ */
+export async function botSetChatPhoto(username: string, imageUrl: string): Promise<BotCallResult> {
+  if (!botEnabled()) return { ok: false, error: 'Бот не настроен' }
+  if (botBanned()) return { ok: false, error: 'Telegram временно ограничил Bot API — попробуйте чуть позже' }
+  await hydrateBotBan()
+  try {
+    // Скачиваем картинку (только https, до 5 МБ — ограничение Bot API на фото)
+    const dl = await fetch(imageUrl, { signal: AbortSignal.timeout(20_000) })
+    if (!dl.ok) return { ok: false, error: `Не удалось скачать картинку (HTTP ${dl.status})` }
+    const bytes = await dl.arrayBuffer()
+    if (bytes.byteLength > 5 * 1024 * 1024) return { ok: false, error: 'Картинка больше 5 МБ — возьмите меньше' }
+    const ct = dl.headers.get('content-type') ?? 'image/jpeg'
+    if (!/^image\//i.test(ct)) return { ok: false, error: 'Ссылка ведёт не на картинку' }
+    const ext = ct.includes('png') ? 'png' : ct.includes('webp') ? 'webp' : 'jpg'
+    const form = new FormData()
+    form.append('chat_id', `@${username.replace(/^@/, '')}`)
+    form.append('photo', new Blob([bytes], { type: ct }), `avatar.${ext}`)
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/setChatPhoto`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    })
+    const data = (await res.json().catch(() => null)) as { ok?: boolean; description?: string } | null
+    if (res.status === 429) await markBotBan(30)
+    if (data?.ok) return { ok: true }
+    return { ok: false, error: data?.description ?? `HTTP ${res.status}` }
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message ?? e) }
+  }
+}
+
 /** Информация о кастомном эмодзи: тип анимации + file_id файла */
 export type CustomEmojiInfo = {
   video: boolean // is_video — видео-стикер (webm), рендерим <video>

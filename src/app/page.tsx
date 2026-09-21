@@ -25,6 +25,7 @@ import { Sidebar } from '@/components/tg/Sidebar'
 import { Splash } from '@/components/tg/Splash'
 import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
 import { PreReleaseScreen } from '@/components/tg/PreReleaseScreen'
+import { WelcomeGuide, useWelcomeGuide } from '@/components/tg/WelcomeGuide'
 import { FeedView } from '@/components/feed/FeedView'
 
 /*
@@ -39,12 +40,12 @@ const PostOverlay = dynamic(() => import('@/components/feed/PostOverlay').then((
 const ShareSheet = dynamic(() => import('@/components/feed/ShareSheet').then((m) => m.ShareSheet), { ssr: false })
 const QuestsTab = dynamic(() => import('@/components/tabs/QuestsTab').then((m) => m.QuestsTab), { ssr: false })
 const SearchTab = dynamic(() => import('@/components/tabs/SearchTab').then((m) => m.SearchTab), { ssr: false })
-const MyChannelTab = dynamic(() => import('@/components/tabs/MyChannelTab').then((m) => m.MyChannelTab), { ssr: false })
+const ChannelTab = dynamic(() => import('@/components/tabs/ChannelTab').then((m) => m.ChannelTab), { ssr: false })
 const ProfileTab = dynamic(() => import('@/components/tabs/ProfileTab').then((m) => m.ProfileTab), { ssr: false })
 const AuthGateSheet = dynamic(() => import('@/components/tg/AuthGateSheet').then((m) => m.AuthGateSheet), { ssr: false })
 const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').then((m) => m.LoginByTelegram), { ssr: false })
 
-const TABS: Tab[] = ['feed', 'quests', 'search', 'mychannel', 'profile']
+const TABS: Tab[] = ['feed', 'quests', 'channel', 'search', 'profile']
 
 /*
  * v5.28: фактическая «темнота» активной темы — нужна для синхрона класса
@@ -87,6 +88,9 @@ export default function Home() {
    * Теперь ошибка входа показывает экран с кнопкой «Повторить».
    */
   const [authError, setAuthError] = useState(false)
+  /* v5.58: приветственный гайд при первом входе (один раз, «Пропустить» всегда
+   * под рукой) — появляется поверх готовой ленты, через 0.9с после авторизации */
+  const welcome = useWelcomeGuide(authReady && Boolean(user) && appOpen)
 
   useEffect(() => {
     const t = setTimeout(() => setSplashMinDone(true), 700)
@@ -353,6 +357,7 @@ export default function Home() {
       void import('@/components/profile/UserProfileSheet')
       void import('@/components/tabs/SearchTab')
       void import('@/components/tabs/QuestsTab')
+      void import('@/components/tabs/ChannelTab')
       void import('@/components/tabs/ProfileTab')
     }, 3_500)
     return () => window.clearTimeout(t)
@@ -500,7 +505,7 @@ export default function Home() {
               {tab === 'feed' && <FeedView />}
               {tab === 'quests' && <QuestsTab />}
               {tab === 'search' && <SearchTab />}
-              {tab === 'mychannel' && <MyChannelTab />}
+              {tab === 'channel' && <ChannelTab />}
               {tab === 'profile' && <ProfileTab />}
             </motion.main>
           </AnimatePresence>
@@ -522,6 +527,8 @@ export default function Home() {
       <CommentsSheet />
       {/* Публичный профиль по тапу на автора комментария (ава/имя) */}
       <UserProfileSheet />
+      {/* Приветственный гайд (v5.58): один раз, с «Пропустить» */}
+      <AnimatePresence>{welcome.open && <WelcomeGuide onDone={welcome.close} />}</AnimatePresence>
     </div>
   )
 }

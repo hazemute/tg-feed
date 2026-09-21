@@ -220,7 +220,7 @@ function stitchNoRepeat<T>(list: T[], channelIdOf: (x: T) => string, startAt = 1
   return arr
 }
 
-/** Чип-фильтр тулбара: компактный, активный — с синей подложкой */
+/** Чип-фильтр тулбара: аккуратный, активный — с мягкой подложкой (v5.58) */
 function FilterChip({
   active,
   onClick,
@@ -248,16 +248,16 @@ function FilterChip({
       aria-label={aria}
       title={aria}
       className={cn(
-        'flex h-9 shrink-0 items-center gap-1 rounded-full border px-3 text-[12.5px] font-medium transition active:scale-95',
+        'flex h-10 shrink-0 items-center gap-1.5 rounded-full border px-4 text-[13.5px] font-medium transition active:scale-95',
         active
-          ? 'border-tg-link/30 bg-tg-link/10 text-tg-link'
-          : 'border-tg-sep bg-tg-surface text-tg-hint',
+          ? 'border-transparent bg-tg-link/12 text-tg-link'
+          : 'border-tg-sep/70 bg-tg-surface text-tg-hint',
       )}
     >
       {busy ? (
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-tg-link" aria-hidden />
+        <Loader2 className="h-4 w-4 animate-spin text-tg-link" aria-hidden />
       ) : (
-        <Icon className={cn('h-3.5 w-3.5', active && 'text-tg-link')} aria-hidden />
+        <Icon className={cn('h-4 w-4', active && 'text-tg-link')} aria-hidden />
       )}
       {label}
     </button>
@@ -793,21 +793,36 @@ export function FeedView() {
   }, [load])
 
   // Кнопка «наверх» — показываем после прокрутки ленты дальше 700px;
-  // там же императивно обновляем тонкий прогресс-бар чтения (без ререндеров)
+  // там же императивно обновляем тонкий прогресс-бар чтения (без ререндеров).
+  // v5.58 (60 FPS): rAF-троттлинг — тяжелее одного кадра не работаем, а
+  // setShowTop зовём только при ПЕРЕСЕЧЕНИИ порога (не каждый кадр скролла).
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
+    let raf = 0
+    let lastShown = false
     const onScroll = () => {
-      setShowTop(el.scrollTop > 700)
-      const max = el.scrollHeight - el.clientHeight
-      const p = max > 0 ? Math.min(1, el.scrollTop / max) : 0
-      if (progressRef.current) {
-        progressRef.current.style.transform = `scaleX(${p})`
-        progressRef.current.style.opacity = p > 0.005 ? '1' : '0'
-      }
+      if (raf) return
+      raf = requestAnimationFrame(() => {
+        raf = 0
+        const shouldShow = el.scrollTop > 700
+        if (shouldShow !== lastShown) {
+          lastShown = shouldShow
+          setShowTop(shouldShow)
+        }
+        const max = el.scrollHeight - el.clientHeight
+        const p = max > 0 ? Math.min(1, el.scrollTop / max) : 0
+        if (progressRef.current) {
+          progressRef.current.style.transform = `scaleX(${p})`
+          progressRef.current.style.opacity = p > 0.005 ? '1' : '0'
+        }
+      })
     }
     el.addEventListener('scroll', onScroll, { passive: true })
-    return () => el.removeEventListener('scroll', onScroll)
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      if (raf) cancelAnimationFrame(raf)
+    }
   }, [])
 
   // Поллинг новых постов: ТИХО добавляем их в КОНЕЦ ленты (без пилюль и скроллов
@@ -1165,15 +1180,18 @@ export function FeedView() {
 
   return (
     <div className="relative flex h-full flex-col">
-      {/* Вкладки категорий — крупные, активная жирная с синей чертой (макет);
-          справа — колокольчик уведомлений с бейджем новых постов.
+      {/* v5.58 РЕДИЗАЙН ШАПКИ: разгрузка верхней части. Категории — аккуратные
+          скроллящиеся пилюли лёгкого веса (вместо крупных заголовков с чертой),
+          фильтры — с воздухом (gap/px увеличены). Справа — колокольчик.
           relative z-20 — пилюля «N новых» (z-10) выползает ИЗ-ПОД этой панели.
           На ПК (lg+) шапка центрируется с капом 1280 — на фулл-ширине окна
           поиск/чипы не тянутся на весь экран (владелец: «фулл, но не растянуто»). */}
       <header className="relative z-20 shrink-0 bg-tg-bg lg:mx-auto lg:w-full lg:max-w-[1280px]" data-noswipe>
-        <div className="flex items-end">
+        <div className="flex items-start pt-2.5">
+          {/* Категории — скроллящиеся табы: лёгкий визуальный вес, крупная
+              тач-зона (h-10), активная — мягкая заливка акцентом */}
           <div
-            className="no-scrollbar flex min-w-0 flex-1 items-end gap-6 overflow-x-auto px-4 pb-1 pt-2.5"
+            className="no-scrollbar flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-3 pb-1"
             role="tablist"
             aria-label="Категории ленты"
           >
@@ -1190,26 +1208,20 @@ export function FeedView() {
                     setCategory(t.slug)
                   }}
                   className={cn(
-                    'relative shrink-0 pb-2.5 pt-1 text-[19px] leading-none transition-colors',
-                    active ? 'font-bold text-tg-text' : 'font-medium text-tg-hint',
+                    'relative flex h-10 shrink-0 items-center rounded-full px-4 text-[14.5px] leading-none transition-all active:scale-95',
+                    active
+                      ? 'bg-tg-link font-semibold text-white shadow-sm shadow-tg-link/25'
+                      : 'bg-tg-surface/80 font-medium text-tg-hint',
                   )}
                 >
                   {t.title}
-                  {active && (
-                    <motion.span
-                      layoutId="feed-tab-underline"
-                      transition={{ type: 'spring', stiffness: 500, damping: 40 }}
-                      aria-hidden
-                      className="absolute inset-x-0 -bottom-px h-[3px] rounded-full bg-tg-link"
-                    />
-                  )}
                 </button>
               )
             })}
           </div>
 
           {/* Колокольчик «Уведомления» — 40×40, бейдж: новые посты + активность (9+ при переполнении) */}
-          <div className="shrink-0 px-3 pb-1.5 pt-2.5">
+          <div className="shrink-0 px-3 pb-1">
             <button
               type="button"
               onClick={openNotifications}
@@ -1237,15 +1249,14 @@ export function FeedView() {
             </button>
           </div>
         </div>
-        <div className="h-px w-full bg-tg-sep/60" aria-hidden />
+        <div className="h-px w-full bg-tg-sep/50" aria-hidden />
 
-        {/* Тулбар (v5.25): поиск — отдельной строкой на всю ширину, чипы — ниже.
-            Одной строкой поиск + 4 чипа на телефоне сжимали поле до бесполезного —
-            разнос даёт воздух, ничего не прячется и не сжимается. */}
-        <div className="px-3 pb-0.5 pt-1.5" data-noswipe>
+        {/* Тулбар (v5.58): поиск — строка на всю ширину с воздухом, чипы — ниже
+            с увеличенными отступами: элементы больше не слипаются */}
+        <div className="px-3 pb-2 pt-2.5" data-noswipe>
           <div className="relative flex min-w-0 items-center">
             <Search
-              className="pointer-events-none absolute left-2.5 h-4 w-4 text-tg-hint"
+              className="pointer-events-none absolute left-3 h-4 w-4 text-tg-hint"
               aria-hidden
             />
             <input
@@ -1253,7 +1264,7 @@ export function FeedView() {
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t('toolbar.search')}
               aria-label={t('toolbar.searchAria')}
-              className="h-8 w-full rounded-full border border-tg-sep bg-tg-surface pl-8 pr-7 text-[13.5px] text-tg-text outline-none transition-colors placeholder:text-tg-hint focus:border-tg-link/40"
+              className="h-10 w-full rounded-full border border-tg-sep bg-tg-surface pl-9 pr-9 text-[14px] text-tg-text outline-none transition-colors placeholder:text-tg-hint focus:border-tg-link/40"
             />
             {query.length > 0 && (
               /* Тач-таргет 28px вокруг видимого кружка 20px — по нему реально
@@ -1262,7 +1273,7 @@ export function FeedView() {
                 type="button"
                 onClick={() => setQuery('')}
                 aria-label={t('toolbar.clear')}
-                className="absolute right-1 flex h-7 w-7 items-center justify-center rounded-full text-tg-hint active:scale-90"
+                className="absolute right-1.5 flex h-7 w-7 items-center justify-center rounded-full text-tg-hint active:scale-90"
               >
                 <span className="flex h-5 w-5 items-center justify-center rounded-full bg-tg-sep">
                   <X className="h-3 w-3" aria-hidden />
@@ -1271,7 +1282,7 @@ export function FeedView() {
             )}
           </div>
         </div>
-        <div className="no-scrollbar flex items-center gap-1.5 overflow-x-auto px-3 pb-1.5 pt-1" data-noswipe>
+        <div className="no-scrollbar flex items-center gap-2.5 overflow-x-auto px-3 pb-2.5 pt-1" data-noswipe>
           <FilterChip
             active={mediaOnly}
             onClick={() => setMediaOnly((v) => !v)}

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from 'react'
 import {
-  Bot,
   Check,
   ChevronRight,
   CreditCard,
@@ -14,7 +13,6 @@ import {
   Loader2,
   MousePointerClick,
   Pencil,
-  Radio,
   Send,
   Settings,
   ShieldCheck,
@@ -41,7 +39,6 @@ import { UserBadges } from '@/components/badges/UserBadges'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
 import { WalletCard } from '@/components/tabs/WalletCard'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
-import { AiChat } from '@/components/ai/AiChat'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 import { GiveawayCard } from '@/components/profile/GiveawayCard'
@@ -59,7 +56,8 @@ let cachedSubs: SubscriptionDTO[] | null = null
 
 /**
  * Экран «Профиль» по макету: шапка пользователя, статистика,
- * мои категории, подписки, настройки. Плюс «Мой канал» и Snap Ассистент.
+ * мои категории, подписки, настройки.
+ * v5.58: «Мой канал» и Snap Ассистент переехали во вкладку «Канал».
  */
 export function ProfileTab() {
   const { user, theme, fontScale, lang, setLang, setFontScale, categories, setTab, setCategory, openChannel } = useApp()
@@ -92,10 +90,6 @@ export function ProfileTab() {
   // Кошелёк (v5.39): шторка пополнения + счётчик изменений для обновления баланса
   const [topUpOpen, setTopUpOpen] = useState(false)
   const [walletReload, setWalletReload] = useState(0)
-  // Snap Ассистент (v5.40): чат ИИ-контентщика прямо из профиля — канал берём
-  // из привязанных (/api/mychannel); без канала — тост + ведём в «Мой канал»
-  const [assistantOpen, setAssistantOpen] = useState(false)
-  const [aiChannel, setAiChannel] = useState<{ id: string; title: string } | null>(null)
 
   const reload = () => {
     if (!user) return
@@ -151,27 +145,6 @@ export function ProfileTab() {
       window.removeEventListener('tgfeed:open-tiers', onOpenTiers)
     }
   }, [])
-
-  // Snap Ассистент: первый клик — лениво достаём привязанный канал
-  const openAssistant = () => {
-    haptic('light')
-    if (aiChannel) {
-      setAssistantOpen(true)
-      return
-    }
-    api<{ channels: Array<{ id: string; title: string }> }>('/api/mychannel')
-      .then((d) => {
-        const ch = d.channels[0]
-        if (!ch) {
-          toast('Ассистент работает с вашим каналом — сначала привяжите его', { icon: '🤖' })
-          setTab('mychannel')
-          return
-        }
-        setAiChannel({ id: ch.id, title: ch.title })
-        setAssistantOpen(true)
-      })
-      .catch(() => toast.error('Не удалось загрузить каналы'))
-  }
 
   if (!user) return null
 
@@ -442,42 +415,9 @@ export function ProfileTab() {
         </div>
       </section>
 
-      {/* Snap Ассистент (v5.40): переехал из карточки «Мой канал» — компактная
-          строка как у остальных пунктов; чат канала открывается поверх профиля */}
-      <section className="pt-7">
-        <div className="mt-1">
-          <SettingRow
-            icon={<Bot className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label={t('profile.assistantRow')}
-            right={
-              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
-                {t('profile.assistantHint')}
-                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
-              </span>
-            }
-            onClick={openAssistant}
-            last
-          />
-        </div>
-      </section>
-
-      {/* Мой канал — из навбара переехал в низ профиля (приказ владельца);
-          v5.15: без описания, только название в одну строку */}
-      <section className="pt-7">
-        <h2 className="px-4 text-[19px] font-bold text-tg-text">Каналы</h2>
-        <div className="mt-1">
-          <SettingRow
-            icon={<Radio className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label={t('profile.myChannelRow')}
-            onClick={() => {
-              haptic('light')
-              setTab('mychannel')
-            }}
-          />
-        </div>
-      </section>
-
-      {/* Обратная связь — одна кнопка вместо двух, разделы внутри шита */}
+      {/* Обратная связь — одна кнопка вместо двух, разделы внутри шита.
+          v5.58: «Мой канал» и Snap Ассистент переехали во вкладку «Канал»
+          (нижняя навигация) — профиль разгружен. */}
       <section className="pt-7 pb-6">
         <h2 className="px-4 text-[19px] font-bold text-tg-text">{t('profile.fbSheet')}</h2>
         <div className="mt-1">
@@ -801,17 +741,6 @@ export function ProfileTab() {
       {/* Чат поддержки (телеграм-стиль) */}
       <SupportChat open={supportOpen} onClose={() => setSupportOpen(false)} />
       <SupportChat open={feedbackOpen} onClose={() => setFeedbackOpen(false)} kind="feedback" />
-
-      {/* Snap Ассистент (v5.40): тот же полноэкранный чат, что и из «Моего канала» */}
-      {aiChannel && (
-        <AiChat
-          kind="assistant"
-          open={assistantOpen}
-          onClose={() => setAssistantOpen(false)}
-          channelId={aiChannel.id}
-          channelTitle={aiChannel.title}
-        />
-      )}
     </div>
   )
 }

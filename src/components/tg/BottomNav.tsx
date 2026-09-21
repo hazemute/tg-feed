@@ -1,6 +1,6 @@
 'use client'
 
-import { Home, ListChecks, Search, UserRound } from 'lucide-react'
+import { Home, ListChecks, Megaphone, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -8,11 +8,18 @@ import { useT } from '@/lib/i18n'
 import { haptic } from '@/lib/tg'
 import type { Tab } from '@/lib/types'
 
-/* «Мой канал» убран из навигации (запрос владельца: разгрузка интерфейса) —
- * строка «Мой канал» переехала в низ профиля. */
-const items: { id: Tab; labelKey: 'nav.feed' | 'nav.quests' | 'nav.search' | 'nav.profile'; icon: typeof Home }[] = [
-  { id: 'feed', labelKey: 'nav.feed', icon: Home },
-  { id: 'quests', labelKey: 'nav.quests', icon: ListChecks },
+/* v5.58: «Канал» вернулся в навигацию как полноценный раздел для админов —
+ * рабочий стол: управление каналом, статистика и ИИ-ассистент в одном месте. */
+const items: {
+  id: Tab
+  labelKey: 'nav.feed' | 'nav.quests' | 'nav.channel' | 'nav.search' | 'nav.profile'
+  icon: typeof Home
+  /** fill активной иконки (мини-акцент, как у Ленты/Заданий) */
+  fillActive?: boolean
+}[] = [
+  { id: 'feed', labelKey: 'nav.feed', icon: Home, fillActive: true },
+  { id: 'quests', labelKey: 'nav.quests', icon: ListChecks, fillActive: true },
+  { id: 'channel', labelKey: 'nav.channel', icon: Megaphone },
   { id: 'search', labelKey: 'nav.search', icon: Search },
   { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]
@@ -21,6 +28,7 @@ const items: { id: Tab; labelKey: 'nav.feed' | 'nav.quests' | 'nav.search' | 'na
  * Плавающая нижняя навигация: стеклянная капсула со скруглением и активной
  * пилюлей (layoutId). Контент вкладок прокручивается под ней — вкладки
  * дают нижний паддинг. safe-area учтена в pb капсулы.
+ * v5.58: 5 пунктов — капсула адаптирована (узкие кнопки, компактные лейблы).
  */
 export function BottomNav() {
   const { tab, goToTab } = useApp()
@@ -33,9 +41,9 @@ export function BottomNav() {
     >
       <div
         data-noswipe
-        className="pointer-events-auto flex items-center gap-0.5 rounded-[24px] border border-tg-sep/70 bg-tg-surface/85 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.16)] backdrop-blur-xl dark:bg-tg-surface/75"
+        className="pointer-events-auto flex items-center gap-0 rounded-[24px] border border-tg-sep/70 bg-tg-surface/85 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.16)] backdrop-blur-xl dark:bg-tg-surface/75"
       >
-        {items.map(({ id, labelKey, icon: Icon }) => {
+        {items.map(({ id, labelKey, icon: Icon, fillActive }) => {
           const active = tab === id
           const label = t(labelKey)
           return (
@@ -50,14 +58,14 @@ export function BottomNav() {
               }}
               aria-current={active ? 'page' : undefined}
               aria-label={label}
-              className="relative flex h-[52px] w-[72px] flex-col items-center justify-center gap-[3px] transition active:scale-95"
+              className="relative flex h-[52px] w-[64px] flex-col items-center justify-center gap-[3px] transition active:scale-95"
             >
               {active && (
                 <motion.span
                   layoutId="bottomnav-pill"
                   transition={{ type: 'spring', stiffness: 480, damping: 36 }}
                   aria-hidden
-                  className="absolute inset-x-1 inset-y-0 rounded-[18px] bg-tg-link/12"
+                  className="absolute inset-x-0.5 inset-y-0 rounded-[18px] bg-tg-link/12"
                 />
               )}
               <Icon
@@ -66,7 +74,7 @@ export function BottomNav() {
                   active ? 'text-tg-link' : 'text-tg-hint',
                 )}
                 strokeWidth={active ? 2.3 : 1.8}
-                fill={active && (id === 'feed' || id === 'quests') ? 'currentColor' : 'none'}
+                fill={active && fillActive ? 'currentColor' : 'none'}
               />
               <span
                 className={cn(

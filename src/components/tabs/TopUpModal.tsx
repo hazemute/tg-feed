@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
-import { formatCount } from '@/lib/format'
 import { haptic, openInvoiceUrl, openTelegram } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
 import { BottomSheet } from '@/components/tg/BottomSheet'
@@ -66,8 +65,14 @@ type TonInvoice = {
 }
 
 function formatRub(kop: number): string {
+  // v5.58: полные числительные с разрядами (не «1K ₽», а «1 000 ₽»)
   const rub = kop / 100
-  return rub % 1 === 0 ? `${formatCount(rub)} ₽` : `${rub.toFixed(2)} ₽`
+  return rub % 1 === 0 ? `${rub.toLocaleString('ru-RU')} ₽` : `${rub.toFixed(2)} ₽`
+}
+
+/** Полное число с разрядами: 5000 → «5 000» (приказ: никаких «5K» для валюты) */
+function fmtFull(n: number): string {
+  return n.toLocaleString('ru-RU')
 }
 
 /** Иконка TON — кристалл #0098EA, БЕЗ подложки (по поручению: иконки без фонов) */
@@ -339,10 +344,10 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     >
       {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Wallet className="h-4.5 w-4.5" />}
       {method === 'stars'
-        ? `${t('topup.payStars')} ${formatCount(starsAmount)} ⭐`
+        ? `${t('topup.payStars')} ${fmtFull(starsAmount)} ⭐`
         : method === 'ton'
           ? t('topup.payTon')
-          : `${t('topup.payCard')} ${formatCount(effective)} ₽`}
+          : `${t('topup.payCard')} ${fmtFull(effective)} ₽`}
     </button>
   )
 
@@ -460,7 +465,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
                     : 'border-tg-sep/60 bg-tg-bg text-tg-text2',
                 )}
               >
-                {formatCount(sw)}
+                {fmtFull(sw)}
               </button>
             ))}
           </div>
@@ -482,7 +487,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
               packRow(sw, {
                 selected: starsAmount === sw,
                 icon: <Star className="h-5 w-5 shrink-0 fill-tg-star text-tg-star" strokeWidth={1.2} />,
-                name: `${formatCount(sw)} ${t('topup.packName')}`,
+                name: `${fmtFull(sw)} ${t('topup.packName')}`,
                 main: formatRub(sw * 100),
                 sub: null,
                 onSelect: () => {
@@ -510,7 +515,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
               return packRow(sw, {
                 selected: effective === sw,
                 icon: <TonIcon className="h-5 w-5 shrink-0" />,
-                name: `${formatCount(sw)} ₽`,
+                name: `${fmtFull(sw)} ₽`,
                 main: tonEq ? `≈ ${tonEq} TON` : formatRub(sw * 100),
                 sub: null,
                 onSelect: () => {
@@ -621,7 +626,7 @@ function TonWaiting({
         <div className="min-w-0 flex-1">
           <div className="text-[16px] font-bold text-tg-text">{invoice.tonAmount} TON</div>
           <div className="text-[12.5px] text-tg-hint">
-            ≈ {formatRub(invoice.rubApprox * 100)} · {formatCount(invoice.rate)} {t('topup.rateSuffix')}
+            ≈ {formatRub(invoice.rubApprox * 100)} · {fmtFull(invoice.rate)} {t('topup.rateSuffix')}
           </div>
         </div>
         {status === 'waiting' && (

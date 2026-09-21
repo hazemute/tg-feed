@@ -15,13 +15,14 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion } from 'framer-motion'
-import { AlertTriangle, ArrowLeftRight, ChevronDown, Loader2, Plus, RefreshCw, Zap } from 'lucide-react'
+import { AlertTriangle, ArrowLeftRight, ChevronDown, Loader2, Plus, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { haptic } from '@/lib/tg'
 import { pluralRu } from '@/lib/format'
 import { useApp } from '@/lib/store'
+import { SwipeIcon } from '@/components/tg/SwipeIcon'
 
 type WalletHistoryItem = {
   id: string
@@ -203,7 +204,7 @@ export function WalletCard({
                     active ? 'text-tg-link' : 'text-tg-hint',
                   )}
                 >
-                  {tb.id === 'swp' && <Zap className="h-4 w-4" strokeWidth={2} />}
+                  {tb.id === 'swp' && <SwipeIcon className="h-4 w-4" size={16} />}
                   {tb.label}
                   {active && (
                     <motion.span
@@ -259,7 +260,8 @@ export function WalletCard({
           {tab === 'swp' && (
             <div className="p-4">
               <div className="flex items-baseline gap-2">
-                <span className="text-[30px] font-bold leading-none tracking-tight text-tg-text tabular-nums">
+                <span className="flex items-baseline gap-1.5 text-[30px] font-bold leading-none tracking-tight text-tg-text tabular-nums">
+                  <SwipeIcon className="h-5 w-5 shrink-0 self-center text-tg-link" size={20} />
                   {fmtNum(swipes)}
                 </span>
                 <span className="text-[14px] font-medium text-tg-hint">{swpWord(swipes)}</span>
@@ -329,9 +331,14 @@ export function WalletCard({
                           )}
                         >
                           {plus ? '+' : '−'}
-                          {isRub
-                            ? fmtRub(h.amount)
-                            : `${fmtNum(h.amount)} ${swpWord(h.amount)}`}
+                          {isRub ? (
+                            fmtRub(h.amount)
+                          ) : (
+                            <span className="inline-flex items-center gap-1">
+                              <SwipeIcon className="h-3 w-3" size={12} />
+                              {fmtNum(h.amount)}
+                            </span>
+                          )}
                         </div>
                       </div>
                     )

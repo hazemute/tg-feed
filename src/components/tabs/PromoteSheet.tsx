@@ -247,7 +247,7 @@ export function PromoteSheet({
                 onClick={() => {
                   haptic('light')
                   onClose()
-                  useApp.getState().goToTab('mychannel')
+                  useApp.getState().goToTab('channel')
                 }}
                 className="h-11 w-full rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link transition active:scale-[0.98]"
               >

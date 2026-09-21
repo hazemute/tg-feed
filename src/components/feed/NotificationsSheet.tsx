@@ -373,7 +373,7 @@ function ActivityRow({ item, onAfterNavigate }: { item: NotificationDTO; onAfter
         break
       case 'campaign':
         onAfterNavigate()
-        goToTab('mychannel')
+        goToTab('channel')
         break
       case 'system':
         // Системные события (бейдж, подписка): показываем профиль

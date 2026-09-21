@@ -6,9 +6,11 @@ import { AlertTriangle, BadgeCheck, Check, ExternalLink, RefreshCw, Sparkles } f
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api, apiCached, invalidateApiCache } from '@/lib/api'
-import { formatCount, pluralRu } from '@/lib/format'
+import { pluralRu } from '@/lib/format'
+import { formatSwipesFull } from '@/lib/money'
 import { haptic, tg } from '@/lib/tg'
 import { useApp } from '@/lib/store'
+import { SwipeIcon } from '@/components/tg/SwipeIcon'
 
 /**
  * Экран «Задания» (v5.51, вместо «Трендов»): подписка на канал / вступление
@@ -188,15 +190,18 @@ export function QuestsTab() {
                   <div className="min-w-0 flex-1">
                     <div className="text-[15px] font-semibold leading-tight text-tg-text">
                       {totalAvailable > 0
-                        ? `Доступно ${formatCount(totalAvailable)} ${pluralRu(totalAvailable, 'свайп', 'свайпа', 'свайпов')}`
+                        ? `Доступно ${formatSwipesFull(totalAvailable)} ${pluralRu(totalAvailable, 'свайп', 'свайпа', 'свайпов')}`
                         : doneCount > 0
                           ? 'Все задания выполнены 🎉'
                           : 'Пока нет доступных заданий'}
                     </div>
-                    <div className="mt-0.5 text-[12.5px] text-tg-hint">
-                      Баланс: {formatCount(data.balance)}{' '}
-                      {pluralRu(data.balance, 'свайп', 'свайпа', 'свайпов')}
-                      {doneCount > 0 ? ` · выполнено: ${doneCount}` : ''}
+                    <div className="mt-0.5 flex items-center gap-1 text-[12.5px] text-tg-hint">
+                      <SwipeIcon className="h-3 w-3" size={12} />
+                      <span>
+                        Баланс: {formatSwipesFull(data.balance)}{' '}
+                        {pluralRu(data.balance, 'свайп', 'свайпа', 'свайпов')}
+                        {doneCount > 0 ? ` · выполнено: ${doneCount}` : ''}
+                      </span>
                     </div>
                   </div>
                   <button
@@ -316,7 +321,7 @@ function QuestCard({
                 done ? 'bg-tg-green/12 text-tg-green' : 'bg-tg-link/12 text-tg-link',
               )}
             >
-              <Sparkles className="size-3.5" aria-hidden />+{formatCount(quest.rewardSwp)}
+              <SwipeIcon className="size-3.5" size={14} aria-hidden />+{formatSwipesFull(quest.rewardSwp)}
             </span>
 
             {done ? (

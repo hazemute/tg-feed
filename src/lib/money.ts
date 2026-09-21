@@ -23,7 +23,15 @@ export function swipesToKop(swipes: number): number {
  * вся арифметика кабинета идёт в целых свайпах).
  */
 export function formatSwipes(kop: number): string {
-  return formatCount(Math.round(kopToSwipes(kop)))
+  return formatSwipesFull(kopToSwipes(kop))
+}
+
+/**
+ * v5.58 (приказ владельца): ПОЛНОФОРМАТНОЕ числительное с разделением разрядов —
+ * никаких «100К»: 100 000 вместо «100К». Неразрывные пробелы как в ru-RU.
+ */
+export function formatSwipesFull(swipes: number): string {
+  return Math.round(swipes).toLocaleString('ru-RU')
 }
 
 /** Плюрализация «свайп/свайпа/свайпов» */

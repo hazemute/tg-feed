@@ -26,6 +26,7 @@ import {
   Scissors,
   Send,
   Sparkles,
+  Trash2,
   Wallet,
   X,
 } from 'lucide-react'
@@ -44,13 +45,17 @@ import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
 import { AiChat } from '@/components/ai/AiChat'
+import { SwipeIcon } from '@/components/tg/SwipeIcon'
 import type { MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
 
 /**
- * «Мой канал» — КАБИНЕТ ВЛАДЕЛЬЦА: большая аналитика именно СВОЕГО канала
- * (просмотры/ER/динамика/ритм/топ постов — как в админке, но у автора),
- * привязка по кодовому слову, показ в ленте и рекламный кабинет (CPA с
- * эскроу-балансом). Плоский стиль без карточек — как поручено.
+ * «Канал» (v5.58) — РАБОЧИЙ СТОЛ АДМИНА: три главных элемента внутри одной
+ * вкладки нижней навигации:
+ *   1. Мой канал — управление: привязка, показ в ленте, CTA, продвижение, реклама.
+ *   2. Статистика — большая аналитика именно СВОЕГО канала (как в админке).
+ *   3. ИИ-ассистент — Snap Ассистент: генерация, публикация, УДАЛЕНИЕ постов,
+ *      смена названия/описания/аватара — полный пульт управления каналом.
+ * Переехал из профиля и старой вкладки «Мой канал» (приказ владельца).
  */
 
 const DISPLAY_MODES = [
@@ -60,19 +65,18 @@ const DISPLAY_MODES = [
 ] as const
 
 /**
- * Вкладки кабинета (приказ владельца: «вкладки на странице Мой канал»,
- * вместо бесконечной простыни): Аналитика · Показ в ленте · Продвижение.
- * Шапка канала видна всегда, контент — по вкладке; полоса вкладок липкая.
+ * Три главных раздела рабочего стола (приказ владельца):
+ * Мой канал · Статистика · ИИ-ассистент. Активная — пилюлей с layoutId.
  */
-const MC_TABS = [
-  { key: 'stats', labelKey: 'mc.tabStats' },
-  { key: 'display', labelKey: 'mc.tabDisplay' },
-  { key: 'ads', labelKey: 'mc.tabAds' },
+const CHANNEL_SECTIONS = [
+  { key: 'manage', label: 'Мой канал' },
+  { key: 'stats', label: 'Статистика' },
+  { key: 'ai', label: 'ИИ-ассистент' },
 ] as const
 
-type McTab = (typeof MC_TABS)[number]['key']
+type ChannelSection = (typeof CHANNEL_SECTIONS)[number]['key']
 
-export function MyChannelTab() {
+export function ChannelTab() {
   const { user } = useApp()
   const [data, setData] = useState<MyChannelResponse | null>(null)
   const [loading, setLoading] = useState(true)
@@ -80,14 +84,13 @@ export function MyChannelTab() {
   // ввода @username (иначе у владельца канала сбои провоцировали повторный claim)
   const [failed, setFailed] = useState(false)
   const [activeId, setActiveId] = useState<string | null>(null)
-  const [tab, setTab] = useState<McTab>('stats')
+  const [section, setSection] = useState<ChannelSection>('manage')
   const t = useT()
 
   const fetchChannel = useCallback(async (useCache: boolean) => {
     try {
-      // v5.35: короткий клиентский кэш (15с) — возврат на вкладку не мигает
-      // скелетоном (паттерн v5.34 «кэш виден, сеть догоняет»); явные перезагрузки
-      // после действий (onReload) кэш инвалидируют — цифры всегда свежие
+      // Короткий клиентский кэш (15с) — возврат на вкладку не мигает скелетоном;
+      // явные перезагрузки после действий кэш инвалидируют — цифры всегда свежие
       const r = useCache
         ? await apiCached<MyChannelResponse>('/api/mychannel', 15_000)
         : await api<MyChannelResponse>('/api/mychannel')
@@ -121,149 +124,151 @@ export function MyChannelTab() {
   // Тариф и лимит продвижения приходят из GET /api/mychannel (E2E берёт их оттуда же)
   const tier = data?.tier ?? 'free'
   const promotion = data?.promotion ?? { used: 0, limit: 7, available: false }
+  const hasChannel = Boolean(data && data.channels.length > 0)
 
   return (
     <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain px-4 pb-28 pt-5 lg:px-6 lg:pt-7">
       {/* Центрированная колонка: кабинет не растягивается на весь широкий экран */}
       <div className="mx-auto w-full max-w-[960px]">
-      {/* Заголовок */}
-      <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
-        <h1 className="text-screen-title leading-tight text-tg-text">Мой канал</h1>
-        <p className="mt-1 text-[15px] text-tg-hint">
-          Статистика вашего канала, показ в ленте и продвижение — всё в одном месте
-        </p>
-      </motion.div>
+        {/* Заголовок */}
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+          <h1 className="text-screen-title leading-tight text-tg-text">Канал</h1>
+          <p className="mt-1 text-[15px] text-tg-hint">
+            Пульт управления: статистика, показ в ленте и ИИ-ассистент — всё в одном месте
+          </p>
+        </motion.div>
 
-      {loading ? (
-        <div className="mt-6 space-y-3">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-28 rounded-2xl tg-shimmer" />
-          ))}
-        </div>
-      ) : failed && !data ? (
-        <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl bg-tg-surface px-4 py-10 text-center">
-          <AlertTriangle className="h-7 w-7 text-tg-hint" aria-hidden />
-          <p className="text-[14.5px] text-tg-hint">Не удалось загрузить кабинет</p>
-          <button
-            type="button"
-            onClick={() => {
-              haptic('light')
-              setFailed(false)
-              setLoading(true)
-              reload()
-            }}
-            className="flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white active:opacity-80"
-          >
-            <RefreshCw className="h-4 w-4" aria-hidden /> Повторить
-          </button>
-        </div>
-      ) : !data || data.channels.length === 0 ? (
-        <ClaimCard onDone={reload} />
-      ) : (
-        <div className="mt-5 space-y-4">
-          {/* Переключатель каналов (если привязано несколько) */}
-          {data.channels.length > 1 && (
-            <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-              {data.channels.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => {
-                    haptic('light')
-                    setActiveId(c.id)
-                  }}
-                  className={cn(
-                    'flex shrink-0 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3.5 text-[13.5px] font-semibold transition',
-                    c.id === channel?.id
-                      ? 'bg-tg-link text-white'
-                      : 'bg-tg-surface text-tg-text2 active:scale-95',
-                  )}
-                >
-                  <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={26} />
-                  {c.title}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <ChannelHero channel={channel!} onReload={reload} />
-
-          {/* ВКЛАДКИ (приказ владельца): Аналитика / Показ / Продвижение.
-              Липкая полоса — при прокрутке держится у верха кабинета. */}
-          <div className="sticky top-0 z-10 -mx-4 border-b border-tg-sep/60 bg-tg-bg/95 px-4 backdrop-blur lg:-mx-6 lg:px-6">
-            <div className="flex" role="tablist" aria-label={t('mc.tabsAria')}>
-              {MC_TABS.map((tb) => {
-                const active = tab === tb.key
-                return (
+        {loading ? (
+          <div className="mt-6 space-y-3">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="h-28 rounded-2xl tg-shimmer" />
+            ))}
+          </div>
+        ) : failed && !data ? (
+          <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl bg-tg-surface px-4 py-10 text-center">
+            <AlertTriangle className="h-7 w-7 text-tg-hint" aria-hidden />
+            <p className="text-[14.5px] text-tg-hint">Не удалось загрузить кабинет</p>
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                setFailed(false)
+                setLoading(true)
+                reload()
+              }}
+              className="flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white active:opacity-80"
+            >
+              <RefreshCw className="h-4 w-4" aria-hidden /> Повторить
+            </button>
+          </div>
+        ) : !hasChannel ? (
+          <ClaimCard onDone={reload} />
+        ) : (
+          <div className="mt-5 space-y-4">
+            {/* Переключатель каналов (если привязано несколько) */}
+            {data!.channels.length > 1 && (
+              <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+                {data!.channels.map((c) => (
                   <button
-                    key={tb.key}
+                    key={c.id}
                     type="button"
-                    role="tab"
-                    aria-selected={active}
                     onClick={() => {
-                      if (!active) {
-                        haptic('light')
-                        setTab(tb.key)
-                      }
+                      haptic('light')
+                      setActiveId(c.id)
                     }}
                     className={cn(
-                      'relative min-h-[46px] flex-1 px-2 text-[14px] font-semibold transition-colors',
-                      active ? 'text-tg-link' : 'text-tg-hint active:opacity-70',
+                      'flex shrink-0 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3.5 text-[13.5px] font-semibold transition',
+                      c.id === channel?.id
+                        ? 'bg-tg-link text-white'
+                        : 'bg-tg-surface text-tg-text2 active:scale-95',
                     )}
                   >
-                    {t(tb.labelKey)}
-                    {active && (
-                      <motion.span
-                        layoutId="mc-tab-underline"
-                        className="absolute inset-x-5 bottom-0 h-[2.5px] rounded-t-full bg-tg-link"
-                        transition={{ type: 'spring', stiffness: 500, damping: 40 }}
-                      />
-                    )}
+                    <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={26} />
+                    {c.title}
                   </button>
-                )
-              })}
-            </div>
-          </div>
+                ))}
+              </div>
+            )}
 
-          {/* Контент вкладки (key — чтобы анимация не переезжала между вкладками) */}
-          <motion.div
-            key={tab}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.18, ease: 'easeOut' }}
-            className="pt-4"
-          >
-            {tab === 'stats' && (
-              /* Большой дашборд именно этого канала (просмотры, ER, динамика,
-                  лучшее время, ритм, топ постов) — плоский, без карточек */
-              <ChannelCabinet key={channel!.username} username={channel!.username} title={channel!.title} />
-            )}
-            {tab === 'display' && (
-              <div className="space-y-5">
-                {/* key с префиксом: сброс состояния при смене канала, но ключи
-                    СОСЕДЕЙ уникальны (раньше CtaSection и AiAssistantSection
-                    делили один key={channel.id} — React-ошибка «two children
-                    with the same key» при каждом открытии вкладки) */}
-                <DisplaySection key={`display-${channel!.id}`} channel={channel!} onSaved={load} />
-                <CtaSection key={`cta-${channel!.id}`} channel={channel!} tier={tier} />
-                <AssistantRow key={`ai-${channel!.id}`} channel={channel!} tier={tier} />
+            {/* ТРИ ГЛАВНЫХ РАЗДЕЛА: Мой канал · Статистика · ИИ-ассистент.
+                Скроллящиеся пилюли — лёгкий вес, больше воздуха. */}
+            <div className="sticky top-0 z-20 -mx-4 bg-tg-bg/95 px-4 py-2.5 backdrop-blur lg:-mx-6 lg:px-6">
+              <div className="no-scrollbar flex gap-2 overflow-x-auto" role="tablist" aria-label={t('mc.tabsAria')}>
+                {CHANNEL_SECTIONS.map((s) => {
+                  const active = section === s.key
+                  return (
+                    <button
+                      key={s.key}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => {
+                        if (!active) {
+                          haptic('light')
+                          setSection(s.key)
+                        }
+                      }}
+                      className={cn(
+                        'relative flex h-10 shrink-0 items-center gap-1.5 rounded-full px-4 text-[14px] font-semibold transition active:scale-95',
+                        active ? 'text-white' : 'bg-tg-surface text-tg-hint',
+                      )}
+                    >
+                      {active && (
+                        <motion.span
+                          layoutId="channel-section-pill"
+                          className="absolute inset-0 rounded-full bg-tg-link"
+                          transition={{ type: 'spring', stiffness: 500, damping: 40 }}
+                          aria-hidden
+                        />
+                      )}
+                      <span className="relative z-10">
+                        {s.key === 'ai' && <Bot className="mr-1 inline h-4 w-4 -translate-y-px" aria-hidden />}
+                        {s.label}
+                      </span>
+                    </button>
+                  )
+                })}
               </div>
-            )}
-            {tab === 'ads' && (
-              <div className="space-y-5">
-                <PromotionSection
-                  key={channel!.id}
-                  channel={channel!}
-                  tier={tier}
-                  promotion={promotion}
-                  onReload={reload}
-                />
-                <AdsSection channel={channel!} onReload={reload} />
-              </div>
-            )}
-          </motion.div>
-        </div>
-      )}
+            </div>
+
+            {/* Контент раздела (key — чтобы анимация не переезжала между разделами) */}
+            <motion.div
+              key={section}
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18, ease: 'easeOut' }}
+              className="pt-1"
+            >
+              {section === 'manage' && (
+                <div className="space-y-5">
+                  <ChannelHero key={`hero-${channel!.id}`} channel={channel!} onReload={reload} />
+                  {/* key с префиксом: сброс состояния при смене канала, но ключи
+                      СОСЕДЕЙ уникальны (раньше CtaSection и AiAssistantSection
+                      делили один key={channel.id} — React-ошибка «two children
+                      with the same key» при каждом открытии вкладки) */}
+                  <DisplaySection key={`display-${channel!.id}`} channel={channel!} onSaved={load} />
+                  <CtaSection key={`cta-${channel!.id}`} channel={channel!} tier={tier} />
+                  <PromotionSection
+                    key={`promo-${channel!.id}`}
+                    channel={channel!}
+                    tier={tier}
+                    promotion={promotion}
+                    onReload={reload}
+                  />
+                  <AdsSection key={`ads-${channel!.id}`} channel={channel!} onReload={reload} />
+                </div>
+              )}
+              {section === 'stats' && (
+                /* Большой дашборд именно этого канала (просмотры, ER, динамика,
+                    лучшее время, ритм, топ постов) — плоский, без карточек */
+                <ChannelCabinet key={channel!.username} username={channel!.username} title={channel!.title} />
+              )}
+              {section === 'ai' && (
+                <AssistantSection key={`ai-${channel!.id}`} channel={channel!} tier={tier} />
+              )}
+            </motion.div>
+          </div>
+        )}
       </div>
     </div>
   )
@@ -437,8 +442,7 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
 
 function ChannelHero({ channel, onReload }: { channel: MyChannelDTO; onReload: () => void | Promise<void> }) {
   const [syncing, setSyncing] = useState(false)
-  // v5.35: спиннер живёт ровно столько, сколько реально идёт перезагрузка данных
-  // (раньше — фиктивный setTimeout 1200мс, при медленном ответе он гас раньше данных)
+  // Спиннер живёт ровно столько, сколько реально идёт перезагрузка данных
   const sync = async () => {
     if (syncing) return
     setSyncing(true)
@@ -614,9 +618,9 @@ function proRequired(err: unknown): boolean {
 }
 
 /**
- * Кнопки «Тарифы» из кабинета: раньше показывали тупиковый тост «Тарифы — в профиле»,
- * теперь ведут прямо в шит тарифов на вкладке «Профиль» (флаг в sessionStorage +
- * событие — ProfileTab подхватывает и на монтировании, и когда уже смонтирован).
+ * Кнопки «Тарифы» из кабинета ведут прямо в шит тарифов на вкладке «Профиль»
+ * (флаг в sessionStorage + событие — ProfileTab подхватывает и на монтировании,
+ * и когда уже смонтирован).
  */
 const TIERS_FLAG = 'tgfeed_open_tiers'
 const TIERS_EVENT = 'tgfeed:open-tiers'
@@ -785,63 +789,111 @@ function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | '
 }
 
 /* ------------------------------------------------------------------ */
-/* Snap Ассистент (Snap Pro) — компактная строка (v5.40)               */
+/* ИИ-ассистент — ПОЛНЫЙ РАЗДЕЛ (v5.58)                                */
 /* ------------------------------------------------------------------ */
 
 /**
- * v5.40 по приказу владельца: огромная карточка ИИ-ассистента УБРАНА —
- * та же функция переехала в профиль (строка «Snap Ассистент»), а здесь
- * осталась компактная строка в ряд с остальными кнопками кабинета.
- * Без Pro: строка открывает шит тарифов (флаг sessionStorage, как у CTA).
+ * Раздел «ИИ-ассистент» внутри вкладки «Канал» (v5.58): Snap Ассистент
+ * переехал сюда из профиля. Не просто генератор контента, а пульт
+ * администрирования: пишет и публикует посты, удаляет посты, меняет
+ * название/описание/аватар канала — по текстовым инструкциям админа.
+ * Без Pro показываем возможности + апгрейд.
  */
-function AssistantRow({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
+const ASSISTANT_FEATURES = [
+  { icon: FileText, title: 'Пишет и публикует посты', text: 'В вашем стиле, с обложкой — по одной фразе' },
+  { icon: Trash2, title: 'Удаляет посты', text: '«Удали пост про кофе» — покажет варианты, удалит после подтверждения' },
+  { icon: Radio, title: 'Меняет канал', text: 'Название, описание и аватар — прямо в диалоге' },
+  { icon: Megaphone, title: 'Следит за статистикой', text: 'Разберёт цифры и подскажет, что улучшить' },
+] as const
+
+function AssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
   const pro = tier === 'pro'
   const [chatOpen, setChatOpen] = useState(false)
-  const [seed, setSeed] = useState<string | null>(null)
+
+  // Открытие чата при переходе в раздел (для pro): раздел и есть ассистент
+  useEffect(() => {
+    if (pro) {
+      const t = window.setTimeout(() => setChatOpen(true), 0)
+      return () => window.clearTimeout(t)
+    }
+  }, [pro])
 
   const open = () => {
     haptic('light')
     if (!pro) {
-      // Паттерн кабинета: флаг в sessionStorage → шит тарифов в профиле
-      try {
-        sessionStorage.setItem('tgfeed_open_tiers', '1')
-      } catch {
-        /* приватный режим */
-      }
-      window.dispatchEvent(new Event('tgfeed:open-tiers'))
+      goTiersFromAssistant()
       return
     }
     setChatOpen(true)
   }
 
+  const goTiersFromAssistant = () => {
+    try {
+      sessionStorage.setItem(TIERS_FLAG, '1')
+    } catch {
+      /* приватный режим */
+    }
+    window.dispatchEvent(new Event(TIERS_EVENT))
+    useApp.getState().setTab('profile')
+  }
+
   return (
-    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16 }}>
+    <motion.section initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} data-noswipe>
+      <SectionTitle icon={Bot}>Snap Ассистент</SectionTitle>
+
+      {/* Главная карточка ассистента */}
       <button
         type="button"
-        data-noswipe
         onClick={open}
-        aria-label="Открыть Snap Ассистента"
-        className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface/60 px-4 py-3.5 text-left transition active:scale-[0.99] active:bg-tg-surface2"
+        aria-label="Открыть чат с Snap Ассистентом"
+        className="group relative w-full overflow-hidden rounded-2xl border border-tg-link/30 bg-gradient-to-br from-tg-link/[0.14] via-tg-link/[0.06] to-transparent p-5 text-left transition active:scale-[0.99]"
       >
         <span
-          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-tg-link text-white"
+          className="flex h-14 w-14 items-center justify-center rounded-2xl bg-tg-link text-white shadow-lg shadow-tg-link/30"
           aria-hidden
         >
-          <Bot className="h-5 w-5" />
+          <Bot className="h-7 w-7" />
         </span>
-        <span className="min-w-0 flex-1">
-          <span className="flex items-center gap-1.5">
-            <span className="truncate text-[15px] font-semibold text-tg-text">Snap Ассистент</span>
-            {!pro && <Sparkles className="h-3.5 w-3.5 shrink-0 text-tg-star" aria-hidden />}
-          </span>
-          <span className="mt-0.5 block truncate text-[12.5px] text-tg-hint">
-            {pro
-              ? 'Пишет в вашем стиле, рисует обложки, публикует в канал'
-              : 'Доступен на тарифе Snap Pro — посты, картинки, статистика'}
-          </span>
+        <span className="mt-3 flex items-center gap-2">
+          <span className="text-[18px] font-bold text-tg-text">Полный пульт канала</span>
+          {!pro && <Sparkles className="h-4 w-4 shrink-0 text-tg-star" aria-hidden />}
         </span>
-        <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+        <span className="mt-1 block text-[13.5px] leading-relaxed text-tg-hint">
+          {pro
+            ? 'Попросите: «удали последние два поста», «поменяй описание канала», «напиши пост про…» — ассистент сделает сам'
+            : 'Генерация, публикация и полное управление каналом через ИИ — на тарифе Snap Pro'}
+        </span>
+        <span className="mt-4 flex h-11 items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14.5px] font-bold text-white transition active:scale-[0.98]">
+          {pro ? <Send className="h-4 w-4" /> : <Sparkles className="h-4 w-4" />}
+          {pro ? 'Открыть чат с ассистентом' : 'Включить в Snap Pro'}
+        </span>
       </button>
+
+      {/* Возможности */}
+      <div className="mt-4 space-y-2.5">
+        {ASSISTANT_FEATURES.map((f, i) => (
+          <motion.div
+            key={f.title}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.06 + i * 0.05 }}
+            className="flex items-start gap-3 rounded-2xl border border-tg-sep/50 bg-tg-surface/60 px-4 py-3.5"
+          >
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-tg-link/12" aria-hidden>
+              <f.icon className="h-4.5 w-4.5 text-tg-link" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-[14.5px] font-semibold leading-snug text-tg-text">{f.title}</span>
+              <span className="mt-0.5 block text-[12.5px] leading-snug text-tg-hint">{f.text}</span>
+            </span>
+            {pro ? (
+              <ChevronRight className="mt-1.5 h-4 w-4 shrink-0 text-tg-hint" aria-hidden />
+            ) : (
+              <Lock className="mt-1.5 h-4 w-4 shrink-0 text-tg-hint" aria-hidden />
+            )}
+          </motion.div>
+        ))}
+      </div>
 
       {pro && (
         <AiChat
@@ -850,8 +902,6 @@ function AssistantRow({ channel, tier }: { channel: MyChannelDTO; tier: 'free' |
           onClose={() => setChatOpen(false)}
           channelId={channel.id}
           channelTitle={channel.title}
-          seedQuery={seed}
-          onSeedConsumed={() => setSeed(null)}
         />
       )}
     </motion.section>
@@ -1060,8 +1110,15 @@ function AdsSection({
             <div className="text-[12px] font-semibold uppercase tracking-wide text-tg-hint">Кошелёк</div>
             <div className="text-[22px] font-bold leading-tight tabular-nums text-tg-text">
               {bal ? `${(bal.balanceKop / 100).toLocaleString('ru-RU', { maximumFractionDigits: 2 })} ₽` : '…'}
-              <span className="ml-2 text-[14px] font-semibold text-tg-hint">
-                {bal ? `${formatCount(bal.swipes)} ${pluralSwipes(bal.swipes)}` : ''}
+              <span className="ml-2 inline-flex items-center gap-1 text-[14px] font-semibold text-tg-hint">
+                {bal ? (
+                  <>
+                    <SwipeIcon className="inline h-3.5 w-3.5" />
+                    {bal.swipes.toLocaleString('ru-RU')} {pluralSwipes(bal.swipes)}
+                  </>
+                ) : (
+                  ''
+                )}
               </span>
             </div>
             <div className="text-[11.5px] text-tg-hint">
