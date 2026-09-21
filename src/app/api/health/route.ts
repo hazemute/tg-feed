@@ -1,10 +1,15 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { db } from '@/lib/db'
 import { botEnabled, getBotUsername, botBanRemainSecAsync } from '@/lib/tg-bot'
 import { redisHealth } from '@/lib/redis'
 import { APP_VERSION } from '@/lib/server'
 import { checkSchema, ensureAppSchema } from '@/lib/ensure-schema'
 import { cronAuthorized } from '@/lib/guard'
+import { ensureContentCatalog, stepContentCatalog } from '@/lib/content-catalog'
+
+// Прод: очередь контента (discover кураторских каналов) может работать в after()
+// до 60с — response возвращается сразу, миграция доезжает в фоне
+export const maxDuration = 60
 
 export const dynamic = 'force-dynamic'
 
@@ -39,6 +44,89 @@ function envDbSummary(raw: string | undefined): Record<string, string> | null {
  * Публичная часть: ok/db/schema/cache/bot/version. Диагностические сводки
  * env/фингерпринт — только с cron-секретом (v5.48: закрыта инфра-разведка).
  */
+/*
+ * v5.76: самолечение webhook-URL бота.
+ *
+ * Канонический домен (в порядке приоритета):
+ *   1. NEXT_PUBLIC_APP_URL (задан руками в Vercel env)
+ *   2. VERCEL_PROJECT_PRODUCTION_URL (Vercel даёт сам: tg-swipe.vercel.app,
+ *      без протокола) — НЕ меняется между деплоями, в отличие от VERCEL_URL
+ *
+ * Троттлинг getWebhookInfo: раз в 5 минут на инстанс (health дергается часто,
+ * а вызов Telegram API из health лишний раз не нужен). setWebhook — только
+ * при фактическом расхождении. drop_pending_updates=false: очередь апдейтов
+ * (например, накопившиеся /start) доезжает и обрабатывается.
+ */
+const WEBHOOK_CHECK_INTERVAL_MS = 5 * 60_000
+let lastWebhookCheckAt = 0
+
+function canonicalBotOrigin(): string | null {
+  const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim()
+  if (explicit) return explicit.replace(/\/$/, '')
+  const vercelProd = process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
+  if (vercelProd) return `https://${vercelProd.replace(/\/$/, '')}`
+  return null
+}
+
+async function healBotWebhook(botEnabledFlag: boolean): Promise<{
+  ok: boolean | null
+  url: string | null
+  expected: string | null
+  healed: boolean
+  lastError: string | null
+}> {
+  const empty = { ok: null, url: null, expected: null, healed: false, lastError: null }
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim()
+  if (!botEnabledFlag || !token) return empty
+
+  const expectedOrigin = canonicalBotOrigin()
+  if (!expectedOrigin) return empty // локально/preview — не трогаем
+  const expectedUrl = `${expectedOrigin}/api/bot/webhook`
+
+  const now = Date.now()
+  if (now - lastWebhookCheckAt < WEBHOOK_CHECK_INTERVAL_MS) {
+    return { ...empty, expected: expectedUrl }
+  }
+  lastWebhookCheckAt = now
+
+  try {
+    const infoRes = await fetch(`https://api.telegram.org/bot${token}/getWebhookInfo`, {
+      signal: AbortSignal.timeout(6000),
+    })
+    const info = (await infoRes.json()) as {
+      ok?: boolean
+      result?: { url?: string; last_error_message?: string; pending_update_count?: number }
+    }
+    const currentUrl = info.result?.url ?? ''
+    const lastError = info.result?.last_error_message ?? null
+    if (currentUrl === expectedUrl) {
+      return { ok: true, url: currentUrl, expected: expectedUrl, healed: false, lastError }
+    }
+
+    // Расхождение (пусто / чужой dpl-URL / другой домен) — перерегистрируем
+    const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
+    const healRes = await fetch(`https://api.telegram.org/bot${token}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: expectedUrl,
+        ...(secret ? { secret_token: secret } : {}),
+        allowed_updates: ['message', 'callback_query', 'business_connection', 'my_chat_member'],
+        max_connections: 40,
+        drop_pending_updates: false,
+      }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const healed = ((await healRes.json()) as { ok?: boolean } | null)?.ok === true
+    console.log(
+      `[health] webhook ${healed ? 'перерегистрирован' : 'НЕ удалось перерегистрировать'}: ${currentUrl || '<пусто>'} → ${expectedUrl}`,
+    )
+    return { ok: healed, url: currentUrl, expected: expectedUrl, healed, lastError }
+  } catch {
+    return { ok: null, url: null, expected: expectedUrl, healed: false, lastError: null }
+  }
+}
+
 export async function GET(request: Request) {
   const diag = cronAuthorized(request)
 
@@ -58,10 +146,29 @@ export async function GET(request: Request) {
     schema = { ok: healed.ok, missing: healed.missing }
   }
 
+  // v5.76: контент-каталог подростковой ленты — одноразовая миграция (быстрая
+  // часть — категории/флаг) + очередь добавления кураторских каналов в after()
+  // (сеть/парсинг — НЕ в основном потоке ответа). Шаг планируем на КАЖДЫЙ
+  // health-вызов: внутри stepContentCatalog свой троттлинг ≥90с + skip для SQLite
+  try {
+    await ensureContentCatalog()
+    after(() => stepContentCatalog().catch((e) => console.error('[health] catalog step', e)))
+  } catch (e) {
+    console.error('[health] content-catalog init failed', e)
+  }
+
   const cache = await redisHealth()
   const bot = botEnabled()
   // botUsername — наружу не отдаём (цель для спам-ботов), только факт наличия
   const botUsername = diag && bot ? await getBotUsername() : null
+
+  // v5.76: САМОЛЕЧЕНИЕ WEBHOOK. Раньше вебхук мог быть зарегистрирован на
+  // dpl-URL (URL конкретного деплоя) — после удаления старых деплоев Telegram
+  // шлёт апдейты в никуда: бот «не отвечает, грузит бесконечно». Health —
+  // самая частая точка входа, поэтому здесь сверяем URL вебхука с каноническим
+  // прод-доменом и перерегистрируем при расхождении (drop_pending=false —
+  // накопившиеся /start пользователей доезжают и получают ответ).
+  const webhook = await healBotWebhook(bot)
 
   // Фингерпринт фактической БД (какой проект реально подключён): размер,
   // наличие таблиц, current_user. Достаточно, чтобы различить старый/новый/
@@ -99,6 +206,8 @@ export async function GET(request: Request) {
       cache,
       bot,
       botUsername,
+      // v5.76: диагноз вебхука наружу только за cron-секретом (url бота — цель для спама)
+      ...(diag ? { webhook } : {}),
       botBanSec: await botBanRemainSecAsync(),
       session: 'jwt',
       version: APP_VERSION,

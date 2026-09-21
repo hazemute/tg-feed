@@ -20,6 +20,30 @@ import type { AffinityMap } from '@/lib/rank'
  */
 export const REPORT_HIDE_THRESHOLD = 3
 
+/*
+ * v5.76: ПОДРОСТКОВЫЙ МИКС — множитель веса поста по категории канала.
+ * Первая аудитория — подростки: игры/мемы/кино/аниме/IT усилены, политика и
+ * «взрослые» финансы придавлены. Промо-посты (платное продвижение) не
+ * подавляются — платное обещание держим в любой категории.
+ */
+export const FEED_MIX: Record<string, number> = {
+  games: 1.45,
+  humor: 1.35,
+  memes: 1.35,
+  anime: 1.3,
+  cinema: 1.25,
+  it: 1.2,
+  music: 1.2,
+  sport: 1.1,
+  travel: 1.0,
+  food: 1.0,
+  other: 0.9,
+  crypto: 0.8,
+  business: 0.65,
+  news: 0.3,
+}
+const FEED_MIX_DEFAULT = 0.9
+
 // ------------------------- Глобальный индекс ленты -------------------------
 
 /**
@@ -103,7 +127,8 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       promotedAt: true,
       channel: {
         // title/description — язык канала для языкового множителя ранжирования
-        select: { isPremium: true, categoryId: true, title: true, description: true },
+        // v5.76: category.slug — подростковый микс (FEED_MIX)
+        select: { isPremium: true, categoryId: true, title: true, description: true, category: { select: { slug: true } } },
       },
     },
     orderBy: { publishedAt: 'desc' },
@@ -143,16 +168,25 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       g: p.channel.categoryId,
       l: detectLang(p.text),
       cl: detectLang(`${p.channel.title} ${p.channel.description ?? ''}`),
-      w: computeWeight({
-        likesCount: p.likesCount,
-        commentsCount: p.commentsCount,
-        reactionsTg: p.reactionsTg,
-        viewsCount: p.viewsCount,
-        hotScore: p.hotScore,
-        publishedAt: p.publishedAt,
-        premium: p.channel.isPremium,
-        promotedAt: p.promotedAt,
-      }) +
+      w: (() => {
+        const base = computeWeight({
+          likesCount: p.likesCount,
+          commentsCount: p.commentsCount,
+          reactionsTg: p.reactionsTg,
+          viewsCount: p.viewsCount,
+          hotScore: p.hotScore,
+          publishedAt: p.publishedAt,
+          premium: p.channel.isPremium,
+          promotedAt: p.promotedAt,
+        })
+        // v5.76 подростковый микс: множитель по категории; платное продвижение
+        // не подавляем (в активном 48ч окне промо множитель ≥ 1)
+        const slug = p.channel.category?.slug ?? ''
+        const mix = FEED_MIX[slug] ?? FEED_MIX_DEFAULT
+        const promoActive =
+          p.promotedAt && Date.now() - new Date(p.promotedAt).getTime() < 48 * 3_600_000
+        return base * (promoActive ? Math.max(1, mix) : mix)
+      })() +
         // v5.68 антиреклама: канал с потоком жалоб глобально понижается
         Math.min(REPORT_PENALTY_CAP, (channelReports.get(p.channelId) ?? 0) * REPORT_PENALTY_PER) +
         rankJitter(p.id),

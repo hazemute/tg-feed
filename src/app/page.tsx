@@ -26,6 +26,7 @@ import { Splash } from '@/components/tg/Splash'
 import { MaintenanceScreen } from '@/components/tg/MaintenanceScreen'
 import { PreReleaseScreen } from '@/components/tg/PreReleaseScreen'
 import { WelcomeGuide, useWelcomeGuide } from '@/components/tg/WelcomeGuide'
+import { TutorialCoach } from '@/components/tg/TutorialCoach'
 import { FeedView } from '@/components/feed/FeedView'
 
 /*
@@ -579,6 +580,9 @@ export default function Home() {
       <UserProfileSheet />
       {/* Приветственный гайд (v5.58): один раз, с «Пропустить» */}
       <AnimatePresence>{welcome.open && <WelcomeGuide onDone={welcome.close} />}</AnimatePresence>
+      {/* v5.76: живой туториал — 4 шага в реальном времени, можно пропустить.
+          Показывается после WelcomeGuide, только авторизованным, один раз */}
+      <TutorialCoach active={appOpen && Boolean(user) && !welcome.open} />
     </div>
   )
 }

@@ -178,40 +178,59 @@ function extractFromJson(text: string): string[] {
  * страницей с постами) — несуществующие юзернеймы тихо отклоняются,
  * так что список можно расширять без риска.
  */
-const CATALOG: Array<{ slug: string; usernames: string[] }> = [
+/*
+ * v5.76: КУРАТОРСКИЙ КАТАЛОГ ПОДРОСТКОВОГО КОНТЕНТА.
+ * Раньше тут было 16 полит-новостных каналов (риа/тасс/коммерсант…) против
+ * 2 юмористических — лента заполнялась «взрослыми» новостями, а первая
+ * аудитория приложения — подростки. Пересобрано: игры/мемы/кино/аниме/IT,
+ * новости срезаны до «срочного/инцидентов» (mash/baza — читают все).
+ * Несуществующие юзернеймы безвредны: processCandidate проверяет t.me/s
+ * (посты + ≥100 подписчиков) и просто не создаёт канал.
+ */
+export const CATALOG: Array<{ slug: string; usernames: string[] }> = [
   {
-    slug: 'news',
+    slug: 'games',
     usernames: [
-      'rian_ru',
-      'vedomosti',
-      'kommersant',
-      'gazeta_ru',
-      'lenta_ru',
-      'bbcrussian',
-      'tass_agency',
-      'interfax_news',
-      'aif_ru',
-      'kpru',
-      'mash',
-      'breakingmash',
-      'baza',
-      'readovka',
-      'rbc_news',
-      'forbes_ru',
+      'stopgame_ru',
+      'igromania',
+      'dtfru',
+      'kanobu',
+      'gameguru',
+      'vgtimes',
+      'cybersportru',
+      'playgrounderu',
+    ],
+  },
+  {
+    slug: 'humor',
+    usernames: [
+      'lentachold',
+      'ideality',
+      'anekdoty',
+      'mem_express',
+      'memchans',
+      'poshlo_tut',
+      'smeshno',
     ],
   },
   {
     slug: 'it',
-    usernames: ['proglib', 'tproger', 'habr_com', 'webstandards_ru', 'pythonlib', 'roddel'],
+    usernames: ['proglib', 'tproger', 'habr_com', 'roddel', 'durov', 'telegram', 'tginfo'],
   },
   {
-    slug: 'crypto',
-    usernames: ['cryptocurrency', 'cointelegraph', 'whale_alert', 'bitcoin', 'investfuture'],
+    slug: 'cinema',
+    usernames: ['kinopoisk', 'kinomania_ru', 'filmguru', 'kinoafisha'],
   },
-  { slug: 'humor', usernames: ['lentachold', 'ideality'] },
-  { slug: 'business', usernames: ['vc_ru'] },
+  {
+    slug: 'anime',
+    usernames: ['anilibria_tv', 'animegoand', 'anime_news_ru'],
+  },
   { slug: 'sport', usernames: ['sports_ru', 'matchtv', 'championat'] },
-  { slug: 'other', usernames: ['kinopoisk'] },
+  { slug: 'crypto', usernames: ['cryptocurrency', 'cointelegraph'] },
+  { slug: 'business', usernames: ['vc_ru'] },
+  // «Минимально новостей»: только инциденты/срочное — без полит-агентств
+  { slug: 'news', usernames: ['mash', 'breakingmash', 'baza'] },
+  { slug: 'music', usernames: ['rap_ru', 'newmusicru', 'zvuk_official'] },
 ]
 
 /** Служебные пути t.me, которые не являются каналами */
@@ -600,6 +619,8 @@ async function processCandidate(
   s: InternalState,
   knownCats: Map<string, string>,
   otherId: string | undefined,
+  // v5.76: жёсткая категория из кураторского каталога (нейро-уточнение пропускается)
+  forcedSlug?: string,
 ): Promise<CandidateResult> {
   // 1) веб-превью: должно отвечать и содержать посты
   let html: string
@@ -628,8 +649,8 @@ async function processCandidate(
   const title = decodeEnt(chat?.title ?? ogTitle) || uname
   const description = chat?.description ? decodeEnt(chat.description) : decodeEnt(ogDesc) || null
   const hint = `${title} ${description ?? ''}`
-  const slug = classifyCategory(hint)
-  const categoryId = knownCats.get(slug) ?? otherId
+  const slug = forcedSlug ?? classifyCategory(hint)
+  const categoryId = forcedSlug ? knownCats.get(forcedSlug) : (knownCats.get(slug) ?? otherId)
 
   // 3) число подписчиков (дешёвый вызов, кэш 24ч) — заодно фильтр качества:
   //    каналы-пустышки размывают ленту и убивают конверсию рекламы
@@ -705,10 +726,39 @@ async function processCandidate(
   }
 
   // 7) уточнение категории нейросетью (фон): регэксп-присвоение выше — лишь
-  //    предварительное, LLM переоценивает канал по совокупности признаков
-  void refineChannelCategory(channel.id, title, uname, description)
+  //    предварительное, LLM переоценивает канал по совокупности признаков.
+  //    Для кураторских каналов категория ФИКСИРОВАННАЯ — уточнение пропускаем
+  if (!forcedSlug) void refineChannelCategory(channel.id, title, uname, description)
 
   return { ok: true, title, category: slug, posts: addedPosts, members }
+}
+
+/**
+ * v5.76: одиночное «живое» добавление канала из кураторского каталога.
+ * Проверяет t.me/s (должен отвечать страницей с постами + ≥100 подписчиков),
+ * создаёт канал с ФИКСИРОВАННОЙ категорией (нейро-уточнение не вызывается)
+ * и сразу парсит первую страницу постов (~25). Мёртвый юзернейм возвращает
+ * ok:false — канал НЕ создаётся, каталог остаётся чистым.
+ */
+export async function discoverSingleChannel(
+  rawUsername: string,
+  slug: string,
+): Promise<
+  | { ok: true; title: string; posts: number; members: number | null }
+  | { ok: false; reason: string }
+> {
+  const uname = rawUsername.replace(/^@/, '').trim().toLowerCase()
+  if (!/^[a-z][a-z0-9_]{3,31}$/.test(uname)) return { ok: false, reason: 'некорректный username' }
+  const cats = await db.category.findMany({ select: { id: true, slug: true } })
+  const knownCats = new Map(cats.map((c) => [c.slug, c.id]))
+  if (!knownCats.has(slug)) return { ok: false, reason: `нет категории ${slug}` }
+  const otherId = knownCats.get('other') ?? [...knownCats.values()][0]
+  // Стуб состояния: processCandidate использует только queue/visited для
+  // кандидатов «графа» — одиночному добавлению они не нужны
+  const stubState = { queue: [] as string[], visited: [] as string[] } as unknown as InternalState
+  const res = await processCandidate(uname, stubState, knownCats, otherId, slug)
+  if (!res.ok) return res
+  return { ok: true, title: res.title, posts: res.posts, members: res.members }
 }
 
 /**

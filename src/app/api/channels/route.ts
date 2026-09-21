@@ -13,7 +13,20 @@ export const dynamic = 'force-dynamic'
 const querySchema = z.object({
   category: z.string().max(64).regex(/^[a-z0-9_-]*$/).catch(''),
   q: z.string().trim().max(100).catch(''),
+  // v5.76: сид ротации — одинаковый сид = одинаковый порядок, новый сид =
+  // ГЛОБАЛЬНО новый порядок каналов (жалоба «при обновлении одни и те же»)
+  rot: z.string().trim().max(64).regex(/^[a-zA-Z0-9_-]*$/).catch(''),
 })
+
+/** Детерминированный «хеш» строки → число (FNV-1a) */
+function hashSeed(str: string): number {
+  let h = 2166136261 >>> 0
+  for (let i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 16777619) >>> 0
+  }
+  return h >>> 0
+}
 
 type ChannelItem = Omit<Awaited<ReturnType<typeof loadChannels>>[number], 'subscribed'> & {
   subscribed: boolean
@@ -38,15 +51,22 @@ export async function GET(request: Request) {
     const q = parsed.success ? parsed.data.q : ''
 
     let items: ChannelItem[]
+    const rot = parsed.success ? parsed.data.rot : ''
     if (q) {
       items = await loadChannels(category, q)
     } else {
       items = await cacheAside({
-        key: await famKey('ch', category || 'all'),
-        ttlSec: 60,
-        memoryTtlMs: 10000,
+        key: await famKey('ch', `${category || 'all'}|rot:${rot}`),
+        ttlSec: rot ? 300 : 60,
+        memoryTtlMs: rot ? 30_000 : 10_000,
         fetcher: () => loadChannels(category, ''),
       })
+    }
+
+    // v5.76: ротация — детерминированное перемешивание по сиду (премиум-буст
+    // сохраняем частично: премиум не выкидываем из первой половины списка)
+    if (rot) {
+      items = rotateChannels(items, rot)
     }
 
     // Персонализация поверх кэша
@@ -65,6 +85,28 @@ export async function GET(request: Request) {
     console.error('[channels]', e)
     return NextResponse.json({ error: 'failed' }, { status: 500 })
   }
+}
+
+/**
+ * v5.76: детерминированная ротация каталога по сиду.
+ * Сортировка по hash(seed + channelId) — каждый новый сид даёт полностью
+ * другой порядок (но один и тот же сид всегда даёт один и тот же список —
+ * пагинация/фильтры стабильны). Премиум-каналы остаются в первых 60% —
+ * монетизация не ломается, но внутри премиум/обычных групп порядок крутится.
+ */
+function rotateChannels(items: ChannelItem[], rot: string): ChannelItem[] {
+  const scored = items.map((c) => ({ c, h: hashSeed(`${rot}:${c.id}`) }))
+  scored.sort((a, b) => a.h - b.h)
+  const shuffled = scored.map((x) => x.c)
+  const premiumFirst = shuffled.filter((c) => c.isPremium)
+  const rest = shuffled.filter((c) => !c.isPremium)
+  const premiumCap = Math.max(3, Math.ceil(items.length * 0.6) - premiumFirst.length)
+  if (premiumFirst.length === 0 || premiumCap <= 0) return shuffled
+  const head = [...premiumFirst, ...rest.slice(0, premiumCap)]
+  const tail = rest.slice(premiumCap)
+  // детерминированно вращаем голову, чтобы премиум не всегда был самым первым
+  const shift = hashSeed(`shift:${rot}`) % Math.max(1, head.length)
+  return [...head.slice(shift), ...head.slice(0, shift), ...tail]
 }
 
 async function loadChannels(category: string, q: string) {

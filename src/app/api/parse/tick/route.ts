@@ -8,6 +8,7 @@ import { pruneAll } from '@/lib/retention'
 import { checkDueGiveaways } from '@/lib/giveaways'
 import { reverifyQuestCompletions } from '@/lib/quests'
 import { publishDueScheduledPosts } from '@/lib/scheduled-posts'
+import { ensureContentCatalog, stepContentCatalog } from '@/lib/content-catalog'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -59,6 +60,19 @@ async function handle(request: Request) {
     }
 
     const batch = await nextAdaptiveBatch()
+
+    // v5.76: миграция контента (отключение новостных → очистка постов →
+    // кураторские игровые/мемные каналы). Троттлинг внутри (≥90с), шаг ≤20с
+    try {
+      await ensureContentCatalog()
+      const catalogStep = await stepContentCatalog()
+      if (!catalogStep.startsWith('skip') && !catalogStep.startsWith('done')) {
+        console.log('[tick] content-catalog:', catalogStep)
+      }
+    } catch (e) {
+      console.error('[tick] content-catalog failed', e)
+    }
+
     if (batch.length === 0) {
       return NextResponse.json({ ok: true, batch: 0, added: 0, enriched: 0, emojiBackfill })
     }

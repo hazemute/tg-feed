@@ -88,7 +88,14 @@ async function healWebhookAllowedUpdates(request: Request): Promise<void> {
     const done = await db.botSetting.findUnique({ where: { key: HEAL_KEY } })
     if (done) return
     if (!BOT_TOKEN()) return
-    const origin = process.env.NEXT_PUBLIC_APP_URL?.trim() || externalOrigin(request)
+    // v5.76: канонический прод-домен ВЫШЕ внешнего origin запроса — иначе
+    // самолечение perpetuate'ит dpl-URL (умирает вместе с деплоем)
+    const origin =
+      process.env.NEXT_PUBLIC_APP_URL?.trim() ||
+      (process.env.VERCEL_PROJECT_PRODUCTION_URL?.trim()
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL.trim()}`
+        : '') ||
+      externalOrigin(request)
     const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/setWebhook`, {
       method: 'POST',
@@ -477,12 +484,13 @@ async function sendGreeting(chatId: number, lang: 'ru' | 'en', from: TgFrom | un
       ].join('\n'),
       {
         keyboard: [
-          [{ label: 'Subscribe to the channel', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
-          [{ label: 'Open Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+          // v5.76: ВСЕ кнопки цветные (официальный style Bot API)
+          [{ label: 'Subscribe to the channel', emoji: '✨', url: 'https://t.me/SnapTeamDev', style: 'primary' }],
+          [{ label: 'Open Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'success' }],
           // v5.43: документы сервиса — постоянные ссылки (требование платёжного провайдера)
           [
-            { label: 'Pricing & payments', emoji: '💳', url: `${SITE_URL}/pricing` },
-            { label: 'Legal docs', emoji: '📄', url: `${SITE_URL}/terms` },
+            { label: 'Pricing & payments', emoji: '💳', url: `${SITE_URL}/pricing`, style: 'danger' },
+            { label: 'Legal docs', emoji: '📄', url: `${SITE_URL}/terms`, style: 'primary' },
           ],
         ] satisfies BotButton[][],
       },
@@ -504,12 +512,13 @@ async function sendGreeting(chatId: number, lang: 'ru' | 'en', from: TgFrom | un
     ].join('\n'),
     {
       keyboard: [
-          [{ label: 'Подписаться на канал', emoji: '✨', url: 'https://t.me/SnapTeamDev' }],
-          [{ label: 'Открыть Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'primary' }],
+          // v5.76: ВСЕ кнопки цветные (официальный style Bot API)
+          [{ label: 'Подписаться на канал', emoji: '✨', url: 'https://t.me/SnapTeamDev', style: 'primary' }],
+          [{ label: 'Открыть Tg Swipe', emoji: '📖', url: TME_APP_URL, style: 'success' }],
           // v5.43: документы сервиса — постоянные ссылки (требование платёжного провайдера)
           [
-            { label: 'Тарифы и оплата', emoji: '💳', url: `${SITE_URL}/pricing` },
-            { label: 'Документы', emoji: '📄', url: `${SITE_URL}/terms` },
+            { label: 'Тарифы и оплата', emoji: '💳', url: `${SITE_URL}/pricing`, style: 'danger' },
+            { label: 'Документы', emoji: '📄', url: `${SITE_URL}/terms`, style: 'primary' },
           ],
       ] satisfies BotButton[][],
     },

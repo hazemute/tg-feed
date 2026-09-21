@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, History, Plus, Search, SearchX, Trash2, TrendingUp, X, Check, Sparkles } from 'lucide-react'
+import { ChevronRight, History, Plus, Search, SearchX, Trash2, TrendingUp, X, Check, Sparkles, RefreshCw } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -170,9 +170,14 @@ export function SearchTab() {
 
   // Каталог каналов: кэшированный GET — вкладка «Поиск» открывается без ожидания
   // (фильтрация на клиенте — для кириллицы SQLite LIKE не подходит)
+  // v5.76: РОТАЦИЯ КАТАЛОГА — дефолтный сид меняется ежечасно, кнопка
+  // «Обновить» даёт полностью новый порядок каналов по требованию
+  const [rotSeed, setRotSeed] = useState(() => String(Math.floor(Date.now() / 3_600_000)))
+  const [rotating, setRotating] = useState(false)
   useEffect(() => {
     const qs = new URLSearchParams()
     if (user) qs.set('userId', user.id)
+    qs.set('rot', rotSeed)
     let alive = true
     apiCached<{ items: ChannelDTO[] }>(`/api/channels?${qs.toString()}`, 90_000)
       .then((d) => {
@@ -186,7 +191,15 @@ export function SearchTab() {
     return () => {
       alive = false
     }
-  }, [user?.id])
+  }, [user?.id, rotSeed])
+
+  /** Полностью перемешать каталог: новый сид → глобально другой порядок */
+  const rotateCatalog = () => {
+    haptic('select')
+    setRotating(true)
+    setRotSeed(String(Date.now()))
+    window.setTimeout(() => setRotating(false), 450)
+  }
 
   const matchedChannels = useMemo(() => {
     if (!channels) return null
@@ -439,6 +452,21 @@ export function SearchTab() {
       {/* Контент */}
       {filter === 'channels' && (
         <section className="mt-2 pb-6" aria-label="Каналы">
+          {/* v5.76: шапка секции с кнопкой ротации — новый порядок каналов */}
+          <div className="flex items-center justify-between px-4 pb-2">
+            <span className="text-[13px] font-semibold uppercase tracking-wide text-tg-hint">
+              Каналы · обновляется каждый час
+            </span>
+            <button
+              type="button"
+              onClick={rotateCatalog}
+              aria-label="Обновить подборку каналов"
+              className="flex h-8 items-center gap-1.5 rounded-full bg-tg-surface px-3 text-[13px] font-medium text-tg-link transition active:scale-95"
+            >
+              <RefreshCw className={cn('h-3.5 w-3.5', rotating && 'animate-spin')} aria-hidden />
+              Другие
+            </button>
+          </div>
           {matchedChannels === null ? (
             <ChannelRowsSkeleton />
           ) : matchedChannels.length === 0 ? (
