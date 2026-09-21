@@ -42,11 +42,10 @@ const QuestsTab = dynamic(() => import('@/components/tabs/QuestsTab').then((m) =
 const SearchTab = dynamic(() => import('@/components/tabs/SearchTab').then((m) => m.SearchTab), { ssr: false })
 const ChannelTab = dynamic(() => import('@/components/tabs/ChannelTab').then((m) => m.ChannelTab), { ssr: false })
 const ProfileTab = dynamic(() => import('@/components/tabs/ProfileTab').then((m) => m.ProfileTab), { ssr: false })
-const PromoTab = dynamic(() => import('@/components/tabs/PromoTab').then((m) => m.PromoTab), { ssr: false })
 const AuthGateSheet = dynamic(() => import('@/components/tg/AuthGateSheet').then((m) => m.AuthGateSheet), { ssr: false })
 const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').then((m) => m.LoginByTelegram), { ssr: false })
 
-const TABS: Tab[] = ['feed', 'quests', 'channel', 'promo', 'search', 'profile']
+const TABS: Tab[] = ['feed', 'quests', 'channel', 'search', 'profile']
 
 /*
  * v5.70 ЖЕСТ-ФИЛЬТР свайпа вкладок: раньше решение принималось только по
@@ -386,7 +385,6 @@ export default function Home() {
       void import('@/components/tabs/QuestsTab')
       void import('@/components/tabs/ChannelTab')
       void import('@/components/tabs/ProfileTab')
-      void import('@/components/tabs/PromoTab')
     }, 3_500)
     return () => window.clearTimeout(t)
   }, [authReady, user, appOpen])
@@ -558,7 +556,6 @@ export default function Home() {
               {tab === 'quests' && <QuestsTab />}
               {tab === 'search' && <SearchTab />}
               {tab === 'channel' && <ChannelTab />}
-              {tab === 'promo' && <PromoTab />}
               {tab === 'profile' && <ProfileTab />}
             </motion.main>
           </AnimatePresence>

@@ -374,8 +374,9 @@ export type ThemeMode =
   | 'custom' // v5.28: своя палитра (фон+акцент в localStorage, vars поверх data-theme)
 export type FontScale = 'sm' | 'md' | 'lg'
 
-/* v5.70: 'promo' — 6-я вкладка «Промо» (хаб продвижения канала) */
-export type Tab = 'feed' | 'quests' | 'channel' | 'promo' | 'search' | 'profile'
+/* v5.72: «Промо» вернулось разделом кабинета «Ваш канал» (ChannelTab) —
+ * отдельной вкладки навбара больше нет */
+export type Tab = 'feed' | 'quests' | 'channel' | 'search' | 'profile'
 
 /** Один день статистики активности в профиле (мини-барчарт «Активность за 7 дней») */
 export type ActivityDayDTO = {

@@ -1,6 +1,6 @@
 'use client'
 
-import { Heart, Home, ListChecks, Megaphone, Rocket, Search, UserRound } from 'lucide-react'
+import { Heart, Home, ListChecks, Megaphone, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -13,13 +13,12 @@ import type { Tab } from '@/lib/types'
 /* v5.58: «Канал» — рабочий стол админа (управление + статистика + ИИ-ассистент). */
 const items: {
   id: Tab
-  labelKey: 'nav.feed' | 'nav.quests' | 'nav.channel' | 'nav.promo' | 'nav.search' | 'nav.profile'
+  labelKey: 'nav.feed' | 'nav.quests' | 'nav.channel' | 'nav.search' | 'nav.profile'
   icon: typeof Home
 }[] = [
   { id: 'feed', labelKey: 'nav.feed', icon: Home },
   { id: 'quests', labelKey: 'nav.quests', icon: ListChecks },
   { id: 'channel', labelKey: 'nav.channel', icon: Megaphone },
-  { id: 'promo', labelKey: 'nav.promo', icon: Rocket },
   { id: 'search', labelKey: 'nav.search', icon: Search },
   { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]

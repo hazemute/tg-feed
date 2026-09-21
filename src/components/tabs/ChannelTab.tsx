@@ -38,6 +38,7 @@ import { Avatar } from '@/components/tg/Avatar'
 import { ChannelCabinet } from '@/components/feed/ChannelCabinet'
 import { AiChat } from '@/components/ai/AiChat'
 import { ChannelLiveView } from '@/components/channel/ChannelLiveView'
+import { PromoSection } from '@/components/channel/PromoSection'
 import { SubscriptionsSection } from '@/components/tabs/SubscriptionsSection'
 import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
 
@@ -49,27 +50,31 @@ import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
  *   3. ИИ-ассистент — Snap Ассистент: генерация, публикация, УДАЛЕНИЕ постов,
  *      смена названия/описания/аватара — полный пульт управления каналом.
  * v5.70 (Task 7-a): «Продвижение в ленте», «CTA-кнопка» и «Показ в ленте»
- * переехали в ОТДЕЛЬНУЮ вкладку «Промо» (PromoTab) — здесь осталась
- * кнопка-ссылка. Рекламный кабинет (кошелёк/CPA-кампании) удалён по решению
- * владельца; бэкенд /api/ads и /api/campaigns не тронут (PromoteSheet живёт).
+ * переехали в PromoTab; v5.72: возврат — это РАЗДЕЛ «Промо» этого кабинета
+ * (PromoSection), отдельной вкладки навбара больше нет. Рекламный кабинет
+ * (кошелёк/CPA-кампании) удалён по решению владельца; бэкенд /api/ads и
+ * /api/campaigns не тронут (PromoteSheet живёт).
  */
 
 /**
- * Разделы рабочего стола (v5.65: + «Живой канал» — вид чата в стиле Telegram).
- * Активная — пилюлей с layoutId.
+ * Разделы рабочего стола (v5.65: + «Живой канал»; v5.72: + «Промо» — вернулся
+ * из отдельной вкладки навбара в кабинет). Активная — пилюлей с layoutId.
  */
 const CHANNEL_SECTIONS = [
   { key: 'manage', label: 'Мой канал' },
   { key: 'live', label: 'Живой канал' },
   { key: 'stats', label: 'Статистика' },
+  { key: 'promo', label: 'Промо' },
   { key: 'ai', label: 'ИИ-ассистент' },
 ] as const
+
+/** Порог горизонтального свайпа между разделами кабинета (v5.72) */
+const SECTION_SWIPE_DIST = 56
 
 type ChannelSection = (typeof CHANNEL_SECTIONS)[number]['key']
 
 export function ChannelTab() {
   const { user } = useApp()
-  const goToTab = useApp((s) => s.goToTab)
   const [data, setData] = useState<MyChannelResponse | null>(null)
   const [loading, setLoading] = useState(true)
   // v5.54: сетевой сбой ≠ «канал не привязан» — отдельный экран повтора вместо
@@ -80,6 +85,63 @@ export function ChannelTab() {
   // v5.65: полноэкранный «живой канал» (вид чата) поверх вкладки
   const [liveOpen, setLiveOpen] = useState(false)
   const t = useT()
+  // v5.72: авто-докрутка активной пилюли раздела в зону видимости
+  const pillListRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const el = pillListRef.current?.querySelector<HTMLElement>(`[data-sec="${section}"]`)
+    el?.scrollIntoView({ inline: 'nearest', block: 'nearest', behavior: 'smooth' })
+  }, [section])
+
+  /* v5.72: СВАЙП МЕЖДУ РАЗДЕЛАМИ кабинета. Горизонтальный жест по контенту
+   * секции переключает раздел (Мой канал ↔ Живой ↔ Статистика ↔ Промо ↔ ИИ),
+   * а НЕ вкладку навбара (прежде свайп по пилюлям уводил в другую вкладку).
+   * Траекторный анализ как в page.tsx: вертикаль «победила первой» — это
+   * скролл; жесты, начавшиеся в [data-hscroll] (пилюли, слайдер), игнорируем.
+   * На контенте стоит data-noswipe — страничный хендлер навбара здесь молчит. */
+  const secTouch = useRef<{
+    x: number
+    y: number
+    t: number
+    maxDx: number
+    maxDy: number
+    skip: boolean
+  } | null>(null)
+
+  const onSectionTouchStart = (e: React.TouchEvent) => {
+    const t0 = e.touches[0]
+    const el = e.target as Element | null
+    secTouch.current = {
+      x: t0.clientX,
+      y: t0.clientY,
+      t: Date.now(),
+      maxDx: 0,
+      maxDy: 0,
+      skip: Boolean(el?.closest?.('[data-hscroll]')),
+    }
+  }
+  const onSectionTouchMove = (e: React.TouchEvent) => {
+    const r = secTouch.current
+    if (!r) return
+    const t0 = e.touches[0]
+    r.maxDx = Math.max(r.maxDx, Math.abs(t0.clientX - r.x))
+    r.maxDy = Math.max(r.maxDy, Math.abs(t0.clientY - r.y))
+  }
+  const onSectionTouchEnd = (e: React.TouchEvent) => {
+    const r = secTouch.current
+    secTouch.current = null
+    if (!r || r.skip) return
+    const dx = e.changedTouches[0].clientX - r.x
+    const dt = Date.now() - r.t
+    // Чисто горизонтальный жест: доминирует над вертикалью вдвое
+    if (r.maxDx < SECTION_SWIPE_DIST || r.maxDx < r.maxDy * 2 || dt > 800) return
+    const idx = CHANNEL_SECTIONS.findIndex((s) => s.key === section)
+    const next = CHANNEL_SECTIONS[idx + (dx < 0 ? 1 : -1)]
+    if (next) {
+      haptic('light')
+      setSection(next.key)
+    }
+  }
 
   const fetchChannel = useCallback(async (useCache: boolean) => {
     try {
@@ -176,7 +238,11 @@ export function ChannelTab() {
             <h2 className="px-1 pt-3 text-[19px] font-bold text-tg-text">Ваш канал</h2>
             {/* Переключатель каналов (если привязано несколько) */}
             {data!.channels.length > 1 && (
-              <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+              <div
+                data-noswipe
+                data-hscroll
+                className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1"
+              >
                 {data!.channels.map((c) => (
                   <button
                     key={c.id}
@@ -199,12 +265,21 @@ export function ChannelTab() {
               </div>
             )}
 
-            {/* ТРИ ГЛАВНЫХ РАЗДЕЛА: Мой канал · Статистика · ИИ-ассистент.
+            {/* ТРИ ГЛАВНЫХ РАЗДЕЛА: Мой канал · Живой · Статистика · Промо · ИИ.
                 Скроллящиеся пилюли — лёгкий вес, больше воздуха. */}
             {/* v5.65: сплошной фон вместо backdrop-blur — блюр на скролле
                 перекрашивает слой каждый кадр и съедает кадры на мобильных */}
+            {/* data-noswipe+data-hscroll: горизонтальный скролл пилюль — это скролл
+                пилюль, а НЕ свайп вкладки навбара и НЕ смена раздела */}
             <div className="sticky top-0 z-20 -mx-4 bg-tg-bg px-4 py-2.5 lg:-mx-6 lg:px-6">
-              <div className="no-scrollbar flex gap-2 overflow-x-auto" role="tablist" aria-label={t('mc.tabsAria')}>
+              <div
+                ref={pillListRef}
+                data-noswipe
+                data-hscroll
+                className="no-scrollbar flex gap-2 overflow-x-auto"
+                role="tablist"
+                aria-label={t('mc.tabsAria')}
+              >
                 {CHANNEL_SECTIONS.map((s) => {
                   const active = section === s.key
                   return (
@@ -212,6 +287,7 @@ export function ChannelTab() {
                       key={s.key}
                       type="button"
                       role="tab"
+                      data-sec={s.key}
                       aria-selected={active}
                       onClick={() => {
                         if (!active) {
@@ -242,24 +318,31 @@ export function ChannelTab() {
               </div>
             </div>
 
-            {/* Контент раздела (key — чтобы анимация не переезжала между разделами) */}
+            {/* Контент раздела (key — чтобы анимация не переезжала между разделами).
+                v5.72: data-noswipe — здесь горизонтальный свайп переключает РАЗДЕЛ
+                кабинета (хендлеры ниже), навбаровский свайп вкладок отключён.
+                Автопрокрутка пилюли к активной — scrollIntoView при смене section. */}
             <motion.div
               key={section}
+              data-noswipe
               initial={{ opacity: 0, y: 8 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="pt-1"
+              onTouchStart={onSectionTouchStart}
+              onTouchMove={onSectionTouchMove}
+              onTouchEnd={onSectionTouchEnd}
             >
               {section === 'manage' && (
                 <div className="space-y-5">
                   <ChannelHero key={`hero-${channel!.id}`} channel={channel!} onReload={reload} />
-                  {/* v5.70: «Продвижение в ленте», «CTA-кнопка» и «Показ в ленте»
-                      живут во вкладке «Промо» — здесь кнопка-ссылка (goToTab('promo')) */}
+                  {/* v5.72: «Продвижение в ленте», «CTA-кнопка» и «Показ в ленте»
+                      живут в разделе «Промо» этого же кабинета — кнопка открывает его */}
                   <button
                     type="button"
                     onClick={() => {
                       haptic('light')
-                      goToTab('promo')
+                      setSection('promo')
                     }}
                     className="press flex w-full items-center gap-3 rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-4 text-left transition active:scale-[0.99]"
                   >
@@ -271,7 +354,7 @@ export function ChannelTab() {
                         Продвижение · CTA · показ в ленте
                       </span>
                       <span className="block text-[12.5px] leading-snug text-tg-hint">
-                        Пакеты продвижений, кнопка действия и гибкий тизер — во вкладке «Промо»
+                        Пакеты продвижений, кнопка действия и гибкий тизер — в разделе «Промо»
                       </span>
                     </span>
                     <ChevronRight className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
@@ -288,6 +371,14 @@ export function ChannelTab() {
               )}
               {section === 'ai' && (
                 <AssistantSection key={`ai-${channel!.id}`} channel={channel!} tier={tier} />
+              )}
+              {section === 'promo' && channel && data && (
+                <PromoSection
+                  key={`promo-${channel.id}`}
+                  data={data}
+                  channel={channel}
+                  onReload={() => void reload()}
+                />
               )}
             </motion.div>
           </div>

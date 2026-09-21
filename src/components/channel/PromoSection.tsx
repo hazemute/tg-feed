@@ -1,9 +1,8 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import {
-  AlertTriangle,
   Check,
   ChevronRight,
   Eye,
@@ -15,15 +14,13 @@ import {
   Minus,
   MousePointerClick,
   Plus,
-  Radio,
-  RefreshCw,
   Rocket,
   Scissors,
   Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
-import { api, apiCached, invalidateApiCache } from '@/lib/api'
+import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
 import { stripMarkdown } from '@/lib/markdown'
@@ -34,24 +31,25 @@ import { cutAtWord, normalizeTeaserApplyTo, teaserApplies, type TeaserApplyTo } 
 import type { MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
 
 /**
- * «Промо» (v5.70, Task 7-a) — ОТДЕЛЬНАЯ вкладка-рабочий стол продвижения автора.
- * Секции переехали из «Моего канала» (ChannelTab) 1:1, логика не менялась:
+ * «Промо» (v5.72) — РАЗДЕЛ кабинета «Ваш канал» (внутри вкладки «Каналы»).
+ * v5.70 это была отдельная вкладка навбара — владелец вернул её в кабинет:
+ * свайпы между разделами кабинета не должны уводить в другие вкладки.
+ * Данные НЕ дергает сам: приходит готовый GET /api/mychannel из ChannelTab
+ * (тот же контракт), перезагрузка — через onReload.
  *   1. Продвижение в ленте — месячный лимит Snap Pro (1/мес) + пакеты (PromotePackSheet).
  *   2. CTA-кнопка — текст/https-ссылка, tier-гейт.
- *   3. Показ в ленте — РАСШИРЕННО: режим (полностью/обрезка/блюр) + лимит символов
- *      + НОВОЕ teaserApplyTo (ко всем / только лонгридам / только текстовым без
- *      медиа) + живое превью мок-поста.
- * Данные: тот же контракт GET/POST /api/mychannel, что у ChannelTab.
+ *   3. Показ в ленте — режим (полностью/обрезка/блюр) + лимит символов
+ *      + teaserApplyTo + живое превью мок-поста.
  */
 
-/** Режимы показа в ленте (переехали из ChannelTab без изменений) */
+/** Режимы показа в ленте */
 const DISPLAY_MODES = [
   { id: 'none', label: 'Полностью', icon: FileText, hint: 'посты видны целиком' },
   { id: 'cut', label: 'Обрезка', icon: Scissors, hint: 'начало текста + кнопка «Читать полностью в Telegram»' },
   { id: 'blur', label: 'Блюр', icon: EyeOff, hint: 'весь текст размыт до подписки' },
 ] as const
 
-/** v5.70: гибкость — КОМУ из постов применять тизер */
+/** Каким постам применять тизер */
 const APPLY_MODES = [
   { id: 'all', label: 'Ко всем постам', hint: 'тизер у любого поста длиннее порога' },
   { id: 'long', label: 'Только длинным', hint: 'лонгриды — текст длиннее 600 символов' },
@@ -71,159 +69,73 @@ const SAMPLE_TEXT =
   ' Через месяц вы увидите рост, а через три — стабильное ядро читателей, которое ' +
   'останется с каналом надолго.'
 
-export function PromoTab() {
-  const goToTab = useApp((s) => s.goToTab)
-  const [data, setData] = useState<MyChannelResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  // Сетевой сбой ≠ «канал не привязан» — отдельный экран повтора (паттерн ChannelTab)
-  const [failed, setFailed] = useState(false)
-  const [activeId, setActiveId] = useState<string | null>(null)
-
-  const fetchChannel = useCallback(async (useCache: boolean) => {
-    try {
-      const r = useCache
-        ? await apiCached<MyChannelResponse>('/api/mychannel', 15_000)
-        : await api<MyChannelResponse>('/api/mychannel')
-      setData(r)
-      setFailed(false)
-      setActiveId((prev) => prev ?? r.channels[0]?.id ?? null)
-    } catch {
-      setFailed(true)
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  /** Первичное открытие вкладки: кэш допустим — без мигания скелетона */
-  const load = useCallback(() => fetchChannel(true), [fetchChannel])
-  /** Перезагрузка после действий (продвижение/настройки): только сеть */
-  const reload = useCallback(() => {
-    invalidateApiCache('/api/mychannel')
-    return fetchChannel(false)
-  }, [fetchChannel])
-
-  useEffect(() => {
-    void load()
-  }, [load])
-
-  const channel = useMemo(
-    () => data?.channels.find((c) => c.id === activeId) ?? data?.channels[0] ?? null,
-    [data, activeId],
+export function PromoSection({
+  data,
+  channel,
+  onReload,
+}: {
+  data: MyChannelResponse
+  channel: MyChannelDTO
+  onReload: () => void
+}) {
+  const tier = data.tier
+  const promotion = data.promotion ?? { used: 0, limit: 1, available: false, credits: 0 }
+  const packPrice = data.promotePackPrice ?? 19_900
+  const packCount = data.promotePackCount ?? 5
+  // Селектор канала нужен только при нескольких привязанных — локальный стейт
+  const [activeId, setActiveId] = useState<string | null>(channel.id)
+  const active = useMemo(
+    () => data.channels.find((c) => c.id === activeId) ?? channel,
+    [data.channels, activeId, channel],
   )
 
-  const tier = data?.tier ?? 'free'
-  const promotion = data?.promotion ?? { used: 0, limit: 1, available: false, credits: 0 }
-  const packPrice = data?.promotePackPrice ?? 19_900
-  const packCount = data?.promotePackCount ?? 5
-
   return (
-    <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain px-4 pb-28 pt-5 lg:px-6 lg:pt-7">
-      <div className="mx-auto w-full max-w-[960px]">
-        {/* Заголовок вкладки */}
-        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="text-screen-title leading-tight text-tg-text">Промо</h1>
-          <p className="mt-1 text-[15px] text-tg-hint">Продвижение, CTA и показ в ленте</p>
-        </motion.div>
-
-        {loading ? (
-          <div className="mt-6 space-y-3">
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="h-28 rounded-2xl tg-shimmer" />
-            ))}
-          </div>
-        ) : failed && !data ? (
-          <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl bg-tg-surface px-4 py-10 text-center">
-            <span className="flex size-16 items-center justify-center rounded-full bg-tg-like/10 text-tg-like" aria-hidden>
-              <AlertTriangle className="size-8" strokeWidth={1.7} />
-            </span>
-            <p className="text-[15px] font-semibold text-tg-text">Не удалось загрузить промо-кабинет</p>
-            <p className="text-snippet text-tg-hint">Проверьте соединение и попробуйте ещё раз</p>
+    <div className="space-y-5">
+      {data.channels.length > 1 && (
+        <div
+          data-hscroll
+          data-noswipe
+          className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1"
+        >
+          {data.channels.map((c) => (
             <button
+              key={c.id}
               type="button"
               onClick={() => {
                 haptic('light')
-                setFailed(false)
-                setLoading(true)
-                reload()
+                setActiveId(c.id)
               }}
-              className="press mt-1 flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white"
+              className={cn(
+                'flex shrink-0 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3.5 text-[13.5px] font-semibold transition',
+                c.id === active.id ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text2 active:scale-95',
+              )}
             >
-              <RefreshCw className="h-4 w-4" aria-hidden /> Повторить
+              <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={26} />
+              {c.title}
             </button>
-          </div>
-        ) : !channel ? (
-          <>
-            {/* Канала нет — пустое состояние с переходом к привязке */}
-            <div className="mt-8 flex flex-col items-center gap-3 rounded-2xl border border-dashed border-tg-sep bg-tg-surface/50 px-4 py-10 text-center">
-              <span className="flex size-16 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
-                <Radio className="size-8" strokeWidth={1.7} />
-              </span>
-              <p className="text-[15px] font-semibold text-tg-text">Сначала привяжите канал</p>
-              <p className="max-w-[320px] text-snippet text-tg-hint">
-                Продвижение постов, CTA-кнопка и показ в ленте настраиваются для вашего канала
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  haptic('light')
-                  goToTab('channel')
-                }}
-                className="press mt-1 flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white"
-              >
-                Привязать канал
-              </button>
-            </div>
-          </>
-        ) : (
-          <div className="mt-5 space-y-5">
-            {/* Селектор канала (если привязано несколько) */}
-            {data!.channels.length > 1 && (
-              <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-                {data!.channels.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => {
-                      haptic('light')
-                      setActiveId(c.id)
-                    }}
-                    className={cn(
-                      'flex shrink-0 items-center gap-2 rounded-full py-1.5 pl-1.5 pr-3.5 text-[13.5px] font-semibold transition',
-                      c.id === channel.id
-                        ? 'bg-tg-link text-white'
-                        : 'bg-tg-surface text-tg-text2 active:scale-95',
-                    )}
-                  >
-                    <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={26} />
-                    {c.title}
-                  </button>
-                ))}
-              </div>
-            )}
+          ))}
+        </div>
+      )}
 
-            <PromotionSection
-              key={`promo-${channel.id}`}
-              channel={channel}
-              tier={tier}
-              promotion={promotion}
-              packPrice={packPrice}
-              packCount={packCount}
-              onReload={reload}
-            />
+      <PromotionSection
+        key={`promo-${active.id}`}
+        channel={active}
+        tier={tier}
+        promotion={promotion}
+        packPrice={packPrice}
+        packCount={packCount}
+        onReload={onReload}
+      />
 
-            <CtaSection key={`cta-${channel.id}`} channel={channel} tier={tier} />
+      <CtaSection key={`cta-${active.id}`} channel={active} tier={tier} />
 
-            <TeaserSection key={`teaser-${channel.id}`} channel={channel} onSaved={load} />
-          </div>
-        )}
-      </div>
+      <TeaserSection key={`teaser-${active.id}`} channel={active} onSaved={onReload} />
     </div>
   )
 }
 
 /* ------------------------------------------------------------------ */
 /* Продвижение в ленте (Snap Pro: 1 бесплатно в месяц + пакеты)         */
-/* Переехало из ChannelTab (Task 5-a) 1:1 — логика не менялась          */
 /* ------------------------------------------------------------------ */
 
 const fmtPackPrice = (kop: number): string => {
@@ -492,7 +404,7 @@ function PromotionSection({
 }
 
 /* ------------------------------------------------------------------ */
-/* CTA-кнопка (Snap Pro) — переехала из ChannelTab 1:1                  */
+/* CTA-кнопка (Snap Pro)                                                */
 /* ------------------------------------------------------------------ */
 
 function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
@@ -594,8 +506,7 @@ function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | '
 }
 
 /* ------------------------------------------------------------------ */
-/* Показ в ленте (v5.70) — режим + лимит + teaserApplyTo + живое превью */
-/* Расширение DisplaySection из ChannelTab (Task 7-a)                   */
+/* Показ в ленте — режим + лимит + teaserApplyTo + живое превью         */
 /* ------------------------------------------------------------------ */
 
 function TeaserSection({ channel, onSaved }: { channel: MyChannelDTO; onSaved: () => void }) {
@@ -666,7 +577,7 @@ function TeaserSection({ channel, onSaved }: { channel: MyChannelDTO; onSaved: (
 
         {/* Порог обрезки: слайдер + степпер (режим «Обрезка») */}
         {mode === 'cut' && (
-          <div className="mt-4">
+          <div className="mt-4" data-hscroll data-noswipe>
             <div className="flex items-center justify-between text-[12.5px] font-medium text-tg-text2">
               <span>До скольких символов показывать</span>
               <span className="tabular-nums text-tg-hint">{limit} симв.</span>
@@ -708,7 +619,7 @@ function TeaserSection({ channel, onSaved }: { channel: MyChannelDTO; onSaved: (
           </div>
         )}
 
-        {/* v5.70: ГИБКОСТЬ — каким постам применять тизер */}
+        {/* ГИБКОСТЬ — каким постам применять тизер */}
         {mode !== 'none' && (
           <div className="mt-4">
             <div className="text-[12.5px] font-medium text-tg-text2">Применять</div>
@@ -830,7 +741,7 @@ function TeaserPreview({ mode, limit, applyTo }: { mode: string; limit: number; 
 }
 
 /* ------------------------------------------------------------------ */
-/* Общие мелочи (локальные хелперы вкладки)                             */
+/* Общие мелочи (локальные хелперы)                                     */
 /* ------------------------------------------------------------------ */
 
 const INPUT_CLS =

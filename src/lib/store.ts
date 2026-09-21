@@ -78,7 +78,7 @@ interface AppState {
 
 // Порядок вкладок для направления анимации перехода — ДОЛЖЕН совпадать
 // с TABS в page.tsx (горизонтальный свайп между вкладками).
-const TAB_ORDER: Tab[] = ['feed', 'quests', 'channel', 'promo', 'search', 'profile']
+const TAB_ORDER: Tab[] = ['feed', 'quests', 'channel', 'search', 'profile']
 
 export const useApp = create<AppState>((set, get) => ({
   user: null,

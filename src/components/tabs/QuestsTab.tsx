@@ -23,11 +23,12 @@ import { uploadImage } from '@/lib/upload'
 import { SwipeIcon } from '@/components/tg/SwipeIcon'
 
 /**
- * Экран «Задания» (v5.51, расширен в v5.70): подписка на канал, чат, буст,
- * TikTok (скриншот + ИИ-проверка), ежедневный вход с серией, профиль,
- * активность в ленте, рефералы. Проверка честная — через Bot API / поля БД /
- * VLM; если юзер получил награду и отписался, сервер аннулирует задание и
- * списывает двойную награду.
+ * Экран «Задания» (v5.51, редизайн v5.72): плоский компактный список без
+ * карточек и эмодзи — строки-разделители, как в настройках Telegram.
+ * Подписка на канал, чат, буст, TikTok (скриншот + ИИ-проверка), ежедневный
+ * вход с серией, профиль, активность в ленте, рефералы. Проверка честная —
+ * через Bot API / поля БД / VLM; если юзер получил награду и отписался,
+ * сервер аннулирует задание и списывает двойную награду.
  *
  * Паттерн кнопки «в два тапа»: первый тап при not_member открывает цель,
  * после подписки второй тап проверяет и начисляет. Автозачётные виды
@@ -53,15 +54,15 @@ type QuestsResponse = { items: QuestItem[]; balance: number }
 
 type VerifyNote = { text: string; tone: 'ok' | 'warn' | 'err'; support?: boolean }
 
-const KIND_META: Record<string, { emoji: string; label: string }> = {
-  subscribe: { emoji: '📢', label: 'Подписка на канал' },
-  join_chat: { emoji: '💬', label: 'Вступление в чат' },
-  tiktok_follow: { emoji: '🎵', label: 'Подписка в TikTok' },
-  daily_checkin: { emoji: '📅', label: 'Ежедневный вход' },
-  profile_setup: { emoji: '👤', label: 'Заполнение профиля' },
-  boost: { emoji: '🚀', label: 'Буст канала' },
-  activity_milestone: { emoji: '📖', label: 'Активность в ленте' },
-  referral: { emoji: '🤝', label: 'Пригласи друга' },
+const KIND_META: Record<string, { label: string }> = {
+  subscribe: { label: 'Подписка на канал' },
+  join_chat: { label: 'Вступление в чат' },
+  tiktok_follow: { label: 'Подписка в TikTok' },
+  daily_checkin: { label: 'Ежедневный вход' },
+  profile_setup: { label: 'Заполнение профиля' },
+  boost: { label: 'Буст канала' },
+  activity_milestone: { label: 'Активность в ленте' },
+  referral: { label: 'Пригласи друга' },
 }
 
 export function QuestsTab() {
@@ -149,7 +150,7 @@ export function QuestsTab() {
         haptic('success')
         markDone(q.id, res.balance, res.reward)
         if (res.bonus && res.bonus > 0) {
-          toast.success(`Бонус за ${res.streak ?? 7} дней подряд: +${res.bonus} 🔥`, { duration: 5000 })
+          toast.success(`Бонус за ${res.streak ?? 7} дней подряд: +${res.bonus}`, { duration: 5000 })
         }
       } else if (res.status === 'not_member' || res.status === 'no_boost') {
         // Не в цели / нет буста: открываем канал/чат, после действия — второй тап
@@ -218,7 +219,7 @@ export function QuestsTab() {
       }>(`/api/quests/${q.id}/tiktok-verify`, { method: 'POST', body: JSON.stringify({ url }) })
       if (res.status === 'done') {
         haptic('success')
-        setVerifyNote((prev) => ({ ...prev, [q.id]: { text: 'Подписка подтверждена 🎉', tone: 'ok' } }))
+        setVerifyNote((prev) => ({ ...prev, [q.id]: { text: 'Подписка подтверждена', tone: 'ok' } }))
         markDone(q.id, res.balance, res.reward)
       } else if (res.status === 'already') {
         setVerifyNote((prev) => ({ ...prev, [q.id]: { text: 'Подписка уже была зачтена', tone: 'ok' } }))
@@ -258,9 +259,9 @@ export function QuestsTab() {
   return (
     <div className="no-scrollbar h-full w-full overflow-y-auto overscroll-contain pb-24">
       <div className="mx-auto w-full max-w-[1000px]">
-        <header className="px-4 pb-3 pt-4">
+        <header className="px-4 pb-2 pt-4">
           <h1 className="text-screen-title text-tg-text">Задания</h1>
-          <p className="mt-1 text-[15px] text-tg-hint">
+          <p className="mt-1 text-[13.5px] text-tg-hint">
             Подписки, бусты, TikTok, серия входов — выполняй и получай свайпы
           </p>
         </header>
@@ -288,27 +289,22 @@ export function QuestsTab() {
           <QuestsSkeleton />
         ) : (
           <>
-            {/* Сводка: доступно к получению + баланс + прогресс.
-                v5.68: при пустом списке заданий сводку НЕ показываем — внизу один
-                аккуратный empty-state (раньше «Пока нет доступных заданий» дублировался) */}
+            {/* Сводка: плоская строка без карточки (v5.72). При пустом списке
+                заданий сводку НЕ показываем — внизу один аккуратный empty-state */}
             {data.items.length > 0 && (
-            <section className="px-4 pb-1" aria-label="Сводка по заданиям">
-              <div className="card-soft rounded-2xl bg-tg-surface p-4">
+              <section className="px-4 pt-2" aria-label="Сводка по заданиям">
                 <div className="flex items-center gap-3">
-                  <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-tg-link/12">
-                    <Sparkles className="size-5 text-tg-link" />
-                  </div>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[15px] font-semibold leading-tight text-tg-text">
+                    <div className="truncate text-[14px] font-bold leading-tight text-tg-text">
                       {totalAvailable > 0
                         ? `Доступно ${formatSwipesFull(totalAvailable)} ${pluralRu(totalAvailable, 'свайп', 'свайпа', 'свайпов')}`
                         : doneCount > 0
-                          ? 'Все задания выполнены 🎉'
+                          ? 'Все задания выполнены'
                           : 'Пока нет доступных заданий'}
                     </div>
-                    <div className="mt-0.5 flex items-center gap-1 text-[12.5px] text-tg-hint">
+                    <div className="mt-0.5 flex items-center gap-1 text-[12px] text-tg-hint">
                       <SwipeIcon className="h-3 w-3" size={12} />
-                      <span>
+                      <span className="truncate">
                         Баланс: {formatSwipesFull(data.balance)}{' '}
                         {pluralRu(data.balance, 'свайп', 'свайпа', 'свайпов')}
                         {doneCount > 0 ? ` · выполнено: ${doneCount}` : ''}
@@ -322,36 +318,34 @@ export function QuestsTab() {
                       setReloadKey((k) => k + 1)
                     }}
                     aria-label="Обновить задания"
-                    className="flex size-9 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 hover:bg-tg-sep/40"
+                    className="flex size-8 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 hover:bg-tg-sep/40"
                   >
-                    <RefreshCw className="size-4" />
+                    <RefreshCw className="size-3.5" />
                   </button>
                 </div>
-                {data.items.length > 0 && (
-                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-tg-sep/50">
-                    <motion.div
-                      className="h-full rounded-full bg-tg-link"
-                      initial={false}
-                      animate={{ width: `${(doneCount / data.items.length) * 100}%` }}
-                      transition={{ type: 'spring', stiffness: 200, damping: 26 }}
-                    />
-                  </div>
-                )}
-              </div>
-            </section>
+                {/* Тонкая полоса прогресса — единственный «декор» сводки */}
+                <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-tg-sep/50">
+                  <motion.div
+                    className="h-full rounded-full bg-tg-link"
+                    initial={false}
+                    animate={{ width: `${(doneCount / data.items.length) * 100}%` }}
+                    transition={{ type: 'spring', stiffness: 200, damping: 26 }}
+                  />
+                </div>
+              </section>
             )}
 
-            {/* Список заданий */}
-            <section className="pb-6 pt-3" aria-label="Список заданий">
+            {/* Список заданий: ПЛОСКИЕ строки с разделителями, без карточек и эмодзи */}
+            <section className="pb-6 pt-2" aria-label="Список заданий">
               {data.items.length === 0 ? (
                 <Empty
                   icon={Sparkles}
                   text="Новых заданий пока нет — заглядывайте позже, они появляются регулярно."
                 />
               ) : (
-                <div className="space-y-2.5 px-4">
+                <div className="mx-4 divide-y divide-tg-sep/40">
                   {data.items.map((q, i) => (
-                    <QuestCard
+                    <QuestRow
                       key={q.id}
                       quest={q}
                       index={i}
@@ -383,9 +377,9 @@ export function QuestsTab() {
   )
 }
 
-/* ------------------------------- Карточка ------------------------------- */
+/* ------------------------------- Строка задания ------------------------------- */
 
-function QuestCard({
+function QuestRow({
   quest,
   index,
   claiming,
@@ -406,12 +400,12 @@ function QuestCard({
   onVerify: (file: File) => void
   onFillProfile: () => void
 }) {
-  const meta = KIND_META[quest.kind] ?? { emoji: '🎯', label: 'Задание' }
+  const meta = KIND_META[quest.kind] ?? { label: 'Задание' }
   const done = quest.myStatus === 'done'
   const revoked = quest.myStatus === 'revoked'
   const fileRef = useRef<HTMLInputElement>(null)
 
-  // Автозачётные виды: условие уже выполнено? (север проверит ещё раз при клэйме)
+  // Автозачётные виды: условие уже выполнено? (сервер проверит ещё раз при клэйме)
   const isMilestone = quest.kind === 'activity_milestone' || quest.kind === 'referral'
   const isProfile = quest.kind === 'profile_setup'
   const isDaily = quest.kind === 'daily_checkin'
@@ -424,213 +418,195 @@ function QuestCard({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ delay: Math.min(index * 0.04, 0.2), duration: 0.25, ease: 'easeOut' }}
-      className={cn(
-        'card-soft relative overflow-hidden rounded-2xl bg-tg-surface p-4 transition',
-        revoked && 'opacity-60',
-      )}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ delay: Math.min(index * 0.03, 0.15), duration: 0.18, ease: 'easeOut' }}
+      className={cn('py-3', revoked && 'opacity-60')}
     >
-      {/* Полоса зачёта слева: зелёная — выполнено, красная — отозвано */}
-      {done && <span className="absolute inset-y-0 left-0 w-1 bg-tg-green" aria-hidden />}
-      {revoked && <span className="absolute inset-y-0 left-0 w-1 bg-tg-like" aria-hidden />}
+      {/* Верхняя строка: категория + награда справа (вместо огромной карточки) */}
+      <div className="flex items-baseline gap-2">
+        <span className="min-w-0 flex-1 truncate text-[11px] font-medium uppercase tracking-wide text-tg-hint">
+          {meta.label}
+        </span>
+        <span
+          className={cn(
+            'inline-flex shrink-0 items-center gap-0.5 text-[12.5px] font-bold tabular-nums',
+            done ? 'text-tg-green' : 'text-tg-link',
+          )}
+        >
+          <SwipeIcon className="size-3" size={12} aria-hidden />+{formatSwipesFull(quest.rewardSwp)}
+        </span>
+      </div>
 
-      <div className="flex items-start gap-3">
+      <div className="mt-0.5 text-[14px] font-semibold leading-snug text-tg-text">{quest.title}</div>
+      {quest.description && (
+        <div className="mt-0.5 line-clamp-2 text-[12.5px] leading-snug text-tg-hint">{quest.description}</div>
+      )}
+
+      {/* Серия ежедневного входа — плоский текст без эмодзи */}
+      {isDaily && (quest.streak ?? 0) > 0 && (
+        <div className="mt-1 text-[12px] font-medium text-tg-star">
+          Серия: {quest.streak} {pluralRu(quest.streak ?? 0, 'день', 'дня', 'дней')}
+          {!done && <span className="font-normal text-tg-hint"> · до бонуса: {toBonus}</span>}
+        </div>
+      )}
+
+      {/* Прогресс автозачётных заданий */}
+      {isMilestone && quest.progress != null && quest.goal != null && !done && (
+        <div className="mt-1.5 flex items-center gap-2">
+          <div className="h-[3px] w-24 overflow-hidden rounded-full bg-tg-sep/50">
+            <div
+              className="h-full rounded-full bg-tg-link transition-all"
+              style={{
+                width: `${Math.min(100, Math.round((quest.progress / Math.max(1, quest.goal)) * 100))}%`,
+              }}
+            />
+          </div>
+          <span className="text-[11.5px] font-medium text-tg-hint tabular-nums">
+            {Math.min(quest.progress, quest.goal)} / {quest.goal}
+          </span>
+        </div>
+      )}
+
+      {/* Вердикт ИИ-проверки TikTok */}
+      {isTiktok && verifyNote && !done && (
         <div
           className={cn(
-            'flex size-11 shrink-0 items-center justify-center rounded-xl text-[20px]',
-            done ? 'bg-tg-green/12' : 'bg-tg-link/12',
+            'mt-1.5 rounded-lg px-2 py-1.5 text-[12px] leading-snug',
+            verifyNote.tone === 'ok' && 'bg-tg-green/10 text-tg-green',
+            verifyNote.tone === 'warn' && 'bg-tg-star/10 text-tg-star',
+            verifyNote.tone === 'err' && 'bg-tg-like/10 text-tg-like',
           )}
-          aria-hidden
+          role="status"
         >
-          {meta.emoji}
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-tg-hint">
-            {meta.label}
-          </div>
-          <div className="mt-0.5 text-[15.5px] font-semibold leading-snug text-tg-text">
-            {quest.title}
-          </div>
-          {quest.description && (
-            <div className="mt-1 text-[13.5px] leading-snug text-tg-hint">{quest.description}</div>
-          )}
-
-          {/* Серия ежедневного входа */}
-          {isDaily && (quest.streak ?? 0) > 0 && (
-            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-tg-star/10 px-2.5 py-1 text-[12px] font-semibold text-tg-star">
-              🔥 Серия: {quest.streak} {pluralRu(quest.streak ?? 0, 'день', 'дня', 'дней')}
-              {!done && <span className="font-normal text-tg-hint">· до бонуса: {toBonus}</span>}
-            </div>
-          )}
-
-          {/* Прогресс автозачётных заданий */}
-          {isMilestone && quest.progress != null && quest.goal != null && (
-            <div className="mt-1.5 flex items-center gap-2">
-              <div className="h-1.5 w-28 overflow-hidden rounded-full bg-tg-sep/50">
-                <div
-                  className="h-full rounded-full bg-tg-link transition-all"
-                  style={{
-                    width: `${Math.min(100, Math.round((quest.progress / Math.max(1, quest.goal)) * 100))}%`,
-                  }}
-                />
-              </div>
-              <span className="text-[12px] font-medium text-tg-hint tabular-nums">
-                {Math.min(quest.progress, quest.goal)} / {quest.goal}
-              </span>
-            </div>
-          )}
-
-          {/* Вердикт ИИ-проверки TikTok */}
-          {isTiktok && verifyNote && !done && (
-            <div
-              className={cn(
-                'mt-1.5 rounded-xl px-2.5 py-1.5 text-[12.5px] leading-snug',
-                verifyNote.tone === 'ok' && 'bg-tg-green/10 text-tg-green',
-                verifyNote.tone === 'warn' && 'bg-tg-star/10 text-tg-star',
-                verifyNote.tone === 'err' && 'bg-tg-like/10 text-tg-like',
-              )}
-              role="status"
-            >
-              {verifyNote.text}
-              {verifyNote.support && (
-                <span className="mt-1 block text-[12px] text-tg-hint">
-                  Уже третья неудачная попытка — напиши в поддержку из профиля, поможем зачесть вручную.
-                </span>
-              )}
-            </div>
-          )}
-
-          <div className="mt-2.5 flex items-center justify-between gap-2">
-            <span
-              className={cn(
-                'inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[12.5px] font-bold',
-                done ? 'bg-tg-green/12 text-tg-green' : 'bg-tg-link/12 text-tg-link',
-              )}
-            >
-              <SwipeIcon className="size-3.5" size={14} aria-hidden />+{formatSwipesFull(quest.rewardSwp)}
+          {verifyNote.text}
+          {verifyNote.support && (
+            <span className="mt-1 block text-[11.5px] text-tg-hint">
+              Уже третья неудачная попытка — напиши в поддержку из профиля, поможем зачесть вручную.
             </span>
-
-            {done ? (
-              <AnimatePresence mode="wait">
-                {justDone ? (
-                  <motion.span
-                    key="done-anim"
-                    initial={{ scale: 0.7, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-green px-4 text-[13.5px] font-bold text-white"
-                  >
-                    <BadgeCheck className="size-4" aria-hidden />
-                    Готово!
-                  </motion.span>
-                ) : (
-                  <motion.span
-                    key="done"
-                    initial={{ scale: 0.9, opacity: 0 }}
-                    animate={{ scale: 1, opacity: 1 }}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-green/12 px-4 text-[13.5px] font-semibold text-tg-green"
-                  >
-                    <Check className="size-4" strokeWidth={2.6} aria-hidden />
-                    {isDaily ? 'Зачтено сегодня' : 'Выполнено'}
-                  </motion.span>
-                )}
-              </AnimatePresence>
-            ) : revoked ? (
-              <span className="inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-like/12 px-4 text-[13px] font-semibold text-tg-like">
-                <AlertTriangle className="size-4" aria-hidden />
-                Аннулировано
-              </span>
-            ) : isTiktok ? (
-              /* TikTok: открыть профиль + загрузить скриншот */
-              <div className="flex items-center gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic('light')
-                    openExternal(quest.link)
-                  }}
-                  aria-label="Открыть TikTok @snapteamdev"
-                  className="press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-sep/40 px-3.5 text-[13px] font-semibold text-tg-text"
-                >
-                  <Music2 className="size-3.5" aria-hidden />
-                  TikTok
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic('light')
-                    fileRef.current?.click()
-                  }}
-                  disabled={verifying}
-                  aria-label="Проверить подписку по скриншоту"
-                  className={cn(
-                    'press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white',
-                    verifying && 'opacity-60',
-                  )}
-                >
-                  {verifying ? (
-                    <span
-                      className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
-                      aria-hidden
-                    />
-                  ) : (
-                    <Upload className="size-3.5" aria-hidden />
-                  )}
-                  {verifying ? 'Проверяем…' : 'Проверить'}
-                </button>
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={(e) => {
-                    const f = e.target.files?.[0]
-                    e.target.value = ''
-                    if (f) onVerify(f)
-                  }}
-                />
-              </div>
-            ) : isProfile && !profileReady ? (
-              <button
-                type="button"
-                onClick={onFillProfile}
-                aria-label="Перейти в профиль и заполнить его"
-                className="press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white"
-              >
-                <ExternalLink className="size-3.5" aria-hidden />
-                Заполнить
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={onClaim}
-                disabled={claiming || (isMilestone && !conditionMet)}
-                aria-label={`Получить награду за задание «${quest.title}»`}
-                className={cn(
-                  'press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white',
-                  (claiming || (isMilestone && !conditionMet)) && 'opacity-60',
-                )}
-              >
-                {claiming ? (
-                  <span
-                    className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
-                    aria-hidden
-                  />
-                ) : canClaimAuto ? (
-                  <BadgeCheck className="size-3.5" aria-hidden />
-                ) : (
-                  <ExternalLink className="size-3.5" aria-hidden />
-                )}
-                {claiming
-                  ? 'Проверяем…'
-                  : canClaimAuto || !isMilestone
-                    ? 'Получить'
-                    : `${quest.progress ?? 0} / ${quest.goal ?? '—'}`}
-              </button>
-            )}
-          </div>
+          )}
         </div>
+      )}
+
+      {/* Действия: компактные кнопки h-8 */}
+      <div className="mt-2 flex items-center justify-end gap-2">
+        {done ? (
+          <AnimatePresence mode="wait">
+            {justDone ? (
+              <motion.span
+                key="done-anim"
+                initial={{ scale: 0.7, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="inline-flex h-8 items-center gap-1.5 rounded-full bg-tg-green px-3.5 text-[12.5px] font-bold text-white"
+              >
+                <BadgeCheck className="size-3.5" aria-hidden />
+                Готово!
+              </motion.span>
+            ) : (
+              <motion.span
+                key="done"
+                initial={{ scale: 0.9, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                className="inline-flex h-8 items-center gap-1 rounded-full bg-tg-green/12 px-3.5 text-[12.5px] font-semibold text-tg-green"
+              >
+                <Check className="size-3.5" strokeWidth={2.6} aria-hidden />
+                {isDaily ? 'Зачтено сегодня' : 'Выполнено'}
+              </motion.span>
+            )}
+          </AnimatePresence>
+        ) : revoked ? (
+          <span className="inline-flex h-8 items-center gap-1 rounded-full bg-tg-like/12 px-3.5 text-[12px] font-semibold text-tg-like">
+            <AlertTriangle className="size-3.5" aria-hidden />
+            Аннулировано
+          </span>
+        ) : isTiktok ? (
+          /* TikTok: открыть профиль + загрузить скриншот */
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                openExternal(quest.link)
+              }}
+              aria-label="Открыть TikTok @snapteamdev"
+              className="press inline-flex h-8 items-center gap-1 rounded-full bg-tg-sep/40 px-3 text-[12px] font-semibold text-tg-text"
+            >
+              <Music2 className="size-3" aria-hidden />
+              TikTok
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                fileRef.current?.click()
+              }}
+              disabled={verifying}
+              aria-label="Проверить подписку по скриншоту"
+              className={cn(
+                'press inline-flex h-8 items-center gap-1 rounded-full bg-tg-link px-3.5 text-[12.5px] font-bold text-white',
+                verifying && 'opacity-60',
+              )}
+            >
+              {verifying ? (
+                <span
+                  className="size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                  aria-hidden
+                />
+              ) : (
+                <Upload className="size-3" aria-hidden />
+              )}
+              {verifying ? 'Проверяем…' : 'Проверить'}
+            </button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0]
+                e.target.value = ''
+                if (f) onVerify(f)
+              }}
+            />
+          </div>
+        ) : isProfile && !profileReady ? (
+          <button
+            type="button"
+            onClick={onFillProfile}
+            aria-label="Перейти в профиль и заполнить его"
+            className="press inline-flex h-8 items-center gap-1 rounded-full bg-tg-link px-3.5 text-[12.5px] font-bold text-white"
+          >
+            <ExternalLink className="size-3" aria-hidden />
+            Заполнить
+          </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onClaim}
+            disabled={claiming || (isMilestone && !conditionMet)}
+            aria-label={`Получить награду за задание «${quest.title}»`}
+            className={cn(
+              'press inline-flex h-8 items-center gap-1 rounded-full bg-tg-link px-4 text-[12.5px] font-bold text-white',
+              (claiming || (isMilestone && !conditionMet)) && 'opacity-60',
+            )}
+          >
+            {claiming ? (
+              <span
+                className="size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                aria-hidden
+              />
+            ) : canClaimAuto ? (
+              <BadgeCheck className="size-3" aria-hidden />
+            ) : (
+              <ExternalLink className="size-3" aria-hidden />
+            )}
+            {claiming
+              ? 'Проверяем…'
+              : canClaimAuto || !isMilestone
+                ? 'Получить'
+                : `${quest.progress ?? 0} / ${quest.goal ?? '—'}`}
+          </button>
+        )}
       </div>
     </motion.div>
   )
@@ -689,20 +665,19 @@ function Empty({
 function QuestsSkeleton() {
   return (
     <div aria-hidden>
-      <div className="px-4 pb-1">
-        <div className="tg-shimmer h-[86px] rounded-2xl" />
+      {/* Плоская сводка-строка */}
+      <div className="px-4 pt-2">
+        <div className="tg-shimmer h-4 w-40 rounded" />
+        <div className="tg-shimmer mt-2 h-3 w-56 rounded" />
+        <div className="tg-shimmer mt-2.5 h-[3px] w-full rounded-full" />
       </div>
-      <div className="space-y-2.5 px-4 pt-3">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="rounded-2xl bg-tg-surface p-4">
-            <div className="flex items-start gap-3">
-              <div className="tg-shimmer size-11 shrink-0 rounded-xl" />
-              <div className="min-w-0 flex-1">
-                <div className="tg-shimmer h-3 w-24 rounded" />
-                <div className="tg-shimmer mt-2 h-4 w-3/4 rounded" />
-                <div className="tg-shimmer mt-2 h-3 w-1/2 rounded" />
-              </div>
-            </div>
+      {/* Плоские строки-разделители */}
+      <div className="mx-4 mt-4 divide-y divide-tg-sep/40">
+        {[...Array(5)].map((_, i) => (
+          <div key={i} className="py-3.5">
+            <div className="tg-shimmer h-3 w-28 rounded" />
+            <div className="tg-shimmer mt-2 h-3.5 w-3/4 rounded" />
+            <div className="tg-shimmer mt-1.5 h-3 w-1/2 rounded" />
           </div>
         ))}
       </div>

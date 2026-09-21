@@ -22,7 +22,6 @@ const DICT = {
   'nav.quests': ['Задания', 'Quests'],
   'nav.search': ['Поиск', 'Search'],
   'nav.channel': ['Каналы', 'Channels'],
-  'nav.promo': ['Промо', 'Promo'],
   'nav.mychannel': ['Мой канал', 'My channel'],
   'nav.profile': ['Профиль', 'Profile'],
   'nav.main': ['Основная навигация', 'Main navigation'],
