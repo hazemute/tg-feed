@@ -358,32 +358,43 @@ export function FeedView() {
    *  продолжал лезть в ленту. Теперь: серверный мьют (ChannelMute — фильтр в
    *  /api/feed с редкими возвращениями) + мгновенная локальная фильтрация.
    *  Тост с «Вернуть» откатывает мьют. */
+  /**
+   * «Не интересно» (v5.68 — запрос владельца): скрываем КОНКРЕТНЫЙ ПОСТ,
+   * а не весь канал. Серверный сигнал POST /api/notinterested → PostHide:
+   * пост исчезает из ленты, канал остаётся, а тематика поста получает
+   * отрицательный сигнал — похожие посты понижаются в приоритете.
+   */
   const hidePost = useCallback(
-    (post: { channel: { id: string; title: string } }) => {
-      // v5.54: гость «только читает» — мьют уходит в БД, шторка входа вместо записи
+    (post: { id: string; channel: { id: string; title: string } }) => {
+      // гость «только читает» — шторка входа вместо записи
       if (user?.isGuest) {
         openAuthGate('mute')
         return
       }
-      const cid = post.channel.id
-      setMutedChannels((prev) => new Set(prev).add(cid))
-      api('/api/subscribe', {
+      const pid = post.id
+      setHiddenIds((prev) => {
+        const next = new Set(prev).add(pid)
+        saveHidden(next)
+        return next
+      })
+      api('/api/notinterested', {
         method: 'POST',
-        body: JSON.stringify({ channelId: cid, action: 'mute' }),
+        body: JSON.stringify({ postId: pid }),
       }).catch(() => {})
-      toast(t('feed.channelHiddenToast'), {
-        description: post.channel.title,
+      toast(t('feed.postHiddenToast'), {
+        description: t('feed.postHiddenHint'),
         action: {
           label: t('feed.unhideToast'),
           onClick: () => {
-            setMutedChannels((prev) => {
+            setHiddenIds((prev) => {
               const next = new Set(prev)
-              next.delete(cid)
+              next.delete(pid)
+              saveHidden(next)
               return next
             })
-            api('/api/subscribe', {
-              method: 'POST',
-              body: JSON.stringify({ channelId: cid, action: 'unmute' }),
+            api('/api/notinterested', {
+              method: 'DELETE',
+              body: JSON.stringify({ postId: pid }),
             }).catch(() => {})
           },
         },

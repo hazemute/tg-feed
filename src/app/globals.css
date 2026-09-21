@@ -798,3 +798,9 @@ button {
     animation: none;
   }
 }
+
+/* v5.68: мягкое проявление текста ИИ-ответа (opacity only, 60 FPS) */
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}

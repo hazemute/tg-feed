@@ -248,8 +248,7 @@ export function ProfileTab() {
           value={stats?.subscriptions}
           label="Подписки"
           onClick={() => {
-            setTab('search')
-            toast('Ваши каналы — во вкладке «Каналы»')
+            setTab('channel')
           }}
         />
         <div className="w-px shrink-0 bg-tg-sep" aria-hidden />
@@ -302,118 +301,8 @@ export function ProfileTab() {
         </div>
       </section>
 
-      {/* Подписки */}
-      <section className="pt-7">
-        <div className="flex items-center justify-between px-4">
-          <h2 className="text-[19px] font-bold text-tg-text">Подписки</h2>
-          <button
-            type="button"
-            onClick={() => setTab('search')}
-            className="text-[15px] font-medium text-tg-link active:opacity-60"
-          >
-            Все
-          </button>
-        </div>
-        {subs === null ? (
-          <div className="space-y-3 px-4 pt-3" aria-hidden>
-            {[0, 1, 2].map((i) => (
-              <div key={i} className="flex items-center gap-3">
-                <div className="tg-shimmer h-12 w-12 rounded-full" />
-                <div className="flex-1 space-y-2">
-                  <div className="tg-shimmer h-3.5 w-1/3 rounded" />
-                  <div className="tg-shimmer h-3 w-1/4 rounded" />
-                </div>
-              </div>
-            ))}
-          </div>
-        ) : subs.length === 0 ? (
-          <p className="px-4 pt-3 text-snippet text-tg-hint">
-            Вы пока не подписаны на каналы. Нажмите [+] в ленте — канал появится здесь.
-          </p>
-        ) : (
-          /* v5.35: длинный список не растягивает профиль бесконечно — кап по высоте
-             с внутренней прокруткой (скроллбары скрыты глобально, владелец просил) */
-          <div className="no-scrollbar max-h-[440px] overflow-y-auto overscroll-contain pt-1">
-            {subs.map((s, i) => (
-              <button
-                key={s.channelId}
-                type="button"
-                onClick={() => openChannel(s.channel.username)}
-                aria-label={`Открыть канал ${s.channel.title}`}
-                className={cn(
-                  'flex w-full items-center gap-3 px-4 py-3 text-left active:bg-tg-surface/60',
-                  i > 0 && 'border-t border-tg-sep/60',
-                )}
-              >
-                <Avatar name={s.channel.title} color={s.channel.avatarColor} src={s.channel.avatarUrl} size={48} />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[16.5px] font-semibold text-tg-text">
-                    {s.channel.title}
-                  </span>
-                  <span className="block truncate text-[14px] text-tg-hint">
-                    {s.channel.subscribersCount > 0 && `${formatCount(s.channel.subscribersCount)} подписчиков`}
-                    {s.hidden && `${s.channel.subscribersCount > 0 ? ' · ' : ''}скрыт из ленты`}
-                  </span>
-                </span>
-                <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" />
-              </button>
-            ))}
-          </div>
-        )}
-      </section>
 
 
-      {/* Настройки */}
-      <section className="pt-7">
-        <h2 className="px-4 text-[19px] font-bold text-tg-text">Настройки</h2>
-        <div className="mt-1">
-          <SettingRow
-            icon={<Settings className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label="Тема оформления"
-            right={
-              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
-                {themeName(theme)}
-                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
-              </span>
-            }
-            onClick={() => setThemesOpen(true)}
-          />
-          <SettingRow
-            icon={<Sparkles className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label="Тариф Snap"
-            right={
-              <span className="flex items-center gap-0.5 text-[15px]">
-                <span
-                  className={cn(
-                    headerTier === 'free' ? 'text-tg-hint' : 'font-semibold text-tg-star',
-                  )}
-                >
-                  {TIER_NAMES[headerTier]}
-                </span>
-                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
-              </span>
-            }
-            onClick={() => {
-              haptic('light')
-              setTiersOpen(true)
-            }}
-          />
-          {/* Одна строка вместо трёх: соглашение/конфиденциальность/о приложении —
-              внутри шита «Информация» (приказ владельца: разгрузить профиль) */}
-          <SettingRow
-            icon={<Info className="h-[22px] w-[22px]" strokeWidth={1.7} />}
-            label={t('profile.infoRow')}
-            right={
-              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
-                {t('profile.infoHint')}
-                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
-              </span>
-            }
-            onClick={() => setInfoMenuOpen(true)}
-            last
-          />
-        </div>
-      </section>
 
       {/* Обратная связь — одна кнопка вместо двух, разделы внутри шита.
           v5.58: «Мой канал» и Snap Ассистент переехали во вкладку «Канал»
@@ -441,8 +330,8 @@ export function ProfileTab() {
       <BottomSheet
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
-        title="Настройки интерфейса"
-        subtitle="Оформление и размер текста"
+        title="Настройки"
+        subtitle="Оформление, тариф и информация — всё здесь"
       >
         <div className="space-y-4">
           <button
@@ -458,6 +347,39 @@ export function ProfileTab() {
               <span className="text-[16px] font-semibold text-tg-text">{themeName(theme)}</span>
               <span className="text-[14px] font-medium text-tg-link">Все темы ({THEMES.length})</span>
             </span>
+          </button>
+          {/* v5.68: тариф и информация переехали сюда из профиля (дубли убраны) */}
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false)
+              setTiersOpen(true)
+            }}
+            className="flex w-full items-center gap-3 rounded-2xl bg-tg-surface p-3.5 text-left active:opacity-80"
+          >
+            <Sparkles className="h-[20px] w-[20px] shrink-0 text-tg-star" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-medium text-tg-hint">Тариф Snap</span>
+              <span className="mt-0.5 block text-[16px] font-semibold text-tg-text">
+                {TIER_NAMES[headerTier] ?? headerTier}
+              </span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-tg-hint" aria-hidden />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setSettingsOpen(false)
+              setInfoMenuOpen(true)
+            }}
+            className="flex w-full items-center gap-3 rounded-2xl bg-tg-surface p-3.5 text-left active:opacity-80"
+          >
+            <Info className="h-[20px] w-[20px] shrink-0 text-tg-hint" aria-hidden />
+            <span className="min-w-0 flex-1">
+              <span className="block text-[13px] font-medium text-tg-hint">Информация</span>
+              <span className="mt-0.5 block truncate text-[16px] font-semibold text-tg-text">Соглашение · конфиденциальность</span>
+            </span>
+            <ChevronRight className="h-4 w-4 shrink-0 text-tg-hint" aria-hidden />
           </button>
           <Segmented
             label={t('settings.font')}

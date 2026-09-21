@@ -276,15 +276,32 @@ export function SearchTab() {
             onBlur={() => setInputFocused(false)}
             placeholder="Поиск каналов, тем, постов"
             aria-label="Поиск каналов, тем, постов"
-            className="h-[52px] w-full rounded-[14px] border border-tg-sep bg-tg-bg pl-11 pr-10 text-[16px] text-tg-text outline-none transition placeholder:text-tg-hint focus:border-tg-link"
+            className="h-[52px] w-full rounded-[14px] border border-tg-sep bg-tg-bg pl-11 pr-[76px] text-[16px] text-tg-text outline-none transition placeholder:text-tg-hint focus:border-tg-link"
           />
+          {/* v5.68: ИИ-поиск ПРЯМО В СТРОКЕ — кнопка-спарк справа: «Спросить нейросеть» */}
+          <button
+            type="button"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => {
+              haptic('light')
+              inputRef.current?.blur()
+              setAiSeed(q.trim().length >= 3 ? q.trim() : null)
+              setAiChatOpen(true)
+            }}
+            aria-label="Спросить нейросеть по постам ленты"
+            title="ИИ-поиск: спросить нейросеть по постам ленты"
+            className="absolute right-2.5 top-1/2 flex h-9 -translate-y-1/2 items-center gap-1 rounded-full bg-tg-link/10 px-2.5 text-tg-link transition active:scale-95"
+          >
+            <Sparkles className="h-4.5 w-4.5" strokeWidth={2.2} aria-hidden />
+            <span className="text-[12.5px] font-bold">ИИ</span>
+          </button>
           {q && (
             <button
               type="button"
               onMouseDown={(e) => e.preventDefault() /* не уводим фокус из поля */}
               onClick={() => setQ('')}
               aria-label="Очистить"
-              className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1.5 text-tg-hint active:bg-tg-surface"
+              className="absolute right-[68px] top-1/2 -translate-y-1/2 rounded-full p-1.5 text-tg-hint active:bg-tg-surface"
             >
               <X className="h-4.5 w-4.5" />
             </button>
@@ -320,15 +337,16 @@ export function SearchTab() {
             type="button"
             onClick={() => {
               haptic('light')
-              inputRef.current?.blur() // прячем клавиатуру — смотрим чат Snap Search
+              inputRef.current?.blur() // прячем клавиатуру — смотрим чат ИИ-поиска
               setAiSeed(query.length >= 3 ? query : null) // с текущим запросом — автоотправка
               setAiChatOpen(true)
             }}
-            aria-label="Snap Search"
+            aria-label="ИИ-поиск: спросить нейросеть по постам ленты"
+            title="ИИ-поиск: спросит по свежим постам ленты и ответит со ссылками на источники"
             className="flex h-10 shrink-0 items-center gap-1.5 rounded-[12px] border border-tg-link/35 bg-tg-link/10 px-4 text-[14.5px] font-semibold text-tg-link transition active:scale-95"
           >
             <Sparkles className="h-4 w-4" strokeWidth={2.2} />
-            Snap Search
+            ИИ-поиск
           </button>
         </div>
       </div>

@@ -53,9 +53,10 @@ export async function POST(request: Request) {
           }),
         ])
         putFlagsOverride(userId, postId, { liked: false })
+        // v5.68: лайки автономны — только мини-апп (без reactionsTg)
         return NextResponse.json({
           liked: false,
-          likesCount: Math.max(0, updated.reactionsTg + updated.likesCount),
+          likesCount: Math.max(0, updated.likesCount),
         })
       } catch {
         // гонка (двойной тап): лайк уже снял параллельный запрос — честный ответ
@@ -64,7 +65,7 @@ export async function POST(request: Request) {
           select: { reactionsTg: true, likesCount: true },
         })
         putFlagsOverride(userId, postId, { liked: false })
-        return NextResponse.json({ liked: false, likesCount: Math.max(0, (fresh?.reactionsTg ?? 0) + (fresh?.likesCount ?? 0)) })
+        return NextResponse.json({ liked: false, likesCount: Math.max(0, fresh?.likesCount ?? 0) })
       }
     }
 
@@ -80,7 +81,8 @@ export async function POST(request: Request) {
         }),
       ])
       putFlagsOverride(userId, postId, { liked: true })
-      return NextResponse.json({ liked: true, likesCount: updated.reactionsTg + updated.likesCount })
+      // v5.68: лайки автономны — только мини-апп (без reactionsTg)
+      return NextResponse.json({ liked: true, likesCount: updated.likesCount })
     } catch {
       // гонка (двойной тап): лайк уже поставил параллельный запрос — идемпотентно
       const fresh = await db.post.findUnique({
@@ -88,7 +90,7 @@ export async function POST(request: Request) {
         select: { reactionsTg: true, likesCount: true },
       })
       putFlagsOverride(userId, postId, { liked: true })
-      return NextResponse.json({ liked: true, likesCount: (fresh?.reactionsTg ?? 0) + (fresh?.likesCount ?? 0) })
+      return NextResponse.json({ liked: true, likesCount: fresh?.likesCount ?? 0 })
     }
   } catch (e) {
     console.error('[like]', e)

@@ -182,7 +182,10 @@ export function QuestsTab() {
           <QuestsSkeleton />
         ) : (
           <>
-            {/* Сводка: доступно к получению + баланс + прогресс */}
+            {/* Сводка: доступно к получению + баланс + прогресс.
+                v5.68: при пустом списке заданий сводку НЕ показываем — внизу один
+                аккуратный empty-state (раньше «Пока нет доступных заданий» дублировался) */}
+            {data.items.length > 0 && (
             <section className="px-4 pb-1" aria-label="Сводка по заданиям">
               <div className="card-soft rounded-2xl bg-tg-surface p-4">
                 <div className="flex items-center gap-3">
@@ -230,6 +233,7 @@ export function QuestsTab() {
                 )}
               </div>
             </section>
+            )}
 
             {/* Список заданий */}
             <section className="pb-6 pt-3" aria-label="Список заданий">

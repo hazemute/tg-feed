@@ -192,7 +192,6 @@ export function WalletCard({
     <section className="pt-7" aria-label="Кошелёк">
       <div className="flex items-center justify-between px-4">
         <h2 className="text-[19px] font-bold text-tg-text">Кошелёк</h2>
-        <span className="text-[12.5px] font-medium text-tg-hint">500 свайпов = 1 ₽</span>
       </div>
 
       <div className="px-4 pt-3">
@@ -255,7 +254,16 @@ export function WalletCard({
               <p className="mt-1.5 text-[13px] leading-snug text-tg-hint">
                 Покупают всё в сервисе — без оплаты картой на месте
               </p>
-              <div className="mt-3.5 flex gap-2.5">
+              {/* v5.68: курс конвертации — часть блока обмена (был плашкой в шапке) */}
+              <div className="mt-3 flex items-center gap-2 rounded-xl bg-tg-bg px-3 py-2" aria-label="Курс конвертации">
+                <ArrowLeftRight className="h-3.5 w-3.5 shrink-0 text-tg-hint" aria-hidden />
+                <span className="flex items-center gap-1.5 text-[13px] font-semibold text-tg-text2 tabular-nums">
+                  <SwipeIcon className="h-3.5 w-3.5 text-tg-link" size={14} />
+                  500 = 1 ₽
+                </span>
+                <span className="shrink-0 text-[12px] text-tg-hint">курс обмена</span>
+              </div>
+              <div className="mt-3 flex gap-2.5">
                 <button
                   type="button"
                   onClick={() => {
@@ -300,11 +308,20 @@ export function WalletCard({
                   ? ` (~${fmtNum(data.aiPricing.inSwpPerMtok)} за 1 млн входных)`
                   : ''}
               </p>
+              {/* v5.68: курс конвертации внутри блока обмена */}
+              <div className="mt-3 flex items-center gap-2 rounded-xl bg-tg-bg px-3 py-2" aria-label="Курс конвертации">
+                <ArrowLeftRight className="h-3.5 w-3.5 shrink-0 text-tg-hint" aria-hidden />
+                <span className="flex items-center gap-1.5 text-[13px] font-semibold text-tg-text2 tabular-nums">
+                  <SwipeIcon className="h-3.5 w-3.5 text-tg-link" size={14} />
+                  500 = 1 ₽
+                </span>
+                <span className="shrink-0 text-[12px] text-tg-hint">курс обмена</span>
+              </div>
               <button
                 type="button"
                 onClick={() => convert('swp2rub')}
                 disabled={busy || swipes < (data?.swpConvertMin ?? 100)}
-                className="mt-3.5 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-tg-sep bg-tg-bg text-[14.5px] font-semibold text-tg-text transition active:scale-[0.97] disabled:opacity-45"
+                className="mt-2.5 flex h-11 w-full items-center justify-center gap-1.5 rounded-xl border border-tg-sep bg-tg-bg text-[14.5px] font-semibold text-tg-text transition active:scale-[0.97] disabled:opacity-45"
               >
                 {busy ? (
                   <Loader2 className="h-4 w-4 animate-spin" />

@@ -208,7 +208,11 @@ export function toPostDTO(
   const viewsCount = Math.max(p.viewsTg ?? 0, p.viewsCount)
   // Лайки для показа: сумма ВСЕХ реакций исходного поста (t.me/s) + локальные
   // лайки миниаппа — сердечко остаётся интерактивным поверх реального числа
-  const likesCount = p.reactionsTg + p.likesCount
+  // v5.68: ЛАЙКИ АВТОНОМНЫ (запрос владельца) — считаются ТОЛЬКО из действий
+  // пользователей внутри Mini App (Post.likesCount, старт с 0). Реакции
+  // исходного Telegram-канала (reactionsTg) больше НЕ примешиваются к лайкам
+  // — они остаются только внутренним сигналом качества в ранжировании.
+  const likesCount = p.likesCount
 
   return {
     id: p.id,

@@ -192,6 +192,34 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "PromoRedemption_promoId_createdAt_idx" ON "PromoRedemption" ("promoId", "createdAt")`,
     `ALTER TABLE "PromoRedemption" ADD CONSTRAINT "PromoRedemption_promoId_fkey" FOREIGN KEY ("promoId") REFERENCES "PromoCode"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
   ],
+  'v5.68': [
+    // v5.68: ЖАЛОБЫ И МОДЕРАЦИЯ БЕЗ ИИ. PostHide — «Не интересно» на конкретный
+    // пост (канал НЕ удаляется, категория понижается в персональном ранжировании);
+    // PostReport/CommentReport — жалобы (уникальные по юзеру); Comment.hidden/
+    // adScore — антирекламный эвристический скрипт (lib/moderation.ts); авто-скрытие
+    // комментария при 3+ уникальных жалобщиках.
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "reportsCount" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "hidden" boolean NOT NULL DEFAULT false`,
+    `ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "adScore" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE "Comment" ADD COLUMN IF NOT EXISTS "reportsCount" integer NOT NULL DEFAULT 0`,
+    `CREATE TABLE IF NOT EXISTS "PostHide" ("id" text PRIMARY KEY, "userId" text NOT NULL, "postId" text NOT NULL, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "PostHide_userId_postId_key" ON "PostHide" ("userId", "postId")`,
+    `CREATE INDEX IF NOT EXISTS "PostHide_userId_idx" ON "PostHide" ("userId")`,
+    `CREATE TABLE IF NOT EXISTS "PostReport" ("id" text PRIMARY KEY, "postId" text NOT NULL, "userId" text NOT NULL, "reason" text NOT NULL DEFAULT 'other', "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "PostReport_userId_postId_key" ON "PostReport" ("userId", "postId")`,
+    `CREATE INDEX IF NOT EXISTS "PostReport_postId_idx" ON "PostReport" ("postId")`,
+    `CREATE INDEX IF NOT EXISTS "PostReport_createdAt_idx" ON "PostReport" ("createdAt")`,
+    `CREATE TABLE IF NOT EXISTS "CommentReport" ("id" text PRIMARY KEY, "commentId" text NOT NULL, "userId" text NOT NULL, "reason" text NOT NULL DEFAULT 'other', "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "CommentReport_userId_commentId_key" ON "CommentReport" ("userId", "commentId")`,
+    `CREATE INDEX IF NOT EXISTS "CommentReport_commentId_idx" ON "CommentReport" ("commentId")`,
+    `CREATE INDEX IF NOT EXISTS "Comment_hidden_postId_idx" ON "Comment" ("postId", "hidden")`,
+    `ALTER TABLE "PostHide" ADD CONSTRAINT "PostHide_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+    `ALTER TABLE "PostHide" ADD CONSTRAINT "PostHide_postId_fkey" FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+    `ALTER TABLE "PostReport" ADD CONSTRAINT "PostReport_postId_fkey" FOREIGN KEY ("postId") REFERENCES "Post"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+    `ALTER TABLE "PostReport" ADD CONSTRAINT "PostReport_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+    `ALTER TABLE "CommentReport" ADD CONSTRAINT "CommentReport_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "Comment"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+    `ALTER TABLE "CommentReport" ADD CONSTRAINT "CommentReport_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -231,6 +259,11 @@ const CRITICAL: Array<[string, string | null]> = [
   ['ScheduledPost', null],
   ['PromoCode', null],
   ['PromoRedemption', null],
+  ['PostHide', null],
+  ['PostReport', null],
+  ['CommentReport', null],
+  ['Comment', 'hidden'],
+  ['Post', 'reportsCount'],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -253,7 +286,9 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
         (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
-        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption')
+        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport') OR
+        (c.table_name = 'Comment' AND c.column_name IN ('hidden','adScore','reportsCount')) OR
+        (c.table_name = 'Post' AND c.column_name = 'reportsCount')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()

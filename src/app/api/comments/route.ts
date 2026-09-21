@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth, guardPublic } from '@/lib/guard'
 import { authorOf, likedSetFor, notifyUser, toCommentDTO } from '@/lib/comments-server'
+import { scanAd, scanFloodBonus } from '@/lib/moderation'
 import type { CommentDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -46,8 +47,13 @@ async function listReplies(
   cursor: string,
   uid: string | null,
 ) {
+  // v5.68: скрытые модерацией комментарии НЕ видны никому, кроме автора
+  // (автор видит свой с плашкой «скрыт за рекламу/жалобы»)
+  const visible = uid
+    ? { OR: [{ hidden: false }, { hidden: true, userId: uid }] }
+    : { hidden: false }
   const rows = await db.comment.findMany({
-    where: { postId, parentId },
+    where: { postId, parentId, ...visible },
     orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     take: PAGE + 1,
     ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -67,7 +73,11 @@ async function listRoots(
   cursor: string,
   uid: string | null,
 ) {
-  const where = { postId, parentId: null }
+  // v5.68: скрытые — мимо списков (кроме собственных — автору их показываем)
+  const visible = uid
+    ? { OR: [{ hidden: false }, { hidden: true, userId: uid }] }
+    : { hidden: false }
+  const where = { postId, parentId: null, ...visible }
   const rows = await db.comment.findMany({
     where,
     orderBy:
@@ -84,6 +94,8 @@ async function listRoots(
     include: {
       user: { select: AUTHOR_SELECT },
       replies: {
+        // превью-ответы: тоже без чужих скрытых
+        where: uid ? { OR: [{ hidden: false }, { hidden: true, userId: uid }] } : { hidden: false },
         take: PREVIEW_REPLIES,
         orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
         include: { user: { select: AUTHOR_SELECT } },
@@ -178,6 +190,16 @@ export async function POST(request: Request) {
     }
 
     const created = await db.$transaction(async (tx) => {
+      // v5.68 АНТИРЕКЛАМНЫЙ СКРИПТ (без ИИ): эвристика lib/moderation.ts.
+      // Порог 45+ — комментарий публикуется СКРЫТЫМ: автор видит его с плашкой,
+      // остальные — нет. Флуд (тот же текст юзера в этом посте) даёт +40.
+      const verdict = scanAd(text)
+      const flood = await tx.comment.findFirst({
+        where: { postId, userId: g.uid, text, createdAt: { gte: new Date(Date.now() - 6 * 3600_000) } },
+        select: { id: true },
+      })
+      const adScore = verdict.score + scanFloodBonus(flood !== null)
+      const hidden = adScore >= 45
       const c = await tx.comment.create({
         data: {
           postId,
@@ -186,28 +208,36 @@ export async function POST(request: Request) {
           parentId: rootId,
           replyToUserId,
           replyToName,
+          hidden,
+          adScore,
         },
         include: { user: { select: AUTHOR_SELECT } },
       })
-      // Денормализованный счётчик + пост «греется» от обсуждения (+5)
+      // Денормализованный счётчик + пост «греется» от обсуждения (+5).
+      // Скрытый антирекламой коммент НЕ увеличивает счётчик (его никто не видит)
       const p = await tx.post.update({
         where: { id: postId },
-        data: { commentsCount: { increment: 1 }, hotScore: { increment: 5 } },
+        data: {
+          ...(hidden ? {} : { commentsCount: { increment: 1 } }),
+          hotScore: { increment: 5 },
+        },
         select: { commentsCount: true },
       })
-      if (rootId) {
+      if (rootId && !hidden) {
         await tx.comment.update({
           where: { id: rootId },
           data: { repliesCount: { increment: 1 } },
         })
       }
-      return { c, commentsCount: p.commentsCount }
+      return { c, commentsCount: p.commentsCount, hidden, adScore }
     })
 
     const dto: CommentDTO = {
       ...toCommentDTO(created.c, g.uid, new Set([created.c.id]), []),
       own: true,
       likedByMe: false,
+      hidden: created.hidden,
+      adScore: created.adScore,
     }
 
     /* ---- Уведомления (fire-and-forget) ---- */
@@ -241,7 +271,7 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ comment: dto, commentsCount: created.commentsCount })
+    return NextResponse.json({ comment: dto, commentsCount: created.commentsCount, hidden: created.hidden })
   } catch (e) {
     console.error('[comments POST]', e)
     return err('comment failed', 500)

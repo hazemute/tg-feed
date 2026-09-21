@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, Forward, Heart, MessageCircle, Rocket, Send, Sparkle, Star } from 'lucide-react'
+import { Eye, EyeOff, Flag, Forward, Heart, MessageCircle, Rocket, Send, Sparkle, Star } from 'lucide-react'
+import { toast } from 'sonner'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -17,6 +18,7 @@ import { PostMedia, PostMediaCards, postVisualItems } from '@/components/feed/Po
 import { translatedText, TranslateControl, useTranslation } from '@/components/feed/TranslateButton'
 import { ListenButton } from '@/components/feed/TTSButton'
 import { RailButton, SubscribeCircle } from '@/components/feed/actions'
+import { BottomSheet } from '@/components/tg/BottomSheet'
 import { cutAtWord, TEASER_LINES, useLineTruncate } from '@/lib/clamp-text'
 import { useIsDesktop } from '@/lib/use-desktop'
 
@@ -356,6 +358,17 @@ function readingMinutes(text: string): number {
   return words < 400 ? 0 : Math.max(2, minutes)
 }
 
+/** v5.68: уже пожалованные в этой сессии — не спамим повторными запросами */
+const reportedPosts = new Set<string>()
+
+/** Причины жалобы (i18n-ключи) — mirrors /api/report REASONS */
+const REPORT_REASONS = [
+  { id: 'ad', labelKey: 'feed.reportReasonSpam' },
+  { id: 'abuse', labelKey: 'feed.reportReasonAbuse' },
+  { id: 'misinfo', labelKey: 'feed.reportReasonMisinfo' },
+  { id: 'other', labelKey: 'feed.reportReasonOther' },
+] as const
+
 export function PostCard({
   post,
   onLike,
@@ -391,6 +404,33 @@ export function PostCard({
   const t = useT()
   const lang = useApp((s) => s.lang)
   const user = useApp((s) => s.user)
+  const openAuthGate = useApp((s) => s.openAuthGate)
+  // v5.68: «Пожаловаться на пост»
+  const [reportOpen, setReportOpen] = useState(false)
+  const [reporting, setReporting] = useState(false)
+  const sendReport = async (reason: string) => {
+    if (reporting || reportedPosts.has(post.id)) return
+    if (!user || user.isGuest) {
+      setReportOpen(false)
+      openAuthGate('report')
+      return
+    }
+    setReporting(true)
+    try {
+      const r = await api<{ ok: boolean; already?: boolean }>('/api/report', {
+        method: 'POST',
+        body: JSON.stringify({ postId: post.id, reason }),
+      })
+      reportedPosts.add(post.id)
+      setReportOpen(false)
+      haptic('success')
+      toast.success(r.already ? t('feed.reportAlready') : t('feed.reportSent'))
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не получилось')
+    } finally {
+      setReporting(false)
+    }
+  }
   const ch = post.channel
   /** «...еще» → полный экран поста */
   const openFullPost = () => openPost(post)
@@ -710,6 +750,28 @@ export function PostCard({
             <EyeOff className="h-[15px] w-[15px]" aria-hidden />
           </button>
         )}
+        {/* v5.68: «Пожаловаться на пост» — сигнал антирекламы для ранжирования */}
+        <button
+          type="button"
+          data-noswipe
+          onClick={(e) => {
+            e.stopPropagation()
+            haptic('light')
+            if (reportedPosts.has(post.id)) {
+              toast(t('feed.reportAlready'))
+              return
+            }
+            setReportOpen(true)
+          }}
+          aria-label={t('feed.reportTitle')}
+          title={t('feed.reportTitle')}
+          className={cn(
+            'flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 active:bg-tg-sep/50 motion-reduce:transition-none',
+            !onHide && 'ml-auto -mr-1',
+          )}
+        >
+          <Flag className="h-[15px] w-[15px]" aria-hidden />
+        </button>
       </div>
     </>
   )
@@ -719,7 +781,7 @@ export function PostCard({
   // v5.58 (60 FPS): feed-card = content-visibility:auto — офф-скрин карточки
   // не участвуют в layout/paint, скролл длинной ленты остаётся плавным.
   const cardShell = cn('feed-card pb-5 pt-4', post.promoted && 'promoted-card')
-  return appear >= 0 ? (
+  const card = appear >= 0 ? (
     <motion.article
       ref={rootRef}
       className={cardShell}
@@ -733,5 +795,32 @@ export function PostCard({
     <article ref={rootRef} className={cardShell}>
       {body}
     </article>
+  )
+
+  return (
+    <>
+      {card}
+      {/* v5.68: шит жалобы на пост */}
+      <BottomSheet open={reportOpen} onClose={() => setReportOpen(false)} title={t('feed.reportTitle')}>
+        <div className="space-y-1 pb-2">
+          {REPORT_REASONS.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              data-noswipe
+              disabled={reporting}
+              onClick={() => void sendReport(r.id)}
+              className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] font-medium text-tg-text transition active:scale-[0.99] active:bg-tg-surface disabled:opacity-50"
+            >
+              <Flag className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
+              {t(r.labelKey)}
+            </button>
+          ))}
+          <p className="px-3 pb-1 pt-2 text-[12px] leading-snug text-tg-hint">
+            Жалоба анонимна. Каналы с потоком жалоб понижаются в ленте.
+          </p>
+        </div>
+      </BottomSheet>
+    </>
   )
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowUp, ChevronDown, CornerDownRight, Heart, Loader2, MessageCircle, Trash2, X } from 'lucide-react'
+import { ArrowUp, ChevronDown, CornerDownRight, Flag, Heart, Loader2, MessageCircle, Trash2, X } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -69,6 +69,24 @@ function mapTree(items: CommentDTO[], id: string, patch: (c: CommentDTO) => Comm
   })
 }
 
+/** Удаление комментария из дерева (скрыт по жалобам / удалён) */
+function removeFromTree(items: CommentDTO[], id: string): CommentDTO[] {
+  const out: CommentDTO[] = []
+  for (const c of items) {
+    if (c.id === id) continue
+    out.push(c.replies?.length ? { ...c, replies: removeFromTree(c.replies, id) } : c)
+  }
+  return out
+}
+
+/** Причины жалобы на комментарий (mirrors /api/comments/[id]/report) */
+const REPORT_REASONS = [
+  { id: 'ad', labelKey: 'feed.reportReasonSpam' },
+  { id: 'abuse', labelKey: 'feed.reportReasonAbuse' },
+  { id: 'misinfo', labelKey: 'feed.reportReasonMisinfo' },
+  { id: 'other', labelKey: 'feed.reportReasonOther' },
+] as const
+
 export function CommentsSheet() {
   const t = useT()
   const lang = useApp((s) => s.lang)
@@ -95,6 +113,9 @@ export function CommentsSheet() {
   const [sending, setSending] = useState(false)
   /** Кому отвечаем: null — новый корневой комментарий */
   const [replyTo, setReplyTo] = useState<{ parentCommentId: string; rootId: string; name: string } | null>(null)
+  // v5.68: «Пожаловаться» на комментарий — цель шита причин
+  const [reportTarget, setReportTarget] = useState<CommentDTO | null>(null)
+  const [reporting, setReporting] = useState(false)
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
   const [flashId, setFlashId] = useState<string | null>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -377,7 +398,7 @@ export function CommentsSheet() {
     if (inputRef.current) inputRef.current.style.height = 'auto'
 
     try {
-      const r = await api<{ comment: CommentDTO; commentsCount: number }>('/api/comments', {
+      const r = await api<{ comment: CommentDTO; commentsCount: number; hidden?: boolean }>('/api/comments', {
         method: 'POST',
         body: JSON.stringify({
           postId: post.id,
@@ -385,6 +406,11 @@ export function CommentsSheet() {
           ...(replying ? { parentId: replying.parentCommentId } : {}),
         }),
       })
+      // v5.68: антирекламный скрипт скрыл комментарий — сообщаем автору сразу
+      if (r.hidden) {
+        haptic('error')
+        toast.error('Комментарий скрыт: похоже на рекламу или спам. Его видите только вы.')
+      }
       setItems((prev) => {
         if (!replying) {
           // Срез «последний элемент = tmp» валиден, только пока оптимистичный
@@ -420,6 +446,33 @@ export function CommentsSheet() {
   }
 
   /* ---------- Удаление своего ---------- */
+
+  /** v5.68: «Пожаловаться» на комментарий. 3+ уникальных жалобщика → сервер
+   *  скрывает комментарий — у нас в списке он тут же исчезает. */
+  const doReport = async (reason: string) => {
+    const target = reportTarget
+    if (!target || reporting) return
+    setReporting(true)
+    try {
+      const r = await api<{ ok: boolean; already?: boolean; hidden?: boolean }>(
+        `/api/comments/${target.id}/report`,
+        { method: 'POST', body: JSON.stringify({ reason }) },
+      )
+      setReportTarget(null)
+      haptic('success')
+      if (r.hidden) {
+        // Порог достигнут — комментарий скрыт для всех, убираем из списка
+        setItems((prev) => removeFromTree(prev, target.id))
+        toast.success('Комментарий скрыт после жалоб')
+      } else {
+        toast.success(r.already ? 'Вы уже жаловались на этот комментарий' : t('feed.reportSent'))
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не получилось')
+    } finally {
+      setReporting(false)
+    }
+  }
 
   const doDelete = async (c: CommentDTO) => {
     haptic('light')
@@ -485,6 +538,7 @@ export function CommentsSheet() {
     lang === 'ru' ? pluralRu(n, t('comments.repliesOne'), t('comments.repliesFew'), t('comments.repliesMany')) : n === 1 ? 'reply' : 'replies'
 
   return (
+    <>
     <BottomSheet
       open={open}
       onClose={closeComments}
@@ -558,6 +612,7 @@ export function CommentsSheet() {
                         onToggle={toggleReplies}
                         onLoadMoreReplies={(root) => void loadReplies(root, true)}
                         flashId={flashId}
+                        onReport={setReportTarget}
                       />
                     </motion.li>
                   ))}
@@ -626,6 +681,33 @@ export function CommentsSheet() {
         </div>
       )}
     </BottomSheet>
+      {/* v5.68: шит жалобы на комментарий */}
+      <BottomSheet
+        open={reportTarget !== null}
+        onClose={() => setReportTarget(null)}
+        title="Пожаловаться на комментарий"
+      >
+        <div className="space-y-1 pb-2">
+          {REPORT_REASONS.map((r) => (
+            <button
+              key={r.id}
+              type="button"
+              data-noswipe
+              disabled={reporting}
+              onClick={() => void doReport(r.id)}
+              className="flex h-12 w-full items-center gap-3 rounded-xl px-3 text-left text-[15px] font-medium text-tg-text transition active:scale-[0.99] active:bg-tg-surface disabled:opacity-50"
+            >
+              <Flag className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
+              {t(r.labelKey)}
+            </button>
+          ))}
+          <p className="px-3 pb-1 pt-2 text-[12px] leading-snug text-tg-hint">
+            Жалоба анонимна. Комментарий скрывается после 3 жалоб от разных людей, а также
+            автоматически — если антирекламный скрипт распознаёт спам.
+          </p>
+        </div>
+      </BottomSheet>
+    </>
   )
 }
 
@@ -661,6 +743,7 @@ function CommentRow({
   onLoadMoreReplies,
   isReply = false,
   flashId = null,
+  onReport,
 }: {
   c: CommentDTO
   expanded?: boolean
@@ -673,6 +756,8 @@ function CommentRow({
   isReply?: boolean
   /** id комментария, подсвечиваемого при переходе из уведомлений (deep-link) */
   flashId?: string | null
+  /** v5.68: «Пожаловаться» — открыть шит причин (у чужих комментариев) */
+  onReport?: (c: CommentDTO) => void
 }) {
   const t = useT()
   const openUserProfile = useApp((s) => s.openUserProfile)
@@ -749,6 +834,21 @@ function CommentRow({
           <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
         </button>
       )}
+      {/* v5.68: «Пожаловаться» — у ЧУЖИХ комментариев (спам/реклама/травля) */}
+      {!c.own && !tmp && onReport && (
+        <button
+          type="button"
+          onClick={() => onReport(c)}
+          aria-label="Пожаловаться на комментарий"
+          title="Пожаловаться"
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-tg-sep/60 hover:text-tg-text active:scale-90 motion-reduce:transition-none',
+            !c.own && !tmp && 'ml-auto',
+          )}
+        >
+          <Flag className="h-3.5 w-3.5" strokeWidth={1.8} />
+        </button>
+      )}
     </>
   )
 
@@ -763,7 +863,19 @@ function CommentRow({
       </span>
     ) : null
 
-  const body = (
+  /* v5.68: свой скрытый комментарий — автор видит его с плашкой модерации,
+     остальные скрытые комментарии из списков уже вырезаны на сервере */
+  const body = c.hidden ? (
+    <p
+      className={cn(
+        'flex items-center gap-1.5 rounded-xl bg-tg-star/[0.08] px-3 py-2 text-[12.5px] font-medium text-tg-hint',
+        isReply ? 'text-[12px]' : 'mt-0.5',
+      )}
+    >
+      <Flag className="h-3.5 w-3.5 shrink-0 text-tg-star" aria-hidden />
+      Комментарий скрыт: похоже на рекламу или спам. Его видите только вы.
+    </p>
+  ) : (
     <p
       className={cn(
         'whitespace-pre-wrap break-words leading-snug text-tg-text2',
@@ -883,6 +995,7 @@ function CommentRow({
                         onReply={onReply}
                         onDelete={onDelete}
                         flashId={flashId}
+                        onReport={onReport}
                       />
                     ))}
                     {/* Подгрузка остальных ответов ветки */}

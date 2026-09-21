@@ -531,7 +531,7 @@ export function AiChat({
       ? lang === 'en'
         ? 'Snap Assistant'
         : 'Snap Ассистент'
-      : 'Snap Search'
+      : 'ИИ-поиск'
   const subtitle =
     kind === 'assistant'
       ? `«${channelTitle ?? ''}» · пишет, рисует, публикует`
@@ -611,7 +611,7 @@ export function AiChat({
                         ? lang === 'en'
                           ? 'Your channel’s AI co-writer'
                           : 'ИИ-контентщик канала'
-                        : 'Snap Search'}
+                        : 'ИИ-поиск'}
                     </p>
                     <p className="mt-1 text-[13px] leading-snug text-tg-hint">
                       {kind === 'assistant'
@@ -642,15 +642,25 @@ export function AiChat({
               </div>
             )}
 
-            {messages.map((m) => (
+            {messages.map((m, mi) => (
               <motion.div
                 key={m.id}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.18 }}
+                initial={{ opacity: 0, y: 12, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{
+                  duration: 0.32,
+                  ease: [0.32, 0.72, 0, 1],
+                  // лёгкий каскад: каждое следующее сообщение вступает на 40мс позже
+                  delay: Math.min(0.16, Math.max(0, mi - Math.max(0, messages.length - 3)) * 0.04),
+                }}
                 className={cn('flex', m.role === 'user' ? 'justify-end' : 'justify-start')}
               >
-                <div className={cn('max-w-[88%] min-w-0', m.role === 'user' && 'max-w-[80%]')}>
+                <motion.div
+                  initial={{ opacity: 0, y: 6, scale: 0.97 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  transition={{ duration: 0.28, ease: [0.32, 0.72, 0, 1], delay: 0.05 }}
+                  className={cn('max-w-[88%] min-w-0', m.role === 'user' && 'max-w-[80%]')}
+                >
                   {/* Этапы инструментов (мелкие чипы над ответом) */}
                   {m.steps && m.steps.length > 0 && m.role === 'assistant' && (
                     <div className="mb-1 flex flex-wrap gap-1">
@@ -682,7 +692,7 @@ export function AiChat({
                     {m.role === 'assistant' ? (
                       <RichText
                         text={aiNormalize(m.text)}
-                        className="text-[14.5px] leading-relaxed [&_a]:text-tg-link"
+                        className="animate-[fade-in_0.35s_ease-out] text-[14.5px] leading-relaxed [&_a]:text-tg-link"
                       />
                     ) : (
                       <span className="whitespace-pre-wrap break-words text-[14.5px] leading-relaxed">{m.text}</span>
@@ -754,20 +764,35 @@ export function AiChat({
                   <span className={cn('mt-0.5 block text-[10px]', m.role === 'user' ? 'text-right text-white/55' : 'text-tg-hint/70')}>
                     {timeAgo(m.at, lang)}
                   </span>
-                </div>
+                </motion.div>
               </motion.div>
             ))}
 
-            {/* v5.40: realtime-стриминг — ответ печатается на глазах, чистым текстом без пузыря */}
+            {/* v5.40: realtime-стриминг — ответ печатается на глазах. v5.68:
+                блок появляется мягко (spring-въезд), текст — с fade, за последним
+                символом — пульсирующий каретка-курсор (transform/opacity, 60 FPS) */}
             {streamText !== null && streamText.length > 0 && (
-              <div className="flex justify-start">
+              <motion.div
+                initial={{ opacity: 0, y: 10, scale: 0.985 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                transition={{ duration: 0.3, ease: [0.32, 0.72, 0, 1] }}
+                className="flex justify-start"
+              >
                 <div className="max-w-[88%] min-w-0">
-                  <RichText
-                    text={aiNormalize(streamText)}
-                    className="text-[14.5px] leading-relaxed text-tg-text [&_a]:text-tg-link"
+                  <div className="animate-[fade-in_0.3s_ease-out]">
+                    <RichText
+                      text={aiNormalize(streamText)}
+                      className="text-[14.5px] leading-relaxed text-tg-text [&_a]:text-tg-link"
+                    />
+                  </div>
+                  <motion.span
+                    aria-hidden
+                    className="ml-0.5 inline-block h-[14px] w-[2px] translate-y-[2px] rounded-full bg-tg-link"
+                    animate={{ opacity: [1, 0.15, 1] }}
+                    transition={{ duration: 0.9, repeat: Infinity, ease: 'easeInOut' }}
                   />
                 </div>
-              </div>
+              </motion.div>
             )}
 
             {busy && streamText === null && <ThinkingBubble label={status} />}

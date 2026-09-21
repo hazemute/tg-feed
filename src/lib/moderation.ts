@@ -267,3 +267,114 @@ export function isAdCliche(text: string | null | undefined): boolean {
   const t = text.length > 1200 ? text.slice(0, 600) + text.slice(-300) : text
   return AD_CLICHE_RE.some((re) => re.test(t))
 }
+
+/* ================= v5.68: АНТИРЕКЛАМА В КОММЕНТАРИЯХ (без ИИ) ================= */
+
+/**
+ * Умный эвристический скрипт для «чата под постом»: оценка 0..100 за признаки
+ * рекламы/спама. Порог AUTO_HIDE_SCORE (45+) → комментарий создаётся скрытым
+ * (Comment.hidden): автор видит свой коммент с плашкой, остальные — нет.
+ * LLM не нужен: правила покрывают типовой спам за микросекунды; порог требует
+ * НЕСКОЛЬКИХ признаков или явного спам-паттерна — обычные разговоры не задевает.
+ */
+
+export type AdVerdict = {
+  score: number
+  reasons: string[]
+  hidden: boolean
+}
+
+/** Порог авто-скрытия комментария */
+export const AUTO_HIDE_SCORE = 45
+
+// Телефоны: +7 999 123-45-67, 8(999)1234567, +380...
+// ВАЖНО: \b в JS определён по ASCII — с кириллицей НЕ работает, поэтому
+// для русских слов используем подстрочные стемы без \b.
+const COMMENT_PHONE_RE = /(?:\+?\d[\d\s\-()]{8,}\d)/
+// Telegram-ссылки/упоминания: t.me/xxx, @username
+const COMMENT_TME_RE = /(?:https?:\/\/)?t\.me\/[A-Za-z0-9_]{3,}/gi
+const COMMENT_MENTION_RE = /@[a-zA-Z][a-zA-Z0-9_]{3,}/g
+// Обычные URL
+const COMMENT_URL_RE = /(?:https?:\/\/|www\.)[^\s]{4,}/gi
+// Промо-лексика комментариев (стемы — без \b, кириллица)
+const COMMENT_PROMO_PATTERNS: Array<[RegExp, number, string]> = [
+  [/по\s?(?:всем\s)?вопросам\s?(?:реклам|сотрудничеств)/i, 22, 'призыв «по вопросам рекламы»'],
+  [/(?:пиш\s?и\s?те|пиши|писать|напишите)\s?(?:мне\s)?(?:в\s|прямо\s)?(?:лс|личку|телеграм|личные)/i, 20, 'призыв «пишите в ЛС»'],
+  [/(?:звоните|звони|наберите|по\s?телефону)/i, 8, 'призыв «звоните»'],
+  [/(?:купить|заказать|продам|продаю|продажа|услуги|прайс|оплата|переводом|наличными)/i, 12, 'продажа/услуги'],
+  [/(?:скидк|акци|промокод|купон|распродаж|бонус)/i, 10, 'акции/скидки/бонус'],
+  [/(?:заработок|заработка|зарабатывать|заработать|пассивн|доход\s?от|доход\s?до)/i, 14, '«заработок»'],
+  [/(?:сигналы?|сигналов|трейдинг|букмекер|аирдроп|airdrop|инвестируй)/i, 20, 'betting/crypto-спам'],
+  [/(?:накрутк|подписчики\s?(?:за|от|дешево)|просмотры\s?(?:за|от)|реакции\s?(?:за|от)|боты\s?за)/i, 18, 'накрутка/услуги ботов'],
+  [/(?:подписывайтесь|подписывайся|переходите?\s(?:в|на)\s(?:канал|бот)|переходи\s(?:в|на))/i, 16, 'призыв подписаться'],
+  [/(?:onlyfans|приват(?:ы|ки)|эскорт|интим|casino|казино|mostbet|1xb(?:e|x)et|melbet|vavada|pin-?up)/i, 25, '18+/гемблинг-спам'],
+]
+const COMMENT_EMOJI_RE = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/gu
+
+export function scanAd(text: string): AdVerdict {
+  const t = (text ?? '').slice(0, 2000)
+  const reasons: string[] = []
+  let score = 0
+  const add = (n: number, why: string) => {
+    score += n
+    reasons.push(why)
+  }
+
+  if (t.length < 4) return { score: 0, reasons, hidden: false }
+
+  // Телефон: цифр много, букв мало
+  if (COMMENT_PHONE_RE.test(t.replace(/[a-zA-Zа-яёА-ЯЁ]{3,}/g, ' '))) add(25, 'номер телефона')
+
+  const tme = t.match(COMMENT_TME_RE) ?? []
+  const mentions = t.match(COMMENT_MENTION_RE) ?? []
+  const tgRefs = tme.length + mentions.length
+  if (tme.length >= 1) add(14, 'ссылка t.me')
+  if (mentions.length >= 1) add(10, 'упоминание @')
+  if (tgRefs >= 2) add(16, `${tgRefs} телеграм-ссылки/упоминания`)
+
+  const urls = t.match(COMMENT_URL_RE) ?? []
+  if (urls.length >= 1 && tme.length === 0) add(urls.length >= 2 ? 18 : 10, 'внешняя ссылка')
+
+  let promoHits = 0
+  for (const [re, w, why] of COMMENT_PROMO_PATTERNS) {
+    if (re.test(t)) {
+      add(w, why)
+      promoHits++
+    }
+  }
+  // 3+ разных промо-паттерна — почти наверняка реклама
+  if (promoHits >= 3) add(14, 'много промо-признаков')
+
+  // СПАМ-КАПС: доля заглавных в «буквенной» части
+  const letters = t.replace(/[^\p{L}]/gu, '')
+  if (letters.length >= 24) {
+    const upper = letters.replace(/[^\p{Lu}]/gu, '').length
+    if (upper / letters.length > 0.6) add(14, 'СПАМ-КАПС')
+  }
+
+  // Эмодзи-лепестки
+  const emojis = t.match(COMMENT_EMOJI_RE) ?? []
+  if (emojis.length >= 8) add(8, 'эмодзи-спам')
+
+  // «Текст = ссылка»: содержательных слов нет, только ссылки/упоминания
+  const words = t
+    .replace(COMMENT_TME_RE, ' ')
+    .replace(COMMENT_URL_RE, ' ')
+    .split(/\s+/)
+    .filter((w) => w.length > 1).length
+  if (tgRefs + urls.length >= 1 && words <= 2) add(32, 'текст = ссылка')
+  else if (tgRefs + urls.length >= 1 && words <= 4) add(18, 'почти без текста')
+
+  score = Math.min(100, score)
+  return { score, reasons, hidden: score >= AUTO_HIDE_SCORE }
+}
+
+/** Бонус за флуд: тот же текст, что у предыдущего коммента этого юзера под постом */
+export function scanFloodBonus(sameTextBefore: boolean): number {
+  return sameTextBefore ? 40 : 0
+}
+
+/** Человекочитаемая сводка вердикта (для логов/админки) */
+export function verdictSummary(v: AdVerdict): string {
+  return `${v.score}${v.hidden ? ' (скрыт)' : ''}: ${v.reasons.join(', ') || 'чисто'}`
+}

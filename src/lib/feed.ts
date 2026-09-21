@@ -1,7 +1,7 @@
 import { db } from '@/lib/db'
 import { parseJsonArray } from '@/lib/server'
 import { getNsfwChannelIds, nsfwPostNotIn } from '@/lib/moderation'
-import { computeWeight, rankJitter } from '@/lib/rank'
+import { computeWeight, rankJitter, REPORT_PENALTY_CAP, REPORT_PENALTY_PER } from '@/lib/rank'
 import { looksLikeGarbage } from '@/lib/text-clean'
 import { detectLang } from '@/lib/lang'
 import type { AffinityMap } from '@/lib/rank'
@@ -75,6 +75,26 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
     orderBy: { publishedAt: 'desc' },
     take: 400,
   })
+
+  // v5.68 антиреклама: distinct-жалобы по постам окна → сумма на канал
+  const channelReports = new Map<string, number>()
+  if (posts.length > 0) {
+    try {
+      const reps = await db.postReport.groupBy({
+        by: ['postId'],
+        _count: { _all: true },
+        where: { postId: { in: posts.map((p) => p.id) } },
+      })
+      const postChannel = new Map(posts.map((p) => [p.id, p.channelId] as const))
+      for (const r of reps) {
+        const ch = postChannel.get(r.postId)
+        if (ch) channelReports.set(ch, (channelReports.get(ch) ?? 0) + r._count._all)
+      }
+    } catch {
+      // без данных о жалобах лента работает как раньше
+    }
+  }
+
   const entries: IndexEntry[] = posts
     .filter((p) => !looksLikeGarbage(p.text)) // мгновенный детект каши — не ждём ИИ
     .map((p) => ({
@@ -90,7 +110,10 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
         publishedAt: p.publishedAt,
         premium: p.channel.isPremium,
         promotedAt: p.promotedAt,
-      }) + rankJitter(p.id),
+      }) +
+        // v5.68 антиреклама: канал с потоком жалоб глобально понижается
+        Math.min(REPORT_PENALTY_CAP, (channelReports.get(p.channelId) ?? 0) * REPORT_PENALTY_PER) +
+        rankJitter(p.id),
     }))
     .sort((a, b) => b.w - a.w)
 
@@ -297,6 +320,10 @@ export type PersonalSignals = {
   subscribedIds: Set<string>
   /** Каналы, скрытые кнопкой «Не интересно» — сильный минус в ранжировании */
   mutedIds: Set<string>
+  /** v5.68: посты, скрытые «Не интересно» на уровне ПОСТА (не канала) */
+  hiddenPostIds: Set<string>
+  /** v5.68: categoryId → сколько постов этой тематики юзер скрыл — понижение приоритета */
+  dislikeCategories: Map<string, number>
 }
 
 export async function loadPersonalSignals(userId: string): Promise<PersonalSignals> {
@@ -318,9 +345,11 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   let bookmarks: Array<{ createdAt: Date; post: { channelId: string; channel: { categoryId: string | null } } }>
   let subs: Array<{ channelId: string; notInterestedAt: Date | null }>
   let mutes: Array<{ channelId: string }>
+  // v5.68: «Не интересно» на уровне ПОСТА (канал остаётся, тематика понижается)
+  let hides: Array<{ postId: string; post: { channel: { categoryId: string | null } } }>
   let sources: Array<{ channelId: string | null; username: string | null; tgId: string }>
   try {
-    ;[views, likes, bookmarks, subs, mutes, sources] = await db.$transaction([
+    ;[views, likes, bookmarks, subs, mutes, hides, sources] = await db.$transaction([
       db.postView.findMany({
         where: { userId },
         select: {
@@ -360,6 +389,13 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
         where: { userId },
         select: { channelId: true },
       }),
+      // v5.68: скрытые ПОСТЫ («Не интересно» на пост — канал не трогаем)
+      db.postHide.findMany({
+        where: { userId },
+        select: { postId: true, post: { select: { channel: { select: { categoryId: true } } } } },
+        orderBy: { createdAt: 'desc' },
+        take: 300,
+      }),
       // v5.50: ИСТОЧНИКИ РЕКОМЕНДАЦИЙ («В один клик») — каналы, которые юзер
       // переслал боту как «читаю каждый день». Сильнейший декларативный сигнал:
       // важнее просмотров (шум) и лайков (импульс) — это осознанный список.
@@ -382,6 +418,8 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
       viewedAt: new Map(),
       subscribedIds: new Set(),
       mutedIds: new Set(),
+      hiddenPostIds: new Set(),
+      dislikeCategories: new Map(),
     }
     affinityCache.set(userId, { data: empty, exp: Date.now() + 2_000 })
     return empty
@@ -493,12 +531,21 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   for (const l of likes) bump(l, 3 * (0.4 + 0.6 * recency(l.createdAt)))
   for (const b of bookmarks) bump(b, 3 * (0.4 + 0.6 * recency(b.createdAt)))
 
+  // v5.68: скрытые посты → отрицательный сигнал по ТЕМАТИКЕ (лог-вес в personalBoost)
+  const dislikeCats = new Map<string, number>()
+  for (const h of hides) {
+    const cat = h.post?.channel?.categoryId
+    if (cat) dislikeCats.set(cat, (dislikeCats.get(cat) ?? 0) + 1)
+  }
+
   const data: PersonalSignals = {
     affinity,
     viewedIds: new Set(views.map((v) => v.postId)),
     viewedAt,
     subscribedIds: new Set(subs.map((s) => s.channelId)),
     mutedIds: new Set(mutes.map((m) => m.channelId)),
+    hiddenPostIds: new Set(hides.map((h) => h.postId)),
+    dislikeCategories: dislikeCats,
   }
 
   if (affinityCache.size >= AFFINITY_MAX) {

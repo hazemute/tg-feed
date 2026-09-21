@@ -57,6 +57,9 @@ model User {
   translations  TranslationLog[]
   balanceLogs   BalanceLog[]
   questCompletions QuestCompletion[]
+  postHides      PostHide[]
+  postReports    PostReport[]
+  commentReports CommentReport[]
 }
 
 model Category {
@@ -132,6 +135,7 @@ model Post {
   reactionsTg Int      @default(0) // сумма реакций исходного поста (t.me/s)
   likesCount  Int      @default(0)
   commentsCount Int    @default(0) // денормализованный счётчик комментариев
+  reportsCount  Int    @default(0) // v5.68: жалобы на пост
   hotScore    Float    @default(0) // «температура» поста
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
   aiFlag      String? // вердикт ИИ-модерации: ok | junk | nsfw | spam (null — не модерирован)
@@ -147,6 +151,8 @@ model Post {
   likedBy     Like[]
   viewedBy    PostView[]
   bookmarkedBy Bookmark[]
+  hides       PostHide[]
+  reports     PostReport[]
   comments    Comment[]
 
   // v5.44 (скорость): срезы ленты по времени, категории/тренды, промо-посты (page 0)
@@ -363,6 +369,12 @@ model Comment {
   repliesCount Int @default(0)
   likedBy      CommentLike[]
 
+  // === v5.68: модерация без ИИ ===
+  hidden       Boolean @default(false)
+  adScore      Int     @default(0)
+  reportsCount Int     @default(0)
+  reports      CommentReport[]
+
   @@index([postId, createdAt])
   @@index([parentId, createdAt])
   @@index([postId, likesCount])
@@ -374,6 +386,47 @@ model CommentLike {
   userId    String
   commentId String
   comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, commentId])
+  @@index([commentId])
+}
+
+// === v5.68: жалобы и «Не интересно» (модерация без ИИ) ===
+
+model PostHide {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([userId])
+}
+
+model PostReport {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    String   @default("other")
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([postId])
+  @@index([createdAt])
+}
+
+model CommentReport {
+  id        String   @id @default(cuid())
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    String   @default("other")
   createdAt DateTime @default(now())
 
   @@unique([userId, commentId])

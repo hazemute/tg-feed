@@ -52,6 +52,7 @@ import { TopUpModal } from '@/components/tabs/TopUpModal'
 import { AiChat } from '@/components/ai/AiChat'
 import { SwipeIcon } from '@/components/tg/SwipeIcon'
 import { ChannelLiveView } from '@/components/channel/ChannelLiveView'
+import { SubscriptionsSection } from '@/components/tabs/SubscriptionsSection'
 import type { MyChannelDTO, MyChannelResponse, PostDTO } from '@/lib/types'
 
 /**
@@ -141,11 +142,17 @@ export function ChannelTab() {
       <div className="mx-auto w-full max-w-[960px]">
         {/* Заголовок */}
         <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="text-screen-title leading-tight text-tg-text">Канал</h1>
+          <h1 className="text-screen-title leading-tight text-tg-text">Каналы</h1>
           <p className="mt-1 text-[15px] text-tg-hint">
-            Пульт управления: статистика, показ в ленте и ИИ-ассистент — всё в одном месте
+            Подписки, ваш канал и ИИ-пульт — всё в одном месте
           </p>
         </motion.div>
+
+        {/* v5.68: УПРАВЛЕНИЕ ПОДПИСКАМИ — переехало из профиля наверх вкладки.
+            Скрытие из ленты (мьют) тоже здесь — это управление каналами. */}
+        <div className="mt-5">
+          <SubscriptionsSection />
+        </div>
 
         {loading ? (
           <div className="mt-6 space-y-3">
@@ -174,9 +181,15 @@ export function ChannelTab() {
             </button>
           </div>
         ) : !hasChannel ? (
-          <ClaimCard onDone={reload} />
+          <>
+            {/* v5.68: разделитель секций (подписки выше, привязка канала ниже) */}
+            <h2 className="mb-3 mt-7 px-1 text-[19px] font-bold text-tg-text">Ваш канал</h2>
+            <ClaimCard onDone={reload} />
+          </>
         ) : (
           <div className="mt-5 space-y-4">
+            {/* v5.68: заголовок админ-части (визуально отделяет от подписок) */}
+            <h2 className="px-1 pt-3 text-[19px] font-bold text-tg-text">Ваш канал</h2>
             {/* Переключатель каналов (если привязано несколько) */}
             {data!.channels.length > 1 && (
               <div className="no-scrollbar -mx-1 flex gap-2 overflow-x-auto px-1 pb-1">

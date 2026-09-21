@@ -57,6 +57,8 @@ export function toCommentDTO(
     likesCount: c.likesCount,
     likedByMe: likedSet.has(c.id),
     repliesCount: c.repliesCount,
+    // v5.68: флаг скрытия (антиреклама/жалобы) — автор видит свой с плашкой
+    ...(c.hidden ? { hidden: true, adScore: c.adScore } : {}),
     ...(replies ? { replies } : {}),
   }
 }

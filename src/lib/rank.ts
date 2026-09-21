@@ -154,6 +154,22 @@ const VIEWED_PENALTY_SOFT = 900
  * «возвращенцев» — они идут глубоко в хвост.
  */
 export const NOT_INTERESTED_PENALTY = 2400
+/**
+ * v5.68 «Не интересно» на ПОСТ: категория скрытого поста получает отрицательный
+ * сигнал — похожие посты (та же тематика) понижаются в персональной ленте,
+ * но КАНАЛ остаётся (фундаментальное отличие от мьюта канала). Лог-скейлинг:
+ * 1 скрытие ≈ −970, 3 ≈ −1900, 8 ≈ −3200 — одна случайная жалоба не убивает
+ * всю тематику, но серия «мне это не интересно» заметно вытесняет её.
+ */
+export const DISLIKE_CATEGORY_PENALTY = 1400
+/**
+ * v5.68 антиреклама: канал, чьи посты собирают жалобы («Пожаловаться»),
+ * понижается ГЛОБАЛЬНО для всех: distinct-жалобы × 220, кап 4000 (≈ полтора
+ * премиум-бонуса — забаненный рекламный канал уходит глубоко, но не исчезает:
+ * решение о полном удалении — за людьми).
+ */
+export const REPORT_PENALTY_PER = 220
+export const REPORT_PENALTY_CAP = 4000
 const EXPLORATION_BONUS = 12 // неизведанная категория — шанс пробиться в ленту (микро-открытия)
 const UNSEEN_CHANNEL_BONUS = 4 // канал, с которым ещё не было взаимодействий — мягкое «открывашка» каналов
 
@@ -190,6 +206,8 @@ export function personalBoost(opts: {
   viewed: boolean
   affinity: AffinityMap
   notInterested?: boolean
+  /** v5.68: сколько постов этой категории юзер уже скрыл («Не интересно») */
+  dislikes?: number
   /** Когда пост был просмотрен (мс) — для прогрессивного штрафа; нет данных — плоский мягкий */
   viewedAtMs?: number
 }): number {
@@ -204,6 +222,11 @@ export function personalBoost(opts: {
   const subScore = opts.subscribed ? SUBSCRIBED_BOOST : 0
   const viewedPenaltyScore = opts.viewed ? viewedPenalty(opts.viewedAtMs) : 0
   const notInterestedPenalty = opts.notInterested ? NOT_INTERESTED_PENALTY : 0
+  // v5.68: «Не интересно» на пост = понижение ПРИОРИТЕТА ТЕМАТИКИ (канал живёт)
+  const dislikePenalty =
+    opts.dislikes && opts.dislikes > 0
+      ? Math.round(DISLIKE_CATEGORY_PENALTY * Math.log1p(opts.dislikes))
+      : 0
   // Бонус открытия действует, только когда у пользователя уже есть история:
   // у новорождённого аккаунта все категории «неизведанные» — бонус не нужен
   const hasHistory = opts.affinity.channels.size > 0 || opts.affinity.categories.size > 0
@@ -221,7 +244,8 @@ export function personalBoost(opts: {
     exploration +
     unseenChannel -
     viewedPenaltyScore -
-    notInterestedPenalty
+    notInterestedPenalty -
+    dislikePenalty
   )
 }
 

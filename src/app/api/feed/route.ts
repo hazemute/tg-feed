@@ -436,6 +436,7 @@ export async function GET(request: Request) {
           viewedAtMs: signals.viewedAt.get(e.i),
           affinity: signals.affinity,
           notInterested: signals.mutedIds.has(e.c),
+          dislikes: signals.dislikeCategories.get(e.g ?? ''),
         }) +
         shuffleNoise(e.i + effSeed, e.w),
     }))
@@ -458,10 +459,18 @@ export async function GET(request: Request) {
       })
     }
 
-    // Разнообразие: посты одного канала не идут подряд (как в нативных лентах)
-    const ordered = diversify(visible, (x) => x.cid)
-    mark('ranked')
+    /* ---------- v5.68: скрытые ПОСТЫ («Не интересно» на пост) ----------
+      Фильтр без возвратов: конкретный пост убран по требованию читателя.
+      Канал и категория продолжают жить — штраф тематики в personalBoost. */
+    let visiblePosts = visible
+    if (signals.hiddenPostIds.size > 0) {
+      const hp = signals.hiddenPostIds
+      visiblePosts = visiblePosts.filter((x) => !hp.has(x.id))
+    }
 
+    // Разнообразие: посты одного канала не идут подряд (как в нативных лентах)
+    const ordered = diversify(visiblePosts, (x) => x.cid)
+    mark('ranked')
     /* ---------- Страница: посты по id из индекса ----------
         Выборка страницы, лайки, закладки и посты спонсоров независимы —
         уходят ОДНИМ параллельным batch’ем (каждый RTT до дальнего Supabase
