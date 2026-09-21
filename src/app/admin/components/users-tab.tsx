@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
   AlertTriangle,
@@ -8,8 +8,10 @@ import {
   BadgeCheck,
   Banknote,
   CalendarClock,
+  Check,
   ClipboardCheck,
   Code2,
+  Copy,
   Crown,
   Gem,
   Gift,
@@ -24,7 +26,9 @@ import {
   Sparkles,
   Trash2,
   Wallet,
+  X,
 } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -54,6 +58,7 @@ import {
   type UsersResponse,
 } from './api'
 import {
+  Avatar,
   EmptyState,
   Pagination,
   SkeletonRows,
@@ -135,6 +140,80 @@ export function AdminBadgeChip({ slug }: { slug: string }) {
       {def.label}
     </span>
   )
+}
+
+/* ===================== v5.62: карточка-секция модалки «Действия» ===================== */
+
+type SectionTone = 'emerald' | 'violet' | 'slate' | 'red'
+
+const SECTION_TONE: Record<SectionTone, string> = {
+  emerald: 'bg-emerald-50 text-emerald-700',
+  violet: 'bg-violet-50 text-violet-700',
+  slate: 'bg-slate-100 text-slate-600',
+  red: 'bg-red-50 text-red-600',
+}
+
+/** Секция модалки: белая карточка с иконкой в тонированном квадрате + заголовок + хинт */
+function SectionCard({
+  icon: Icon,
+  tone,
+  title,
+  hint,
+  right,
+  footer,
+  children,
+  className,
+}: {
+  icon: LucideIcon
+  tone: SectionTone
+  title: string
+  hint?: string
+  right?: ReactNode
+  footer?: ReactNode
+  children: ReactNode
+  className?: string
+}) {
+  return (
+    <section className={cn('rounded-xl border border-slate-200 bg-white p-4', className)}>
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-start gap-2.5">
+          <span
+            className={cn(
+              'mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg',
+              SECTION_TONE[tone],
+            )}
+          >
+            <Icon className="size-4" aria-hidden />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-[13px] font-semibold leading-tight text-slate-800">{title}</h3>
+            {hint && <p className="mt-0.5 text-xs leading-snug text-slate-500">{hint}</p>}
+          </div>
+        </div>
+        {right && <div className="shrink-0 text-right">{right}</div>}
+      </div>
+      <div className="mt-3">{children}</div>
+      {footer && <div className="mt-3">{footer}</div>}
+    </section>
+  )
+}
+
+/** Детерминированный цвет аватара по ID (палитра бренда, инлайн-стиль — темы не задеты) */
+const AVATAR_COLORS = [
+  '#0ea5e9',
+  '#10b981',
+  '#f59e0b',
+  '#8b5cf6',
+  '#14b8a6',
+  '#3b82f6',
+  '#f97316',
+  '#64748b',
+] as const
+
+function avatarColorFor(seed: string): string {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0
+  return AVATAR_COLORS[h % AVATAR_COLORS.length]
 }
 
 export function UsersTab({ tick, onSettled }: TabProps) {
@@ -228,6 +307,18 @@ export function UsersTab({ tick, onSettled }: TabProps) {
 
   const displayName = (u: PanelUser) =>
     [u.firstName, u.lastName].filter(Boolean).join(' ') || u.username || u.id
+
+  /** Копировать ID юзера в буфер (кнопка в шапке модалки) */
+  const copyUserId = (id: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        void navigator.clipboard.writeText(id)
+        toast.success('ID скопирован')
+      }
+    } catch {
+      /* приватный режим — без копирования */
+    }
+  }
 
   /** Действие v5.11/v5.18 с оптимистичным апдейтом */
   const runUserAction = async (
@@ -478,13 +569,23 @@ export function UsersTab({ tick, onSettled }: TabProps) {
               {/* Мобильные: карточки */}
               <div className="space-y-2 md:hidden">
                 {data.items.map((u) => (
-                  <div key={u.id} className="border-b border-slate-200 p-4">
+                  <div key={u.id} className="rounded-xl border border-slate-200 bg-white p-3.5">
                     <div className="flex items-start justify-between gap-2">
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-center gap-1.5">
                           <span className="truncate text-sm font-medium text-slate-900">{displayName(u)}</span>
                           <UserKindBadge isGuest={u.isGuest} />
                           <TierBadge tier={u.tier} until={u.tierUntil} />
+                          {u.isPremium && (
+                            <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                              TG Premium
+                            </span>
+                          )}
+                          {u.bannedAt && (
+                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                              бан
+                            </span>
+                          )}
                         </div>
                         {u.badges && u.badges.length > 0 && (
                           <div className="mt-1 flex flex-wrap gap-1">
@@ -520,7 +621,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                         </div>
                       ))}
                     </div>
-                    <div className="mt-1.5 text-[11px] text-slate-400">
+                    <div className="mt-1.5 text-[11px] text-slate-500">
                       {u.username ? `@${u.username} · ` : ''}регистрация {fmtAgo(u.createdAt)}
                     </div>
                     <div className="mt-2 flex items-center gap-2">
@@ -528,9 +629,10 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                         variant="outline"
                         size="sm"
                         onClick={() => openAction(u)}
-                        className={cn('h-7 px-2 text-xs', btnOutlineDark)}
+                        aria-label={`Действия: ${displayName(u)}`}
+                        className={cn('h-7 gap-1 px-2 text-xs', btnOutlineDark)}
                       >
-                        Действия{u.bannedAt ? ' (бан)' : ''}
+                        <Settings2 className="size-3.5" aria-hidden /> Действия
                       </Button>
                     </div>
                   </div>
@@ -545,401 +647,525 @@ export function UsersTab({ tick, onSettled }: TabProps) {
         </CardContent>
       </Card>
 
-      {/* Модалка действий: подписка / баланс / премиум / бан */}
+      {/* Модалка действий v5.62: sticky-шапка + 2 колонки карточек (подписка/бейджи | балансы/модерация) */}
       {actionUser && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 md:items-center md:p-6"
           role="dialog"
           aria-modal="true"
-          aria-label={`Действия: ${displayName(actionUser)}`}
+          aria-labelledby="user-action-title"
           onClick={() => !actionBusy && setActionUser(null)}
         >
-          <div
-            className="max-h-[92vh] w-full max-w-md overflow-y-auto rounded-xl border border-slate-200 bg-white p-6 shadow-xl"
+          <motion.div
+            initial={{ opacity: 0, y: 24, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="flex max-h-[92dvh] w-full max-w-3xl flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-xl md:max-h-[86dvh] md:rounded-2xl"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="truncate text-base font-semibold text-slate-900">{displayName(actionUser)}</p>
-                <p className="truncate font-mono text-[11px] text-slate-400">{actionUser.id}</p>
-              </div>
-              <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
-                <TierBadge tier={actionUser.tier} until={actionUser.tierUntil} />
-                {actionUser.isPremium && (
-                  <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
-                    TG Premium
-                  </span>
-                )}
-              </div>
-            </div>
-            {actionUser.bannedAt && actionUser.banReason && (
-              <p className="mt-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
-                Забанен: {actionUser.banReason}
-              </p>
-            )}
-
-            {/* ===== v5.18: Подписка Snap Plus/Pro ===== */}
-            <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/60 p-3">
-              <p className="flex items-center gap-1.5 text-xs font-semibold text-emerald-800">
-                <Gift className="size-4" aria-hidden /> Подписка Snap
-                {actionUser.tier && actionUser.tier !== 'free' && actionUser.tierUntil && (
-                  <span className="ml-auto font-normal text-emerald-700">
-                    до {new Date(actionUser.tierUntil).toLocaleDateString('ru-RU')}
-                  </span>
-                )}
-              </p>
-
-              {/* План: Plus / Pro */}
-              <div className="mt-2.5 grid grid-cols-2 gap-2" role="radiogroup" aria-label="Тариф подписки">
-                {(['plus', 'pro'] as const).map((p) => (
-                  <button
-                    key={p}
-                    type="button"
-                    role="radio"
-                    aria-checked={tierPlan === p}
-                    disabled={actionBusy}
-                    onClick={() => setTierPlan(p)}
-                    className={cn(
-                      'rounded-lg border px-3 py-2 text-left transition',
-                      tierPlan === p
-                        ? p === 'pro'
-                          ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-300'
-                          : 'border-emerald-300 bg-white ring-1 ring-emerald-300'
-                        : 'border-slate-200 bg-white hover:border-slate-300',
-                    )}
-                  >
-                    <span className={cn('flex items-center gap-1.5 text-sm font-semibold', p === 'pro' ? 'text-amber-700' : 'text-emerald-700')}>
-                      <Gem className="size-3.5" aria-hidden /> {p === 'pro' ? 'Snap Pro' : 'Snap Plus'}
-                    </span>
-                    <span className="mt-0.5 block text-[11px] text-slate-500">
-                      {p === 'pro' ? 'Snap Ассистент, продвижение' : 'Безлимит Snap Search, инкогнито'}
-                    </span>
-                  </button>
-                ))}
-              </div>
-
-              {/* Срок */}
-              <div className="mt-2.5">
-                <label className="text-xs font-semibold text-slate-700" htmlFor="tier-days">
-                  <CalendarClock className="mr-1 inline size-3.5" aria-hidden /> Срок, дней
-                </label>
-                <div className="mt-1.5 flex flex-wrap gap-1.5">
-                  {[1, 7, 30, 90, 180, 365].map((d) => (
-                    <button
-                      key={d}
-                      type="button"
-                      disabled={actionBusy || tierForever}
-                      onClick={() => {
-                        setTierDays(String(d))
-                        setTierForever(false)
-                      }}
-                      className={cn(
-                        'rounded-full border px-2.5 py-1 text-xs font-medium transition',
-                        !tierForever && Number(tierDays) === d
-                          ? 'border-emerald-300 bg-emerald-100 text-emerald-800'
-                          : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
-                        tierForever && 'opacity-40',
-                      )}
-                    >
-                      {d === 1 ? 'сутки' : `${d}д`}
-                    </button>
-                  ))}
-                </div>
-                <div className="mt-2 flex items-center gap-2">
-                  <Input
-                    id="tier-days"
-                    type="number"
-                    min={1}
-                    max={36500}
-                    value={tierForever ? '' : tierDays}
-                    disabled={actionBusy || tierForever}
-                    onChange={(e) => setTierDays(e.target.value)}
-                    className={cn('h-8 w-24 text-sm', inputDark)}
-                    aria-label="Срок подписки в днях"
-                  />
-                  <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
-                    <input
-                      type="checkbox"
-                      checked={tierForever}
-                      disabled={actionBusy}
-                      onChange={(e) => setTierForever(e.target.checked)}
-                      className="size-3.5 accent-emerald-600"
-                    />
-                    навсегда
-                  </label>
-                </div>
-              </div>
-
-              {/* Причина (необязательно) */}
-              <Input
-                value={tierReason}
-                onChange={(e) => setTierReason(e.target.value)}
-                placeholder="Заметка: бонус, компенсация…"
-                maxLength={200}
-                disabled={actionBusy}
-                className={cn('mt-2 h-8 text-sm', inputDark)}
-                aria-label="Заметка к выдаче подписки"
+            {/* ===== Sticky-шапка: аватар, имя, ID, бейджи ===== */}
+            <header className="flex shrink-0 items-start gap-3 border-b border-slate-200 bg-white px-4 py-3.5 md:px-5">
+              <Avatar
+                color={avatarColorFor(actionUser.id)}
+                title={displayName(actionUser)}
+                className="size-10 text-base"
               />
-
-              <div className="mt-2.5 grid grid-cols-2 gap-2">
-                <Button
-                  size="sm"
-                  disabled={actionBusy || (!tierForever && (Number(tierDays) || 0) < 1)}
-                  onClick={() =>
-                    actionUser &&
-                    void runUserAction(
-                      actionUser,
-                      { action: 'tier', userId: actionUser.id, tier: tierPlan, days: grantDays, mode: 'grant' },
-                      `${tierPlan === 'pro' ? 'Snap Pro' : 'Snap Plus'} выдан на ${tierForever ? 'всё время' : `${grantDays} дн.`}`,
-                      {
-                        tier: tierPlan,
-                        tierUntil: new Date(
-                          Math.max(Date.now(), actionUser.tierUntil ? new Date(actionUser.tierUntil).getTime() : 0) +
-                            grantDays * 86_400_000,
-                        ).toISOString(),
-                      },
-                    )
-                  }
-                  className="h-9 bg-emerald-600 text-white hover:bg-emerald-700"
-                >
-                  <Gift className="size-4" aria-hidden />
-                  {actionUser.tier === tierPlan && actionUser.tierUntil ? 'Продлить' : 'Выдать'}
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={actionBusy || !actionUser.tier || actionUser.tier === 'free'}
-                  onClick={() =>
-                    actionUser &&
-                    void runUserAction(
-                      actionUser,
-                      { action: 'tier', userId: actionUser.id, mode: 'revoke' },
-                      'Подписка отозвана',
-                      { tier: 'free', tierUntil: null },
-                    )
-                  }
-                  className={cn('h-9 hover:bg-red-50 hover:text-red-700', btnOutlineDark)}
-                >
-                  <Trash2 className="size-4" aria-hidden /> Отозвать
-                </Button>
-              </div>
-              <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
-                Продление того же тарифа суммируется с текущим сроком. Отзыв сбрасывает тир в free.
-              </p>
-            </div>
-
-            {/* ===== v5.19: Бейджи (разработчик/менеджер/…) — клик выдаёт/снимает ===== */}
-            <div className="mt-4 rounded-xl border border-violet-200 bg-violet-50/60 p-3">
-              <p className="flex items-center gap-1.5 text-xs font-semibold text-violet-800">
-                <BadgeCheck className="size-4" aria-hidden /> Бейджи
-                {actionUser.badges && actionUser.badges.length > 0 && (
-                  <span className="ml-auto font-normal text-violet-700">{actionUser.badges.length} шт.</span>
-                )}
-              </p>
-              <div className="mt-2.5 flex flex-wrap gap-1.5">
-                {BADGE_LIST.map((b) => {
-                  const has = actionUser.badges?.includes(b.slug) ?? false
-                  const Icon = BADGE_ICONS[b.icon]
-                  return (
+              <div className="min-w-0 flex-1">
+                <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
+                  <p
+                    id="user-action-title"
+                    className="truncate text-sm font-semibold text-slate-900 md:text-[15px]"
+                  >
+                    {displayName(actionUser)}
+                  </p>
+                  {actionUser.username && (
+                    <span className="truncate text-xs text-slate-500">@{actionUser.username}</span>
+                  )}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="inline-flex items-center gap-0.5 font-mono text-[11px] text-slate-500">
+                    {actionUser.id}
                     <button
-                      key={b.slug}
                       type="button"
+                      onClick={() => copyUserId(actionUser.id)}
+                      aria-label="Скопировать ID"
+                      title="Скопировать ID"
+                      className="rounded p-0.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-900"
+                    >
+                      <Copy className="size-3" aria-hidden />
+                    </button>
+                  </span>
+                  <UserKindBadge isGuest={actionUser.isGuest} />
+                  <TierBadge tier={actionUser.tier} until={actionUser.tierUntil} />
+                  {actionUser.isPremium && (
+                    <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                      TG Premium
+                    </span>
+                  )}
+                  {actionUser.bannedAt && (
+                    <span className="rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+                      бан
+                    </span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => !actionBusy && setActionUser(null)}
+                disabled={actionBusy}
+                aria-label="Закрыть"
+                className="-mr-1 rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-900"
+              >
+                <X className="size-4" aria-hidden />
+              </button>
+            </header>
+
+            {/* ===== Тело: грид карточек, скролл под шапкой ===== */}
+            <div className="admin-scroll min-h-0 flex-1 overflow-y-auto p-4 md:p-5">
+              <div className="grid grid-cols-1 items-start gap-3 md:grid-cols-2 md:gap-4">
+                {/* Левая колонка: подписка + бейджи */}
+                <div className="space-y-3 md:space-y-4">
+
+                  {/* ===== v5.18: Подписка Snap Plus/Pro ===== */}
+                  <SectionCard
+                    icon={Gift}
+                    tone="emerald"
+                    title="Подписка Snap"
+                    right={
+                      actionUser.tier && actionUser.tier !== 'free' && actionUser.tierUntil ? (
+                        <span className="text-[11px] text-slate-500">
+                          до {new Date(actionUser.tierUntil).toLocaleDateString('ru-RU')}
+                        </span>
+                      ) : undefined
+                    }
+                    footer={
+                      <p className="text-[11px] leading-snug text-slate-500">
+                        Продление того же тарифа суммируется с текущим сроком. Отзыв сбрасывает тир в free.
+                      </p>
+                    }
+                  >
+                    {/* План: Plus / Pro — выбираемые плитки */}
+                    <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Тариф подписки">
+                      {(['plus', 'pro'] as const).map((p) => {
+                        const active = tierPlan === p
+                        return (
+                          <button
+                            key={p}
+                            type="button"
+                            role="radio"
+                            aria-checked={active}
+                            disabled={actionBusy}
+                            onClick={() => setTierPlan(p)}
+                            className={cn(
+                              'relative rounded-lg border px-3 py-2 text-left transition',
+                              active
+                                ? p === 'pro'
+                                  ? 'border-amber-300 bg-amber-50 ring-1 ring-amber-300'
+                                  : 'border-emerald-300 bg-emerald-50/70 ring-1 ring-emerald-300'
+                                : 'border-slate-200 bg-white hover:border-slate-300',
+                            )}
+                          >
+                            {active && (
+                              <Check
+                                className={cn(
+                                  'absolute right-2 top-2 size-3.5',
+                                  p === 'pro' ? 'text-amber-600' : 'text-emerald-600',
+                                )}
+                                aria-hidden
+                              />
+                            )}
+                            <span
+                              className={cn(
+                                'flex items-center gap-1.5 text-sm font-semibold',
+                                p === 'pro' ? 'text-amber-700' : 'text-emerald-700',
+                              )}
+                            >
+                              <Gem className="size-3.5" aria-hidden /> {p === 'pro' ? 'Snap Pro' : 'Snap Plus'}
+                            </span>
+                            <span className="mt-0.5 block text-[11px] leading-snug text-slate-500">
+                              {p === 'pro' ? 'Snap Ассистент, продвижение' : 'Безлимит Snap Search, инкогнито'}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+
+                    {/* Срок: чипы-сегменты + свой ввод + «навсегда» */}
+                    <div className="mt-3">
+                      <label className="text-xs font-semibold text-slate-700" htmlFor="tier-days">
+                        <CalendarClock className="mr-1 inline size-3.5" aria-hidden /> Срок, дней
+                      </label>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        {[1, 7, 30, 90, 180, 365].map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            disabled={actionBusy || tierForever}
+                            onClick={() => {
+                              setTierDays(String(d))
+                              setTierForever(false)
+                            }}
+                            className={cn(
+                              'rounded-lg border px-2.5 py-1 text-xs font-medium tabular-nums transition',
+                              !tierForever && Number(tierDays) === d
+                                ? 'border-emerald-300 bg-emerald-100 text-emerald-800'
+                                : 'border-slate-200 bg-white text-slate-600 hover:bg-slate-50',
+                              tierForever && 'opacity-40',
+                            )}
+                          >
+                            {d === 1 ? 'сутки' : `${d}д`}
+                          </button>
+                        ))}
+                        <Input
+                          id="tier-days"
+                          type="number"
+                          min={1}
+                          max={36500}
+                          value={tierForever ? '' : tierDays}
+                          disabled={actionBusy || tierForever}
+                          onChange={(e) => setTierDays(e.target.value)}
+                          className={cn('h-8 w-20 text-sm tabular-nums', inputDark)}
+                          aria-label="Срок подписки в днях"
+                        />
+                        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-slate-600">
+                          <input
+                            type="checkbox"
+                            checked={tierForever}
+                            disabled={actionBusy}
+                            onChange={(e) => setTierForever(e.target.checked)}
+                            className="size-3.5 accent-emerald-600"
+                          />
+                          навсегда
+                        </label>
+                      </div>
+                    </div>
+
+                    {/* Причина (необязательно) */}
+                    <Input
+                      value={tierReason}
+                      onChange={(e) => setTierReason(e.target.value)}
+                      placeholder="Заметка: бонус, компенсация…"
+                      maxLength={200}
                       disabled={actionBusy}
-                      aria-pressed={has}
-                      title={has ? 'Снять бейдж' : 'Выдать бейдж'}
+                      className={cn('mt-3 h-9 text-sm', inputDark)}
+                      aria-label="Заметка к выдаче подписки"
+                    />
+
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <Button
+                        size="sm"
+                        disabled={actionBusy || (!tierForever && (Number(tierDays) || 0) < 1)}
+                        onClick={() =>
+                          actionUser &&
+                          void runUserAction(
+                            actionUser,
+                            { action: 'tier', userId: actionUser.id, tier: tierPlan, days: grantDays, mode: 'grant' },
+                            `${tierPlan === 'pro' ? 'Snap Pro' : 'Snap Plus'} выдан на ${tierForever ? 'всё время' : `${grantDays} дн.`}`,
+                            {
+                              tier: tierPlan,
+                              tierUntil: new Date(
+                                Math.max(Date.now(), actionUser.tierUntil ? new Date(actionUser.tierUntil).getTime() : 0) +
+                                  grantDays * 86_400_000,
+                              ).toISOString(),
+                            },
+                          )
+                        }
+                        className="h-9 bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
+                        <Gift className="size-4" aria-hidden />
+                        {actionUser.tier === tierPlan && actionUser.tierUntil ? 'Продлить' : 'Выдать'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={actionBusy || !actionUser.tier || actionUser.tier === 'free'}
+                        onClick={() =>
+                          actionUser &&
+                          void runUserAction(
+                            actionUser,
+                            { action: 'tier', userId: actionUser.id, mode: 'revoke' },
+                            'Подписка отозвана',
+                            { tier: 'free', tierUntil: null },
+                          )
+                        }
+                        className={cn('h-9 hover:bg-red-50 hover:text-red-700', btnOutlineDark)}
+                      >
+                        <Trash2 className="size-4" aria-hidden /> Отозвать
+                      </Button>
+                    </div>
+                  </SectionCard>
+
+                  {/* ===== v5.19: Бейджи (разработчик/менеджер/…) — клик выдаёт/снимает ===== */}
+                  <SectionCard
+                    icon={BadgeCheck}
+                    tone="violet"
+                    title="Бейджи"
+                    hint="Клик по цветному — снять, по серому — выдать"
+                    right={
+                      actionUser.badges && actionUser.badges.length > 0 ? (
+                        <span className="text-[11px] font-semibold text-violet-700">
+                          {actionUser.badges.length} шт.
+                        </span>
+                      ) : undefined
+                    }
+                    footer={
+                      <p className="text-[11px] leading-snug text-slate-500">
+                        Юзер получает уведомление, бейдж виден у имени в комментариях и профиле.
+                      </p>
+                    }
+                  >
+                    <div className="flex flex-wrap gap-1.5">
+                      {BADGE_LIST.map((b) => {
+                        const has = actionUser.badges?.includes(b.slug) ?? false
+                        const Icon = BADGE_ICONS[b.icon]
+                        return (
+                          <button
+                            key={b.slug}
+                            type="button"
+                            disabled={actionBusy}
+                            aria-pressed={has}
+                            title={has ? 'Снять бейдж' : 'Выдать бейдж'}
+                            onClick={() =>
+                              actionUser &&
+                              void runUserAction(
+                                actionUser,
+                                { action: 'badge', userId: actionUser.id, badge: b.slug, mode: has ? 'revoke' : 'grant' },
+                                has ? `Бейдж «${b.label}» снят` : `Бейдж «${b.label}» выдан`,
+                                {
+                                  badges: has
+                                    ? (actionUser.badges ?? []).filter((x) => x !== b.slug)
+                                    : [...(actionUser.badges ?? []), b.slug],
+                                },
+                              )
+                            }
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-lg border px-2.5 py-1 text-[11px] font-semibold transition',
+                              has
+                                ? `${b.solid} border-transparent`
+                                : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700',
+                            )}
+                          >
+                            <Icon className="size-3.5" aria-hidden />
+                            {b.label}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </SectionCard>
+                </div>
+
+                {/* Правая колонка: балансы + модерация */}
+                <div className="space-y-3 md:space-y-4">
+
+                  {/* Баланс свайпов */}
+                  <SectionCard
+                    icon={Wallet}
+                    tone="slate"
+                    title="Баланс свайпов"
+                    hint="Абсолютное значение, не дельта"
+                    right={
+                      <div>
+                        <div className="text-sm font-semibold tabular-nums text-slate-900">
+                          {fmtNum(actionUser.swipes ?? 0)}
+                        </div>
+                        <div className="text-[11px] text-slate-500">сейчас</div>
+                      </div>
+                    }
+                  >
+                    <div className="flex gap-2">
+                      <Input
+                        id="swipes-input"
+                        type="number"
+                        min={0}
+                        max={10000000}
+                        value={swipesInput}
+                        onChange={(e) => setSwipesInput(e.target.value)}
+                        className={cn('h-9 flex-1 text-sm tabular-nums', inputDark)}
+                        aria-label="Новый баланс свайпов"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={actionBusy || swipesInput === '' || Number(swipesInput) === actionUser.swipes}
+                        onClick={() =>
+                          actionUser &&
+                          void runUserAction(
+                            actionUser,
+                            { action: 'swipes', userId: actionUser.id, swipes: Number(swipesInput) },
+                            `Баланс изменён на ${fmtNum(Number(swipesInput))} свайпов`,
+                            { swipes: Number(swipesInput) },
+                          )
+                        }
+                        className="h-9 shrink-0 bg-emerald-600 px-3 text-white hover:bg-emerald-700"
+                      >
+                        Сохранить
+                      </Button>
+                    </div>
+                  </SectionCard>
+
+                  {/* Баланс рублей (v5.61) */}
+                  <SectionCard
+                    icon={Banknote}
+                    tone="emerald"
+                    title="Баланс рублей — кошелёк"
+                    right={
+                      <div>
+                        <div className="text-sm font-semibold tabular-nums text-slate-900">
+                          {((actionUser.balanceKop ?? 0) / 100).toLocaleString('ru-RU', {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })}{' '}
+                          ₽
+                        </div>
+                        <div className="text-[11px] text-slate-500">сейчас</div>
+                      </div>
+                    }
+                    footer={
+                      <p className="text-[11px] leading-snug text-slate-500">
+                        Компенсации и корректировки кошелька. Юзер увидит операцию в истории кошелька.
+                      </p>
+                    }
+                  >
+                    <div className="flex gap-2">
+                      <Input
+                        id="balance-input"
+                        type="number"
+                        min={0}
+                        max={1000000}
+                        step={0.01}
+                        value={balanceInput}
+                        onChange={(e) => setBalanceInput(e.target.value)}
+                        className={cn('h-9 flex-1 text-sm tabular-nums', inputDark)}
+                        aria-label="Новый рублёвый баланс в рублях"
+                        placeholder="0.00"
+                      />
+                      <Button
+                        size="sm"
+                        disabled={actionBusy || balanceInput === '' || Math.round(Number(balanceInput.replace(',', '.')) * 100) === (actionUser.balanceKop ?? 0)}
+                        onClick={() => {
+                          const kop = Math.round(Number(balanceInput.replace(',', '.')) * 100)
+                          if (!Number.isFinite(kop) || kop < 0) return
+                          if (actionUser)
+                            void runUserAction(
+                              actionUser,
+                              { action: 'balance', userId: actionUser.id, balanceKop: kop },
+                              `Рублёвый баланс изменён на ${(kop / 100).toFixed(2)} ₽`,
+                              { balanceKop: kop },
+                            )
+                        }}
+                        className="h-9 shrink-0 bg-emerald-600 px-3 text-white hover:bg-emerald-700"
+                      >
+                        Сохранить
+                      </Button>
+                    </div>
+                  </SectionCard>
+
+                  {/* ===== Модерация: TG Premium + бан/разбан (danger zone) ===== */}
+                  <SectionCard icon={ShieldCheck} tone="red" title="Модерация" hint="Флаг TG Premium, бан и разбан">
+                    {/* Telegram Premium (флаг) */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="flex items-center gap-1.5 text-xs font-semibold text-slate-700">
+                        <Gem className="size-3.5 text-sky-600" aria-hidden /> TG Premium
+                      </span>
+                      {actionUser.isPremium ? (
+                        <span className="rounded-full bg-sky-100 px-2 py-0.5 text-[11px] font-semibold text-sky-700">
+                          активен
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-500">
+                          нет
+                        </span>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={actionBusy}
                       onClick={() =>
                         actionUser &&
                         void runUserAction(
                           actionUser,
-                          { action: 'badge', userId: actionUser.id, badge: b.slug, mode: has ? 'revoke' : 'grant' },
-                          has ? `Бейдж «${b.label}» снят` : `Бейдж «${b.label}» выдан`,
-                          {
-                            badges: has
-                              ? (actionUser.badges ?? []).filter((x) => x !== b.slug)
-                              : [...(actionUser.badges ?? []), b.slug],
-                          },
+                          { action: 'premium', userId: actionUser.id },
+                          actionUser.isPremium ? 'TG Premium снят' : 'TG Premium выдан',
+                          { isPremium: !actionUser.isPremium },
                         )
                       }
-                      className={cn(
-                        'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-semibold transition',
-                        has
-                          ? `${b.solid} border-transparent`
-                          : 'border-slate-200 bg-white text-slate-500 hover:border-slate-300 hover:text-slate-700',
-                      )}
+                      className={cn('mt-2 w-full', btnOutlineDark)}
                     >
-                      <Icon className="size-3.5" aria-hidden />
-                      {b.label}
-                    </button>
-                  )
-                })}
+                      <Gem className="size-4" aria-hidden />
+                      {actionUser.isPremium ? 'Снять флаг TG Premium' : 'Поставить флаг TG Premium'}
+                    </Button>
+
+                    {/* Бан/разбан — danger zone */}
+                    <div className="mt-4">
+                      {!actionUser.bannedAt ? (
+                        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                          <label className="text-xs font-semibold text-red-700" htmlFor="ban-reason">
+                            <Ban className="mr-1 inline size-3.5" aria-hidden /> Причина бана
+                          </label>
+                          <Input
+                            id="ban-reason"
+                            value={banReason}
+                            onChange={(e) => setBanReason(e.target.value)}
+                            placeholder="спам, абьюз…"
+                            maxLength={200}
+                            className={cn('mt-1.5 h-9 text-sm', inputDark)}
+                          />
+                          <Button
+                            size="sm"
+                            disabled={actionBusy || banReason.trim().length === 0}
+                            onClick={() =>
+                              actionUser &&
+                              void runUserAction(
+                                actionUser,
+                                { action: 'ban', userId: actionUser.id, reason: banReason.trim() },
+                                'Пользователь забанен — API отвечает ему 403',
+                                { bannedAt: new Date().toISOString(), banReason: banReason.trim() },
+                              )
+                            }
+                            className="mt-2 w-full bg-red-600 text-white hover:bg-red-700"
+                          >
+                            <Ban className="size-4" aria-hidden /> Забанить пользователя
+                          </Button>
+                        </div>
+                      ) : (
+                        <div className="rounded-lg border border-red-200 bg-red-50 p-3">
+                          <p className="flex items-center gap-1.5 text-xs font-semibold text-red-700">
+                            <Ban className="size-3.5" aria-hidden /> Пользователь забанен
+                          </p>
+                          {actionUser.banReason && (
+                            <p className="mt-1 text-xs leading-snug text-red-600">
+                              Причина: {actionUser.banReason}
+                            </p>
+                          )}
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={actionBusy}
+                            onClick={() =>
+                              actionUser &&
+                              void runUserAction(
+                                actionUser,
+                                { action: 'unban', userId: actionUser.id },
+                                'Пользователь разбанен',
+                                { bannedAt: null, banReason: null },
+                              )
+                            }
+                            className={cn('mt-2 w-full', btnOutlineDark)}
+                          >
+                            <ShieldOff className="size-4" aria-hidden /> Разбанить
+                          </Button>
+                        </div>
+                      )}
+                      <p className="mt-2 text-[11px] leading-snug text-slate-500">
+                        Бан блокирует весь API (лента, комментарии, платежи) через Edge-зеркало; вход в миниапп
+                        остаётся, чтобы пользователь видел бан.
+                      </p>
+                    </div>
+                  </SectionCard>
+                </div>
               </div>
-              <p className="mt-1.5 text-[11px] leading-snug text-slate-500">
-                Клик по цветному — снять, по серому — выдать. Юзер получает уведомление, бейдж виден у имени в комментариях и профиле.
-              </p>
             </div>
-
-            {/* Баланс свайпов */}
-            <div className="mt-4">
-              <label className="text-xs font-semibold text-slate-700" htmlFor="swipes-input">
-                <Wallet className="mr-1 inline size-3.5" aria-hidden /> Баланс свайпов (сейчас{' '}
-                {fmtNum(actionUser.swipes ?? 0)})
-              </label>
-              <div className="mt-1.5 flex gap-2">
-                <Input
-                  id="swipes-input"
-                  type="number"
-                  min={0}
-                  max={10000000}
-                  value={swipesInput}
-                  onChange={(e) => setSwipesInput(e.target.value)}
-                  className={cn('h-9 flex-1 text-sm', inputDark)}
-                  aria-label="Новый баланс свайпов"
-                />
-                <Button
-                  size="sm"
-                  disabled={actionBusy || swipesInput === '' || Number(swipesInput) === actionUser.swipes}
-                  onClick={() =>
-                    actionUser &&
-                    void runUserAction(
-                      actionUser,
-                      { action: 'swipes', userId: actionUser.id, swipes: Number(swipesInput) },
-                      `Баланс изменён на ${fmtNum(Number(swipesInput))} свайпов`,
-                      { swipes: Number(swipesInput) },
-                    )
-                  }
-                  className="h-9 bg-slate-800 text-white hover:bg-slate-900"
-                >
-                  Сохранить
-                </Button>
-              </div>
-            </div>
-
-            {/* Баланс рублей (v5.61) */}
-            <div className="mt-4">
-              <label className="text-xs font-semibold text-slate-700" htmlFor="balance-input">
-                <Banknote className="mr-1 inline size-3.5 text-emerald-600" aria-hidden /> Баланс рублей — кошелёк (сейчас{' '}
-                {((actionUser.balanceKop ?? 0) / 100).toLocaleString('ru-RU', {
-                  minimumFractionDigits: 2,
-                  maximumFractionDigits: 2,
-                })}{' '}
-                ₽)
-              </label>
-              <div className="mt-1.5 flex gap-2">
-                <Input
-                  id="balance-input"
-                  type="number"
-                  min={0}
-                  max={1000000}
-                  step={0.01}
-                  value={balanceInput}
-                  onChange={(e) => setBalanceInput(e.target.value)}
-                  className={cn('h-9 flex-1 text-sm', inputDark)}
-                  aria-label="Новый рублёвый баланс в рублях"
-                  placeholder="0.00"
-                />
-                <Button
-                  size="sm"
-                  disabled={actionBusy || balanceInput === '' || Math.round(Number(balanceInput.replace(',', '.')) * 100) === (actionUser.balanceKop ?? 0)}
-                  onClick={() => {
-                    const kop = Math.round(Number(balanceInput.replace(',', '.')) * 100)
-                    if (!Number.isFinite(kop) || kop < 0) return
-                    if (actionUser)
-                      void runUserAction(
-                        actionUser,
-                        { action: 'balance', userId: actionUser.id, balanceKop: kop },
-                        `Рублёвый баланс изменён на ${(kop / 100).toFixed(2)} ₽`,
-                        { balanceKop: kop },
-                      )
-                  }}
-                  className="h-9 bg-slate-800 text-white hover:bg-slate-900"
-                >
-                  Сохранить
-                </Button>
-              </div>
-              <p className="mt-1 text-[11px] leading-snug text-slate-500">
-                Компенсации и корректировки кошелька. Юзер увидит операцию в истории кошелька.
-              </p>
-            </div>
-
-            {/* Telegram Premium (флаг) */}
-            <div className="mt-3">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={actionBusy}
-                onClick={() =>
-                  actionUser &&
-                  void runUserAction(
-                    actionUser,
-                    { action: 'premium', userId: actionUser.id },
-                    actionUser.isPremium ? 'TG Premium снят' : 'TG Premium выдан',
-                    { isPremium: !actionUser.isPremium },
-                  )
-                }
-                className={cn('w-full', btnOutlineDark)}
-              >
-                <Gem className="size-4" aria-hidden />
-                {actionUser.isPremium ? 'Снять флаг TG Premium' : 'Поставить флаг TG Premium'}
-              </Button>
-            </div>
-
-            {/* Бан/разбан */}
-            <div className="mt-4 border-t border-slate-100 pt-4">
-              {!actionUser.bannedAt ? (
-                <>
-                  <label className="text-xs font-semibold text-slate-700" htmlFor="ban-reason">
-                    <Ban className="mr-1 inline size-3.5 text-red-500" aria-hidden /> Причина бана
-                  </label>
-                  <Input
-                    id="ban-reason"
-                    value={banReason}
-                    onChange={(e) => setBanReason(e.target.value)}
-                    placeholder="спам, абьюз…"
-                    maxLength={200}
-                    className={cn('mt-1.5 h-9 text-sm', inputDark)}
-                  />
-                  <Button
-                    size="sm"
-                    disabled={actionBusy || banReason.trim().length === 0}
-                    onClick={() =>
-                      actionUser &&
-                      void runUserAction(
-                        actionUser,
-                        { action: 'ban', userId: actionUser.id, reason: banReason.trim() },
-                        'Пользователь забанен — API отвечает ему 403',
-                        { bannedAt: new Date().toISOString(), banReason: banReason.trim() },
-                      )
-                    }
-                    className="mt-2 w-full bg-red-600 text-white hover:bg-red-700"
-                  >
-                    <Ban className="size-4" aria-hidden /> Забанить пользователя
-                  </Button>
-                </>
-              ) : (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={actionBusy}
-                  onClick={() =>
-                    actionUser &&
-                    void runUserAction(
-                      actionUser,
-                      { action: 'unban', userId: actionUser.id },
-                      'Пользователь разбанен',
-                      { bannedAt: null, banReason: null },
-                    )
-                  }
-                  className={cn('w-full', btnOutlineDark)}
-                >
-                  <ShieldOff className="size-4" aria-hidden /> Разбанить
-                </Button>
-              )}
-              <p className="mt-2 text-[11px] leading-snug text-slate-400">
-                Бан блокирует весь API (лента, комментарии, платежи) через Edge-зеркало;
-                вход в миниапп остаётся, чтобы пользователь видел бан.
-              </p>
-            </div>
-          </div>
+          </motion.div>
         </div>
       )}
     </motion.div>

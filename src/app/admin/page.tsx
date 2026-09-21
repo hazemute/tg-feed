@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { motion } from 'framer-motion'
+import { AnimatePresence, motion } from 'framer-motion'
 import {
   Bot,
   Gem,
@@ -14,7 +14,7 @@ import {
   ListChecks,
   LogOut,
   Megaphone,
-  MonitorCog,
+  Menu,
   Moon,
   Palette,
   RefreshCw,
@@ -25,6 +25,8 @@ import {
   Users,
   Wallet,
   Wrench,
+  X,
+  Check,
 } from 'lucide-react'
 import { toast } from 'sonner'
 
@@ -92,6 +94,28 @@ const THEME_LABEL: Record<AdminTheme, string> = {
   rose: 'Роза',
 }
 
+/* Элемент навигации (данные — те же, что раньше; группировка — ниже) */
+type NavItem = {
+  key: TabKey
+  label: string
+  icon: typeof LayoutDashboard
+  badge?: number | string | null
+  badgeTone?: 'accent' | 'amber'
+}
+
+/*
+ * Группы сайдбара (v5.62): секции с крошечными uppercase-заголовками.
+ * Порядок вкладок внутри групп фиксирован, ключи — все 16 вкладок панели.
+ */
+const NAV_GROUPS: Array<{ title?: string; keys: TabKey[] }> = [
+  { keys: ['overview'] },
+  { title: 'Деньги', keys: ['finance', 'subscriptions', 'ads'] },
+  { title: 'Контент', keys: ['channels', 'moderation', 'feedback'] },
+  { title: 'Люди', keys: ['users', 'badges', 'support'] },
+  { title: 'Рост', keys: ['giveaways', 'quests'] },
+  { title: 'Система', keys: ['audit', 'system', 'tools', 'bot'] },
+]
+
 export default function AdminPage() {
   const [auth, setAuth] = useState<AuthState>('checking')
   const [health, setHealth] = useState<PanelHealth | null>(null)
@@ -105,6 +129,7 @@ export default function AdminPage() {
   const [supportUnread, setSupportUnread] = useState(0)
   const [feedbackUnread, setFeedbackUnread] = useState(0)
   const [active, setActive] = useState<TabKey>('overview')
+  const [navOpen, setNavOpen] = useState(false)
   // Тема: localStorage; undefined до монтирования — чтобы не мигнуло
   const [theme, setTheme] = useState<AdminTheme>('')
 
@@ -119,6 +144,21 @@ export default function AdminPage() {
     else document.documentElement.setAttribute('data-adm', theme)
     return () => document.documentElement.removeAttribute('data-adm')
   }, [theme])
+
+  // Мобильный дровер: Esc закрывает, скролл body заблокирован, пока открыт
+  useEffect(() => {
+    if (!navOpen) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setNavOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    const prevOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+    }
+  }, [navOpen])
 
   const applyTheme = useCallback((t: AdminTheme) => {
     setTheme(t)
@@ -241,6 +281,7 @@ export default function AdminPage() {
     setHealth(null)
     setHealthOk(null)
     setModCount(null)
+    setNavOpen(false)
     toast.success('Выход выполнен — ключ удалён из сессии')
   }, [])
 
@@ -253,9 +294,18 @@ export default function AdminPage() {
     [loadHealth],
   )
 
+  const selectTab = useCallback((key: TabKey) => {
+    setActive(key)
+    // Дровер закрывается при выборе вкладки (на десктопе он и так закрыт)
+    setNavOpen(false)
+  }, [])
+
   if (auth === 'checking') {
     return (
-      <div data-adm-theme={theme || 'light'} className="flex min-h-screen flex-col items-center justify-center gap-3">
+      <div
+        data-adm-theme={theme || 'light'}
+        className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-50"
+      >
         <img src="/logo.svg" alt="" className="h-10 w-10 animate-pulse" />
         <p className="text-xs text-slate-500">Проверка доступа…</p>
       </div>
@@ -264,7 +314,7 @@ export default function AdminPage() {
 
   if (auth === 'anon') {
     return (
-      <div data-adm-theme={theme || 'light'}>
+      <div data-adm-theme={theme || 'light'} className="min-h-screen bg-slate-50">
         <LoginScreen onSuccess={handleLoginSuccess} />
       </div>
     )
@@ -287,13 +337,7 @@ export default function AdminPage() {
             ring: 'border-red-500/30 bg-red-50',
           }
 
-  const NAV: Array<{
-    key: TabKey
-    label: string
-    icon: typeof LayoutDashboard
-    badge?: number | string | null
-    badgeTone?: 'accent' | 'amber'
-  }> = [
+  const NAV: NavItem[] = [
     { key: 'overview', label: 'Обзор', icon: LayoutDashboard },
     { key: 'finance', label: 'Финансы', icon: Wallet },
     { key: 'subscriptions', label: 'Подписки', icon: Gem },
@@ -336,6 +380,9 @@ export default function AdminPage() {
     { key: 'bot', label: 'Бот', icon: Bot },
   ]
 
+  const navByKey = new Map<TabKey, NavItem>(NAV.map((item) => [item.key, item]))
+  const activeLabel = NAV.find((item) => item.key === active)?.label ?? ''
+
   const renderTab = () => {
     switch (active) {
       case 'overview':
@@ -374,47 +421,144 @@ export default function AdminPage() {
   }
 
   const ThemeSwatches = (
-    <div className="flex items-center gap-1.5" role="group" aria-label="Тема админ-панели">
+    <div className="flex items-center gap-2" role="group" aria-label="Тема админ-панели">
       {(
         [
-          { t: '' as AdminTheme, cls: 'bg-white border-slate-300' },
-          { t: 'dark' as AdminTheme, cls: 'bg-[#17212b] border-slate-600' },
-          { t: 'sepia' as AdminTheme, cls: 'bg-[#f0e6d2] border-amber-300' },
-          { t: 'rose' as AdminTheme, cls: 'bg-[#fbe4eb] border-rose-300' },
-        ]
-      ).map(({ t, cls }) => (
-        <button
-          key={t}
-          type="button"
-          onClick={() => applyTheme(t)}
-          title={THEME_LABEL[t]}
-          aria-label={`Тема: ${THEME_LABEL[t]}`}
-          aria-pressed={theme === t}
-          className={cn(
-            'flex size-6 items-center justify-center rounded-full border transition',
-            cls,
-            theme === t ? 'ring-2 ring-emerald-500 ring-offset-1' : 'opacity-70 hover:opacity-100',
+          // bg-[#ffffff], а не bg-white: в тёмной теме .bg-white перекрашивается
+          // панелью — светлый свотч слился бы с тёмным
+          { t: '' as AdminTheme, cls: 'border-slate-300 bg-[#ffffff]', icon: 'sun' },
+          { t: 'dark' as AdminTheme, cls: 'border-slate-600 bg-[#111a24]', icon: 'moon' },
+          { t: 'sepia' as AdminTheme, cls: 'border-amber-300 bg-[#f0e6d2]', icon: null },
+          { t: 'rose' as AdminTheme, cls: 'border-rose-300 bg-[#fbe4eb]', icon: null },
+        ] as const
+      ).map(({ t, cls, icon }) => {
+        const isActive = theme === t
+        return (
+          <button
+            key={t}
+            type="button"
+            onClick={() => applyTheme(t)}
+            title={THEME_LABEL[t]}
+            aria-label={`Тема: ${THEME_LABEL[t]}`}
+            aria-pressed={isActive}
+            className={cn(
+              'flex size-6 items-center justify-center rounded-full border shadow-sm transition-all duration-150',
+              cls,
+              isActive ? 'ring-2 ring-emerald-500 ring-offset-1' : 'opacity-75 hover:opacity-100',
+            )}
+          >
+            {isActive ? (
+              <Check
+                className={cn('size-3', t === 'dark' ? 'text-sky-300' : 'text-slate-600')}
+                aria-hidden
+              />
+            ) : icon === 'sun' ? (
+              <Sun className="size-3 text-slate-500" aria-hidden />
+            ) : icon === 'moon' ? (
+              <Moon className="size-3 text-slate-300" aria-hidden />
+            ) : null}
+          </button>
+        )
+      })}
+      <span className="ml-1 text-[11px] text-slate-400">{THEME_LABEL[theme]}</span>
+    </div>
+  )
+
+  const BrandBlock = (
+    <div className="flex items-center gap-3 border-b border-slate-100 px-5 py-4">
+      <img src="/logo.svg" alt="Tg Swipe" className="h-9 w-9 shrink-0" />
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold text-slate-900">Tg Swipe</p>
+        <p className="truncate text-xs text-slate-500">Админ-панель</p>
+      </div>
+    </div>
+  )
+
+  /*
+   * Сгруппированное меню: крошечные uppercase-заголовки секций, активный
+   * пункт — акцентная черта слева (3px) + тонированный фон + акцентный текст.
+   * Используется и в десктопном сайдбаре, и в мобильном дровере.
+   */
+  const renderNavGroups = () => (
+    <div>
+      {NAV_GROUPS.map((group, gi) => (
+        <div key={group.title ?? `group-${gi}`}>
+          {group.title ? (
+            <p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
+              {group.title}
+            </p>
+          ) : (
+            <div className="pt-1" aria-hidden />
           )}
-        >
-          {t === '' && <Sun className="size-3 text-slate-500" aria-hidden />}
-          {t === 'dark' && <Moon className="size-3 text-white" aria-hidden />}
-        </button>
+          <div className="flex flex-col gap-0.5">
+            {group.keys.map((key) => {
+              const item = navByKey.get(key)
+              if (!item) return null
+              const { label, icon: Icon, badge, badgeTone } = item
+              const isActive = active === key
+              return (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => selectTab(key)}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={cn(
+                    'relative flex w-full items-center gap-2.5 rounded-lg py-2 pl-4 pr-2.5 text-sm font-medium transition-colors duration-150',
+                    isActive
+                      ? 'bg-emerald-50 text-emerald-700 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.10)]'
+                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
+                  )}
+                >
+                  <span
+                    aria-hidden
+                    className={cn(
+                      'absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-emerald-500 transition-opacity duration-150',
+                      isActive ? 'opacity-100' : 'opacity-0',
+                    )}
+                  />
+                  <Icon className="size-4 shrink-0" aria-hidden />
+                  <span className="min-w-0 flex-1 truncate text-left">{label}</span>
+                  {badge != null && badge !== 0 && badge !== '' && (
+                    <span
+                      className={cn(
+                        'shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
+                        badgeTone === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-600 text-white',
+                      )}
+                    >
+                      {badge}
+                    </span>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+        </div>
       ))}
-      <span className="ml-1 hidden text-[11px] text-slate-400 xl:inline">{THEME_LABEL[theme]}</span>
     </div>
   )
 
   return (
-    <div data-adm-theme={theme || 'light'} className="min-h-screen">
-      {/* Шапка */}
+    <div data-adm-theme={theme || 'light'} className="min-h-screen bg-slate-50">
+      {/* Шапка: заголовок активной вкладки + статус API/обновление/тема/выход */}
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
-        <div className="flex h-14 w-full items-center gap-3 px-4 md:px-6 xl:px-10">
-          <img src="/logo.svg" alt="" className="h-7 w-7" />
-          <h1 className="truncate text-sm font-semibold text-slate-900 md:text-base">
-            Tg Swipe · Админ-панель
+        <div className="mx-auto flex h-14 w-full items-center gap-2 px-4 md:gap-3 md:px-8">
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => setNavOpen(true)}
+            aria-label="Открыть меню"
+            className="text-slate-500 lg:hidden"
+          >
+            <Menu aria-hidden />
+          </Button>
+          <h1 className="min-w-0 flex-1 truncate text-sm font-semibold text-slate-900 md:text-[15px]">
+            {activeLabel}
+            <span className="ml-2 hidden text-xs font-normal text-slate-400 xl:inline">
+              · Tg Swipe — Админ-панель
+            </span>
           </h1>
-          <div className="ml-auto flex items-center gap-2">
-            {/* Тема: компактный цикл на узких экранах, свотчи в сайдбаре */}
+          <div className="flex shrink-0 items-center gap-2">
+            {/* Тема: компактный цикл на узких экранах, свотчи — в сайдбаре/дровере */}
             <Button
               variant="ghost"
               size="icon"
@@ -459,96 +603,22 @@ export default function AdminPage() {
         </div>
       </header>
 
-      {/* Сайдбар (lg+) + контент — приказ владельца: «для компа сделай сайдбар
-          слева, а не вверху вкладки, потому что много вкладок горизонтальных
-          в админ панели не красиво» */}
-      <div className="flex w-full items-start gap-5 px-4 md:px-6 xl:gap-8 xl:px-10">
-        <aside className="sticky top-[72px] mt-4 hidden w-52 shrink-0 flex-col gap-1 lg:flex">
-          <nav className="flex flex-col gap-1 p-1" aria-label="Разделы панели">
-            {NAV.map(({ key, label, icon: Icon, badge, badgeTone }) => {
-              const isActive = active === key
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setActive(key)}
-                  aria-current={isActive ? 'page' : undefined}
-                  className={cn(
-                    'flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors',
-                    isActive
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
-                  )}
-                >
-                  <Icon className="size-4 shrink-0" aria-hidden />
-                  <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-                  {badge != null && badge !== 0 && badge !== '' && (
-                    <span
-                      className={cn(
-                        'shrink-0 rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
-                        badgeTone === 'amber'
-                          ? 'bg-amber-100 text-amber-700'
-                          : 'bg-emerald-600 text-white',
-                      )}
-                    >
-                      {badge}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-          </nav>
-          <div className="mt-3 p-1">
-            <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-400">
-              <MonitorCog className="size-3.5" aria-hidden /> Тема панели
-            </p>
-            {ThemeSwatches}
-          </div>
-        </aside>
+      {/* Сайдбар (lg+): фиксированная колонка на всю высоту — приказ владельца
+          v5.11 «сайдбар слева, а не вверху вкладки» + v5.62 редизайн оболочки */}
+      <aside className="fixed inset-y-0 left-0 z-30 hidden w-64 flex-col border-r border-slate-200 bg-white lg:flex">
+        {BrandBlock}
+        <nav className="admin-scroll min-h-0 flex-1 overflow-y-auto px-3 py-2" aria-label="Разделы панели">
+          {renderNavGroups()}
+        </nav>
+        <div className="border-t border-slate-100 px-4 py-3">
+          {ThemeSwatches}
+          <p className="mt-2 text-[11px] text-slate-400">{apiVersion ? `API v${apiVersion}` : 'API'}</p>
+        </div>
+      </aside>
 
-        <main className="min-w-0 flex-1 py-4">
-          {/* Мобильная навигация: горизонтальная полоса */}
-          <div className="mb-4 flex gap-1.5 overflow-x-auto pb-1 no-scrollbar lg:hidden" role="tablist" aria-label="Разделы">
-            {NAV.map(({ key, label, icon: Icon, badge, badgeTone }) => {
-              const isActive = active === key
-              return (
-                <button
-                  key={key}
-                  type="button"
-                  role="tab"
-                  aria-selected={isActive}
-                  onClick={() => setActive(key)}
-                  className={cn(
-                    'flex flex-none items-center gap-1.5 rounded-lg border px-3 py-2 text-[13px] font-medium transition-colors',
-                    isActive
-                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
-                      : 'border-slate-200 bg-white text-slate-600',
-                  )}
-                >
-                  <Icon className="size-3.5" aria-hidden />
-                  {label}
-                  {badge != null && badge !== 0 && badge !== '' && (
-                    <span
-                      className={cn(
-                        'rounded-full px-1.5 py-0.5 text-[11px] font-semibold tabular-nums',
-                        badgeTone === 'amber' ? 'bg-amber-100 text-amber-700' : 'bg-emerald-600 text-white',
-                      )}
-                    >
-                      {badge}
-                    </span>
-                  )}
-                </button>
-              )
-            })}
-            {/* Тема на мобиле: свотчи в конце полосы */}
-            <div className="flex flex-none items-center rounded-lg border border-slate-200 bg-white px-2.5">
-              <span className="mr-1.5 text-[11px] text-slate-400">
-                <Palette className="size-3.5" aria-hidden />
-              </span>
-              {ThemeSwatches}
-            </div>
-          </div>
-
+      {/* Контент: компенсация ширины сайдбара, максимум 1440px по центру */}
+      <div className="lg:pl-64">
+        <main className="mx-auto w-full max-w-[1440px] px-4 py-5 md:px-8 md:py-6">
           <motion.div
             key={active}
             variants={{ hidden: { opacity: 0, y: 8 }, show: { opacity: 1, y: 0 } }}
@@ -559,11 +629,75 @@ export default function AdminPage() {
             {renderTab()}
           </motion.div>
         </main>
+
+        <footer className="mx-auto flex w-full max-w-[1440px] items-center justify-between gap-3 px-4 pb-6 text-xs text-slate-500 md:px-8">
+          <span>Tg Swipe · Админ-панель</span>
+          <span className="tabular-nums">{apiVersion ? `v${apiVersion}` : ''}</span>
+        </footer>
       </div>
 
-      <footer className="flex w-full items-center px-4 pb-6 text-xs text-slate-500 md:px-6 xl:px-10">
-        <span>Tg Swipe{apiVersion ? ` · API v${apiVersion}` : ''}</span>
-      </footer>
+      {/* Мобильное меню (<lg): выезжающий слева дровер с затемнением */}
+      <AnimatePresence>
+        {navOpen && (
+          <>
+            <motion.div
+              key="adm-drawer-backdrop"
+              className="fixed inset-0 z-40 bg-slate-950/50 backdrop-blur-sm lg:hidden"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.18 }}
+              onClick={() => setNavOpen(false)}
+              aria-hidden
+            />
+            <motion.aside
+              key="adm-drawer"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Навигация панели"
+              className="fixed inset-y-0 left-0 z-50 flex w-[280px] max-w-[86vw] flex-col border-r border-slate-200 bg-white lg:hidden"
+              initial={{ x: '-100%' }}
+              animate={{ x: 0 }}
+              exit={{ x: '-100%' }}
+              transition={{ type: 'tween', duration: 0.22, ease: 'easeOut' }}
+            >
+              <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3">
+                <img src="/logo.svg" alt="Tg Swipe" className="h-9 w-9 shrink-0" />
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold text-slate-900">Tg Swipe</p>
+                  <p className="truncate text-xs text-slate-500">Админ-панель</p>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setNavOpen(false)}
+                  aria-label="Закрыть меню"
+                  className="text-slate-500"
+                >
+                  <X aria-hidden />
+                </Button>
+              </div>
+              <nav className="admin-scroll min-h-0 flex-1 overflow-y-auto px-3 py-2" aria-label="Разделы панели">
+                {renderNavGroups()}
+              </nav>
+              <div className="border-t border-slate-100 px-4 py-3">
+                {ThemeSwatches}
+                <div className="mt-2 flex items-center justify-between gap-2">
+                  <span className="text-[11px] text-slate-400">{apiVersion ? `API v${apiVersion}` : ''}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={logout}
+                    className="text-slate-500 hover:bg-red-50 hover:text-red-700"
+                  >
+                    <LogOut aria-hidden /> Выйти
+                  </Button>
+                </div>
+              </div>
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
     </div>
   )
 }
