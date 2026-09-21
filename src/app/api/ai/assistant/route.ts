@@ -20,9 +20,44 @@ import { botPublishToChannel, getBotChatRights, getChatMemberCount } from '@/lib
 import { sweepScheduledPostsThrottled } from '@/lib/scheduled-posts'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { stripMarkdown } from '@/lib/markdown'
-import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx, channelStatsBlock } from '@/lib/ai-tools'
+import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx, channelStatsBlock, aiMemoryBlock } from '@/lib/ai-tools'
 import { knowledgeBlock } from '@/lib/ai-knowledge'
 import { sseStream } from '@/lib/sse'
+
+
+/** v5.73: best-effort сохранение пары «вопрос-ответ» в постоянную историю */
+async function persistAiTurn(
+  uid: string,
+  userText: string,
+  reply: string,
+  meta: Record<string, unknown>,
+  channelId?: string,
+): Promise<void> {
+  try {
+    const metaClean: Record<string, unknown> = { ...meta }
+    delete metaClean.steps
+    delete metaClean.sourceIds
+    const metaJson = Object.keys(metaClean).length > 0 ? JSON.stringify(metaClean) : null
+    await db.aiChatMessage.createMany({
+      data: [
+        { userId: uid, surface: 'assistant', channelId: channelId ?? null, role: 'user', content: userText.slice(0, 4000), meta: null },
+        { userId: uid, surface: 'assistant', channelId: channelId ?? null, role: 'assistant', content: reply.slice(0, 8000), meta: metaJson },
+      ],
+    })
+    // Хвост истории ограничиваем (на всякий случай — 200 последних)
+    const all = await db.aiChatMessage.findMany({
+      where: { userId: uid, surface: 'assistant' },
+      orderBy: { createdAt: 'desc' },
+      take: 200,
+      select: { id: true },
+    })
+    if (all.length === 200) {
+      await db.aiChatMessage.deleteMany({ where: { id: { in: all.map((x) => x.id) } , NOT: {} }, }).catch(() => {})
+    }
+  } catch {
+    /* история — не критично */
+  }
+}
 
 export const dynamic = 'force-dynamic'
 
@@ -163,6 +198,62 @@ async function trendingDigest(): Promise<string> {
     .join('\n')
 }
 
+
+/* ==================== v5.73: постоянная история чата ==================== *
+ *  GET    — последние 50 сообщений (surface=assistant) для восстановления
+ *           переписки на другом устройстве/после очистки localStorage.
+ *  DELETE — очистить историю (кнопка «очистить чат» синхронно стирает и тут).
+ */
+export async function GET(request: Request) {
+  const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'ai-history' })
+  if (!g.ok) return g.res
+  try {
+    const url = new URL(request.url)
+    const channelId = url.searchParams.get('channelId')
+    const rows = await db.aiChatMessage.findMany({
+      where: { userId: g.uid, surface: 'assistant', ...(channelId ? { channelId } : {}) },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: { role: true, content: true, meta: true, createdAt: true },
+    })
+    return NextResponse.json({
+      messages: rows.reverse().map((r) => ({
+        role: r.role,
+        text: r.content,
+        at: r.createdAt.toISOString(),
+        ...(r.meta ? { meta: safeParseMeta(r.meta) } : {}),
+      }))},
+    )
+  } catch {
+    return err('Ошибка', 500)
+  }
+}
+
+/** meta хранится JSON-строкой — мягкий парс (битая строка не роняет историю) */
+function safeParseMeta(raw: string): Record<string, unknown> {
+  try {
+    const v = JSON.parse(raw) as unknown
+    return v && typeof v === 'object' && !Array.isArray(v) ? (v as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
+export async function DELETE(request: Request) {
+  const g = guardAuth(request, { limit: 20, windowMs: 60_000, bucket: 'ai-history' })
+  if (!g.ok) return g.res
+  try {
+    const url = new URL(request.url)
+    const channelId = url.searchParams.get('channelId')
+    await db.aiChatMessage.deleteMany({
+      where: { userId: g.uid, surface: 'assistant', ...(channelId ? { channelId } : {}) },
+    })
+    return NextResponse.json({ ok: true })
+  } catch {
+    return err('Ошибка', 500)
+  }
+}
+
 export async function POST(request: Request) {
   const g = guardAuth(request, { limit: 20, windowMs: 60_000, bucket: 'ai-assistant' })
   if (!g.ok) return g.res
@@ -232,7 +323,7 @@ export async function POST(request: Request) {
       sweepScheduledPostsThrottled()
       // Категория канала + юзер + полный снапшот статистики — параллельно (v5.34:
       // ассистент знает ВЕСЬ канал до первого вопроса — цифры, настройки, топ постов)
-      const [channelFull, user, statsBlock, weeklyUsed, knowledge] = await Promise.all([
+      const [channelFull, user, statsBlock, weeklyUsed, knowledge, memory] = await Promise.all([
         channel.categoryId
           ? db.channel.findUnique({
               where: { id: channel.id },
@@ -256,6 +347,7 @@ export async function POST(request: Request) {
         // v5.47: живая база знаний сервиса — ассистент знает ВСЁ приложение,
         // а не только свой канал (тарифы, свайпы, розыгрыши, лимиты)
         knowledgeBlock('full').catch(() => undefined),
+        aiMemoryBlock(g.uid).catch(() => ''),
       ])
       const userName =
         [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
@@ -289,6 +381,7 @@ export async function POST(request: Request) {
         teaserMode: channelFull?.teaserMode ?? 'cut',
         createdAt: channelFull?.createdAt ?? null,
         knowledge,
+        memory,
       })
 
       const history: ChatMsg[] = [
@@ -297,6 +390,7 @@ export async function POST(request: Request) {
       ]
 
       const ctx: ToolCtx = { uid: g.uid, kind: 'assistant', channelId: channel.id }
+      const lastUserText = [...d.messages].reverse().find((m) => m.role === 'user')?.content ?? ''
       const meta: Record<string, unknown> = { steps: [] }
       const steps = meta.steps as Array<{ tool: string; label: string; ok: boolean }>
 
@@ -355,6 +449,7 @@ export async function POST(request: Request) {
               // Финальный ответ (+ премиум-эмодзи из слотов бота)
               const reply = await aiPremiumEmojiText(content || 'Готово!')
               await settle()
+              void persistAiTurn(g.uid, lastUserText, reply, meta, channel.id)
               send('done', { reply, ...meta, model: r.model })
               return
             }
@@ -411,6 +506,7 @@ export async function POST(request: Request) {
           )
           const reply = await aiPremiumEmojiText(tail.content || 'Готово!')
           await settle()
+          void persistAiTurn(g.uid, lastUserText, reply, meta, channel.id)
           send('done', { reply, ...meta })
         } catch (e) {
           console.error('[ai/assistant chat]', e)

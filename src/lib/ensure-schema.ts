@@ -261,6 +261,12 @@ export const MIGRATIONS: Record<string, string[]> = {
   'v5.70-promo': [
     `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "teaserApplyTo" text NOT NULL DEFAULT 'all'`,
   ],
+  // КЛЮЧ 'v5.73-ai': память ИИ (AiMemory) и постоянная история чатов (AiChatMessage)
+  'v5.73-ai': [
+    `CREATE TABLE IF NOT EXISTS "AiMemory" ("userId" TEXT NOT NULL PRIMARY KEY, "content" TEXT NOT NULL DEFAULT '', "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE TABLE IF NOT EXISTS "AiChatMessage" ("id" TEXT NOT NULL PRIMARY KEY, "userId" TEXT NOT NULL, "surface" TEXT NOT NULL, "channelId" TEXT, "role" TEXT NOT NULL, "content" TEXT NOT NULL, "meta" TEXT, "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "AiChatMessage_userId_surface_createdAt_idx" ON "AiChatMessage"("userId", "surface", "createdAt")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()

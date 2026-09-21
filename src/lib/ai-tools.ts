@@ -1176,8 +1176,216 @@ const searchChannels: ToolDef = {
   },
 }
 
-const SEARCH_TOOLS: ToolDef[] = [getTrending, searchPosts, readPost, searchChannels, getServiceFacts]
+/* ============================ v5.73: ПАМЯТЬ, ВЕБ, ПРОФИЛЬ ============================ *
+ *  Память: инструмент remember_fact пишет факт в AiMemory.userId — блок памяти
+ *  подмешивается в системный промпт при КАЖДОМ запросе (ИИ помнит пользователя
+ *  между сессиями). forget_memory стирает. Веб: web_search/read_web_page через
+ *  z-ai-web-dev-sdk (web_search/page_reader). Плюс профиль/кошелёк/задания/розыгрыши.
+ */
+
+const MEMORY_MAX_CHARS = 2400
+
+/** Компактный блок памяти для системного промпта ('' — памяти нет) */
+export async function aiMemoryBlock(uid: string): Promise<string> {
+  try {
+    const row = await db.aiMemory.findUnique({ where: { userId: uid } })
+    if (!row?.content?.trim()) return ''
+    return `=== ЧТО ТЫ ПОМНИШЬ ОБ ЭТОМ ПОЛЬЗОВАТЕЛЕ (из прошлых разговоров) ===\n${row.content.trim().slice(0, MEMORY_MAX_CHARS)}\n=== конец памяти ===`
+  } catch {
+    return ''
+  }
+}
+
+const rememberFactTool: ToolDef = {
+  name: 'remember_fact',
+  label: 'Запоминаю',
+  description:
+    'Сохраняет факт о пользователе в долговременную память (видна во всех будущих разговорах). Вызывай, когда пользователь сообщает что-то личное/полезное на будущее: предпочтения, ниша канала, тон, план, важные договорённости («запомни», «будем делать»). НЕ сохраняй мимолётное.',
+  parameters: {
+    type: 'object',
+    properties: {
+      fact: { type: 'string', description: 'Краткий факт одним предложением от третьего лица: «Ниша канала — криптовалютные обзоры»' },
+    },
+    required: ['fact'],
+  },
+  exec: async (args, ctx) => {
+    const fact = str(args.fact, 300)
+    if (!fact) return { ok: false, data: 'Пустой факт' }
+    const row = await db.aiMemory.findUnique({ where: { userId: ctx.uid } })
+    const prev = row?.content ?? ''
+    const lines = prev.split('\n').filter(Boolean).filter((l) => l.toLowerCase() !== fact.toLowerCase())
+    lines.push(fact)
+    let next = lines.join('\n')
+    if (next.length > MEMORY_MAX_CHARS) next = next.slice(next.length - MEMORY_MAX_CHARS)
+    await db.aiMemory.upsert({
+      where: { userId: ctx.uid },
+      create: { userId: ctx.uid, content: next },
+      update: { content: next },
+    })
+    return { ok: true, data: `Запомнено: ${fact}`, meta: { memorySaved: true } }
+  },
+}
+
+const forgetMemoryTool: ToolDef = {
+  name: 'forget_memory',
+  label: 'Стираю память',
+  description: 'Полностью стирает долговременную память о пользователе. Вызывай ТОЛЬКО по явной просьбе («забудь всё, что помнишь»).',
+  parameters: { type: 'object', properties: {} },
+  exec: async (_args, ctx) => {
+    await db.aiMemory.deleteMany({ where: { userId: ctx.uid } })
+    return { ok: true, data: 'Память о пользователе полностью стёрта.' }
+  },
+}
+
+const webSearchTool: ToolDef = {
+  name: 'web_search',
+  label: 'Ищу в интернете',
+  description: 'Поиск в интернете (актуальные новости, факты, события). Используй для вопросов о том, чего НЕТ в ленте и базе знаний: «что случилось…», «когда выходит…». Возвращай краткие находки с источниками.',
+  parameters: {
+    type: 'object',
+    properties: {
+      query: { type: 'string', description: 'Поисковый запрос (лучше на языке оригинала темы)' },
+    },
+    required: ['query'],
+  },
+  exec: async (args) => {
+    const query = str(args.query, 300)
+    if (!query) return { ok: false, data: 'Пустой запрос' }
+    try {
+      const zai = await import('z-ai-web-dev-sdk').then((m) => m.default.create())
+      const res = await zai.functions.invoke('web_search', { query, count: 6 } as never)
+      const items = ((res as { results?: Array<{ caption?: string; source?: string; original_url?: string }> }).results ?? [])
+      if (items.length === 0) return { ok: true, data: `По запросу «${query}» ничего не найдено.` }
+      const lines = items.slice(0, 6).map((it, i) => `${i + 1}. ${it.caption ?? '(без описания)'}${it.source ? ` — ${it.source}` : it.original_url ? ` (${it.original_url})` : ''}`)
+      return { ok: true, data: `Результаты поиска «${query}»:\n${lines.join('\n')}` }
+    } catch (e) {
+      return { ok: false, data: `Поиск недоступен: ${(e as Error).message?.slice(0, 120) || 'ошибка'}` }
+    }
+  },
+}
+
+const readWebPageTool: ToolDef = {
+  name: 'read_web_page',
+  label: 'Читаю страницу',
+  description: 'Открывает и читает текст веб-страницы по URL. Используй после web_search для деталей или когда пользователь даёт ссылку.',
+  parameters: {
+    type: 'object',
+    properties: {
+      url: { type: 'string', description: 'Полный https-URL страницы' },
+    },
+    required: ['url'],
+  },
+  exec: async (args) => {
+    const url = str(args.url, 500)
+    if (!/^https:\/\//i.test(url)) return { ok: false, data: 'Нужен https-URL' }
+    try {
+      const zai = await import('z-ai-web-dev-sdk').then((m) => m.default.create())
+      const res = await zai.functions.invoke('page_reader', { url } as never)
+      const html = ((res as { html?: string }).html ?? '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+      if (!html) return { ok: false, data: 'Страница пустая или не читается' }
+      return { ok: true, data: `Текст страницы ${url}:\n${html.slice(0, 3000)}` }
+    } catch (e) {
+      return { ok: false, data: `Не удалось прочитать: ${(e as Error).message?.slice(0, 120) || 'ошибка'}` }
+    }
+  },
+}
+
+const myProfileTool: ToolDef = {
+  name: 'get_my_profile',
+  label: 'Смотрю профиль',
+  description: 'Профиль текущего пользователя: имя, username, тариф, дата регистрации.',
+  parameters: { type: 'object', properties: {} },
+  exec: async (_args, ctx) => {
+    const u = await db.user.findUnique({
+      where: { id: ctx.uid },
+      select: { username: true, firstName: true, lastName: true, createdAt: true },
+    })
+    if (!u) return { ok: false, data: 'Пользователь не найден' }
+    return {
+      ok: true,
+      data: `Профиль: ${[u.firstName, u.lastName].filter(Boolean).join(' ') || '(без имени)'}${u.username ? ` (@${u.username})` : ''}; с нами с ${u.createdAt.toISOString().slice(0, 10)}.`,
+    }
+  },
+}
+
+const walletRecentTool: ToolDef = {
+  name: 'get_wallet_recent',
+  label: 'Смотрю кошелёк',
+  description: 'Последние операции по балансу (пополнения, списания, конвертации, награды) — до 10 записей.',
+  parameters: { type: 'object', properties: {} },
+  exec: async (_args, ctx) => {
+    const logs = await db.balanceLog.findMany({
+      where: { userId: ctx.uid },
+      orderBy: { createdAt: 'desc' },
+      take: 10,
+      select: { kind: true, currency: true, amount: true, note: true, createdAt: true },
+    })
+    if (logs.length === 0) return { ok: true, data: 'Операций пока нет.' }
+    const lines = logs.map((l) => {
+      const sign = l.amount >= 0 ? '+' : ''
+      const val = l.currency === 'swp' ? `${sign}${l.amount} свайпов` : `${sign}${(l.amount / 100).toFixed(2)} ₽`
+      return `${l.createdAt.toISOString().slice(0, 16).replace('T', ' ')} · ${val} · ${l.note ?? l.kind}`
+    })
+    return { ok: true, data: `Последние операции:\n${lines.join('\n')}` }
+  },
+}
+
+const myQuestsTool: ToolDef = {
+  name: 'get_my_quests',
+  label: 'Смотрю задания',
+  description: 'Список заданий пользователя и что уже выполнено (задания за свайпы: подписки, ежедневный вход, TikTok и др.).',
+  parameters: { type: 'object', properties: {} },
+  exec: async (_args, ctx) => {
+    const [quests, done] = await Promise.all([
+      db.quest.findMany({ where: { active: true }, orderBy: { sort: 'asc' }, select: { id: true, title: true, rewardSwp: true } }),
+      db.questCompletion.findMany({ where: { userId: ctx.uid }, select: { questId: true, status: true } }),
+    ])
+    const doneMap = new Map(done.map((d) => [d.questId, d.status]))
+    const lines = quests.map((q) => `- ${q.title} · +${q.rewardSwp} · ${doneMap.get(q.id) === 'done' ? 'ВЫПОЛНЕНО' : doneMap.get(q.id) === 'revoked' ? 'аннулировано' : 'не выполнено'}`)
+    return { ok: true, data: `Задания:\n${lines.join('\n') || '(пусто)'}` }
+  },
+}
+
+const giveawaysTool: ToolDef = {
+  name: 'get_active_giveaways',
+  label: 'Смотрю розыгрыши',
+  description: 'Активные розыгрыши сервиса: призы, дедлайн, число участников, задания за билеты.',
+  parameters: { type: 'object', properties: {} },
+  exec: async () => {
+    const gs = await db.giveaway.findMany({
+      where: { status: 'active' },
+      orderBy: { endAt: 'asc' },
+      take: 5,
+      select: { id: true, title: true, prizes: true, endAt: true, tasks: true, _count: { select: { entries: true } } },
+    })
+    if (gs.length === 0) return { ok: true, data: 'Активных розыгрышей сейчас нет.' }
+    const lines = gs.map((g) => {
+      const end = g.endAt ? `дедлайн ${g.endAt.toISOString().slice(0, 16).replace('T', ' ')} UTC` : 'без дедлайна'
+      let prize = ''
+      try {
+        const p = JSON.parse(g.prizes ?? '[]') as Array<{ title?: string; winners?: number }>
+        prize = p.map((x) => `${x.title ?? 'приз'}${x.winners ? ` (×${x.winners})` : ''}`).join('; ')
+      } catch { prize = g.prizes ?? '' }
+      return `- ${g.title} · участники: ${g._count.entries} · ${end}${prize ? ` · призы: ${prize}` : ''}`
+    })
+    return { ok: true, data: `Активные розыгрыши:\n${lines.join('\n')}` }
+  },
+}
+
+const COMMON_USER_TOOLS = [
+  rememberFactTool,
+  forgetMemoryTool,
+  webSearchTool,
+  readWebPageTool,
+  myProfileTool,
+  walletRecentTool,
+  myQuestsTool,
+  giveawaysTool,
+]
+
+const SEARCH_TOOLS: ToolDef[] = [...COMMON_USER_TOOLS, getTrending, searchPosts, readPost, searchChannels, getServiceFacts]
 const ASSISTANT_TOOLS: ToolDef[] = [
+  ...COMMON_USER_TOOLS,
   // Аналитика
   getChannelStats,
   auditTelegramChannel, // v5.64: живой аудит из Telegram через бота
@@ -1205,6 +1413,7 @@ const ASSISTANT_TOOLS: ToolDef[] = [
   getServiceFacts,
 ]
 
+
 export function toolsFor(kind: ToolCtx['kind']): ToolDef[] {
   return kind === 'assistant' ? ASSISTANT_TOOLS : SEARCH_TOOLS
 }
@@ -1230,6 +1439,8 @@ export function searchSystemPrompt(ctx: {
   tier: string
   /** Живые факты сервиса (v5.47): тарифы, курс, розыгрыши, статистика */
   knowledge?: string
+  /** Долговременная память о пользователе (v5.73) */
+  memory?: string
 }): string {
   const now = new Date()
   return [
@@ -1237,6 +1448,7 @@ export function searchSystemPrompt(ctx: {
     'Ты помогаешь читателю находить посты и каналы, понимать, что происходит в ленте, и отвечать на вопросы о сервисе.',
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}), ${now.toISOString().slice(11, 16)} UTC. Пользователь: ${ctx.userName}, тариф: ${ctx.tier}.`,
     ctx.knowledge ?? '',
+    ctx.memory ?? '',
     '',
     'КАК РАБОТАТЬ:',
     '1. Для ЛЮБОГО вопроса о содержании постов сначала вызывай search_posts (вопрос → ключевые слова). Затем при необходимости read_post для деталей.',
@@ -1246,6 +1458,7 @@ export function searchSystemPrompt(ctx: {
     '5. Формат ответа (как в ChatGPT): markdown, 2-8 строк по делу — заголовки ### только при уместности, **жирный** для ключевых мыслей, списки «- », при сравнениях — таблицы. В конце перечисли источники строкой «Источники: @username, @username» (для вопросов о сервисе источники не нужны).',
     '6. Общие вопросы («как дела», «что ты умеешь») отвечай без инструментов, коротко и дружелюбно.',
     '7. Язык ответа = язык вопроса (по умолчанию русский).',
+    '8. ПАМЯТЬ: пользователь сообщает что-то важное на будущее («запомни, что…», ниша, предпочтения) → вызови remember_fact. То, что ты помнишь, — в блоке памяти выше.',
   ].filter(Boolean).join('\n')
 }
 
@@ -1266,6 +1479,8 @@ export function assistantSystemPrompt(ctx: {
   createdAt: Date | null
   /** Живые факты сервиса (v5.47): тарифы, курс, розыгрыши — ассистент знает весь сервис */
   knowledge?: string
+  /** Долговременная память о пользователе (v5.73) */
+  memory?: string
 }): string {
   const now = new Date()
   const age = ctx.createdAt
@@ -1285,6 +1500,7 @@ export function assistantSystemPrompt(ctx: {
       : 'Стиль автора ещё не проанализирован — при необходимости вызови analyze_channel_style.',
     `Продвижения в ленте на этой неделе: ${ctx.weeklyPromo.used}/${ctx.weeklyPromo.limit}.`,
     ctx.knowledge ?? '',
+    ctx.memory ?? '',
     '',
     ctx.statsBlock
       ? `=== ДАННЫЕ КАНАЛА (уже собраны, вызывать get_channel_stats для базовых цифр НЕ нужно) ===\n${ctx.statsBlock}\n=== конец данных канала ===`
@@ -1302,6 +1518,7 @@ export function assistantSystemPrompt(ctx: {
     '9. Вопросы о СЕРВИСЕ (тарифы, свайпы, розыгрыши, лимиты, возможности приложения) → отвечай из базы знаний в системном промпте; самый свежий срез → get_service_facts.',
     '10. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
     '11. Формат ответов КАК В CHATGPT: markdown с заголовками ##/### при уместности, **жирный**, списки «- », нумерованные шаги, таблицы для сравнений, ```блоки кода``` для кода. Уместно используй эмодзи (🎉🔥✨⚡💡) — они отображаются премиум-анимациями. Без выдуманных фактов и цифр.',
+    '13. ПАМЯТЬ: автор сообщает что-то важное на будущее («запомни», ниша канала, тон, план) → вызови remember_fact; «забудь всё» → forget_memory. Известные тебе факты — в блоке памяти выше.',
     '12. ПРАВА БОТА: если инструмент вернул ошибку «нет прав» — объясни автору, какого права не хватает (публикация/удаление/правка/закрепление/смена инфо/инвайт-ссылки) и попроси выдать его боту в настройках канала. Не повторяй неудавшуюся попытку без изменений условий.',
   ].join('\n')
 }

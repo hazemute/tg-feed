@@ -148,6 +148,69 @@ function liveChain(chain: string[]): string[] {
 
 /** POST /chat/completions с ОДНИМ ретраем на 429 (минутные лимиты free-слотов:
  *  ретрай через ~1.5с почти всегда проходит, не переключая модель). */
+/* ==================== ЕДИНЫЙ ТРАНСПОРТ (v5.73) ==================== *
+ *  Раньше без OPENROUTER_API_KEY все ИИ-функции падали (503 «ключ не задан»).
+ *  Теперь транспорт выбирается автоматически:
+ *   • ключ задан → OpenRouter (бесплатная шестёрка :free);
+ *   • ключа нет  → z-ai-web-dev-sdk (GLM-4 Plus — самая мощная бесплатная
+ *     модель платформы Z.ai; сервер сам выдаёт креды, ключ НЕ нужен).
+ *  Формат ответов одинаков (OpenAI-совместимый SSE/JSON), поэтому все
+ *  парсеры выше по стеку работают без изменений.
+ */
+type RawLLMResponse = {
+  ok: boolean
+  status: number
+  body: ReadableStream<Uint8Array> | null
+  json: () => Promise<unknown>
+}
+
+/** Минимальный тип z-ai-web-dev-sdk (нам нужен только chat.completions.create) */
+interface ZAILLM {
+  chat: { completions: { create: (b: unknown) => Promise<unknown> } }
+}
+
+let zaiClientPromise: Promise<ZAILLM> | null = null
+
+async function zaiLLM(): Promise<ZAILLM> {
+  if (!zaiClientPromise) {
+    zaiClientPromise = import('z-ai-web-dev-sdk').then((m) => {
+      const ZAI = (m as unknown as { default: { create: () => Promise<unknown> } }).default
+      return ZAI.create() as Promise<ZAILLM>
+    })
+  }
+  return zaiClientPromise
+}
+
+let zaiWarned = false
+
+/** Прямой вызов через z-ai-web-dev-sdk (GLM-4 Plus): JSON или SSE-поток */
+async function zaiRaw(body: Record<string, unknown>, timeoutMs: number): Promise<RawLLMResponse> {
+  const zai = await zaiLLM()
+  const payload: Record<string, unknown> = { ...body }
+  // Свои поля OpenRouter платформа Z.ai не знает — model берётся по умолчанию (glm-4-plus)
+  delete payload.model
+  delete payload.usage
+  const run = zai.chat.completions.create(payload) as Promise<unknown>
+  const timer = new Promise<never>((_, rej) => setTimeout(() => rej(new Error('ZAI timeout')), timeoutMs + 5_000))
+  const data = await Promise.race([run, timer])
+  if (!zaiWarned) {
+    zaiWarned = true
+    console.log('[openrouter] OPENROUTER_API_KEY не задан → транспорт z-ai-web-dev-sdk (GLM-4 Plus)')
+  }
+  // stream:true → SDK отдаёт ReadableStream SSE (OpenAI-совместимые чанки)
+  if (payload.stream) {
+    const stream = data as ReadableStream<Uint8Array>
+    return { ok: true, status: 200, body: stream, json: async () => ({}) }
+  }
+  return { ok: true, status: 200, body: null, json: async () => data }
+}
+
+/** Единая точкаraw-вызова: OpenRouter при наличии ключа, иначе z-ai-web-dev-sdk */
+async function rawComplete(body: Record<string, unknown>, timeoutMs: number): Promise<RawLLMResponse> {
+  if (process.env.OPENROUTER_API_KEY) return postWith429Retry(body, timeoutMs)
+  return zaiRaw(body, timeoutMs)
+}
+
 async function postWith429Retry(body: Record<string, unknown>, timeoutMs: number): Promise<Response> {
   const key = process.env.OPENROUTER_API_KEY ?? ''
   const headers = {
@@ -187,7 +250,8 @@ export function openRouterErrorText(e: unknown): string {
 }
 
 export function openRouterEnabled(): boolean {
-  return Boolean(process.env.OPENROUTER_API_KEY)
+  // v5.73: true ВСЕГДА — без ключа OpenRouter работает транспорт z-ai-web-dev-sdk
+  return true
 }
 
 function models(): string[] {
@@ -226,8 +290,6 @@ export async function chatMessages(
     onUsage?: (u: AiUsage) => void
   },
 ): Promise<string> {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const maxTokens = opts?.maxTokens ?? 800
   const timeoutMs = opts?.timeoutMs ?? 25_000
   const temperature = opts?.temperature ?? 0.2
@@ -238,7 +300,7 @@ export async function chatMessages(
   for (const model of chain) {
     if (opts?.models === undefined && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
     try {
-      const res = await postWith429Retry({ model, max_tokens: maxTokens, temperature, messages }, timeoutMs)
+      const res = await rawComplete({ model, max_tokens: maxTokens, temperature, messages }, timeoutMs)
       if (!res.ok) {
         if (res.status === 404) markDeadSlot(model) // v5.56: слот исчез из каталога
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
@@ -287,8 +349,6 @@ export async function chatStream(
     onUsage?: (u: AiUsage) => void
   },
 ): Promise<string> {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const chain = opts?.models?.length ? opts.models : SPEED_MODELS
   const maxTokens = opts?.maxTokens ?? 1100
   const timeoutMs = opts?.timeoutMs ?? 30_000
@@ -301,7 +361,7 @@ export async function chatStream(
     if (!opts?.models?.length && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
     let accumulated = ''
     try {
-      const res = await postWith429Retry(
+      const res = await rawComplete(
         {
           model,
           max_tokens: maxTokens,
@@ -532,8 +592,6 @@ export async function chatStreamRace(
     onUsage?: (u: AiUsage) => void
   },
 ): Promise<string> {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const base = opts?.models?.length ? opts.models : SPEED_MODELS
   const chain = liveChain(base)
   const maxTokens = opts?.maxTokens ?? 1100
@@ -733,8 +791,6 @@ export async function chatWithTools(
     onUsage?: (u: AiUsage) => void
   },
 ): Promise<{ content: string; toolCalls: ToolCall[]; model?: string; finishReason?: string }> {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const maxTokens = opts?.maxTokens ?? 1200
   const timeoutMs = opts?.timeoutMs ?? 45_000
   const temperature = opts?.temperature ?? 0.5
@@ -787,7 +843,7 @@ export async function chatWithTools(
   let lastError: unknown = null
   for (const model of chain) {
     try {
-      const res = await postWith429Retry(
+      const res = await rawComplete(
         {
           model,
           max_tokens: maxTokens,
@@ -801,23 +857,15 @@ export async function chatWithTools(
       if (!res.ok) {
         // Модель не поддерживает tools (400/404) — сразу пробуем текстовый протокол
         if (res.status === 400 || res.status === 404 || res.status === 422) {
-          const t = await fetch(API_URL, {
-            method: 'POST',
-            headers: {
-              Authorization: `Bearer ${key}`,
-              'Content-Type': 'application/json',
-              'HTTP-Referer': process.env.APP_URL ?? 'https://tg-swipe.vercel.app',
-              'X-Title': 'Tg Swipe',
-            },
-            body: JSON.stringify({
+          const t = await rawComplete(
+            {
               model,
               max_tokens: maxTokens,
               temperature,
               messages: encode(false),
-              usage: { include: true },
-            }),
-            signal: AbortSignal.timeout(timeoutMs),
-          })
+            },
+            timeoutMs,
+          )
           if (t.ok) {
             const td = (await t.json()) as {
               choices?: Array<{ message?: { content?: string } }>
@@ -888,8 +936,6 @@ export async function chatWithToolsStream(
     onDelta?: (chunk: string) => void
   },
 ): Promise<{ content: string; toolCalls: ToolCall[]; model?: string; finishReason?: string }> {
-  const key = process.env.OPENROUTER_API_KEY
-  if (!key) throw new Error('OPENROUTER_API_KEY не задан')
   const maxTokens = opts?.maxTokens ?? 1200
   const timeoutMs = opts?.timeoutMs ?? 60_000
   const temperature = opts?.temperature ?? 0.5
@@ -935,7 +981,7 @@ export async function chatWithToolsStream(
         body.tools = tools
         body.tool_choice = 'auto'
       }
-      const res = await postWith429Retry(body, timeoutMs)
+      const res = await rawComplete(body, timeoutMs)
       if (!res.ok || !res.body) {
         // Модель не умеет tools — фолбэк на текстовый JSON-протокол (не стримим:
         // JSON-блок юзеру показывать нельзя), дальше по цепочке не идём

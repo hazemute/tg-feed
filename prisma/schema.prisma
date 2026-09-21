@@ -378,6 +378,28 @@ model AdvertiserAccount {
 // Журнал операций кошелька (v5.38): пополнения, конвертации, списания ИИ,
 // покупки за баланс. amount — знаковый: + зачисление, − списание.
 // currency: 'rub' (amount в копейках) | 'swp' (amount в свайпах).
+
+/// Память ИИ о пользователе (v5.73): компактный список фактов, пишет инструмент remember_fact
+model AiMemory {
+  userId    String   @id
+  content   String   @default("")
+  updatedAt DateTime @updatedAt
+}
+
+/// Постоянная история ИИ-чатов (v5.73): surface = assistant | search
+model AiChatMessage {
+  id        String   @id @default(cuid())
+  userId    String
+  surface   String
+  channelId String?
+  role      String
+  content   String
+  meta      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, surface, createdAt])
+}
+
 model BalanceLog {
   id        String   @id @default(cuid())
   userId    String

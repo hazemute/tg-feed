@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, Bot, CalendarClock, Check, Copy, Loader2, Rocket, Send, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ArrowLeft, CalendarClock, Check, Copy, Loader2, Rocket, Send, Sparkles, Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
@@ -80,18 +80,24 @@ function saveHistory(kind: AiChatKind, channelId: string | undefined, msgs: AiMs
 
 const SUGGESTIONS: Record<AiChatKind, string[]> = {
   assistant: [
-    'Оцени мой канал: дай аудит и план роста',
+    'Оцени мой канал и дай план роста',
     'Напиши пост на актуальную тему',
-    'Когда лучше публиковать посты?',
+    'Что сейчас в тренде ленты?',
+    'Нарисуй обложку к посту',
     'Опубликуй пост завтра в 18:00',
-    'Поменяй описание канала',
     'Создай пригласительную ссылку',
+    'Запомни: ниша моего канала — ',
+    'Какие у меня задания? Что выполнено?',
+    'Покажи последние операции кошелька',
+    'Найди в интернете новости по моей теме',
   ],
   search: [
     'Что нового в ленте за сутки?',
     'Найди посты про нейросети',
     'О чём сейчас пишут каналы?',
-    'Кратко: главные темы недели',
+    'Активные розыгрыши — призы и дедлайны',
+    'Как заработать свайпы на заданиях?',
+    'Найди в интернете свежие новости про…',
   ],
 }
 
@@ -107,24 +113,62 @@ export function aiNormalize(text: string): string {
     .replace(/(^|[\s(>«"'])_([^_\n]+)_(?=[\s).,!?;:»"'<]|$)/g, '$1__$2__')
 }
 
+/**
+ * v5.73: markdown ПОЛНОСТЬЮ под телефон. markdown-lite RichText не знает
+ * заголовки # и таблицы — превращаем их в мобильный вид:
+ *  • «### Заголовок» → жирная строка с отбивкой (сканимо на любом экране);
+ *  • таблицы → компактные строки «A · B · C» (разделитель-строка |---| выкидывается);
+ *  • «---» (hr) → пустая строка (линии в чате — шум).
+ * Жирный/курсив/код/списки/ссылки рендерит RichText как есть.
+ */
+export function aiMobileMarkdown(input: string): string {
+  const lines = aiNormalize(input).split('\n')
+  const out: string[] = []
+  for (const line of lines) {
+    const t = line.trim()
+    // Таблица: строка из пайпов
+    if (t.startsWith('|') && t.endsWith('|')) {
+      const cells = t.slice(1, -1).split('|').map((c) => c.trim())
+      // Разделитель |---|---| — пропускаем
+      if (cells.every((c) => /^:?-{2,}:?$/.test(c))) continue
+      out.push(cells.join(' · '))
+      continue
+    }
+    // Горизонтальная линия — в чате не нужна
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(t)) {
+      out.push('')
+      continue
+    }
+    // Заголовки #..###### → жирная строка
+    const h = t.match(/^(#{1,6})\s+(.+)$/)
+    if (h) {
+      if (out.length > 0 && out[out.length - 1] !== '') out.push('')
+      out.push(`**${h[2].trim()}**`)
+      out.push('')
+      continue
+    }
+    out.push(line)
+  }
+  return out.join('\n').replace(/\n{3,}/g, '\n\n').trim()
+}
+
 /* ============================ Typing-индикатор ============================ */
 
 function ThinkingBubble({ label }: { label: string | null }) {
+  // v5.73: статус — ПЛОСКИЙ, по центру, без бабла (как системные строки в Telegram)
   return (
-    <div className="flex items-end gap-1.5">
-      <div className="flex items-center gap-2 rounded-2xl bg-tg-surface px-3.5 py-2.5 shadow-sm">
-        <span className="flex gap-1" aria-hidden>
-          {[0, 1, 2].map((i) => (
-            <motion.span
-              key={i}
-              className="h-1.5 w-1.5 rounded-full bg-tg-hint"
-              animate={{ opacity: [0.35, 1, 0.35], y: [0, -2, 0] }}
-              transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.18 }}
-            />
-          ))}
-        </span>
-        <span className="text-[12.5px] font-medium text-tg-hint">{label ?? 'Думаю…'}</span>
-      </div>
+    <div className="flex items-center justify-center gap-2 py-1" aria-live="polite">
+      <span className="flex gap-1" aria-hidden>
+        {[0, 1, 2].map((i) => (
+          <motion.span
+            key={i}
+            className="h-1 w-1 rounded-full bg-tg-hint"
+            animate={{ opacity: [0.3, 1, 0.3] }}
+            transition={{ duration: 1.1, repeat: Infinity, delay: i * 0.18 }}
+          />
+        ))}
+      </span>
+      <span className="text-[12px] font-medium text-tg-hint">{label ?? 'Думаю…'}</span>
     </div>
   )
 }
@@ -407,15 +451,69 @@ export function AiChat({
   const [streamText, setStreamText] = useState<string | null>(null) // v5.40: realtime-печать
   const [publishing, setPublishing] = useState(false)
   const [loaded, setLoaded] = useState(false)
+  // v5.73: ПЛАВНЫЙ стриминг — дельты копятся в буфер, экран обновляется
+  // не чаще 1 раза на кадр (requestAnimationFrame): токены сливаются в
+  // непрерывную печать без «прыжков» и лишних рендеров на каждый SSE-чанк
+  const streamBufRef = useRef('')
+  const streamRafRef = useRef(0)
+  const flushStream = useCallback(() => {
+    if (streamRafRef.current) {
+      cancelAnimationFrame(streamRafRef.current)
+      streamRafRef.current = 0
+    }
+    const next = streamBufRef.current
+    streamBufRef.current = ''
+    if (next) setStreamText((prev) => (prev ?? '') + next)
+  }, [])
+  const pushStreamChunk = useCallback(
+    (chunk: string) => {
+      streamBufRef.current += chunk
+      if (!streamRafRef.current) {
+        streamRafRef.current = requestAnimationFrame(() => {
+          streamRafRef.current = 0
+          const next = streamBufRef.current
+          streamBufRef.current = ''
+          if (next) setStreamText((prev) => (prev ?? '') + next)
+        })
+      }
+    },
+    [],
+  )
   const listRef = useRef<HTMLDivElement>(null)
   const busyRef = useRef(false)
   busyRef.current = busy
 
-  // Загрузка истории при открытии
+  // Загрузка истории при открытии: сначала локально (мгновенно), затем
+  // серверная ПАМЯТЬ чата (v5.73) — переписка живёт между устройствами
   useEffect(() => {
     if (!open) return
+    let alive = true
     setMessages(loadHistory(kind, channelId))
     setLoaded(true)
+    const token = getSessionToken()
+    if (!token) return
+    const url =
+      kind === 'assistant'
+        ? `/api/ai/assistant?channelId=${encodeURIComponent(channelId ?? '')}`
+        : '/api/ai/search'
+    fetch(url, { headers: { Authorization: `Bearer ${token}` }, cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((j: { messages?: Array<{ role: string; text: string; at: string; meta?: Partial<AiMsg> }> } | null) => {
+        if (!alive || !j?.messages?.length) return
+        const server: AiMsg[] = j.messages.slice(-MAX_HISTORY).map((m, i) => ({
+          id: `srv${i}_${m.at}`,
+          role: m.role === 'user' ? 'user' : 'assistant',
+          text: m.text,
+          at: m.at,
+          ...(m.meta ?? {}),
+        }))
+        setMessages(server)
+        saveHistory(kind, channelId, server)
+      })
+      .catch(() => {})
+    return () => {
+      alive = false
+    }
   }, [open, kind, channelId])
 
   // Автоскролл вниз при новых сообщениях/статусах
@@ -458,10 +556,11 @@ export function AiChat({
         if (type === 'status') {
           setStatus((data.label as string) ?? null)
         } else if (type === 'delta') {
-          // v5.40: realtime-стриминг токенов — печатаем ответ по мере генерации
+          // v5.73: realtime-стриминг через rAF-буфер — печать идеально плавная
           setStatus(null)
-          acc += (data.text as string) ?? ''
-          setStreamText((prev) => (prev ?? '') + ((data.text as string) ?? ''))
+          const chunk = (data.text as string) ?? ''
+          acc += chunk
+          pushStreamChunk(chunk)
         } else if (type === 'paid') {
           // v5.39: тарификация по токенам — сервер вернул фактическую списанную сумму
           const sw = Number(data.swipes ?? 0)
@@ -490,6 +589,7 @@ export function AiChat({
             steps: stepsRaw.map((s) => ({ label: s.label, ok: s.ok })),
           }
           persist([...history, botMsg])
+          flushStream()
           setBusy(false)
           setStatus(null)
           setStreamText(null)
@@ -504,6 +604,7 @@ export function AiChat({
             failed: true,
           }
           persist([...history, errMsg])
+          flushStream()
           setBusy(false)
           setStatus(null)
           setStreamText(null)
@@ -583,10 +684,12 @@ export function AiChat({
           ])
           toast.error('Ответ получен не полностью — соединение оборвалось')
         }
+        flushStream()
         setBusy(false)
         setStatus(null)
         setStreamText(null)
       } catch (e) {
+        flushStream()
         setBusy(false)
         setStatus(null)
         setStreamText(null)
@@ -602,7 +705,7 @@ export function AiChat({
         haptic('error')
       }
     },
-    [messages, persist, kind, channelId, openAuthGate, user],
+    [messages, persist, kind, channelId, openAuthGate, user, pushStreamChunk, flushStream],
   )
 
   // Seed-запрос из SearchTab: автоотправка один раз
@@ -647,6 +750,15 @@ export function AiChat({
   const clearChat = () => {
     haptic('light')
     persist([])
+    // v5.73: стираем и постоянную историю на сервере
+    const token = getSessionToken()
+    if (token) {
+      const url =
+        kind === 'assistant'
+          ? `/api/ai/assistant?channelId=${encodeURIComponent(channelId ?? '')}`
+          : '/api/ai/search'
+      void fetch(url, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } }).catch(() => {})
+    }
   }
 
   if (typeof document === 'undefined') return null
@@ -689,16 +801,7 @@ export function AiChat({
             >
               <ArrowLeft className="h-5.5 w-5.5" />
             </button>
-            <span
-              className={cn(
-                'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-white shadow-sm',
-                kind === 'assistant' ? 'bg-tg-link' : 'border border-tg-sep bg-tg-text',
-              )}
-              aria-hidden
-            >
-              <Bot className="h-4.5 w-4.5" />
-            </span>
-            <span className="min-w-0 flex-1">
+            <span className="min-w-0 flex-1 pl-1">
               <span className="block truncate text-[16px] font-bold leading-tight text-tg-text">{title}</span>
               <span className="block truncate text-[12.5px] leading-tight text-tg-hint">{subtitle}</span>
             </span>
@@ -719,31 +822,20 @@ export function AiChat({
           <div ref={listRef} className="no-scrollbar min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain px-3 py-3">
             {loaded && messages.length === 0 && !busy && (
               <div className="flex h-full flex-col justify-center gap-5 px-5 py-6">
-                {/* Строгий welcome-блок: монохром, чёткие строки, без градиентов */}
-                <div className="flex items-start gap-3">
-                  <span
-                    className={cn(
-                      'flex h-11 w-11 shrink-0 items-center justify-center rounded-xl text-white',
-                      kind === 'assistant' ? 'bg-tg-link' : 'border border-tg-sep bg-tg-text',
-                    )}
-                    aria-hidden
-                  >
-                    <Bot className="h-5.5 w-5.5" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="text-[16px] font-bold leading-tight text-tg-text">
-                      {kind === 'assistant'
-                        ? lang === 'en'
-                          ? 'Your channel’s AI co-writer'
-                          : 'ИИ-контентщик канала'
-                        : 'ИИ-поиск'}
-                    </p>
-                    <p className="mt-1 text-[13px] leading-snug text-tg-hint">
-                      {kind === 'assistant'
-                        ? 'Знает статистику канала, пишет посты в вашем стиле, рисует обложки и публикует — просто попросите'
-                        : 'Отвечает по свежим постам ленты со ссылками на источники — без выдумок'}
-                    </p>
-                  </div>
+                {/* v5.73: welcome без иконки-аватарки — чистая типографика */}
+                <div>
+                  <p className="text-[17px] font-bold leading-tight text-tg-text">
+                    {kind === 'assistant'
+                      ? lang === 'en'
+                        ? 'Your channel’s AI co-writer'
+                        : 'ИИ-контентщик канала'
+                      : 'ИИ-поиск'}
+                  </p>
+                  <p className="mt-1 text-[13px] leading-snug text-tg-hint">
+                    {kind === 'assistant'
+                      ? 'Знает статистику канала, пишет посты в вашем стиле, рисует обложки и публикует. Помнит вас между разговорами, ищет в интернете. Просто попросите'
+                      : 'Отвечает по свежим постам ленты со ссылками на источники, помнит ваши темы и ищет в интернете'}
+                  </p>
                 </div>
                 <div>
                   <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-tg-hint">
@@ -788,16 +880,16 @@ export function AiChat({
                 >
                   {/* Этапы инструментов (мелкие чипы над ответом) */}
                   {m.steps && m.steps.length > 0 && m.role === 'assistant' && (
-                    <div className="mb-1 flex flex-wrap gap-1">
+                    <div className="mb-1 space-y-0.5">
                       {m.steps.map((s, i) => (
                         <span
                           key={i}
                           className={cn(
-                            'inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10.5px] font-medium',
-                            s.ok ? 'bg-tg-surface text-tg-hint' : 'bg-destructive/10 text-destructive',
+                            'flex items-center gap-1.5 text-[11px] leading-snug',
+                            s.ok ? 'text-tg-hint' : 'text-destructive',
                           )}
                         >
-                          {s.ok ? <Check className="h-2.5 w-2.5" /> : <AlertCircle className="h-2.5 w-2.5" />}
+                          {s.ok ? <Check className="h-3 w-3 shrink-0 text-tg-green" /> : <AlertCircle className="h-3 w-3 shrink-0" />}
                           {s.label.replace(/…$/, '')}
                         </span>
                       ))}
@@ -816,7 +908,7 @@ export function AiChat({
                   >
                     {m.role === 'assistant' ? (
                       <RichText
-                        text={aiNormalize(stripImageLinks(m.text))}
+                        text={aiMobileMarkdown(stripImageLinks(m.text))}
                         className="animate-[fade-in_0.35s_ease-out] text-[14.5px] leading-relaxed [&_a]:text-tg-link"
                       />
                     ) : (
@@ -892,7 +984,7 @@ export function AiChat({
                 <div className="max-w-[88%] min-w-0">
                   <div className="animate-[fade-in_0.3s_ease-out]">
                     <RichText
-                      text={aiNormalize(streamText)}
+                      text={aiMobileMarkdown(streamText)}
                       className="text-[14.5px] leading-relaxed text-tg-text [&_a]:text-tg-link"
                     />
                   </div>
