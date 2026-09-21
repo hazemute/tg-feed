@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ArrowUpRight,
   Bot,
+  CalendarClock,
   Check,
   ChevronRight,
   Copy,
@@ -18,11 +19,13 @@ import {
   Megaphone,
   MousePointerClick,
   Pause,
+  Pin,
   Play,
   Plus,
   Radio,
   RefreshCw,
   Rocket,
+  ScanSearch,
   Scissors,
   Send,
   Sparkles,
@@ -800,10 +803,13 @@ function CtaSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | '
  * Без Pro показываем возможности + апгрейд.
  */
 const ASSISTANT_FEATURES = [
-  { icon: FileText, title: 'Пишет и публикует посты', text: 'В вашем стиле, с обложкой — по одной фразе' },
+  { icon: ScanSearch, title: 'Живой аудит канала из Telegram', text: 'Реальные подписчики, просмотры и реакции через бота — оценка и план роста' },
+  { icon: FileText, title: 'Пишет, публикует и откладывает', text: 'Пост в вашем стиле с обложкой — сейчас или по расписанию' },
+  { icon: Pin, title: 'Правит и закрепляет посты', text: '«Исправь текст», «закрепи анонс» — и в Telegram, и в ленте' },
   { icon: Trash2, title: 'Удаляет посты', text: '«Удали пост про кофе» — покажет варианты, удалит после подтверждения' },
-  { icon: Radio, title: 'Меняет канал', text: 'Название, описание и аватар — прямо в диалоге' },
-  { icon: Megaphone, title: 'Следит за статистикой', text: 'Разберёт цифры и подскажет, что улучшить' },
+  { icon: Radio, title: 'Меняет канал', text: 'Название, описание, аватар, кнопка в постах — прямо в диалоге' },
+  { icon: Link2, title: 'Пригласительные ссылки', text: 'С меткой, лимитом и сроком — для кампаний и закрытых каналов' },
+  { icon: CalendarClock, title: 'Подсказывает время публикаций', text: 'Найдёт лучшие часы по реальным просмотрам аудитории' },
 ] as const
 
 function AssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'free' | 'plus' | 'pro' }) {
@@ -860,7 +866,7 @@ function AssistantSection({ channel, tier }: { channel: MyChannelDTO; tier: 'fre
         </span>
         <span className="mt-1 block text-[13.5px] leading-relaxed text-tg-hint">
           {pro
-            ? 'Попросите: «удали последние два поста», «поменяй описание канала», «напиши пост про…» — ассистент сделает сам'
+            ? 'Аудит из Telegram, посты по расписанию, правка/закрепление/удаление, ссылки и оформление — просто попросите'
             : 'Генерация, публикация и полное управление каналом через ИИ — на тарифе Snap Pro'}
         </span>
         <span className="mt-4 flex h-11 items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14.5px] font-bold text-white transition active:scale-[0.98]">

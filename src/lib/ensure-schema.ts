@@ -172,6 +172,14 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "QuestCompletion_status_lastCheck_idx" ON "QuestCompletion" ("status", "lastCheck")`,
     `CREATE INDEX IF NOT EXISTS "QuestCompletion_questId_idx" ON "QuestCompletion" ("questId")`,
   ],
+  'v5.64': [
+    // v5.64: ОТЛОЖЕННЫЕ ПОСТЫ (Snap Ассистент: «опубликуй завтра в 18:00») —
+    // очередь ScheduledPost, публикуется свипом (mychannel/parse tick) через бота
+    `CREATE TABLE IF NOT EXISTS "ScheduledPost" ("id" text PRIMARY KEY, "channelId" text NOT NULL, "text" text NOT NULL, "imageUrl" text, "scheduledAt" timestamptz NOT NULL, "publishedAt" timestamptz, "link" text, "error" text, "createdBy" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "ScheduledPost_scheduledAt_idx" ON "ScheduledPost" ("scheduledAt")`,
+    `CREATE INDEX IF NOT EXISTS "ScheduledPost_channelId_publishedAt_idx" ON "ScheduledPost" ("channelId", "publishedAt")`,
+    `ALTER TABLE "ScheduledPost" ADD CONSTRAINT "ScheduledPost_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "Channel"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -208,6 +216,7 @@ const CRITICAL: Array<[string, string | null]> = [
   ['UserSource', null],
   ['Quest', null],
   ['QuestCompletion', null],
+  ['ScheduledPost', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -230,7 +239,7 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
         (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
-        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion')
+        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()

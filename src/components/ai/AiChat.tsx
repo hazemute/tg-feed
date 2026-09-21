@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, Bot, Check, Loader2, Rocket, Send, Sparkles, Trash2 } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Bot, CalendarClock, Check, Copy, Loader2, Rocket, Send, Sparkles, Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
@@ -44,6 +44,8 @@ type AiMsg = {
   draftText?: string
   draftTopic?: string
   publishedLink?: string
+  inviteLink?: string // v5.64: созданная пригласительная ссылка
+  scheduledAt?: string // v5.64: время отложенной публикации (ISO)
   sources?: PostDTO[]
   steps?: Array<{ label: string; ok: boolean }>
   failed?: boolean
@@ -77,10 +79,12 @@ function saveHistory(kind: AiChatKind, channelId: string | undefined, msgs: AiMs
 
 const SUGGESTIONS: Record<AiChatKind, string[]> = {
   assistant: [
+    'Оцени мой канал: дай аудит и план роста',
     'Напиши пост на актуальную тему',
-    'Разбери статистику канала: что улучшить?',
-    'Удали последние два поста',
+    'Когда лучше публиковать посты?',
+    'Опубликуй пост завтра в 18:00',
     'Поменяй описание канала',
+    'Создай пригласительную ссылку',
   ],
   search: [
     'Что нового в ленте за сутки?',
@@ -355,6 +359,8 @@ export function AiChat({
             draftText: (data.draftText as string | undefined) ?? undefined,
             draftTopic: (data.draftTopic as string | undefined) ?? undefined,
             publishedLink: (data.publishedLink as string | undefined) ?? undefined,
+            inviteLink: (data.inviteLink as string | undefined) ?? undefined,
+            scheduledAt: (data.scheduledAt as string | undefined) ?? undefined,
             sources: (data.sources as PostDTO[] | undefined) ?? undefined,
             steps: stepsRaw.map((s) => ({ label: s.label, ok: s.ok })),
           }
@@ -699,6 +705,28 @@ export function AiChat({
                     <div className="mt-1 rounded-xl bg-tg-star/[0.08] px-3 py-1.5 text-[11.5px] text-tg-hint">
                       Картинка досоздаётся — откройте через минуту
                     </div>
+                  )}
+                  {/* v5.64: чипы результата — отложенный пост и пригласительная ссылка */}
+                  {m.scheduledAt && (
+                    <div className="mt-1.5 flex items-center gap-1.5 rounded-xl bg-tg-surface px-3 py-1.5 text-[11.5px] font-medium text-tg-hint" data-noswipe>
+                      <CalendarClock className="h-3.5 w-3.5 shrink-0 text-tg-link" />
+                      Публикация отложена: {new Date(m.scheduledAt).toLocaleString('ru-RU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })} (UTC)
+                    </div>
+                  )}
+                  {m.inviteLink && (
+                    <button
+                      type="button"
+                      data-noswipe
+                      onClick={() => {
+                        void navigator.clipboard.writeText(m.inviteLink!).then(() => toast('Ссылка скопирована'))
+                      }}
+                      className="mt-1.5 flex w-full items-center gap-1.5 rounded-xl bg-tg-surface px-3 py-2 text-left transition active:bg-tg-surface2"
+                      aria-label="Скопировать пригласительную ссылку"
+                    >
+                      <Copy className="h-3.5 w-3.5 shrink-0 text-tg-link" />
+                      <span className="min-w-0 flex-1 truncate text-[11.5px] font-medium text-tg-text2">{m.inviteLink}</span>
+                      <span className="shrink-0 text-[10.5px] font-semibold text-tg-link">Скопировать</span>
+                    </button>
                   )}
                   {/* Инлайн-кнопки + публикация */}
                   {m.role === 'assistant' && channelId && (

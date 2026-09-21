@@ -7,6 +7,7 @@ import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { isValidChannelUsername } from '@/lib/server'
 import { PRO_PROMOTE_HOT_BOOST, PRO_PROMOTE_WEEKLY_LIMIT, tierAtLeast, tierOfUser } from '@/lib/tiers'
+import { sweepScheduledPostsThrottled } from '@/lib/scheduled-posts'
 
 export const dynamic = 'force-dynamic'
 
@@ -84,6 +85,9 @@ export async function GET(request: Request) {
   if (!g.ok) return g.res
 
   try {
+    // v5.64: владелец открыл кабинет — публикуем дозревшие отложенные посты (троттлинг 30с)
+    sweepScheduledPostsThrottled()
+
     const since24h = new Date(Date.now() - 24 * 60 * 60_000)
     // egress (11-a): select вместо include — styleProfile и прочие тяжёлые
     // служебные колонки канала в кабинет не отдаются (форма ответа прежняя)

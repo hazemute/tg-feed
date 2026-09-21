@@ -113,6 +113,7 @@ model Channel {
   createdAt        DateTime  @default(now())
 
   posts            Post[]
+  scheduledPosts   ScheduledPost[] // v5.64: отложенные посты (Snap Ассистент)
   subscriptions    Subscription[]
   campaigns        AdCampaign[]
 
@@ -163,6 +164,23 @@ model Post {
   @@index([publishedAt])
   // промо-посты (Snap Pro): выборка на КАЖДОЙ странице 0 ленты (не кэшируется)
   @@index([promotedAt])
+}
+
+model ScheduledPost {
+  id          String    @id @default(cuid())
+  channelId   String
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  text        String
+  imageUrl    String?
+  scheduledAt DateTime
+  publishedAt DateTime?
+  link        String? // ссылка на опубликованный пост (t.me/<u>/<id>)
+  error       String? // последняя ошибка публикации (если бот без прав)
+  createdBy   String? // id пользователя-админа (Snap Ассистент)
+  createdAt   DateTime  @default(now())
+
+  @@index([scheduledAt])
+  @@index([channelId, publishedAt])
 }
 
 model Like {

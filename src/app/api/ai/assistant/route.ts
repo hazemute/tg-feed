@@ -15,7 +15,8 @@ import {
   usageCollector,
 } from '@/lib/wallet'
 import { enVisualPrompt, pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-image'
-import { botPublishToChannel } from '@/lib/tg-bot'
+import { botPublishToChannel, getBotChatRights, getChatMemberCount } from '@/lib/tg-bot'
+import { sweepScheduledPostsThrottled } from '@/lib/scheduled-posts'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { stripMarkdown } from '@/lib/markdown'
 import { schemasFor, toolBy, type ToolExecResult, assistantSystemPrompt, type ToolCtx, channelStatsBlock } from '@/lib/ai-tools'
@@ -226,6 +227,8 @@ export async function POST(request: Request) {
     /* ---------- Чат с инструментами (SSE) ---------- */
     if (d.action === 'chat') {
       registerStyleExecutor()
+      // v5.64: заходим — подчищаем очередь отложенных постов (срок вышел → публикуем)
+      sweepScheduledPostsThrottled()
       // Категория канала + юзер + полный снапшот статистики — параллельно (v5.34:
       // ассистент знает ВЕСЬ канал до первого вопроса — цифры, настройки, топ постов)
       const [channelFull, user, statsBlock, weeklyUsed, knowledge] = await Promise.all([
@@ -257,6 +260,20 @@ export async function POST(request: Request) {
         [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim() ||
         (user?.username ? `@${user.username}` : 'автор канала')
 
+      // v5.64: ЖИВОЙ СРЕЗ TELEGRAM в системном промпте — реальные подписчики (Bot API)
+      // и матрица прав бота. Оба вызова закэшированы (память 15-60 мин) — почти бесплатно.
+      // Ассистент СРАЗУ знает реальное состояние канала в самом Telegram,
+      // а не только цифры ленты приложения.
+      const [liveMembers, botRights] = await Promise.all([
+        getChatMemberCount(channel.username).catch(() => null),
+        getBotChatRights(channel.username).catch(() => null),
+      ])
+      const liveLines: string[] = []
+      if (liveMembers != null) liveLines.push(`Реальные подписчики в Telegram прямо сейчас: ${liveMembers}`)
+      if (botRights) liveLines.push(`Права бота в канале: ${botRights.rightsText}`)
+      const liveBlock = liveLines.length > 0 ? `\n=== TELEGRAM ЖИВЬЁМ (Bot API) ===\n${liveLines.join('\n')}\n=== конец живого среза ===` : ''
+      const statsFull = statsBlock ? statsBlock + liveBlock : liveBlock.trim() || null
+
       const sys = assistantSystemPrompt({
         userName,
         tier,
@@ -266,7 +283,7 @@ export async function POST(request: Request) {
         categoryTitle: channelFull?.category?.title ?? null,
         style: styleFresh(channel),
         weeklyPromo: { used: weeklyUsed, limit: 7 },
-        statsBlock,
+        statsBlock: statsFull,
         cta: { label: channelFull?.ctaLabel ?? null, url: channelFull?.ctaUrl ?? null },
         teaserMode: channelFull?.teaserMode ?? 'cut',
         createdAt: channelFull?.createdAt ?? null,
@@ -364,6 +381,8 @@ export async function POST(request: Request) {
                 if (res.meta.imageUrl) meta.imageUrl = res.meta.imageUrl
                 if (res.meta.imagePending !== undefined) meta.imagePending = res.meta.imagePending
                 if (res.meta.publishedLink) meta.publishedLink = res.meta.publishedLink
+                if (res.meta.inviteLink) meta.inviteLink = res.meta.inviteLink
+                if (res.meta.scheduledAt) meta.scheduledAt = res.meta.scheduledAt
               }
               steps.push({ tool: call.name, label, ok: res.ok })
               messages = [

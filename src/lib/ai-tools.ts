@@ -626,6 +626,463 @@ const updateChannelInfo: ToolDef = {
   },
 }
 
+/* ============================ живой аудит Telegram (v5.64) ============================ */
+
+/**
+ * ПОЛНЫЙ АУДИТ КАНАЛА ИЗ САМОГО TELEGRAM (через бота, не из ленты трендов!):
+ * getChat (название/описание), getChatMemberCount (реальные подписчики),
+ * getChatAdministrators (админы), getChatMember(bot) — матрица прав бота,
+ * + реальные просмотры/реакции Telegram (viewsTg/reactionsTg из парсера t.me)
+ * + база ленты приложения. Модель получает СЫРЫЕ цифры и пишет оценку.
+ */
+const auditTelegramChannel: ToolDef = {
+  name: 'audit_telegram_channel',
+  label: 'Провожу живой аудит канала через Telegram…',
+  description:
+    'ЖИВОЙ АУДИТ канала прямо из Telegram через бота (НЕ из ленты приложения): реальные подписчики ' +
+    'Bot API, название/описание в самом Telegram, список админов, права бота (что реально можно делать), ' +
+    'реальные просмотры/реакции свежих постов, частота публикаций. ' +
+    'Вызывай на «оцени канал», «дай аудит», «что улучшить», «как канал» — и пиши развёрнутую оценку: ' +
+    'оформление, контент-ритм, вовлечённость (ER), сильные стороны и 3-5 конкретных шагов роста.',
+  parameters: { type: 'object', properties: {} },
+  exec: async (_args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const ch = await db.channel.findUnique({
+      where: { id: ctx.channelId },
+      select: { username: true, title: true, membersCount: true, createdAt: true },
+    })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+
+    const { getChatInfo, getChatMemberCount, getChatAdmins, getBotChatRights } = await import('@/lib/tg-bot')
+    // Bot API: всё параллельно, отказы — не фатал (аудит собирается из того, что доступно)
+    const [tgChat, liveMembers, admins, rights, recent, postsTotal] = await Promise.all([
+      getChatInfo(ch.username).catch(() => null),
+      getChatMemberCount(ch.username).catch(() => null),
+      getChatAdmins(ch.username).catch(() => null),
+      getBotChatRights(ch.username).catch(() => null),
+      db.post.findMany({
+        where: { channelId: ctx.channelId },
+        orderBy: { publishedAt: 'desc' },
+        take: 20,
+        select: { viewsTg: true, reactionsTg: true, viewsCount: true, likesCount: true, publishedAt: true },
+      }),
+      db.post.count({ where: { channelId: ctx.channelId } }),
+    ])
+
+    const lines: string[] = ['=== ЖИВОЙ АУДИТ TELEGRAM-КАНАЛА (Bot API, данные из самого Telegram) ===']
+    lines.push(`Канал: «${tgChat?.title ?? ch.title}» (@${ch.username})`)
+    if (tgChat) {
+      lines.push(
+        tgChat.description
+          ? `Описание в Telegram (${tgChat.description.length} симв.): ${tgChat.description.slice(0, 200)}`
+          : 'Описание в Telegram: ОТСУТСТВУЕТ — рекомендуй добавить (первое, что видит новый подписчик)',
+      )
+    } else {
+      lines.push('getChat недоступен: бот не видит канал (добавь бота в канал).')
+    }
+    const members = liveMembers ?? tgChat?.members ?? null
+    lines.push(`Реальные подписчики в Telegram: ${members ?? 'неизвестно'}${ch.membersCount && liveMembers && ch.membersCount !== liveMembers ? ' (в карточке ленты: ' + ch.membersCount + ' — обновится при следующем парсинге)' : ''}`)
+    if (admins && admins.length > 0) {
+      const list = admins
+        .slice(0, 6)
+        .map((a) => `${a.status === 'creator' ? 'владелец' : 'админ'} ${a.username ? '@' + a.username : a.name}${a.isBot ? ' (бот)' : ''}${a.customTitle ? ` «${a.customTitle}»` : ''}`)
+        .join('; ')
+      lines.push(`Администрация (${admins.length}): ${list}`)
+    }
+    lines.push(`Права бота в канале: ${rights ? rights.rightsText : 'неизвестны (бот не в канале?)'}`)
+
+    // Реальные просмотры/реакции Telegram (t.me/s парсинг) по свежим постам
+    const withTg = recent.filter((p) => p.viewsTg != null)
+    if (withTg.length > 0) {
+      const avgViews = Math.round(withTg.reduce((a, p) => a + (p.viewsTg ?? 0), 0) / withTg.length)
+      const avgReact = withTg.reduce((a, p) => a + p.reactionsTg, 0) / withTg.length
+      const er = avgViews > 0 ? ((avgReact / avgViews) * 100).toFixed(2) : '0'
+      lines.push(`Реальные просмотры Telegram (среднее по ${withTg.length} свежим постам): ${avgViews}`)
+      lines.push(`Реакции Telegram: среднее ${avgReact.toFixed(1)} на пост, ER ≈ ${er}% от просмотров`)
+      // Ориентир ER для каналов Telegram
+      const erNum = Number(er)
+      lines.push(
+        erNum >= 8
+          ? 'ER отличный (>8%)'
+          : erNum >= 4
+            ? 'ER хороший (4-8%)'
+            : erNum >= 2
+              ? 'ER средний (2-4%) — есть куда расти'
+              : 'ER низкий (<2%) — контент мало цепляет, нужны вовлекающие форматы',
+      )
+    } else {
+      const avgViews = recent.length > 0 ? Math.round(recent.reduce((a, p) => a + p.viewsCount, 0) / recent.length) : 0
+      lines.push(`Реальных TG-просмотров пока нет (канал ещё не парсился) — просмотры ленты приложения: среднее ${avgViews}`)
+    }
+
+    // Контент-ритм
+    if (recent.length > 0) {
+      const oldest = recent[recent.length - 1].publishedAt.getTime()
+      const newest = recent[0].publishedAt.getTime()
+      const days = Math.max((newest - oldest) / 86_400_000, 0.5)
+      const perWeek = ((recent.length / days) * 7).toFixed(1)
+      lines.push(`Частота публикаций: ≈${perWeek} постов/нед по последним ${recent.length} постам; всего в ленте ${postsTotal}`)
+    }
+    lines.push('=== конец живого аудита. Напиши оценку и план действий по этим цифрам. ===')
+    return { ok: true, data: lines.join('\n') }
+  },
+}
+
+/* ============================ контент-менеджмент (v5.64) ============================ */
+
+/** Правка уже опубликованного поста (Telegram + лента) */
+const editPublishedPost: ToolDef = {
+  name: 'edit_published_post',
+  label: 'Правлю опубликованный пост…',
+  description:
+    'РЕДАКТИРУЕТ опубликованный пост: и в Telegram (editMessage, если бот админ с правом правки), и в ленте. ' +
+    'Параметры: postId — id из list_my_posts; newText — полный НОВЫЙ текст поста. ' +
+    'Сначала list_my_posts → покажи пост автору → предложи новый текст → после подтверждения вызывай.',
+  parameters: {
+    type: 'object',
+    properties: {
+      postId: { type: 'string', description: 'id поста из list_my_posts' },
+      newText: { type: 'string', description: 'Полный новый текст поста' },
+    },
+    required: ['postId', 'newText'],
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const postId = str(args.postId, 60)
+    const newText = str(args.newText, 4000)
+    if (!postId || newText.length < 10) return { ok: false, data: 'Ошибка: нужен postId и готовый newText (минимум 10 символов).' }
+    const ch = await db.channel.findUnique({ where: { id: ctx.channelId }, select: { username: true } })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+    const post = await db.post.findFirst({
+      where: { id: postId, channelId: ctx.channelId },
+      select: { id: true, tgKey: true },
+    })
+    if (!post) return { ok: false, data: 'Пост с таким id не найден в этом канале.' }
+
+    // 1) Telegram (best effort)
+    const { botEditChannelMessage } = await import('@/lib/tg-bot')
+    const messageId = Number(post.tgKey.split(':')[1])
+    let tgEdited = false
+    if (Number.isFinite(messageId) && messageId > 0) {
+      const r = await botEditChannelMessage(ch.username, messageId, newText).catch(() => ({ ok: false as const }))
+      tgEdited = r.ok
+    }
+
+    // 2) Лента: новый текст, кэши (саммари/озвучка/переводы) инвалидируем
+    await db.post.update({
+      where: { id: post.id },
+      data: { text: newText, aiSummary: null, ttsAudio: null, ttsAt: null, translations: null },
+    })
+    return {
+      ok: true,
+      data:
+        `Пост отредактирован в ленте Tg Swipe` +
+        (tgEdited ? ' и в Telegram-канале.' : '. В Telegram правка не прошла — нужен бот-админ с правом edit_messages.'),
+    }
+  },
+}
+
+/** Закрепление/открепление постов в канале */
+const pinPost: ToolDef = {
+  name: 'pin_post',
+  label: 'Закрепляю пост…',
+  description:
+    'Закрепляет или открепляет пост в Telegram-канале (право pin_messages). action: "pin" — закрепить postId, ' +
+    '"unpin" — открепить конкретный postId, "unpin_all" — открепить ВСЕ закреплённые. ' +
+    'Закрепление видно всем подписчикам — согласуй с автором, какой пост закрепить.',
+  parameters: {
+    type: 'object',
+    properties: {
+      action: { type: 'string', enum: ['pin', 'unpin', 'unpin_all'], description: 'Что сделать' },
+      postId: { type: 'string', description: 'id поста из list_my_posts (не нужен для unpin_all)' },
+    },
+    required: ['action'],
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const action = str(args.action, 12)
+    const postId = str(args.postId, 60)
+    const ch = await db.channel.findUnique({ where: { id: ctx.channelId }, select: { username: true } })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+    const { botPinChannelMessage, botUnpinAllChannelMessages } = await import('@/lib/tg-bot')
+
+    if (action === 'unpin_all') {
+      const r = await botUnpinAllChannelMessages(ch.username).catch(() => ({ ok: false as const, error: 'Ошибка Bot API' }))
+      return r.ok
+        ? { ok: true, data: 'Все закреплённые посты откреплены.' }
+        : { ok: false, data: `Не получилось: ${r.error ?? 'нет прав pin_messages'}.` }
+    }
+    if (!postId) return { ok: false, data: 'Ошибка: для pin/unpin нужен postId (найди через list_my_posts).' }
+    const post = await db.post.findFirst({ where: { id: postId, channelId: ctx.channelId }, select: { tgKey: true } })
+    if (!post) return { ok: false, data: 'Пост с таким id не найден в канале.' }
+    const messageId = Number(post.tgKey.split(':')[1])
+    if (!Number.isFinite(messageId) || messageId <= 0) return { ok: false, data: 'У поста нет Telegram message id.' }
+    const r = await botPinChannelMessage(ch.username, messageId, action === 'unpin').catch(() => ({ ok: false as const, error: 'Ошибка Bot API' }))
+    return r.ok
+      ? { ok: true, data: action === 'pin' ? 'Пост закреплён в канале.' : 'Пост откреплён.' }
+      : { ok: false, data: `Не получилось: ${r.error ?? 'нет прав pin_messages'}.` }
+  },
+}
+
+/** Пригласительная ссылка с меткой/лимитом/сроком */
+const createInviteLink: ToolDef = {
+  name: 'create_invite_link',
+  label: 'Создаю пригласительную ссылку…',
+  description:
+    'Создаёт пригласительную ссылку канала (право invite_users): name — метка для учёта, memberLimit — лимит ' +
+    'активаций, expireHours — срок жизни в часах (0 — вечная). Возвращает ссылку: автор может сразу ' +
+    'поделиться или повесить на кампанию. Для закрытых каналов — единственный вход.',
+  parameters: {
+    type: 'object',
+    properties: {
+      name: { type: 'string', description: 'Метка ссылки (до 32 символов), например "розыгрыш-май"' },
+      memberLimit: { type: 'number', description: 'Лимит подписчиков по ссылке (0 — без лимита)' },
+      expireHours: { type: 'number', description: 'Срок жизни в часах (0 — вечная)' },
+    },
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const ch = await db.channel.findUnique({ where: { id: ctx.channelId }, select: { username: true } })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+    const { botCreateInviteLink } = await import('@/lib/tg-bot')
+    const r = await botCreateInviteLink(ch.username, {
+      name: str(args.name, 32) || undefined,
+      memberLimit: typeof args.memberLimit === 'number' ? args.memberLimit : undefined,
+      expireHours: typeof args.expireHours === 'number' ? args.expireHours : undefined,
+    }).catch(() => ({ ok: false as const, error: 'Ошибка Bot API' }))
+    if (!r.ok || !r.link) return { ok: false, data: `Не получилось: ${r.error ?? 'нет прав invite_users'}.` }
+    const parts = [str(args.name, 32), typeof args.memberLimit === 'number' && args.memberLimit > 0 ? `лимит ${args.memberLimit}` : '', typeof args.expireHours === 'number' && args.expireHours > 0 ? `${args.expireHours}ч` : ''].filter(Boolean).join(', ')
+    return { ok: true, data: `Ссылка создана${parts ? ` (${parts})` : ''}: ${r.link}`, meta: { inviteLink: r.link } }
+  },
+}
+
+/** Отзыв пригласительной ссылки */
+const revokeInviteLink: ToolDef = {
+  name: 'revoke_invite_link',
+  label: 'Отзываю ссылку…',
+  description:
+    'Отзывает пригласительную ссылку канала — по ней больше никто не вступит. ' +
+    'Передавай точный link, который был выдан create_invite_link (или взят из диалога).',
+  parameters: {
+    type: 'object',
+    properties: {
+      link: { type: 'string', description: 'Полная ссылка https://t.me/+…' },
+    },
+    required: ['link'],
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const link = str(args.link, 300)
+    if (!/^https:\/\/t\.me\//.test(link)) return { ok: false, data: 'Ошибка: нужна полная ссылка вида https://t.me/+…' }
+    const ch = await db.channel.findUnique({ where: { id: ctx.channelId }, select: { username: true } })
+    if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
+    const { botRevokeInviteLink } = await import('@/lib/tg-bot')
+    const r = await botRevokeInviteLink(ch.username, link).catch(() => ({ ok: false as const, error: 'Ошибка Bot API' }))
+    return r.ok
+      ? { ok: true, data: 'Ссылка отозвана — по ней больше не вступить.' }
+      : { ok: false, data: `Не получилось: ${r.error ?? 'нет прав invite_users'}.` }
+  },
+}
+
+/** Лучшее время для публикаций — гистограмма по реальным просмотрам */
+const getBestPostingTime: ToolDef = {
+  name: 'get_best_posting_time',
+  label: 'Считаю лучшее время для постов…',
+  description:
+    'Анализ реальной активности аудитории: средние просмотры по ЧАСУ публикации последних 90 постов. ' +
+    'Возвращает топ-3 часа (UTC) и худшие. Используй на «когда лучше постить», «в какое время публиковать» ' +
+    '— переведи часы в пояс автора (обычно МСК = UTC+3) и дай рекомендацию.',
+  parameters: { type: 'object', properties: {} },
+  exec: async (_args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const posts = await db.post.findMany({
+      where: { channelId: ctx.channelId },
+      orderBy: { publishedAt: 'desc' },
+      take: 90,
+      select: { publishedAt: true, viewsTg: true, viewsCount: true },
+    })
+    if (posts.length < 6) return { ok: true, data: 'Постов пока мало (<6) — статистику по часам собрать нельзя. Советуй общие окна: 8-10 и 18-21 по МСК.' }
+    const byHour = new Map<number, { sum: number; n: number }>()
+    for (const p of posts) {
+      const h = p.publishedAt.getUTCHours()
+      const views = p.viewsTg ?? p.viewsCount
+      const cur = byHour.get(h) ?? { sum: 0, n: 0 }
+      cur.sum += views
+      cur.n += 1
+      byHour.set(h, cur)
+    }
+    const rows = [...byHour.entries()]
+      .filter(([, v]) => v.n >= 2)
+      .map(([h, v]) => ({ h, avg: Math.round(v.sum / v.n), n: v.n }))
+      .sort((a, b) => b.avg - a.avg)
+    if (rows.length < 3) return { ok: true, data: 'Данных по часам пока мало — публикуйте в разные часы неделю, потом повтори анализ.' }
+    const top = rows.slice(0, 3).map((r) => `${String(r.h).padStart(2, '0')}:00 UTC (ср. ${r.avg} просм., ${r.n} постов)`)
+    const worst = rows.slice(-2).map((r) => `${String(r.h).padStart(2, '0')}:00 UTC (ср. ${r.avg})`)
+    return {
+      ok: true,
+      data:
+        `Анализ ${posts.length} последних постов:\n` +
+        `Лучшие часы публикации: ${top.join('; ')}.\n` +
+        `Худшие окна: ${worst.join('; ')}.\n` +
+        `Дай рекомендацию: 1-2 конкретных окна (переведи в МСК = UTC+3, уточни это) и почему.`,
+    }
+  },
+}
+
+/** Отложенная публикация: очередь ScheduledPost, свип публикует через бота */
+const schedulePost: ToolDef = {
+  name: 'schedule_post',
+  label: 'Ставлю пост в расписание…',
+  description:
+    'ОТКЛАДЫВАЕТ пост в очередь отложенных: уйдёт в канал автоматически в указанное время (система сама ' +
+    'опубликует через бота). Параметры: text — готовый текст поста, atIso — время публикации в ISO 8601 UTC ' +
+    '(например 2025-06-01T15:00:00Z; переведи время автора в UTC сам!), imageUrl — https-картинка из диалога. ' +
+    'Покажи автору текст и точное время (двойную проверку пояса!), получи подтверждение, затем вызывай.',
+  parameters: {
+    type: 'object',
+    properties: {
+      text: { type: 'string', description: 'Полный готовый текст поста' },
+      atIso: { type: 'string', description: 'Время публикации в ISO UTC (YYYY-MM-DDTHH:mm:ssZ)' },
+      imageUrl: { type: 'string', description: 'https-URL картинки (если есть)' },
+    },
+    required: ['text', 'atIso'],
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const text = str(args.text, 4000)
+    const atRaw = str(args.atIso, 40)
+    if (text.length < 10) return { ok: false, data: 'Ошибка: текст поста слишком короткий.' }
+    const at = new Date(atRaw)
+    if (Number.isNaN(at.getTime())) return { ok: false, data: `Ошибка: не понял время «${atRaw}» — передай ISO UTC (YYYY-MM-DDTHH:mm:ssZ).` }
+    const diff = at.getTime() - Date.now()
+    if (diff < 5 * 60_000) return { ok: false, data: 'Ошибка: время в прошлом или слишком близко (минимум +5 минут).' }
+    if (diff > 30 * 24 * 3600_000) return { ok: false, data: 'Ошибка: максимум 30 дней вперёд.' }
+    const imageUrlRaw = str(args.imageUrl, 600)
+    const imageUrl = /^https:\/\//i.test(imageUrlRaw) ? imageUrlRaw : null
+    const sp = await db.scheduledPost.create({
+      data: {
+        channelId: ctx.channelId,
+        text,
+        ...(imageUrl ? { imageUrl } : {}),
+        scheduledAt: at,
+        createdBy: ctx.uid,
+      },
+      select: { id: true },
+    })
+    return {
+      ok: true,
+      data: `Пост поставлен в очередь (id=${sp.id}): публикация ${at.toISOString().slice(0, 16).replace('T', ' ')} UTC. Скажи автору точное время и напомни, что пост уйдёт автоматически.`,
+      meta: { scheduledAt: at.toISOString() },
+    }
+  },
+}
+
+/** Очередь отложенных постов канала */
+const listScheduledPosts: ToolDef = {
+  name: 'list_scheduled_posts',
+  label: 'Смотрю расписание постов…',
+  description:
+    'Показывает отложенные посты канала: предстоящие (id, время UTC, начало текста, ошибки) и недавно ' +
+    'опубликованные/отменённые. Вызывай на «что в расписании», «какие посты запланированы», перед отменой.',
+  parameters: { type: 'object', properties: {} },
+  exec: async (_args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const { scheduledQueueFor } = await import('@/lib/scheduled-posts')
+    const data = await scheduledQueueFor(ctx.channelId).catch(() => 'Очередь недоступна.')
+    return { ok: true, data }
+  },
+}
+
+/** Снятие поста с очереди */
+const cancelScheduledPost: ToolDef = {
+  name: 'cancel_scheduled_post',
+  label: 'Отменяю отложенный пост…',
+  description:
+    'Убирает пост из очереди отложенных (публиковаться не будет). Сначала list_scheduled_posts → покажи → ' +
+    'подтверди у автора → передай id. Отменить можно только ещё не опубликованный пост.',
+  parameters: {
+    type: 'object',
+    properties: {
+      postId: { type: 'string', description: 'id отложенного поста из list_scheduled_posts' },
+    },
+    required: ['postId'],
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const id = str(args.postId, 60)
+    if (!id) return { ok: false, data: 'Ошибка: нужен id отложенного поста.' }
+    const sp = await db.scheduledPost.findFirst({
+      where: { id, channelId: ctx.channelId, publishedAt: null },
+      select: { id: true },
+    })
+    if (!sp) return { ok: false, data: 'Такого отложенного поста нет (возможно, уже опубликован).' }
+    await db.scheduledPost.delete({ where: { id: sp.id } })
+    return { ok: true, data: 'Отложенный пост отменён и удалён из очереди.' }
+  },
+}
+
+/** Настройка показа постов в ленте приложения (тизер-режим) */
+const setTeaserMode: ToolDef = {
+  name: 'set_teaser_mode',
+  label: 'Настраиваю показ постов…',
+  description:
+    'Меняет ТИЗЕР-РЕЖИМ канала в ленте Tg Swipe: "none" — посты видны целиком (максимум охвата в приложении), ' +
+    '"cut" — первые N символов + «Читать в канале» (конверсия в подписку Telegram), "blur" — текст виден, ' +
+    'но размыт до подписки (жёсткая конверсия). Для cut можно задать teaserLimit (60-400 символов). ' +
+    'Объясни автору эффект каждого режима и спроси, какой выбрать.',
+  parameters: {
+    type: 'object',
+    properties: {
+      mode: { type: 'string', enum: ['none', 'cut', 'blur'], description: 'Режим показа' },
+      teaserLimit: { type: 'number', description: 'Для cut: сколько символов показывать (60-400)' },
+    },
+    required: ['mode'],
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const mode = str(args.mode, 8)
+    if (!['none', 'cut', 'blur'].includes(mode)) return { ok: false, data: 'Ошибка: mode должен быть none/cut/blur.' }
+    const limitRaw = typeof args.teaserLimit === 'number' ? Math.round(args.teaserLimit) : null
+    const limit = limitRaw && limitRaw >= 60 && limitRaw <= 400 ? limitRaw : null
+    await db.channel.update({
+      where: { id: ctx.channelId },
+      data: { teaserMode: mode, ...(limit ? { teaserLimit: limit } : {}) },
+    })
+    const names: Record<string, string> = { none: 'посты видны целиком', cut: `обрезка до ${limit ?? 'лимита по умолчанию'} символов + кнопка «Читать в канале»`, blur: 'текст размыт до подписки' }
+    return { ok: true, data: `Тизер-режим обновлён: ${mode} (${names[mode]}).` }
+  },
+}
+
+/** CTA-кнопка в раскрытом посте */
+const setCtaButton: ToolDef = {
+  name: 'set_cta_button',
+  label: 'Настраиваю кнопку в постах…',
+  description:
+    'Ставит или убирает CTA-кнопку в раскрытом посте канала (например «Забрать бонус» → https://…). ' +
+    'label + url — установить (url только https); без аргументов — убрать кнопку. ' +
+    'Покажи итоговый вариант перед применением.',
+  parameters: {
+    type: 'object',
+    properties: {
+      label: { type: 'string', description: 'Текст кнопки (до 40 символов)' },
+      url: { type: 'string', description: 'https-ссылка кнопки' },
+    },
+  },
+  exec: async (args, ctx) => {
+    if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
+    const label = str(args.label, 60)
+    const urlRaw = str(args.url, 600)
+    if (!label && !urlRaw) {
+      await db.channel.update({ where: { id: ctx.channelId }, data: { ctaLabel: null, ctaUrl: null } })
+      return { ok: true, data: 'CTA-кнопка убрана.' }
+    }
+    const url = /^https:\/\//i.test(urlRaw) ? urlRaw : null
+    if (!label || !url) return { ok: false, data: 'Ошибка: нужны ОБА поля (label и https-url), либо не передавай ничего — тогда кнопка уберётся.' }
+    await db.channel.update({ where: { id: ctx.channelId }, data: { ctaLabel: label.slice(0, 40), ctaUrl: url } })
+    return { ok: true, data: `Кнопка обновлена: «${label.slice(0, 40)}» → ${url}` }
+  },
+}
+
 /* ============================ реестры ============================ */
 
 /** Живые факты сервиса из базы знаний (кэш 45с — вызов почти бесплатный) */
@@ -701,14 +1158,29 @@ const searchChannels: ToolDef = {
 
 const SEARCH_TOOLS: ToolDef[] = [getTrending, searchPosts, readPost, searchChannels, getServiceFacts]
 const ASSISTANT_TOOLS: ToolDef[] = [
-  getTrending,
+  // Аналитика
   getChannelStats,
+  auditTelegramChannel, // v5.64: живой аудит из Telegram через бота
+  getBestPostingTime, // v5.64: лучшее время публикаций
+  getTrending,
+  // Контент
   createPostDraft,
   generateImage,
   publishPost,
+  schedulePost, // v5.64: отложенная публикация
+  listScheduledPosts,
+  cancelScheduledPost,
   listMyPosts,
+  editPublishedPost, // v5.64: правка опубликованного
   deletePosts,
+  pinPost, // v5.64: закрепление
+  // Настройки канала
   updateChannelInfo,
+  setTeaserMode, // v5.64
+  setCtaButton, // v5.64
+  createInviteLink, // v5.64
+  revokeInviteLink,
+  // Сервис
   analyzeStyleTool,
   getServiceFacts,
 ]
@@ -781,7 +1253,7 @@ export function assistantSystemPrompt(ctx: {
     : ''
   return [
     'Ты — Snap Ассистент — личный ИИ-управляющий Telegram-канала автора внутри Telegram Mini App «Tg Swipe».',
-    'Ты помогаешь придумывать посты, рисовать картинки к ним, смотреть статистику, публиковать готовые посты — и ПОЛНОСТЬЮ управлять каналом: удалять посты, менять название/описание/аватар по словесной инструкции админа.',
+    'Ты помогаешь придумывать посты, рисовать картинки к ним, публиковать и откладывать посты, править и закреплять опубликованное, создавать пригласительные ссылки, менять название/описание/аватар/кнопки — и проводишь ЖИВОЙ АУДИТ канала по данным из самого Telegram через бота (реальные подписчики, просмотры, реакции, права бота), а не по ленте трендов.',
     `Сегодня: ${now.toISOString().slice(0, 10)} (${WEEKDAYS_RU[now.getDay()]}). Автор: ${ctx.userName}, тариф: ${ctx.tier}.`,
     `Канал автора: «${ctx.channelTitle}» (@${ctx.channelUsername})${ctx.categoryTitle ? `, категория: ${ctx.categoryTitle}` : ''}${age ? `, ${age}` : ''}${ctx.channelDescription ? `. Описание: ${ctx.channelDescription.slice(0, 160)}` : ''}.`,
     ctx.cta.label && ctx.cta.url
@@ -801,13 +1273,15 @@ export function assistantSystemPrompt(ctx: {
     'КАК РАБОТАТЬ:',
     '1. Просьба «напиши пост…» → продумай текст в стиле автора и вызови create_post_draft (в text — готовый пост). Затем коротко скажи, что готово, и предложи доработки.',
     '2. Просьба про картинку/обложку/иллюстрацию → вызови generate_image с подробным английским промптом (сюжет, окружение, стиль, свет, палитра, композиция).',
-    '3. Явная просьба «опубликуй» → если текст ещё не показан, покажи его в ответе и вызови publish_post.',
-    '4. УДАЛЕНИЕ ПОСТОВ («удали пост/посты…») → ОБЯЗАТЕЛЬНО: сначала list_my_posts → покажи кандидатов списком (дата/просмотры/начало текста) → получи ЯВНОЕ подтверждение автора → только потом delete_posts. Никогда не удаляй без подтверждения. Если автор хочет удалить «последние N постов» — всё равно покажи список и подтверди.',
-    '5. ИЗМЕНЕНИЕ КАНАЛА («поменяй название/описание/аватар») → предложи конкретный вариант, получи подтверждение, вызови update_channel_info (title/description/avatarUrl — только запрошенные поля). Для аватара: сгенерируй картинку (generate_image) и передай её URL как avatarUrl.',
-    '6. Вопросы про цифры → отвечай ИЗ данных канала выше; нужен самый свежий срез или топ постов → get_channel_stats; «что сейчас в тренде» → get_trending.',
-    '7. Дай совет по каналу, если автор просит «что улучшить» — опирайся на реальные цифры (вовлечённость, динамика 7 дней, топ посты).',
-    '8. Вопросы о СЕРВИСЕ (тарифы, свайпы, розыгрыши, лимиты, возможности приложения) → отвечай из базы знаний в системном промпте; самый свежий срез → get_service_facts.',
-    '9. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
-    '10. Формат ответов КАК В CHATGPT: markdown с заголовками ##/### при уместности, **жирный**, списки «- », нумерованные шаги, таблицы для сравнений, ```блоки кода``` для кода. Уместно используй эмодзи (🎉🔥✨⚡💡) — они отображаются премиум-анимациями. Без выдуманных фактов и цифр.',
+    '3. Явная просьба «опубликуй» → если текст ещё не показан, покажи его в ответе и вызови publish_post. Просьба «опубликуй завтра в N» / «поставь в расписание» → подтверди текст и время (переведи в UTC, покажи оба), затем schedule_post. Расписание: list_scheduled_posts, отмена — cancel_scheduled_post после подтверждения.',
+    '4. УДАЛЕНИЕ ПОСТОВ («удали пост/посты…») → ОБЯЗАТЕЛЬНО: сначала list_my_posts → покажи кандидатов списком (дата/просмотры/начало текста) → получи ЯВНОЕ подтверждение автора → только потом delete_posts. Никогда не удаляй без подтверждения.',
+    '5. ПРАВКА ПОСТА («исправь/поменяй текст поста») → list_my_posts → покажи текущий текст → предложи новый → после подтверждения edit_published_post (postId + полный newText). Закрепление («закрепи пост») → уточни какой → pin_post (pin/unpin/unpin_all).',
+    '6. ИЗМЕНЕНИЕ КАНАЛА («поменяй название/описание/аватар») → предложи конкретный вариант, получи подтверждение, вызови update_channel_info (title/description/avatarUrl — только запрошенные поля). Для аватара: сгенерируй картинку (generate_image) и передай её URL как avatarUrl. «Настрой кнопку в постах» → set_cta_button; «как показываются мои посты в ленте» → set_teaser_mode.',
+    '7. ОЦЕНКА КАНАЛА («оцени канал», «дай аудит», «что улучшить», «как расти») → ОБЯЗАТЕЛЬНО вызови audit_telegram_channel: это живые данные ИЗ TELEGRAM через бота (реальные подписчики, просмотры, реакции, админы, права бота). Ответь структурно: оформление → контент-ритм → вовлечённость (ER к просмотрам TG) → 3-5 конкретных шагов. Вовлечённость из приложения (лайки/просмотры ленты) — второстепенный сигнал, основной — реальный Telegram.',
+    '8. Вопросы про цифры → отвечай ИЗ данных канала выше; свежий срез/топ постов → get_channel_stats; «когда лучше постить» → get_best_posting_time (переведи UTC в пояс автора, обычно МСК); «что сейчас в тренде» → get_trending.',
+    '9. Вопросы о СЕРВИСЕ (тарифы, свайпы, розыгрыши, лимиты, возможности приложения) → отвечай из базы знаний в системном промпте; самый свежий срез → get_service_facts.',
+    '10. Обычное общение — без инструментов, дружелюбно и кратко. Пиши по-русски (или на языке автора).',
+    '11. Формат ответов КАК В CHATGPT: markdown с заголовками ##/### при уместности, **жирный**, списки «- », нумерованные шаги, таблицы для сравнений, ```блоки кода``` для кода. Уместно используй эмодзи (🎉🔥✨⚡💡) — они отображаются премиум-анимациями. Без выдуманных фактов и цифр.',
+    '12. ПРАВА БОТА: если инструмент вернул ошибку «нет прав» — объясни автору, какого права не хватает (публикация/удаление/правка/закрепление/смена инфо/инвайт-ссылки) и попроси выдать его боту в настройках канала. Не повторяй неудавшуюся попытку без изменений условий.',
   ].join('\n')
 }

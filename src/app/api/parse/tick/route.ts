@@ -7,6 +7,7 @@ import { nextAdaptiveBatch, enrichMissingMedia, refreshChannelCards, refreshHotC
 import { pruneAll } from '@/lib/retention'
 import { checkDueGiveaways } from '@/lib/giveaways'
 import { reverifyQuestCompletions } from '@/lib/quests'
+import { publishDueScheduledPosts } from '@/lib/scheduled-posts'
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 120
@@ -123,6 +124,10 @@ async function handle(request: Request) {
     // Отписался → аннулирование + штраф ×2 (см. lib/quests.ts).
     const questChecks = await reverifyQuestCompletions(10).catch(() => null)
 
+    // v5.64: ОТЛОЖЕННЫЕ ПОСТЫ (Snap Ассистент) — у кого время наступило,
+    // публикуем через бота и добавляем в ленту (до 5 за тик — не мешаем парсингу)
+    const scheduled = await publishDueScheduledPosts(5).catch(() => null)
+
     return NextResponse.json({
       ok: true,
       batch: batch.length,
@@ -136,6 +141,7 @@ async function handle(request: Request) {
       pruned,
       giveaways,
       questChecks,
+      scheduled,
       ms: Date.now() - started,
     })
   } catch (e) {

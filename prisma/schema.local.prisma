@@ -105,6 +105,7 @@ model Channel {
   createdAt        DateTime  @default(now())
 
   posts            Post[]
+  scheduledPosts   ScheduledPost[] // v5.64: отложенные посты (Snap Ассистент)
   subscriptions    Subscription[]
   mutedBy     ChannelMute[]
   campaigns   AdCampaign[]
@@ -152,6 +153,23 @@ model Post {
   @@index([channelId, publishedAt])
   @@index([publishedAt])
   @@index([promotedAt])
+}
+
+model ScheduledPost {
+  id          String    @id @default(cuid())
+  channelId   String
+  channel     Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  text        String
+  imageUrl    String?
+  scheduledAt DateTime
+  publishedAt DateTime?
+  link        String?
+  error       String?
+  createdBy   String?
+  createdAt   DateTime  @default(now())
+
+  @@index([scheduledAt])
+  @@index([channelId, publishedAt])
 }
 
 model Like {

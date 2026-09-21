@@ -790,6 +790,217 @@ export async function botSetChatPhoto(username: string, imageUrl: string): Promi
   }
 }
 
+/* ===================== Живой аудит канала (v5.64, Snap Ассистент) ===================== */
+
+/** Расширенный вызов Bot API: возвращает распарсенный result (чтение данных канала) */
+async function botManageCallData<T>(
+  method: string,
+  body: Record<string, unknown>,
+): Promise<{ ok: boolean; result?: T; error?: string }> {
+  if (!botEnabled()) return { ok: false, error: 'Бот не настроен' }
+  if (botBanned()) return { ok: false, error: 'Telegram временно ограничил Bot API — попробуйте чуть позже' }
+  await hydrateBotBan()
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/${method}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const data = (await res.json().catch(() => null)) as { ok?: boolean; result?: T; description?: string } | null
+    if (res.status === 429) {
+      const retry = Number((data as { parameters?: { retry_after?: number } } | null)?.parameters?.retry_after ?? 30)
+      await markBotBan(retry)
+    }
+    if (data?.ok) return { ok: true, result: data.result }
+    return { ok: false, error: data?.description ?? `HTTP ${res.status}` }
+  } catch (e) {
+    return { ok: false, error: String((e as Error)?.message ?? e) }
+  }
+}
+
+export type TgAdminInfo = {
+  name: string
+  username: string | null
+  isBot: boolean
+  status: string // creator | administrator
+  customTitle: string | null
+}
+
+/**
+ * Администраторы канала через getChatAdministrators (бот должен видеть канал).
+ * Кэш в памяти 10 минут — аудит не должен молотить API на каждый вопрос.
+ */
+export async function getChatAdmins(username: string): Promise<TgAdminInfo[] | null> {
+  if (!botEnabled()) return null
+  const clean = username.replace(/^@/, '')
+  const mk = `admins:${clean}`
+  const local = memGet(mk)
+  if (local !== undefined) {
+    if (local === null) return null
+    try {
+      return JSON.parse(local) as TgAdminInfo[]
+    } catch {
+      return null
+    }
+  }
+  type RawAdmin = {
+    status?: string
+    custom_title?: string
+    user?: { id?: number; is_bot?: boolean; first_name?: string; last_name?: string; username?: string }
+  }
+  const r = await botManageCallData<RawAdmin[]>('getChatAdministrators', { chat_id: `@${clean}` })
+  if (!r.ok || !Array.isArray(r.result)) {
+    memSet(mk, null, 5 * 60_000)
+    return null
+  }
+  const admins: TgAdminInfo[] = r.result.map((a) => ({
+    name: [a.user?.first_name, a.user?.last_name].filter(Boolean).join(' ').trim() || '—',
+    username: a.user?.username ?? null,
+    isBot: Boolean(a.user?.is_bot),
+    status: a.status === 'creator' ? 'creator' : 'administrator',
+    customTitle: a.custom_title ?? null,
+  }))
+  memSet(mk, JSON.stringify(admins), 10 * 60_000)
+  return admins
+}
+
+export type BotChatRights = {
+  isAdmin: boolean
+  canPost: boolean
+  canEdit: boolean
+  canDelete: boolean
+  canPin: boolean
+  canChangeInfo: boolean
+  canInvite: boolean
+  rightsText: string
+}
+
+/** Кэш прав бота в конкретном канале (память 15 мин) */
+const rightsCache = new Map<string, { v: BotChatRights; exp: number }>()
+
+/**
+ * Права НАШЕГО бота в канале: getMe → bot id, затем getChatMember(chat, bot_id).
+ * Из статуса и флагов собирается матрица прав — ядро живого аудита:
+ * ассистент ЗНАЕТ, что бот реально может (публикация/удаление/правка/закрепление).
+ */
+export async function getBotChatRights(username: string): Promise<BotChatRights | null> {
+  if (!botEnabled()) return null
+  const clean = username.replace(/^@/, '')
+  const cached = rightsCache.get(clean)
+  if (cached && cached.exp > Date.now()) return cached.v
+
+  // id бота (getMe кэшируется выше в getBotUsername только юзернеймом — тут нужен id)
+  let botId: number | null = null
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getMe`, { signal: AbortSignal.timeout(8000) })
+    const data = (await res.json()) as { ok?: boolean; result?: { id?: number } }
+    if (data?.ok && typeof data.result?.id === 'number') botId = data.result.id
+  } catch {
+    return null
+  }
+  if (!botId) return null
+
+  type RawMember = {
+    status?: string
+    can_post_messages?: boolean
+    can_edit_messages?: boolean
+    can_delete_messages?: boolean
+    can_pin_messages?: boolean
+    can_change_info?: boolean
+    can_invite_users?: boolean
+  }
+  const r = await botManageCallData<RawMember>('getChatMember', { chat_id: `@${clean}`, user_id: botId })
+  if (!r.ok || !r.result) return null
+  const m = r.result
+  const isAdmin = m.status === 'administrator' || m.status === 'creator'
+  const rights: BotChatRights = {
+    isAdmin,
+    canPost: isAdmin && Boolean(m.can_post_messages),
+    canEdit: isAdmin && Boolean(m.can_edit_messages),
+    canDelete: isAdmin && Boolean(m.can_delete_messages),
+    canPin: isAdmin && Boolean(m.can_pin_messages),
+    canChangeInfo: isAdmin && Boolean(m.can_change_info),
+    canInvite: isAdmin && Boolean(m.can_invite_users),
+    rightsText: '',
+  }
+  const parts: string[] = []
+  if (!isAdmin) parts.push('бот НЕ админ канала')
+  else {
+    parts.push(`публикация ${rights.canPost ? '✓' : '✗'}`)
+    parts.push(`правка ${rights.canEdit ? '✓' : '✗'}`)
+    parts.push(`удаление ${rights.canDelete ? '✓' : '✗'}`)
+    parts.push(`закрепление ${rights.canPin ? '✓' : '✗'}`)
+    parts.push(`смена инфо ${rights.canChangeInfo ? '✓' : '✗'}`)
+    parts.push(`инвайт-ссылки ${rights.canInvite ? '✓' : '✗'}`)
+  }
+  rights.rightsText = parts.join(', ')
+  rightsCache.set(clean, { v: rights, exp: Date.now() + 15 * 60_000 })
+  return rights
+}
+
+/**
+ * Правка опубликованного поста в Telegram (право edit_messages).
+ * Текстовые сообщения — editMessageText, медиа-посты — editMessageCaption.
+ * Пробуем текст, при отказе «message can't be edited» / нет текста — caption.
+ */
+export async function botEditChannelMessage(username: string, messageId: number, newText: string): Promise<BotCallResult> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  const asText = await botManageCall('editMessageText', {
+    chat_id: chatId,
+    message_id: messageId,
+    text: newText.slice(0, 4000),
+    parse_mode: 'HTML',
+  })
+  if (asText.ok) return { ok: true }
+  const asCaption = await botManageCall('editMessageCaption', {
+    chat_id: chatId,
+    message_id: messageId,
+    caption: newText.slice(0, 4000),
+    parse_mode: 'HTML',
+  })
+  return asCaption.ok ? { ok: true } : { ok: false, error: asCaption.error ?? asText.error }
+}
+
+/** Закрепить или открепить пост (право pin_messages) */
+export async function botPinChannelMessage(username: string, messageId: number, unpin: boolean): Promise<BotCallResult> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  return botManageCall(unpin ? 'unpinChatMessage' : 'pinChatMessage', { chat_id: chatId, message_id: messageId })
+}
+
+/** Открепить ВСЕ посты канала (право pin_messages) */
+export async function botUnpinAllChannelMessages(username: string): Promise<BotCallResult> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  return botManageCall('unpinAllChatMessages', { chat_id: chatId })
+}
+
+/**
+ * Создать пригласительную ссылку (право invite_users):
+ * имя-метка, лимит подписчиков, срок действия в часах (0/undefined — вечная).
+ */
+export async function botCreateInviteLink(
+  username: string,
+  opts?: { name?: string; memberLimit?: number; expireHours?: number },
+): Promise<{ ok: boolean; link?: string; error?: string }> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  const body: Record<string, unknown> = { chat_id: chatId }
+  if (opts?.name) body.name = opts.name.slice(0, 32)
+  if (opts?.memberLimit && opts.memberLimit > 0) body.member_limit = Math.min(Math.round(opts.memberLimit), 99999)
+  if (opts?.expireHours && opts.expireHours > 0) {
+    body.expire_date = Math.floor(Date.now() / 1000) + Math.min(Math.round(opts.expireHours), 24 * 365) * 3600
+  }
+  const r = await botManageCallData<{ invite_link?: string }>('createChatInviteLink', body)
+  if (!r.ok) return { ok: false, error: r.error }
+  const link = r.result?.invite_link
+  return link ? { ok: true, link } : { ok: false, error: 'Telegram не вернул ссылку' }
+}
+
+/** Отозвать пригласительную ссылку (право invite_users) */
+export async function botRevokeInviteLink(username: string, link: string): Promise<BotCallResult> {
+  const chatId = `@${username.replace(/^@/, '')}`
+  return botManageCall('revokeChatInviteLink', { chat_id: chatId, invite_link: link.slice(0, 300) })
+}
+
 /** Информация о кастомном эмодзи: тип анимации + file_id файла */
 export type CustomEmojiInfo = {
   video: boolean // is_video — видео-стикер (webm), рендерим <video>
