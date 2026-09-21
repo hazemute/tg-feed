@@ -8,6 +8,7 @@ import { stripMarkdown } from '@/lib/markdown'
 import { useBackButton } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
 import type { PostDTO } from '@/lib/types'
+import { Portal } from '@/components/ui/Portal'
 
 /**
  * AI-саммари: полупрозрачный bottom sheet с выжимкой лонгрида в 3 пункта.
@@ -98,7 +99,10 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
   const partial = !state?.done ? (state?.partial ?? '') : ''
   const note = state?.note ?? null
 
+  // v5.74: портал в body — иначе шит застревает в stacking context motion.main
+  // и красится ПОД навбаром (z-40)
   return (
+    <Portal>
     <AnimatePresence>
       {post && (
         <motion.div
@@ -194,5 +198,6 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
         </motion.div>
       )}
     </AnimatePresence>
+    </Portal>
   )
 }

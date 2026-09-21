@@ -10,6 +10,7 @@ import { useT } from '@/lib/i18n'
 import { uploadImage } from '@/lib/upload'
 import { RichText } from '@/components/feed/RichText'
 import { ChatInput } from '@/components/ai/ChatInput'
+import { Portal } from '@/components/ui/Portal'
 import { cn } from '@/lib/utils'
 
 /**
@@ -209,7 +210,10 @@ export function SupportChat({
 
   const waiting = sending && !isFeedback && state.status !== 'human'
 
+  // v5.74: ПОРТАЛ в body — иначе чат поддержки застревает в stacking context
+  // motion.main и навбар (z-40) перекрывает поле ввода (баг со скрина)
   return (
+    <Portal>
     <motion.div
       initial={{ opacity: 0, y: 24 }}
       animate={{ opacity: 1, y: 0 }}
@@ -496,5 +500,6 @@ export function SupportChat({
         </div>
       </footer>
     </motion.div>
+    </Portal>
   )
 }

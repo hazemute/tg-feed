@@ -7,6 +7,7 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { useBackButton } from '@/lib/tg'
 import { isInTelegram } from '@/lib/platform'
+import { Portal } from '@/components/ui/Portal'
 
 /**
  * Лаконичный bottom sheet в стиле Telegram (светлый, без неона).
@@ -122,7 +123,10 @@ export function BottomSheet({
     }
   }, [open, isFull])
 
+  // v5.74: ПОРТАЛ в body — шиты открываются из табов (внутри motion.main,
+  // чей will-change создаёт stacking context и прятал их под навбаром z-40)
   return (
+    <Portal>
     <AnimatePresence>
       {open && (
         <motion.div
@@ -223,5 +227,6 @@ export function BottomSheet({
         </motion.div>
       )}
     </AnimatePresence>
+    </Portal>
   )
 }

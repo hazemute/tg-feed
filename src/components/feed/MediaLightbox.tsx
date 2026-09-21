@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils'
 import { haptic } from '@/lib/tg'
 import type { MediaItemDTO } from '@/lib/types'
 import { optimizedImgSrc } from '@/lib/media'
+import { Portal } from '@/components/ui/Portal'
 
 /**
  * Полноэкранный просмотр медиа (как в Telegram): тап по фото/видео/гиф/стикеру
@@ -101,7 +102,9 @@ export function MediaLightbox({
     }, 260)
   }
 
+  // v5.74: портал в body — лайтбокс из ленты застревал под навбаром
   return (
+    <Portal>
     <motion.div
       className="fixed inset-0 z-[90] flex flex-col bg-black/97"
       initial={{ opacity: 0 }}
@@ -235,5 +238,6 @@ export function MediaLightbox({
         )}
       </div>
     </motion.div>
+    </Portal>
   )
 }
