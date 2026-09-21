@@ -109,8 +109,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
               ],
             },
           ],
-          thinking: { type: 'disabled' },
-        }),
+        } as Parameters<typeof zai.chat.completions.createVision>[0]),
         new Promise<never>((_, rej) => {
           const t = setTimeout(() => rej(new Error('vlm timeout')), 40_000)
           if (typeof t === 'object' && 'unref' in t) (t as { unref: () => void }).unref?.()
