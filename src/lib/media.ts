@@ -92,3 +92,30 @@ export function channelAvatarUrl(
   const raw = avatarUrl && avatarUrl.includes('.supabase.co/') ? null : avatarUrl
   return proxiedMediaUrl(raw) ?? null
 }
+
+/**
+ * Аватарка ПОЛЬЗОВАТЕЛЯ → прочный URL для клиента (v5.69, единая точка для DTO).
+ *
+ * Баг «аватарки не отображаются»: User.photoUrl уезжал на фронт СЫРОЙ ссылкой
+ * cdn*.telesco.pe (photo_url из initData живёт ~час, дальше 404) — картинка
+ * пустая. Теперь:
+ *  - `tgfile:<file_id>` (Bot API, вечный) → /api/avatar/<uid> (байты + кэши);
+ *  - https telesco.pe/telegram.org/наш Supabase → /api/media?u=… (прокси Vercel,
+ *    CDN-кэш 30 дней);
+ *  - остальное (мёртвые легаси-хосты) → null → компонент рисует инициал-фолбэк.
+ *
+ * Изоморфная: вызывается и в DTO на сервере, и в lib/tg.ts на клиенте.
+ */
+export function userAvatarProxyUrl(
+  userId: string,
+  photoUrl: string | null | undefined,
+): string | null {
+  if (!photoUrl) return null
+  if (photoUrl.startsWith('tgfile:')) return `/api/avatar/${userId}`
+  if (photoUrl.startsWith('https://')) {
+    const proxied = proxiedMediaUrl(photoUrl)
+    // Доверенный хост → прокси; чужой/битый хост → null (инициалы вместо битой картинки)
+    return proxied && proxied !== photoUrl ? proxied : null
+  }
+  return null
+}

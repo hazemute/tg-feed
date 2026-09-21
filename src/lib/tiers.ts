@@ -8,8 +8,9 @@ import { db } from '@/lib/db'
  *    (просмотры не видны в детальной статистике админов), приоритетная
  *    скорость медиа, анимированные премиум-эмодзи;
  *  - Snap Pro (1490₽/мес или 9990₽/год): всё из Plus + автономный
- *    ИИ-контентщик (стиль → пост → картинка → публикация в TG), продвижение
- *    постов в ленту до 7 раз в неделю, премиум-бейдж автора, CTA-кнопка.
+ *    ИИ-контентщик (стиль → пост → картинка → публикация в TG), 1 бесплатное
+ *    продвижение поста в ленту в календарный месяц (UTC) + докупка пакетов
+ *    (PROMOTE_PACK: 5 продвижений за 199₽), премиум-бейдж автора, CTA-кнопка.
  */
 
 export type Tier = 'free' | 'plus' | 'pro'
@@ -23,9 +24,25 @@ export const TIER_PRICES: Record<
 }
 
 export const AI_SEARCH_DAILY_LIMIT = 3 // free-тир, сутки UTC
-export const PRO_PROMOTE_WEEKLY_LIMIT = 7 // продвижений в неделю
+export const PRO_PROMOTE_MONTHLY_LIMIT = 1 // бесплатных продвижений в календарный месяц (UTC)
 export const PRO_INITIAL_BOOST = 40 // стартовый буст температуры поста Pro-автора
 export const PRO_PROMOTE_HOT_BOOST = 150 // разовый буст температуры при продвижении
+/**
+ * Пакет продвижений (v5.69): 5 продвижений за 199 ₽ — докупка сверх бесплатного
+ * месячного лимита. Расход: сначала месячный бесплатный, затем купленные кредиты
+ * (User.promoteCredits). Кредиты не сгорают.
+ */
+export const PROMOTE_PACK = { priceKop: 19_900, count: 5 } as const
+
+/** Ключ календарного месяца UTC: '2026-09' (граница бесплатного продвижения) */
+export function utcMonthKey(d: Date = new Date()): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`
+}
+
+/** Начало следующего календарного месяца UTC (когда вернётся бесплатное продвижение) */
+export function nextMonthStart(d: Date = new Date()): Date {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0))
+}
 
 const TIER_RANK: Record<Tier, number> = { free: 0, plus: 1, pro: 2 }
 
@@ -94,4 +111,10 @@ export function parseTierPurpose(purpose: string): { plan: 'plus' | 'pro'; perio
   if (purpose === 'pro_month') return { plan: 'pro', period: 'month' }
   if (purpose === 'pro_year') return { plan: 'pro', period: 'year' }
   return null
+}
+
+/** purpose платежа пакета продвижений: полная сумма или половина (оплата 50/50) */
+export const PROMOTE_PACK_PURPOSES = ['promote_pack', 'promote_pack_half'] as const
+export function isPromotePackPurpose(purpose: string | null | undefined): boolean {
+  return purpose === 'promote_pack' || purpose === 'promote_pack_half'
 }

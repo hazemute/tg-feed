@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { invalidatePersonalSignals } from '@/lib/feed'
+import { clearUserPages } from '@/lib/page-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -43,6 +45,11 @@ export async function POST(request: Request) {
       update: {},
       create: { userId: g.uid, postId },
     })
+    // Task 5-c: скрытый пост обязан исчезнуть СРАЗУ (следующий запрос ленты
+    // перечитает сигналы минуя 15с кэш), а не «после TTL»
+    invalidatePersonalSignals(g.uid)
+    // и из L0-кэша страниц (90с) тоже — он отдаётся до свежих фильтров
+    clearUserPages(g.uid)
     return NextResponse.json({ ok: true, categoryId: post.channel.categoryId })
   } catch (e) {
     console.error('[notinterested POST]', e)
@@ -59,6 +66,9 @@ export async function DELETE(request: Request) {
 
   try {
     await db.postHide.deleteMany({ where: { userId: g.uid, postId: parsed.data.postId } })
+    // «Вернуть» — тоже сразу: сигнал пересчитывается на следующем запросе
+    invalidatePersonalSignals(g.uid)
+    clearUserPages(g.uid)
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[notinterested DELETE]', e)

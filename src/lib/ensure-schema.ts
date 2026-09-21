@@ -220,6 +220,47 @@ export const MIGRATIONS: Record<string, string[]> = {
     `ALTER TABLE "CommentReport" ADD CONSTRAINT "CommentReport_commentId_fkey" FOREIGN KEY ("commentId") REFERENCES "Comment"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
     `ALTER TABLE "CommentReport" ADD CONSTRAINT "CommentReport_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
   ],
+  'v5.69': [
+    // v5.69: ПРОДВИЖЕНИЕ С SNAP PRO — месячная модель. 1 бесплатное продвижение
+    // в календарный месяц (UTC) вместо «7 раз в неделю»; сверх лимита — купленные
+    // пакеты (PROMOTE_PACK: 5 продвижений за 199 ₽). promoteCredits — баланс
+    // купленных продвижений; promoteFreeMonth — ключ месяца ('YYYY-MM' UTC),
+    // в котором бесплатный слот уже использован (атомарное владение через
+    // условный updateMany: NOT monthKey → пустая строка/прошлый месяц).
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "promoteCredits" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "promoteFreeMonth" text NOT NULL DEFAULT ''`,
+  ],
+  // КЛЮЧ 'v5.69-perf' (не v5.70): суффикс, чтобы не пересекаться с параллельным
+  // агентом, занявшим v5.69 под продвижение. ALL применяет блоки независимо от имён.
+  'v5.69-perf': [
+    // v5.69 (перф): СКОРОСТЬ ПРОФИЛЕЙ/СТАТИСТИКИ.
+    // Channel.claimedById: GET /api/mychannel ищет каналы владельца
+    //   (where claimedById) и promotedUsed-джойны по нему — раньше полный скан.
+    // Comment(userId) уже есть (v5.х), CommentLike(userId) покрывается
+    //   unique(userId, commentId) — счётчики /api/user/[uid] и /api/profile
+    //   теперь идут ОДНИМ SQL с подзапросами (1 RTT вместо 4-5).
+    `CREATE INDEX IF NOT EXISTS "Channel_claimedById_idx" ON "Channel" ("claimedById")`,
+  ],
+  'v5.70-quests': [
+    // v5.70: РАСШИРЕНИЕ ЗАДАНИЙ — новые виды (tiktok_follow/daily_checkin/
+    // profile_setup/boost/activity_milestone/referral) + DailyCheckin (серия
+    // ежедневного входа), QuestVerifyLog (аудит VLM-проверок TikTok),
+    // BotChat (чаты, где бот админ — для приватных инвайт-чатов).
+    `ALTER TABLE "Quest" ADD COLUMN IF NOT EXISTS "targetType" text NOT NULL DEFAULT 'username'`,
+    `CREATE TABLE IF NOT EXISTS "DailyCheckin" ("id" text PRIMARY KEY, "userId" text NOT NULL, "streak" integer NOT NULL DEFAULT 0, "bestStreak" integer NOT NULL DEFAULT 0, "lastDate" text NOT NULL DEFAULT '', "totalCheckins" integer NOT NULL DEFAULT 0, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "DailyCheckin_userId_key" ON "DailyCheckin" ("userId")`,
+    `CREATE TABLE IF NOT EXISTS "QuestVerifyLog" ("id" text PRIMARY KEY, "questId" text NOT NULL, "userId" text NOT NULL, "ok" boolean NOT NULL DEFAULT false, "confidence" text NOT NULL DEFAULT '', "reason" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "QuestVerifyLog_userId_questId_createdAt_idx" ON "QuestVerifyLog" ("userId", "questId", "createdAt")`,
+    `CREATE TABLE IF NOT EXISTS "BotChat" ("id" text PRIMARY KEY, "chatId" text NOT NULL, "title" text NOT NULL DEFAULT '', "type" text NOT NULL DEFAULT 'supergroup', "isAdmin" boolean NOT NULL DEFAULT false, "updatedAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "BotChat_chatId_key" ON "BotChat" ("chatId")`,
+  ],
+  // КЛЮЧ 'v5.70-promo' (Task 7-a): суффикс, чтобы не пересекаться с параллельным
+  // агентом, занявшим 'v5.70-quests'. Гибкий показ в ленте: Channel.teaserApplyTo —
+  // каким постам применять тизер (all | long — лонгриды 600+ симв. | text —
+  // текстовые без медиа). Настройка живёт во вкладке «Промо».
+  'v5.70-promo': [
+    `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "teaserApplyTo" text NOT NULL DEFAULT 'all'`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -264,6 +305,13 @@ const CRITICAL: Array<[string, string | null]> = [
   ['CommentReport', null],
   ['Comment', 'hidden'],
   ['Post', 'reportsCount'],
+  ['User', 'promoteCredits'],
+  ['User', 'promoteFreeMonth'],
+  ['Quest', 'targetType'],
+  ['DailyCheckin', null],
+  ['QuestVerifyLog', null],
+  ['BotChat', null],
+  ['Channel', 'teaserApplyTo'],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -278,15 +326,16 @@ export async function checkSchema(): Promise<SchemaState> {
       FROM information_schema.columns c
       WHERE c.table_schema = 'public' AND (
         c.table_name = 'AiSearchLog' OR c.table_name = 'AdminLog' OR
-        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame')) OR
-        (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt')) OR
+        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame','promoteCredits','promoteFreeMonth')) OR
+        (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt','teaserApplyTo')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR
         (c.table_name = 'Notification' AND c.column_name = 'commentId') OR
         (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
         (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
-        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport') OR
+        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport' OR c.table_name = 'DailyCheckin' OR c.table_name = 'QuestVerifyLog' OR c.table_name = 'BotChat') OR
+        (c.table_name = 'Quest' AND c.column_name = 'targetType') OR
         (c.table_name = 'Comment' AND c.column_name IN ('hidden','adScore','reportsCount')) OR
         (c.table_name = 'Post' AND c.column_name = 'reportsCount')
       )`)

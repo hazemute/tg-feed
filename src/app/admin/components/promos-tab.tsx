@@ -9,9 +9,11 @@ import {
   Loader2,
   Plus,
   Power,
+  RefreshCw,
   Sparkles,
   Ticket,
   Trash2,
+  TriangleAlert,
   Wallet,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -36,8 +38,17 @@ import {
   TableRow,
 } from '@/components/ui/table'
 
-import { panelFetch, PanelError } from './api'
-import { BoolBadge, SkeletonRows, btnOutlineDark, fadeUp, inputDark, panelCard } from './bits'
+import { panelFetch, PanelError, fmtAgo } from './api'
+import {
+  BoolBadge,
+  EmptyState,
+  SkeletonRows,
+  TabProps,
+  btnOutlineDark,
+  fadeUp,
+  inputDark,
+  panelCard,
+} from './bits'
 import { cn } from '@/lib/utils'
 
 /**
@@ -84,8 +95,9 @@ const KIND_ICON: Record<PromoKind, typeof Wallet> = {
   tier: Gem,
 }
 
-export function PromosTab({ onSettled }: { onSettled?: () => void }) {
+export function PromosTab({ tick, onSettled }: TabProps) {
   const [codes, setCodes] = useState<PromoRow[] | null>(null)
+  const [loadErr, setLoadErr] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [creating, setCreating] = useState(false)
 
@@ -102,19 +114,27 @@ export function PromosTab({ onSettled }: { onSettled?: () => void }) {
   const load = useCallback(async () => {
     try {
       const r = await panelFetch<{ codes: PromoRow[] }>('/api/panel/promocodes')
-      setCodes(r.codes)
-      onSettled?.()
+      setCodes(r.codes ?? [])
+      setLoadErr(null)
     } catch (e) {
-      if (!(e instanceof PanelError && e.status === 401)) {
-        toast.error('Не удалось загрузить промокоды')
-        setCodes([])
-      }
+      if (e instanceof PanelError && e.status === 401) return // панель сама уведёт на логин
+      // Инлайн-ошибка вместо пустого списка: пользователь видит причину и «Повторить»
+      setLoadErr(e instanceof PanelError ? e.message : 'Сеть недоступна')
+      setCodes([])
+    } finally {
+      onSettled?.()
     }
   }, [onSettled])
 
-  useEffect(() => {
+  const retry = useCallback(() => {
+    setLoadErr(null)
+    setCodes(null)
     void load()
   }, [load])
+
+  useEffect(() => {
+    void load()
+  }, [load, tick])
 
   const create = useCallback(async () => {
     if (creating) return
@@ -183,7 +203,10 @@ export function PromosTab({ onSettled }: { onSettled?: () => void }) {
   )
 
   return (
-    <motion.div variants={fadeUp} initial="hidden" animate="visible" className="space-y-5">
+    /* ВАЖНО: animate="show" — у fadeUp есть только варианты hidden/show.
+     * Было animate="visible" (несуществующий вариант) — блок навсегда оставался
+     * в hidden (opacity: 0) и вкладка выглядела полностью пустой. */
+    <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-5">
       {/* ------------------------- Генератор ------------------------- */}
       <Card className={panelCard}>
         <CardHeader>
@@ -345,10 +368,27 @@ export function PromosTab({ onSettled }: { onSettled?: () => void }) {
           <CardDescription>Награда начисляется пользователю мгновенно при активации в кошельке</CardDescription>
         </CardHeader>
         <CardContent>
-          {codes === null ? (
+          {loadErr !== null ? (
+            <div
+              role="alert"
+              className="flex flex-col items-center justify-center gap-3 rounded-lg border border-red-200 bg-red-50/60 px-4 py-8 text-center"
+            >
+              <span className="flex size-10 items-center justify-center rounded-full bg-red-100 text-red-600">
+                <TriangleAlert className="size-5" aria-hidden />
+              </span>
+              <p className="text-sm text-red-700">Не удалось загрузить промокоды: {loadErr}</p>
+              <Button type="button" variant="outline" size="sm" className={btnOutlineDark} onClick={retry}>
+                <RefreshCw className="h-4 w-4" aria-hidden /> Повторить
+              </Button>
+            </div>
+          ) : codes === null ? (
             <SkeletonRows rows={4} />
           ) : codes.length === 0 ? (
-            <p className="py-6 text-center text-sm text-slate-500">Промокодов пока нет — создайте первый выше.</p>
+            <EmptyState
+              icon={Ticket}
+              title="Промокодов ещё нет — создайте первый"
+              hint="Заполните генератор выше: пользователь активирует код в кошельке миниаппа и получит награду мгновенно."
+            />
           ) : (
             <Table>
               <TableHeader>
@@ -358,6 +398,7 @@ export function PromosTab({ onSettled }: { onSettled?: () => void }) {
                   <TableHead className="hidden md:table-cell">Активации</TableHead>
                   <TableHead className="hidden lg:table-cell">Заметка</TableHead>
                   <TableHead>Статус</TableHead>
+                  <TableHead className="hidden xl:table-cell">Создан</TableHead>
                   <TableHead className="w-[100px] text-right">Действия</TableHead>
                 </TableRow>
               </TableHeader>
@@ -409,6 +450,9 @@ export function PromosTab({ onSettled }: { onSettled?: () => void }) {
                         ) : (
                           <BoolBadge value={c.active} trueText="активен" falseText="выключен" />
                         )}
+                      </TableCell>
+                      <TableCell className="hidden whitespace-nowrap text-[13px] text-slate-500 xl:table-cell">
+                        {fmtAgo(c.createdAt)}
                       </TableCell>
                       <TableCell className="text-right">
                         <div className="flex justify-end gap-1">

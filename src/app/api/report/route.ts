@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { invalidatePersonalSignals } from '@/lib/feed'
+import { clearUserPages } from '@/lib/page-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,6 +50,10 @@ export async function POST(request: Request) {
       data: { reportsCount: { increment: 1 } },
       select: { id: true },
     })
+    // Task 5-c: пожалованный пост исчезает из рекомендаций жаловавшегося сразу
+    invalidatePersonalSignals(g.uid)
+    // и из L0-кэша страниц — он отдаётся до свежих фильтров видимости
+    clearUserPages(g.uid)
     return NextResponse.json({ ok: true })
   } catch (e) {
     console.error('[report]', e)

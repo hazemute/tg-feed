@@ -40,6 +40,9 @@ model User {
   // === Кошелёк (v5.38): единый баланс — рубли + свайпы (курс v5.40: 500 свайпов = 1 ₽) ===
   balanceKop     Int      @default(0) // рубли, в копейках
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
+  // === Продвижение (v5.69): купленные кредиты пакета + ключ месяца бесплатного продвижения ===
+  promoteCredits Int      @default(0) // купленные продвижения (пакет 5 шт/199 ₽), тратятся после месячного бесплатного
+  promoteFreeMonth String @default("") // 'YYYY-MM' (UTC): месяц, в котором бесплатное продвижение уже использовано
   createdAt      DateTime @default(now())
 
   @@index([tier])
@@ -111,6 +114,8 @@ model Channel {
   // blur — весь текст виден, но размазан до подписки (жёстче конверсия)
   teaserMode       String    @default("none")
   teaserLimit      Int       @default(160) // сколько символов показывать в режиме cut
+  // v5.70: кому применять тизер: all | long (лонгриды 600+ симв.) | text (текстовые без медиа)
+  teaserApplyTo    String    @default("all")
   addedById        String?
   addedBy          User?     @relation("addedChannels", fields: [addedById], references: [id])
   createdAt        DateTime  @default(now())
@@ -123,6 +128,7 @@ model Channel {
   @@index([status])
   @@index([categoryId]) // v5.48: join категории в ленте/каталоге/трендах
   @@index([addedById]) // v5.48: «каналы, добавленные модератором» в админке
+  @@index([claimedById]) // v5.69: GET /api/mychannel (каналы владельца) + promotedUsed-джойны
   mutedBy     ChannelMute[]
 }
 
@@ -851,8 +857,9 @@ model Quest {
   id          String   @id @default(cuid())
   title       String // название для карточки («Подпишись на @channel»)
   description String?  // пояснение под названием
-  kind        String   @default("subscribe") // subscribe | join_chat
-  target      String   // @username канала/чата (или числовой chat_id)
+  kind        String   @default("subscribe") // subscribe | join_chat | tiktok_follow | daily_checkin | profile_setup | boost | activity_milestone | referral
+  target      String   // @username канала/чата, числовой chat_id, инвайт-ссылка, tiktok-хэндл, 'posts:N', 'N' или 'none'
+  targetType  String   @default("username") // username | chat_id | invite | tiktok | metric | goal | none (v5.70)
   link        String?  // кнопка-ссылка (по умолчанию https://t.me/<target>)
   rewardSwp   Int      @default(100) // награда в свайпах
   active      Boolean  @default(true)
@@ -881,4 +888,46 @@ model QuestCompletion {
   @@unique([questId, userId])
   @@index([userId, status])
   @@index([status, lastCheck]) // очередь реверификации: старые проверки первыми
+}
+
+// v5.70: ежедневный вход (задание kind=daily_checkin). Отдельная таблица вместо
+// QuestCompletion: серия повторяется каждый день, а уникальная пара quest+user
+// разрешила бы зачёт только один раз. streak — серия подряд (UTC-дни),
+// lastDate — 'YYYY-MM-DD' последнего зачёта (идемпотентность «раз в сутки»).
+model DailyCheckin {
+  id            String   @id @default(cuid())
+  userId        String   @unique // User.id ("tg_<uid>")
+  streak        Int      @default(0) // текущая серия подряд
+  bestStreak    Int      @default(0) // рекорд серии
+  lastDate      String   @default("") // 'YYYY-MM-DD' UTC последнего зачёта
+  totalCheckins Int      @default(0) // всего зачётов за всё время
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// v5.70: журнал попыток VLM-проверки TikTok (анти-абьюз: 3 подряд false →
+// предложение поддержки; аудит скриншот-проверок для админа).
+model QuestVerifyLog {
+  id         String   @id @default(cuid())
+  questId    String
+  userId     String
+  ok         Boolean  @default(false) // зачтено ли (subscribed + high)
+  confidence String   @default("") // high | low | error
+  reason     String?  // краткое пояснение модели/ошибки
+  createdAt  DateTime @default(now())
+
+  @@index([userId, questId, createdAt])
+}
+
+// v5.70: чаты, где бот состоит (из update.my_chat_member вебхука). Для заданий
+// kind=join_chat с приватным инвайтом: бот не может зайти по ссылке сам —
+// владелец добавляет его админом, чат сохраняется здесь, и квест привязывается
+// к числовому chat_id (проверка getChatMember по инвайт-ссылке невозможна).
+model BotChat {
+  id        String   @id @default(cuid())
+  chatId    String   @unique // числовой id чата строкой ("-100...")
+  title     String   @default("")
+  type      String   @default("supergroup") // group | supergroup | channel
+  isAdmin   Boolean  @default(false) // бот administrator в этом чате
+  updatedAt DateTime @updatedAt
 }

@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { parseTierPurpose, tierExpiryFor } from '@/lib/tiers'
+import { parseTierPurpose, tierExpiryFor, PROMOTE_PACK, isPromotePackPurpose } from '@/lib/tiers'
 import { invalidateBalance } from '@/lib/balance-cache'
 
 /**
@@ -8,7 +8,10 @@ import { invalidateBalance } from '@/lib/balance-cache'
  *    один раз (идемпотентность) — User.balanceKop += amountKop (v5.38: единый
  *    кошелёк, эскроу рекламодателя выведен из оборота);
  *  - purpose='plus_month'/'pro_year'/… (тариф Snap): срок действия тира
- *    продлевается от текущего tierUntil (или от «сейчас», если подписки не было).
+ *    продлевается от текущего tierUntil (или от «сейчас», если подписки не было);
+ *  - purpose='promote_pack'/'promote_pack_half' (v5.69, пакет продвижений):
+ *    User.promoteCredits += PROMOTE_PACK.count (полная сумма картой или половина
+ *    при оплате 50/50 — половина с баланса списана до счёта).
  * Используется вебхуком ЮKassa, зачислением Telegram Stars и проверкой TON.
  */
 export async function creditPendingPayment(
@@ -45,6 +48,17 @@ export async function creditPendingPayment(
           tier: tierPurpose.plan,
           tierUntil: tierExpiryFor(user?.tierUntil ?? null, tierPurpose.period),
         },
+      })
+      return true
+    }
+
+    // Пакет продвижений (v5.69): карта (полная сумма) или половина при 50/50.
+    // Идемпотентность — та же атомарная проводка pending → succeeded выше:
+    // кредиты начисляются ровно один раз, ретраи вебхука безопасны.
+    if (isPromotePackPurpose(payment.purpose)) {
+      await tx.user.updateMany({
+        where: { id: payment.userId },
+        data: { promoteCredits: { increment: PROMOTE_PACK.count } },
       })
       return true
     }

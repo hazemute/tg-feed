@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { toast } from 'sonner'
+import { userAvatarProxyUrl } from '@/lib/media'
 
 /** Минимальные типы Telegram WebApp SDK */
 export type TgWebApp = {
@@ -230,14 +231,15 @@ export function haptic(kind: 'light' | 'success' | 'warning' | 'error' | 'select
 }
 
 /**
- * Аватар текущего пользователя: прочный прокси-URL /api/avatar/<uid>
- * (tgfile:<file_id> из Bot API или временный CDN-URL в демо-режиме).
- * Возвращает null, если у пользователя нет фото — рисуем инициалы.
+ * Аватар текущего пользователя: прочный прокси-URL (v5.69).
+ *  - `tgfile:<file_id>` (Bot API) → /api/avatar/<uid> — вечные байты;
+ *  - сырая https-ссылка (telesco.pe из initData / Widget, живёт ~час) →
+ *    /api/media?u=… — сервер проксирует и держит в CDN-кэше;
+ *  - чужие/мёртвые хосты → null — рисуем инициалы.
+ * Единая изоморфная логика с серверными DTO — lib/media.ts userAvatarProxyUrl.
  */
 export function userAvatarUrl(userId: string, photoUrl?: string | null): string | null {
-  if (!photoUrl) return null
-  if (photoUrl.startsWith('tgfile:')) return `/api/avatar/${userId}`
-  return photoUrl
+  return userAvatarProxyUrl(userId, photoUrl)
 }
 
 /** Репост поста: в Telegram — нативный шаринг, иначе navigator.share / буфер обмена.

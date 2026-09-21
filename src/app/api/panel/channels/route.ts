@@ -5,6 +5,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { bumpCache } from '@/lib/redis'
+import { channelAvatarUrl } from '@/lib/media'
 
 export const dynamic = 'force-dynamic'
 
@@ -67,7 +68,9 @@ export async function GET(request: Request) {
         username: c.username,
         description: c.description,
         avatarColor: c.avatarColor,
-        avatarUrl: c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+        // v5.69: единый хелпер — photoFileId (вечный) → /api/avatar, сырая
+        // telesco.pe-ссылка → /api/media (раньше уезжала как есть и слетала)
+        avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
         status: c.status,
         isPremium: c.isPremium,
         verified: c.verified,

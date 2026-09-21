@@ -4,6 +4,7 @@ import type { CommentDTO } from '@/lib/types'
 import { parseBadges } from '@/lib/badges'
 import { emitAppEvent } from '@/lib/events'
 import { sendBotNotification } from '@/lib/bot-notify'
+import { userAvatarProxyUrl } from '@/lib/media'
 
 /**
  * Серверные помощники комментариев (общие для /api/comments, /api/comments/[id],
@@ -13,11 +14,13 @@ import { sendBotNotification } from '@/lib/bot-notify'
  * replyToName — плашка «Ответ NAME» внутри ветки.
  */
 
-/** Прочный прокси-URL аватарки (дубль логики lib/tg.ts — она клиентская) */
+/**
+ * v5.69: прочный прокси-URL аватарки (единая логика с lib/media.ts).
+ * Раньше сырой photoUrl (cdn*.telesco.pe из initData, живёт ~час) уезжал
+ * на фронт как есть — аватарки в комментариях «слетали».
+ */
 export function avatarUrlOf(userId: string, photoUrl: string | null): string | null {
-  if (!photoUrl) return null
-  if (photoUrl.startsWith('tgfile:')) return `/api/avatar/${userId}`
-  return photoUrl
+  return userAvatarProxyUrl(userId, photoUrl)
 }
 
 type AuthorUser = Pick<User, 'id' | 'username' | 'firstName' | 'lastName' | 'photoUrl' | 'badges'>

@@ -4,15 +4,17 @@ import { z } from 'zod'
 import type { Channel, Post } from '@prisma/client'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
-import { diversify, personalBoost, shuffleNoise } from '@/lib/rank'
+import { diversify, personalScoreParts, shuffleNoise, FOREIGN_LANG_MULTIPLIER, UNDETECTED_FROM_FOREIGN_CHANNEL_MULTIPLIER, isForeignForRanking } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
 import { buildFeedScope, loadPersonalSignals, computeRankedIndex } from '@/lib/feed'
-import type { RankedIndex } from '@/lib/feed'
+import type { RankedIndex, PersonalSignals } from '@/lib/feed'
 import { detectLang, langPasses } from '@/lib/lang'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside, famKey, shortHash } from '@/lib/redis'
 import { getCachedPage, putCachedPage } from '@/lib/page-cache'
 import { getSponsorChannelIds, getPromotedCandidates, getSponsorCandidates } from '@/lib/feed-extras'
+import { feedSessionKey, getOrBuildFeedSnapshot } from '@/lib/feed-session'
+import type { FeedSnapshot } from '@/lib/feed-session'
 import { IS_SQLITE } from '@/lib/server'
 import type { PostDTO } from '@/lib/types'
 
@@ -55,6 +57,8 @@ type PageRow = {
   c_status: string
   c_teaserMode: string
   c_teaserLimit: number
+  // v5.70-promo: только колонка гибкого тизера — рекомендательная логика не тронута
+  c_teaserApplyTo: string
   c_ctaLabel: string | null
   c_ctaUrl: string | null
   c_ownerTier: string | null
@@ -105,6 +109,7 @@ function postFromRow(r: PageRow): PostWithChannel {
       status: r.c_status,
       teaserMode: r.c_teaserMode,
       teaserLimit: r.c_teaserLimit,
+      teaserApplyTo: r.c_teaserApplyTo,
       ctaLabel: r.c_ctaLabel,
       ctaUrl: r.c_ctaUrl,
       claimedBy: r.c_ownerTier ? { tier: r.c_ownerTier, tierUntil: r.c_ownerTierUntil } : null,
@@ -167,6 +172,7 @@ async function fetchBaseRowsPostgres(ids: string[]): Promise<BaseRow[]> {
                    c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
                    c."status"     AS "c_status",
                    c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
+                   c."teaserApplyTo" AS "c_teaserApplyTo",
                    c."ctaLabel"     AS "c_ctaLabel", c."ctaUrl"    AS "c_ctaUrl",
                    owner."tier"     AS "c_ownerTier", owner."tierUntil" AS "c_ownerTierUntil",
                    cat."slug"       AS "cat_slug", cat."title"  AS "cat_title",
@@ -216,6 +222,7 @@ async function fetchBaseRowsSqlite(ids: string[]): Promise<BaseRow[]> {
             status: true,
             teaserMode: true,
             teaserLimit: true,
+            teaserApplyTo: true,
             ctaLabel: true,
             ctaUrl: true,
             claimedBy: { select: { tier: true, tierUntil: true } },
@@ -258,6 +265,7 @@ async function fetchBaseRowsSqlite(ids: string[]): Promise<BaseRow[]> {
       c_status: c.status,
       c_teaserMode: c.teaserMode,
       c_teaserLimit: c.teaserLimit,
+      c_teaserApplyTo: c.teaserApplyTo,
       c_ctaLabel: c.ctaLabel,
       c_ctaUrl: c.ctaUrl,
       c_ownerTier: c.claimedBy?.tier ?? null,
@@ -319,7 +327,9 @@ const querySchema = z.object({
   page: z.coerce.number().int().min(0).catch(0),
   limit: z.coerce.number().int().min(1).max(20).catch(6),
   /** Сид перемешивания: клиент меняет его при каждом обновлении ленты —
-   *  при повторном открытии лента показывается в ДРУГОМ порядке */
+   *  при повторном открытии лента показывается в ДРУГОМ порядке.
+   *  Внутри сессии скролла сид НЕ меняется — пагинация идёт по одному
+   *  замороженному порядку (снапшот, см. lib/feed-session.ts). */
   sh: z.string().max(24).optional(),
   /** Фильтр языка (v5.25): any — всё, ru — русский сегмент, foreign — прочие языки.
    *  Посты без букв (мемы-картинки) проходят в любом режиме (см. src/lib/lang.ts). */
@@ -329,11 +339,27 @@ const querySchema = z.object({
 /**
  * GET /api/feed?category=all|slug|discover&page=0&limit=6
  *
- * Рекомендации в два уровня:
- *  1) глобальный вес (качество: лайки, закладки, просмотры, свежесть, премиум)
- *     — кэшируется как индекс на «скоуп» в Redis;
- *  2) персональный буст (аффинити к каналам/категориям, подписки, штраф за
- *     просмотренное) + гарантия разнообразия (≤3 постов канала подряд).
+ * РЕКОМЕНДАЦИИ v6 (Task 5-c — полная переработка):
+ *
+ *  1) Глобальный вес поста (качество на лог-шкале: лайки/комментарии/закладки/
+ *     реакции/просмотры + экспоненциальная свежесть, полураспад 36ч) —
+ *     кэшируется в Redis/памяти по скоупу (computeRankedIndex);
+ *  2) Персональный слой на каждом запросе: аффинити к каналам/категориям
+ *     (просмотры/лайки/закладки/источники), буст подписок, штрафы за
+ *     просмотренное/«не интересно»/скрытые тематики, ЧАСОВОЙ сид перемешивания
+ *     с userId внутри (сигнатуры разных пользователей различаются);
+ *  3) Языковой приоритет: нерусский пост ×0.35 к положительной части скора
+ *     (мем без букв из нерусского канала — ×0.6), кроме каналов, с которыми
+ *     юзер взаимодействовал (лайк/подписка/источник);
+ *  4) Исключения: мьютнутые каналы (целиком), скрытые посты («Не интересно»),
+ *     посты с жалобой самого юзера, посты с 3+ чужими жалобами (в индексе);
+ *  5) Порядок сессии ЗАМОРАЖИВАЕТСЯ в снапшот (lib/feed-session.ts): пагинация
+ *     — честные срезы одного списка, дубли между страницами невозможны,
+ *     порядок стабилен, «Не интересно» в середине сессии применяется фильтром
+ *     на выдаче без перемешивания;
+ *  6) Разнообразие: round-robin по каналам (cooldown) + кап 5 постов/канал
+ *     в индексе → ≤2 постов одного канала на страницу.
+ *
  * Требуется сессия (Bearer); лимит 120 запросов в минуту на пользователя.
  */
 export async function GET(request: Request) {
@@ -370,8 +396,7 @@ export async function GET(request: Request) {
     const { category, page, limit, lang } = parsed.data
 
     // Мгновенный ответ для недавно отданной страницы (смена вкладок/возврат в ленту):
-    // 45с L0-кэш + свежие персональные флаги поверх (см. src/lib/page-cache.ts).
-    // Часовая серверная ротация сида не конфликтует с кэшем: TTL 45с << 1 часа.
+    // 90с L0-кэш + свежие персональные флаги поверх (см. src/lib/page-cache.ts).
     const seedForCache = typeof parsed.data.sh === 'string' ? parsed.data.sh : ''
     const cached = getCachedPage(userId, category, page, limit, seedForCache, lang)
     if (cached) return jsonWithEtag({ ...cached, page })
@@ -389,11 +414,11 @@ export async function GET(request: Request) {
         ~2с и грузит пул; TTL 300с + инвалидация famKey при новых постах
         парсером + ПРОГРЕВ ключей парсером/warm'ом (feed-warm.ts) — юзеры
         почти никогда не платят за пересчёт; кросс-инстансный лок в cacheAside
-        не даёт бёрсту запросов умножить холодную пересборку. v4 — кап канала.
+        не даёт бёрсту запросов умножить холодную пересборку.
         v5.48: discover кэшируется ТОЖЕ — сигнатура скоупа строится из
         фактического where (v7), одинаковый where → одинаковый индекс. */
     const indexKey = scope.sig
-      ? await famKey('feed', `${category}:v7:${shortHash(scope.sig)}`)
+      ? await famKey('feed', `${category}:v8:${shortHash(scope.sig)}`)
       : null // сигнатуры нет только при ошибке скоупа (не бывает на этом пути)
 
     const loadIndex = () => computeRankedIndex(scope.where)
@@ -405,170 +430,61 @@ export async function GET(request: Request) {
     const [index, signals] = await Promise.all([indexPromise, loadPersonalSignals(userId)])
     mark('index+signals')
 
-    /* ---------- Фильтр языка (v5.25): «Русский / Другие» ----------
-        Режем индекс ДО персонализации и диверсификации: тогда пагинация,
-        hasMore и «разные каналы подряд» считаются уже по отфильтрованному
-        списку. Посты без букв (und) проходят в любом режиме. */
-    const scopedEntries =
-      lang === 'any' ? index.entries : index.entries.filter((e) => langPasses(e.l, lang))
-
-    /* ---------- Персональный слой: аффинити + просмотренное + перемешивание ----------
-        РОТАЦИЯ (жалоба владельца «постоянно одно и то же»): если клиент не
-        прислал сид (первая загрузка сессии), сервер подставляет ЧАСОВОЙ ведро —
-        порядок ленты сам вращается каждый час даже без pull-to-refresh,
-        у каждого пользователя свой (сид = userId + час). */
+    /* ---------- Сид сессии: клиентский `sh` или часовой дефолт ----------
+        РОТАЦИЯ (жалоба владельца «постоянно одно и то же»): без сида сервер
+        подставляет userId:час — порядок вращается каждый час, у каждого
+        пользователя свой. userId внутри сида = сигнатуры двух пользователей
+        с одинаковой историей всё равно различаются (Task 5-c). */
     const hourBucket = Math.floor(Date.now() / 3_600_000)
     const effSeed =
       typeof parsed.data.sh === 'string' && parsed.data.sh.length > 0
         ? parsed.data.sh
         : `${userId}:${hourBucket}`
 
-    const boosted = scopedEntries.map((e) => ({
-      id: e.i,
-      cid: e.c,
-      w:
-        e.w +
-        personalBoost({
-          channelId: e.c,
-          categoryId: e.g,
-          subscribed: signals.subscribedIds.has(e.c),
-          viewed: signals.viewedIds.has(e.i),
-          viewedAtMs: signals.viewedAt.get(e.i),
-          affinity: signals.affinity,
-          notInterested: signals.mutedIds.has(e.c),
-          dislikes: signals.dislikeCategories.get(e.g ?? ''),
-        }) +
-        shuffleNoise(e.i + effSeed, e.w),
-    }))
-    boosted.sort((a, b) => b.w - a.w)
+    /* ---------- Персональный порядок сессии: снапшот (single-flight) ----------
+        Строится один раз на (user, category, lang, seed) и замораживается на
+        10 минут: пагинация режет ОДИН список — повторы между страницами и
+        дёрганье порядка исчезают по построению. */
+    const snapshot = await getOrBuildFeedSnapshot(
+      feedSessionKey(userId, category, lang, effSeed),
+      () => buildFeedSnapshot({ userId, effSeed, index, signals, lang }),
+    )
+    mark('snapshot')
 
-    /* «Не интересно» — ФИЛЬТР, а не штраф: посты замьютнутых каналов
-        исключаются из выдачи. Редкие возвращения — детерминированные:
-        ~4% каналов в день (hash(userId:channel:день) % 25 == 0) остаются,
-        чтобы лента не замыкалась наглухо и канал мог «вернуться». */
-    const muted = signals.mutedIds
-    let visible = boosted
-    if (muted.size > 0) {
-      const dayKey = Math.floor(Date.now() / 86_400_000)
-      visible = boosted.filter((x) => {
-        if (!muted.has(x.cid)) return true
-        let h = 0
-        const s = `${userId}:${x.cid}:${dayKey}`
-        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0
-        return h % 25 === 0
-      })
-    }
+    /* ---------- Свежие персональные исключения ПОВЕРХ снапшота ----------
+        «Не интересно»/жалоба/мьют, сделанные в середине сессии, применяются
+        фильтром на выдаче: пост исчезает, остальные не перемешиваются.
+        (Мутации вызывают invalidatePersonalSignals — фильтр виден сразу.) */
+    const visible = snapshot.items.filter(
+      (x) =>
+        !signals.hiddenPostIds.has(x.id) &&
+        !signals.reportedPostIds.has(x.id) &&
+        !signals.mutedIds.has(x.cid),
+    )
 
-    /* ---------- v5.68: скрытые ПОСТЫ («Не интересно» на пост) ----------
-      Фильтр без возвратов: конкретный пост убран по требованию читателя.
-      Канал и категория продолжают жить — штраф тематики в personalBoost. */
-    let visiblePosts = visible
-    if (signals.hiddenPostIds.size > 0) {
-      const hp = signals.hiddenPostIds
-      visiblePosts = visiblePosts.filter((x) => !hp.has(x.id))
-    }
-
-    // Разнообразие: посты одного канала не идут подряд (как в нативных лентах)
-    const ordered = diversify(visiblePosts, (x) => x.cid)
-    mark('ranked')
-    /* ---------- Страница: посты по id из индекса ----------
-        Выборка страницы, лайки, закладки и посты спонсоров независимы —
-        уходят ОДНИМ параллельным batch’ем (каждый RTT до дальнего Supabase
-        стоит ~0.3-0.9с: последовательная цепочка и была причиной «тормозов»). */
-    const sponsors = page === 0 ? await getSponsorChannelIds() : null
-    let sponSet: Set<string> | null = null
-    mark('sponsors-ids')
-
-    /* ---------- Промо-посты (Snap Pro «Продвинуть»): ПЕРВЫМИ В ЛЮБОЙ КАТЕГОРИИ ----------
-        Автор заплатил за продвижение — пост вставляется в САМОЕ начало первой
-        страницы (выше спонсоров и органики), в любом разрезе ленты, независимо
-        от просмотренности/маутов. Окно промо — 24 часа с момента продвижения;
-        после — пост остаётся высоко за счёт веса (rank.ts PROMO_BONUS 48ч). */
-    const promoSet: Set<string> = new Set()
-    // Промо-кандидаты из L0-кэша (feed-extras, 20с): персонализации в выборке нет,
-    // язык фильтруем на каждом запросе (кэш общий для всех фильтров)
-    const promotedPosts =
-      page === 0
-        ? (await getPromotedCandidates()).filter((p) => langPasses(detectLang(p.text), lang))
-        : []
-    if (promotedPosts.length > 0) {
-      for (const p of promotedPosts) promoSet.add(p.id)
-      const promoEntries = promotedPosts.map((p) => ({ id: p.id, cid: p.channelId, w: 0 }))
-      const rest = ordered.filter((x) => !promoSet.has(x.id))
-      const merged = diversify([...promoEntries, ...rest], (x) => x.cid)
-      ordered.length = 0
-      ordered.push(...merged)
-    }
-    mark('promo-merge')
-
-    // Страница вырезается ПОСЛЕ промо-вставки: промо-посты обязаны попасть
-    // на текущую страницу первыми (особенно страница 0)
-    const sliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
+    // Страница — честный срез замороженного порядка
+    const sliceItems = visible.slice(page * limit, page * limit + limit)
+    const sliceIds = sliceItems.map((x) => x.id)
     const pageRows: PageRow[] = await fetchPageRows(sliceIds, userId)
     mark('page-batch')
 
-    // Посты спонсоров — кандидаты из L0-кэша (feed-extras, 20с): персональное
-    // «уже просмотренное/промо» вычитается в JS по каждому запросу; пул берётся
-    // с запасом (18), поэтому после вычитания кандидатов на выборку хватает
-    const sponsorPosts =
-      sponsors && sponsors.size > 0
-        ? (await getSponsorCandidates([...sponsors.keys()]))
-            .filter((p) => !signals.viewedIds.has(p.id) && !promoSet.has(p.id))
-            .filter((p) => langPasses(detectLang(p.text), lang))
-        : []
-    mark('sponsor-posts')
-
-    /* ---------- Спонсорские каналы: активные CPA-кампании — в первых рядах ----------
-        Посты канала с активной кампанией подмешиваются на первые позиции первой
-        страницы (ещё не просмотренные). Показ кампании засчитывается сразу. */
-    if (sponsors && sponsors.size > 0 && sponsorPosts.length > 0) {
-      // по свежему посту от каждого спонсора, в начало первой страницы (сразу после промо)
-      const picked = new Map<string, string>()
-      for (const p of sponsorPosts) {
-        if (picked.size >= 3) break
-        if (!picked.has(p.channelId)) picked.set(p.channelId, p.id)
+    // Показ кампании: инкремент ТОЛЬКО кампаниям, чей спонсорский пост реально
+    // попал на текущую страницу снапшота (fire-and-forget)
+    if (snapshot.sponsoredIds.size > 0) {
+      const shownCampaignIds = new Set<string>()
+      for (const x of sliceItems) {
+        if (snapshot.sponsoredIds.has(x.id)) {
+          const campId = snapshot.sponsorCampaigns.get(x.cid)
+          if (campId) shownCampaignIds.add(campId)
+        }
       }
-      if (picked.size > 0) {
-        const sponIds = [...picked.values()]
-        const sponSetLocal = new Set(sponIds)
-        sponSet = sponSetLocal
-        const rest = ordered.filter((x) => !sponSetLocal.has(x.id) && !promoSet.has(x.id))
-        /* Спонсорские посты несут РЕАЛЬНЫЙ channelId (раньше cid:'' делал их
-            «невидимыми» для диверсификатора — спонсор мог встать рядом с
-            органикой того же канала). Пересобираем с повторным diversify:
-            стык «спонсор → первый органический того же канала» разводится. */
-        const sponEntries = [...picked.entries()].map(([cid, id]) => ({ id, cid, w: 0 }))
-        const merged = diversify([...sponEntries, ...rest], (x) => x.cid)
-        ordered.length = 0
-        ordered.push(...merged)
-        // страница уже вырезана из старого порядка — перевырезаем из нового
-        const newSliceIds = ordered.slice(page * limit, page * limit + limit).map((x) => x.id)
-        const changed = newSliceIds.some((id, i) => sliceIds[i] !== id)
-        if (changed) {
-          const extraRows = await fetchPageRows(newSliceIds, userId)
-          pageRows.length = 0
-          pageRows.push(...extraRows)
-          sliceIds.length = 0
-          sliceIds.push(...newSliceIds)
-        }
-        // показ кампании: инкремент ТОЛЬКО кампаниям, чей пост реально попал
-        // на текущую страницу (раньше инкрементировались ВСЕ активные кампании
-        // — статистика показов/бюджета раздувалась впустую). Не ждем ответа.
-        const shownCampaignIds = new Set<string>()
-        for (const [cid, pid] of picked) {
-          if (sliceIds.includes(pid)) {
-            const campId = sponsors.get(cid)
-            if (campId) shownCampaignIds.add(campId)
-          }
-        }
-        if (shownCampaignIds.size > 0) {
-          void db.adCampaign
-            .updateMany({
-              where: { id: { in: [...shownCampaignIds] }, status: 'active' },
-              data: { impressions: { increment: 1 } },
-            })
-            .catch(() => {})
-        }
+      if (shownCampaignIds.size > 0) {
+        void db.adCampaign
+          .updateMany({
+            where: { id: { in: [...shownCampaignIds] }, status: 'active' },
+            data: { impressions: { increment: 1 } },
+          })
+          .catch(() => {})
       }
     }
 
@@ -588,16 +504,14 @@ export async function GET(request: Request) {
         Number(r.bookmarksCount),
       )
       // Спонсорский пост помечается честной меткой «Реклама» в карточке
-      if (sponSet?.has(r.id)) dto.sponsored = true
+      if (snapshot.sponsoredIds.has(r.id)) dto.sponsored = true
       // Промо-пост (Snap Pro): подсветка «Продвинуто» в карточке
-      if (promoSet.has(r.id)) dto.promoted = true
+      if (snapshot.promotedIds.has(r.id)) dto.promoted = true
       return dto
     })
 
-    // Честный hasMore: по ДЛИНЕ персонального порядка (после мьют-фильтра),
-    // а не по глобальному индексу — иначе после фильтра «Не интересно»
-    // лента обещает страницы, которых нет
-    const hasMore = (page + 1) * limit < ordered.length
+    // Честный hasMore: по ДЛИНЕ персонального порядка (после всех фильтров)
+    const hasMore = (page + 1) * limit < visible.length
     putCachedPage(userId, category, page, limit, seedForCache, lang, items, hasMore)
 
     return jsonWithEtag({
@@ -609,4 +523,153 @@ export async function GET(request: Request) {
     console.error('[feed]', e)
     return err('feed failed', 500)
   }
+}
+
+/**
+ * Построитель персонального порядка сессии (замороженного снапшота).
+ * Выполняется ОДИН раз на (user, category, lang, seed) — см. feed-session.ts.
+ *
+ * Пайплайн: фильтр языка → исключения → персональный скор → языковой
+ * множитель → сортировка (tiebreak по id) → round-robin каналов →
+ * пиннинг промо/спонсоров в голову.
+ */
+async function buildFeedSnapshot(ctx: {
+  userId: string
+  effSeed: string
+  index: RankedIndex
+  signals: PersonalSignals
+  lang: 'any' | 'ru' | 'foreign'
+}): Promise<FeedSnapshot> {
+  const { userId, effSeed, index, signals, lang } = ctx
+
+  /* ---------- 1. Фильтр языка (v5.25): «Русский / Другие» ----------
+      Режем индекс ДО персонализации и диверсификации. Посты без букв (und)
+      проходят в любом режиме. */
+  const scopedEntries =
+    lang === 'any' ? index.entries : index.entries.filter((e) => langPasses(e.l, lang))
+
+  /* ---------- 2. Исключения (Task 5-c) ----------
+      • замьютнутые каналы — ЦЕЛИКОМ, без прежних 4% «возвращений»:
+        юзер сказал «не показывать» — рекомендация обязана подчиниться;
+      • скрытые посты («Не интересно» на пост);
+      • посты, на которые юзер сам пожаловался («дизлайкнутое» не возвращается).
+      (Посты с 3+ чужими жалобами уже выкинуты в computeRankedIndex.) */
+  const muted = signals.mutedIds
+  const hidden = signals.hiddenPostIds
+  const reported = signals.reportedPostIds
+  const pool = scopedEntries.filter(
+    (e) => !muted.has(e.c) && !hidden.has(e.i) && !reported.has(e.i),
+  )
+
+  /* ---------- 3. Каналы с взаимодействием юзера ----------
+      Языковой множитель к ним не применяется: если человек сам лайкал/
+      подписывался/добавил источник — его выбор важнее языка. */
+  const interacted = new Set<string>()
+  for (const [cid, w] of signals.affinity.channels) if (w > 0) interacted.add(cid)
+  for (const cid of signals.subscribedIds) interacted.add(cid)
+
+  /* ---------- 4. Персональный скор + шум + язык ---------- */
+  const scored = pool.map((e) => {
+    const parts = personalScoreParts({
+      channelId: e.c,
+      categoryId: e.g,
+      subscribed: signals.subscribedIds.has(e.c),
+      viewed: signals.viewedIds.has(e.i),
+      viewedAtMs: signals.viewedAt.get(e.i),
+      affinity: signals.affinity,
+      dislikes: signals.dislikeCategories.get(e.g ?? ''),
+    })
+    let w = e.w + parts.boost
+    // Шум с userId внутри сида: у разных пользователей — разные сигнатуры
+    w += shuffleNoise(`${userId}:${e.i}:${effSeed}`, e.w)
+    // Языковой множитель (Task 5-c): только к положительной части, штрафы
+    // (просмотрено/не интересно/дизлайк тематики) не смягчаются
+    if (isForeignForRanking(e.l, e.cl) && !interacted.has(e.c) && w > 0) {
+      w *= e.l === 'foreign' ? FOREIGN_LANG_MULTIPLIER : UNDETECTED_FROM_FOREIGN_CHANNEL_MULTIPLIER
+    }
+    w -= parts.penalty
+    return { id: e.i, cid: e.c, w }
+  })
+
+  /* ---------- 5. Сортировка с детерминированным tiebreak ----------
+      Равные веса упорядочиваются по id — порядок воспроизводим между
+      пересборками снапшота и одинаков у всех реплик инстанса. */
+  scored.sort((a, b) => b.w - a.w || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  /* ---------- 6. Промо + спонсоры: пиннинг в голову потока ----------
+      Прежде промо/спонсоры вставлялись ТОЛЬКО на странице 0 с перевырезкой
+      страниц (page 0 резалась из одного порядка, page 1 — из другого —
+      источник пропусков/дублей). Теперь они пиннятся в голову ЕДИНОГО
+      порядка: страница 0 открывается ими, дальше сессия едет по списку.
+      Уважаем скрытие/жалобу юзера на конкретный пост; платное промо мьют
+      канала не пробивает (раньше — тем более).
+      Task 6-c: блок ПЕРЕНЕСЁН ДО diversify — каналы пинов уходят в diversify
+      как «recent», иначе их органические посты вставали вплотную к пину
+      («два подряд» в начале страницы, аудит 6-c). */
+  const promotedIds = new Set<string>()
+  const sponsoredIds = new Set<string>()
+  const sponsorCampaigns = new Map<string, string>()
+  const head: Array<{ id: string; cid: string }> = []
+  try {
+    const promotedPosts = (await getPromotedCandidates())
+      .filter((p) => langPasses(detectLang(p.text), lang))
+      .filter((p) => !hidden.has(p.id) && !reported.has(p.id))
+    for (const p of promotedPosts) {
+      if (promotedIds.has(p.id)) continue
+      promotedIds.add(p.id)
+      head.push({ id: p.id, cid: p.channelId })
+    }
+
+    const sponsors = await getSponsorChannelIds()
+    if (sponsors.size > 0) {
+      const sponsorPosts = (await getSponsorCandidates([...sponsors.keys()]))
+        .filter((p) => !promotedIds.has(p.id) && !signals.viewedIds.has(p.id))
+        .filter((p) => !hidden.has(p.id) && !reported.has(p.id))
+        .filter((p) => langPasses(detectLang(p.text), lang))
+      // по одному свежему посту от каждого спонсора, максимум 3
+      const picked = new Map<string, string>()
+      for (const p of sponsorPosts) {
+        if (picked.size >= 3) break
+        if (!picked.has(p.channelId)) picked.set(p.channelId, p.id)
+      }
+      for (const [cid, id] of picked) {
+        sponsoredIds.add(id)
+        const campId = sponsors.get(cid)
+        if (campId) sponsorCampaigns.set(cid, campId)
+        head.push({ id, cid })
+      }
+    }
+  } catch {
+    // экстрасы не критичны: без промо/спонсоров лента работает
+  }
+
+  const pinIds = new Set<string>([...promotedIds, ...sponsoredIds])
+
+  /* ---------- 7. Разнообразие: round-robin по каналам ----------
+      Cooldown между постами одного канала (см. diversify) + кап 5 постов/канал
+      в индексе → ≤2 постов одного канала на страницу из 6. Каналы пинов
+      (промо/спонсоры) передаются в recent — их органика соблюдает cooldown
+      относительно пинов. */
+  const ordered = diversify(scored, (x) => x.cid, head.map((x) => x.cid))
+  const items = [...head, ...ordered.filter((x) => !pinIds.has(x.id))]
+
+  /* ---------- 8. Страховка «не подряд» (Task 6-c) ----------
+      Если пара соседей одного канала всё же встретилась (двойной пин одного
+      канала в голове, вырожденное окно) — второй элемент пары меняется
+      местами с ближайшим следующим постом ДРУГОГО канала. Проход детерминирован
+      (тот же вход → тот же порядок), пины головы (индексы < head.length)
+      не сдвигаются. */
+  for (let k = Math.max(1, head.length); k < items.length; k++) {
+    if (items[k].cid !== items[k - 1].cid) continue
+    for (let j = k + 1; j < items.length; j++) {
+      if (items[j].cid !== items[k].cid) {
+        const tmp = items[k]
+        items[k] = items[j]
+        items[j] = tmp
+        break
+      }
+    }
+  }
+
+  return { items, promotedIds, sponsoredIds, sponsorCampaigns, builtAt: 0, exp: 0 }
 }

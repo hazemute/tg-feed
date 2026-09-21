@@ -3,6 +3,8 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { invalidatePersonalSignals } from '@/lib/feed'
+import { clearUserPages } from '@/lib/page-cache'
 
 export const dynamic = 'force-dynamic'
 
@@ -78,10 +80,16 @@ export async function POST(request: Request) {
         create: { userId, channelId: channel.id },
         update: {},
       })
+      // Task 5-c: мьютнутый канал исключается из рекомендаций — применяем сразу
+      invalidatePersonalSignals(userId)
+      // L0-кэш страниц тоже сбрасываем — он отдаётся до свежих фильтров видимости
+      clearUserPages(userId)
       return NextResponse.json({ ok: true, muted: true })
     }
     if (action === 'unmute') {
       await db.channelMute.deleteMany({ where: { userId, channelId: channel.id } })
+      invalidatePersonalSignals(userId)
+      clearUserPages(userId)
       return NextResponse.json({ ok: true, muted: false })
     }
 

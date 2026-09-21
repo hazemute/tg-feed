@@ -74,7 +74,7 @@ let lastSecretWarnAt = 0
 
 /* ------------------- Самолечение allowed_updates ------------------- */
 
-const HEAL_KEY = 'webhook_selfheal_v1'
+const HEAL_KEY = 'webhook_selfheal_v2' // v2: +my_chat_member (задания join_chat → BotChat)
 let healChecked = false // in-memory: 1 раз на инстанс
 
 /**
@@ -96,7 +96,7 @@ async function healWebhookAllowedUpdates(request: Request): Promise<void> {
       body: JSON.stringify({
         url: `${origin}/api/bot/webhook`,
         ...(secret ? { secret_token: secret } : {}),
-        allowed_updates: ['message', 'callback_query', 'business_connection'],
+        allowed_updates: ['message', 'callback_query', 'business_connection', 'my_chat_member'],
         max_connections: 40,
       }),
       signal: AbortSignal.timeout(8000),
@@ -172,6 +172,16 @@ type TgUpdate = {
     id?: string
     user?: { id?: number; is_premium?: boolean }
     is_enabled?: boolean
+  }
+  /** v5.70: статус самого бота в чате/канале — копим реестр BotChat
+   *  (для заданий «вступай в чат» с приватным инвайтом: бот не может зайти
+   *  по ссылке сам — владелец добавляет его админом, чат приезжает сюда) */
+  my_chat_member?: {
+    chat?: { id?: number; title?: string; username?: string; type?: string }
+    new_chat_member?: {
+      status?: string
+      user?: { id?: number; is_bot?: boolean }
+    }
   }
 }
 
@@ -899,6 +909,26 @@ export async function POST(request: Request) {
   }
 
   try {
+    // v5.70: статус бота в чате/канале (my_chat_member) — реестр BotChat для
+    // заданий «вступай в чат» с приватным инвайтом. Обрабатываем ДО остального:
+    // апдейт самодостаточен и не касается юзеров миниаппа.
+    const mcm = update.my_chat_member
+    if (mcm?.chat?.id != null) {
+      const status = mcm.new_chat_member?.status ?? ''
+      const isAdmin = status === 'administrator'
+      const title = (mcm.chat.title ?? mcm.chat.username ?? String(mcm.chat.id)).slice(0, 120)
+      const type = mcm.chat.type ?? 'supergroup'
+      await db.botChat
+        .upsert({
+          where: { chatId: String(mcm.chat.id) },
+          create: { chatId: String(mcm.chat.id), title, type, isAdmin },
+          update: { title, type, isAdmin },
+        })
+        .catch(() => {})
+      console.log(`[bot/webhook] my_chat_member: chat=${mcm.chat.id} "${title}" (${type}) → ${status}`)
+      return NextResponse.json({ ok: true })
+    }
+
     // Telegram Business: премиум-аккаунт владельца подключился как посредник
     const bc = update.business_connection
     if (bc?.id && bc.user?.id) {

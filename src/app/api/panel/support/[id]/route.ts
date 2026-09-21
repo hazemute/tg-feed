@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { emitAppEvent } from '@/lib/events'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
+import { userAvatarProxyUrl } from '@/lib/media'
 
 export const dynamic = 'force-dynamic'
 
@@ -40,7 +41,8 @@ export async function GET(request: Request, ctx: Ctx) {
       unreadUser: thread.unreadUser,
       lastMessageAt: thread.lastMessageAt.toISOString(),
       createdAt: thread.createdAt.toISOString(),
-      user: thread.user,
+      // v5.69: прокси-аватар пользователя в шапке нити
+      user: { ...thread.user, photoUrl: userAvatarProxyUrl(thread.user.id, thread.user.photoUrl) },
       messages: thread.messages.map((m) => {
         let images: string[] = []
         if (m.images) {

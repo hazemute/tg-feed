@@ -1,10 +1,24 @@
 import { db } from '@/lib/db'
 import { parseJsonArray } from '@/lib/server'
 import { getNsfwChannelIds, nsfwPostNotIn } from '@/lib/moderation'
-import { computeWeight, rankJitter, REPORT_PENALTY_CAP, REPORT_PENALTY_PER } from '@/lib/rank'
+import {
+  computeWeight,
+  rankJitter,
+  REPORT_PENALTY_CAP,
+  REPORT_PENALTY_PER,
+} from '@/lib/rank'
 import { looksLikeGarbage } from '@/lib/text-clean'
 import { detectLang } from '@/lib/lang'
+import type { PostLang } from '@/lib/lang'
 import type { AffinityMap } from '@/lib/rank'
+
+/**
+ * Task 5-c: пост с ЭТИМ числом разных жалобщиков и больше исключается из
+ * рекомендаций ПОЛНОСТЬЮ (3+ человека независимо нажали «Пожаловаться» —
+ * почти наверняка реклама/скам). Канальный штраф (REPORT_PENALTY_*) остаётся
+ * мягким понижением для остальных постов канала — решение о бане за людьми.
+ */
+export const REPORT_HIDE_THRESHOLD = 3
 
 // ------------------------- Глобальный индекс ленты -------------------------
 
@@ -14,8 +28,17 @@ import type { AffinityMap } from '@/lib/rank'
  * персонализация применяется на каждом запросе поверх этих данных.
  * l — язык поста (lang.ts): фильтр «Русский / Другие» режет индекс на сервере,
  * чтобы пагинация и hasMore были честными.
+ * cl — язык КАНАЛА (заголовок+описание): для постов без букв (мемы) подсказывает
+ * языковой множитель ранжирования (Task 5-c) — ×0.6 вместо ×0.35.
  */
-export type IndexEntry = { i: string; c: string; g: string | null; w: number; l: 'ru' | 'foreign' | 'und' }
+export type IndexEntry = {
+  i: string
+  c: string
+  g: string | null
+  w: number
+  l: PostLang
+  cl: PostLang
+}
 export type RankedIndex = { entries: IndexEntry[]; total: number }
 
 /** Максимум постов одного канала в окне индекса (разнообразие ленты) */
@@ -63,13 +86,15 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       channelId: true,
       text: true,
       likesCount: true,
+      commentsCount: true,
       reactionsTg: true,
       viewsCount: true,
       hotScore: true,
       publishedAt: true,
       promotedAt: true,
       channel: {
-        select: { isPremium: true, categoryId: true },
+        // title/description — язык канала для языкового множителя ранжирования
+        select: { isPremium: true, categoryId: true, title: true, description: true },
       },
     },
     orderBy: { publishedAt: 'desc' },
@@ -77,7 +102,10 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
   })
 
   // v5.68 антиреклама: distinct-жалобы по постам окна → сумма на канал
+  // Task 5-c: попутно считаем жалобы НА КАЖДЫЙ пост — 3+ жалобщиков = пост
+  // исключается из рекомендаций целиком (см. REPORT_HIDE_THRESHOLD)
   const channelReports = new Map<string, number>()
+  const postReports = new Map<string, number>()
   if (posts.length > 0) {
     try {
       const reps = await db.postReport.groupBy({
@@ -87,6 +115,7 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       })
       const postChannel = new Map(posts.map((p) => [p.id, p.channelId] as const))
       for (const r of reps) {
+        postReports.set(r.postId, r._count._all)
         const ch = postChannel.get(r.postId)
         if (ch) channelReports.set(ch, (channelReports.get(ch) ?? 0) + r._count._all)
       }
@@ -97,13 +126,17 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
 
   const entries: IndexEntry[] = posts
     .filter((p) => !looksLikeGarbage(p.text)) // мгновенный детект каши — не ждём ИИ
+    // Task 5-c: посты с потоком жалоб (≥3 разных жалобщиков) — мимо рекомендаций
+    .filter((p) => (postReports.get(p.id) ?? 0) < REPORT_HIDE_THRESHOLD)
     .map((p) => ({
       i: p.id,
       c: p.channelId,
       g: p.channel.categoryId,
       l: detectLang(p.text),
+      cl: detectLang(`${p.channel.title} ${p.channel.description ?? ''}`),
       w: computeWeight({
         likesCount: p.likesCount,
+        commentsCount: p.commentsCount,
         reactionsTg: p.reactionsTg,
         viewsCount: p.viewsCount,
         hotScore: p.hotScore,
@@ -115,7 +148,9 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
         Math.min(REPORT_PENALTY_CAP, (channelReports.get(p.channelId) ?? 0) * REPORT_PENALTY_PER) +
         rankJitter(p.id),
     }))
-    .sort((a, b) => b.w - a.w)
+    // Task 5-c: детерминированный tiebreak по id — равные веса не «дрогают»
+    // между пересборками индекса (стабильная пагинация)
+    .sort((a, b) => b.w - a.w || (a.i < b.i ? -1 : a.i > b.i ? 1 : 0))
 
   /*
    * КАП НА КАНАЛ (разнообразие, жалоба владельца «постоянно одно и то же»):
@@ -162,7 +197,19 @@ type ScopeResult = {
  * подписки/интересы меняются редко, лаг 60с неощутим.
  */
 type ScopeCacheEntry = { data: NonNullable<ScopeResult>; exp: number }
-const scopeCache = new Map<string, ScopeCacheEntry>()
+/*
+ * Кэши персональных сигналов/скоупа — через globalThis-синглтон (паттерн
+ * lib/page-cache.ts): в dev (и в некоторых сборках) Next.js изолирует модули
+ * разных route-бандлов, и без этого /api/notinterested,/api/report,/api/subscribe
+ * вызывали бы invalidatePersonalSignals на СВОЕЙ копии Map — /api/feed не видел
+ * бы сброса, и «Не интересно»/жалоба/мьют применялись бы только по TTL (15с).
+ * globalThis гарантирует один инстанс на процесс для всех роутов.
+ */
+const G = globalThis as unknown as {
+  __tgFeedScopeCache?: Map<string, ScopeCacheEntry>
+  __tgFeedAffinityCache?: Map<string, AffinityCacheEntry>
+}
+const scopeCache: Map<string, ScopeCacheEntry> = (G.__tgFeedScopeCache ??= new Map())
 const SCOPE_TTL_MS = 60_000
 const SCOPE_MAX = 1_000
 
@@ -260,12 +307,16 @@ async function buildFeedScopeUncached(userId: string, category: string) {
     for (const b of bookmarks) bump(b, 3)
 
     const allCategories = await db.category.findMany({
-      where: { slug: { not: 'other' } },
       select: { id: true, slug: true },
     })
     const ranked = [...allCategories].sort((a, b) => (engaged.get(b.id) ?? 0) - (engaged.get(a.id) ?? 0))
+    /* Task 5-c: «top» ищется по ВСЕМ категориям (включая 'other'): если вся
+     * вовлечённость юзера сидит в некатегоризованных каналах, прежний фильтр
+     * slug != 'other' делал top ПУСТЫМ — «Интересное» вырождалось в пару
+     * случайных неосвоенных категорий, где нет ни одного поста. В рулетку
+     * exploration 'other' по-прежнему не попадает — туда не «открываем». */
     const top = ranked.filter((c) => (engaged.get(c.id) ?? 0) > 0).slice(0, 4)
-    const untouched = ranked.filter((c) => !engaged.has(c.id))
+    const untouched = ranked.filter((c) => !engaged.has(c.id) && c.slug !== 'other')
     // детерминированная «рулетка» по дню: один-два новых раздела в сутки
     const daySeed = Math.floor(Date.now() / 86_400_000)
     const exploration = untouched
@@ -308,7 +359,7 @@ async function buildFeedScopeUncached(userId: string, category: string) {
  * запросов подряд — считаем сигналы один раз, на лайки реагируем почти сразу.
  */
 type AffinityCacheEntry = { data: PersonalSignals; exp: number }
-const affinityCache = new Map<string, AffinityCacheEntry>()
+const affinityCache: Map<string, AffinityCacheEntry> = (G.__tgFeedAffinityCache ??= new Map())
 const AFFINITY_TTL_MS = 15_000
 const AFFINITY_MAX = 500
 
@@ -324,6 +375,8 @@ export type PersonalSignals = {
   hiddenPostIds: Set<string>
   /** v5.68: categoryId → сколько постов этой тематики юзер скрыл — понижение приоритета */
   dislikeCategories: Map<string, number>
+  /** Task 5-c: посты, на которые юзер САМ нажал «Пожаловаться», — из его рекомендаций исключаются */
+  reportedPostIds: Set<string>
 }
 
 export async function loadPersonalSignals(userId: string): Promise<PersonalSignals> {
@@ -348,8 +401,10 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   // v5.68: «Не интересно» на уровне ПОСТА (канал остаётся, тематика понижается)
   let hides: Array<{ postId: string; post: { channel: { categoryId: string | null } } }>
   let sources: Array<{ channelId: string | null; username: string | null; tgId: string }>
+  // Task 5-c: посты, пожалованные самим юзером («то, что я дизлайкнул — не показывать»)
+  let ownReports: Array<{ postId: string }>
   try {
-    ;[views, likes, bookmarks, subs, mutes, hides, sources] = await db.$transaction([
+    ;[views, likes, bookmarks, subs, mutes, hides, sources, ownReports] = await db.$transaction([
       db.postView.findMany({
         where: { userId },
         select: {
@@ -405,6 +460,12 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
         orderBy: { createdAt: 'desc' },
         take: 80,
       }),
+      db.postReport.findMany({
+        where: { userId },
+        select: { postId: true },
+        orderBy: { createdAt: 'desc' },
+        take: 200,
+      }),
     ])
   } catch {
     /*
@@ -420,6 +481,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
       mutedIds: new Set(),
       hiddenPostIds: new Set(),
       dislikeCategories: new Map(),
+      reportedPostIds: new Set(),
     }
     affinityCache.set(userId, { data: empty, exp: Date.now() + 2_000 })
     return empty
@@ -546,6 +608,7 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     mutedIds: new Set(mutes.map((m) => m.channelId)),
     hiddenPostIds: new Set(hides.map((h) => h.postId)),
     dislikeCategories: dislikeCats,
+    reportedPostIds: new Set(ownReports.map((r) => r.postId)),
   }
 
   if (affinityCache.size >= AFFINITY_MAX) {

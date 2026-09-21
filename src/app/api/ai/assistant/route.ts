@@ -14,7 +14,8 @@ import {
   swipesForUsage,
   usageCollector,
 } from '@/lib/wallet'
-import { enVisualPrompt, pollinationsImageUrl, verifyImageUrl } from '@/lib/ai-image'
+import { generatePublicImage, verifyImageUrl } from '@/lib/ai-image'
+import { SITE_URL } from '@/lib/site'
 import { botPublishToChannel, getBotChatRights, getChatMemberCount } from '@/lib/tg-bot'
 import { sweepScheduledPostsThrottled } from '@/lib/scheduled-posts'
 import { tierAtLeast, tierOfUser } from '@/lib/tiers'
@@ -473,21 +474,30 @@ export async function POST(request: Request) {
 
       // v5.33: суть поста → английский визуальный промпт (бесплатная модель)
       // → бесплатный pollinations. И текст, и визуал — ноль рублей.
-      const enPrompt = await enVisualPrompt(clean).catch(() => clean.slice(0, 220))
-      const imageUrl = pollinationsImageUrl(enPrompt)
-      const imageOk = await verifyImageUrl(imageUrl).catch(() => false)
+      // v5.70: байты скачиваются сервером, сжимаются в WebP ≤350КБ и хранятся
+      // в Upload → клиенту отдаётся стабильный /api/upload/<id> (фолбэк —
+      // сырая ссылка pollinations, если скачать/сохранить не удалось)
+      const img = await generatePublicImage(clean, { ownerId: g.uid }).catch(() => null)
 
       return NextResponse.json({
         text: clean,
-        imageUrl: imageOk ? imageUrl : imageUrl,
-        imagePending: !imageOk,
+        imageUrl: img?.url ?? null,
+        imagePending: img?.pending ?? true,
         styleAnalyzed,
       })
     }
 
     /* ---------- Публикация в реальный канал ---------- */
-    const imageUrl = d.imageUrl && /^https:\/\//i.test(d.imageUrl) ? d.imageUrl : null
-    if (imageUrl) {
+    // v5.70: принимаем и наш /api/upload/<id> (абсолютизируем через SITE_URL —
+    // Telegram качает файл по https сам). Свой immutable-URL, созданный только
+    // что, проверять HEAD'ом не нужно — проверяем только внешние ссылки
+    const rawUrl = d.imageUrl ?? ''
+    const imageUrl = /^https:\/\//i.test(rawUrl)
+      ? rawUrl
+      : rawUrl.startsWith('/api/upload/')
+        ? `${SITE_URL}${rawUrl}`
+        : null
+    if (imageUrl && !imageUrl.startsWith(SITE_URL)) {
       const ok = await verifyImageUrl(imageUrl).catch(() => false)
       if (!ok) {
         return NextResponse.json({

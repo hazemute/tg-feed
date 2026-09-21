@@ -18,6 +18,7 @@ import { useApp } from '@/lib/store'
 import { userAvatarUrl } from '@/lib/tg'
 import type { PublicProfileResponse } from '@/lib/types'
 import { BottomSheet } from '@/components/tg/BottomSheet'
+import { Avatar } from '@/components/tg/Avatar'
 import { UserBadges } from '@/components/badges/UserBadges'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 
@@ -36,6 +37,29 @@ export function UserProfileSheet() {
 
   const open = !!profileUserId
   const fresh = state.uid !== null && state.uid === profileUserId
+  const data = fresh && !state.failed ? state.data : null
+
+  // v5.69: липкая шапка полноэкранной страницы — аватар + имя (после загрузки),
+  // пока едут данные — просто заголовок. Кнопка «назад» рисуется самим BottomSheet.
+  const header = data ? (
+    <div className="flex min-w-0 flex-1 items-center gap-2.5">
+      <Avatar
+        name={data.name}
+        src={userAvatarUrl(data.id, data.photoUrl)}
+        size={30}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[15.5px] font-bold leading-tight text-tg-text">{data.name}</div>
+        {data.username && (
+          <div className="truncate text-[12px] leading-tight text-tg-hint">@{data.username}</div>
+        )}
+      </div>
+    </div>
+  ) : (
+    <div className="min-w-0 flex-1">
+      <div className="truncate text-[17px] font-bold leading-tight text-tg-text">Профиль</div>
+    </div>
+  )
 
   // Загрузка при открытии/смене профиля и по кнопке «Повторить»
   useEffect(() => {
@@ -56,7 +80,18 @@ export function UserProfileSheet() {
     : null
 
   return (
-    <BottomSheet open={open} onClose={closeUserProfile} zClass="z-[85]" wide title="Профиль">
+    // v5.69: полноэкранная страница (была полувысотная шторка — низ недолистывался
+    // на мобиле). Обложка — на всю ширину, скролл у контента, липкая шапка сверху.
+    <BottomSheet
+      open={open}
+      onClose={closeUserProfile}
+      zClass="z-[85]"
+      wide
+      title="Профиль"
+      variant="full"
+      header={header}
+      contentClassName="px-0 pb-[calc(1.25rem+env(safe-area-inset-bottom))] pt-0"
+    >
       {open && !fresh && <Skeletons />}
 
       {open && fresh && state.failed && (

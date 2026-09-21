@@ -4,6 +4,18 @@ import { looksLikeGarbage } from '@/lib/text-clean'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import type { ToolSchema } from '@/lib/openrouter'
 import { getAiKnowledge } from '@/lib/ai-knowledge'
+import { SITE_URL } from '@/lib/site'
+
+/**
+ * /api/upload/<id> → абсолютный https (Telegram качает файл сам —
+ * sendPhoto/setChatPhoto не понимают относительные пути).
+ * Паттерн из живого канала (api/channel/live absoluteMediaUrl).
+ */
+function absoluteImageUrl(u: string): string | null {
+  if (/^https:\/\//i.test(u)) return u
+  if (u.startsWith('/api/upload/')) return `${SITE_URL}${u}`
+  return null
+}
 
 /**
  * ИНСТРУМЕНТЫ ИИ (v5.21): нейросеть сама решает, когда и какой инструмент
@@ -369,12 +381,16 @@ const generateImage: ToolDef = {
     if (prompt.length < 10) return { ok: false, data: 'Ошибка: промпт слишком короткий.' }
     const { generatePublicImage } = await import('@/lib/ai-image')
     // v5.34: промпт модели дополнительно раскрывается в детальную английскую
-    // визуальную сцену (enVisualPrompt) → бесплатный pollinations/flux
-    const img = await generatePublicImage(prompt)
+    // визуальную сцену (enVisualPrompt) → бесплатный pollinations/flux.
+    // v5.70: байты скачиваются сервером и сохраняются в Upload → наш вечный
+    // URL /api/upload/<id> (фолбэк — сырая ссылка pollinations, если не вышло)
+    const img = await generatePublicImage(prompt, { ownerId: ctx.uid })
     if (!img.url) return { ok: false, data: 'Картинка не сгенерировалась — сервис недоступен. Продолжай без неё.' }
     return {
       ok: true,
-      data: `Картинка готова: ${img.url}`,
+      data:
+        `Картинка готова и УЖЕ ПОКАЗАНА автору картинкой под сообщением. Ссылку в текст ответа НЕ вставляй — ` +
+        `автор видит картинку автоматически. Если будешь публиковать пост или менять аватар — передай этот URL без изменений: ${img.url}`,
       meta: { imageUrl: img.url, imagePending: img.pending },
     }
   },
@@ -392,7 +408,7 @@ const publishPost: ToolDef = {
     type: 'object',
     properties: {
       text: { type: 'string', description: 'Готовый текст поста' },
-      imageUrl: { type: 'string', description: 'https-URL картинки (если есть в диалоге)' },
+      imageUrl: { type: 'string', description: 'URL картинки из диалога (https или /api/upload/… — передавай ровно как дал generate_image)' },
     },
     required: ['text'],
   },
@@ -401,7 +417,9 @@ const publishPost: ToolDef = {
     if (!ctx.channelId) return { ok: false, data: 'Ошибка: канал не привязан.' }
     if (text.length < 10) return { ok: false, data: 'Ошибка: текст поста слишком короткий.' }
     const imageUrlRaw = str(args.imageUrl, 600)
-    const imageUrl = /^https:\/\//i.test(imageUrlRaw) ? imageUrlRaw : null
+    // v5.70: принимаем и наш /api/upload/<id> (абсолютизируем через SITE_URL —
+    // Telegram скачивает файл по https сам), и внешние https-ссылки
+    const imageUrl = absoluteImageUrl(imageUrlRaw)
     const ch = await db.channel.findUnique({ where: { id: ctx.channelId }, select: { username: true } })
     if (!ch) return { ok: false, data: 'Ошибка: канал не найден.' }
     const { botPublishToChannel } = await import('@/lib/tg-bot')
@@ -548,14 +566,14 @@ const updateChannelInfo: ToolDef = {
   description:
     'Меняет НАЗВАНИЕ, ОПИСАНИЕ и/или АВАТАРА канала — и в Telegram, и в карточке ленты. ' +
     'Передавай только то, что попросил автор (title/description/avatarUrl). Смена названия/аватара — ' +
-    'серьёзный шаг: покажи итоговый вариант и убедись, что автор подтвердил. avatarUrl — прямая ' +
-    'https-ссылка на картинку (можешь взять из generate_image).',
+    'серьёзный шаг: покажи итоговый вариант и убедись, что автор подтвердил. avatarUrl — URL картинки ' +
+    '(https или /api/upload/… — можно взять из generate_image, передавай без изменений).',
   parameters: {
     type: 'object',
     properties: {
       title: { type: 'string', description: 'Новое название канала (2–128 символов)' },
       description: { type: 'string', description: 'Новое описание канала (до 255 символов)' },
-      avatarUrl: { type: 'string', description: 'https-URL новой аватарки' },
+      avatarUrl: { type: 'string', description: 'URL новой аватарки (https или /api/upload/… из generate_image)' },
     },
   },
   exec: async (args, ctx) => {
@@ -569,7 +587,9 @@ const updateChannelInfo: ToolDef = {
     const title = str(args.title, 200)
     const description = str(args.description, 600)
     const avatarUrlRaw = str(args.avatarUrl, 600)
-    const avatarUrl = /^https:\/\//i.test(avatarUrlRaw) ? avatarUrlRaw : null
+    // v5.70: /api/upload/<id> от generate_image тоже годится — абсолютизируем
+    // для Bot API (setChatPhoto качает файл по https) и храним абсолютным
+    const avatarUrl = absoluteImageUrl(avatarUrlRaw)
     if (!title && !description && !avatarUrl) {
       return { ok: false, data: 'Ошибка: передай хотя бы одно поле (title/description/avatarUrl).' }
     }
@@ -1272,7 +1292,7 @@ export function assistantSystemPrompt(ctx: {
     '',
     'КАК РАБОТАТЬ:',
     '1. Просьба «напиши пост…» → продумай текст в стиле автора и вызови create_post_draft (в text — готовый пост). Затем коротко скажи, что готово, и предложи доработки.',
-    '2. Просьба про картинку/обложку/иллюстрацию → вызови generate_image с подробным английским промптом (сюжет, окружение, стиль, свет, палитра, композиция).',
+    '2. Просьба про картинку/обложку/иллюстрацию → вызови generate_image с подробным английским промптом (сюжет, окружение, стиль, свет, палитра, композиция). Ссылку/путь на картинку в текст ответа НЕ вставляй — она показывается автору автоматически.',
     '3. Явная просьба «опубликуй» → если текст ещё не показан, покажи его в ответе и вызови publish_post. Просьба «опубликуй завтра в N» / «поставь в расписание» → подтверди текст и время (переведи в UTC, покажи оба), затем schedule_post. Расписание: list_scheduled_posts, отмена — cancel_scheduled_post после подтверждения.',
     '4. УДАЛЕНИЕ ПОСТОВ («удали пост/посты…») → ОБЯЗАТЕЛЬНО: сначала list_my_posts → покажи кандидатов списком (дата/просмотры/начало текста) → получи ЯВНОЕ подтверждение автора → только потом delete_posts. Никогда не удаляй без подтверждения.',
     '5. ПРАВКА ПОСТА («исправь/поменяй текст поста») → list_my_posts → покажи текущий текст → предложи новый → после подтверждения edit_published_post (postId + полный newText). Закрепление («закрепи пост») → уточни какой → pin_post (pin/unpin/unpin_all).',

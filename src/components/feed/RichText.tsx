@@ -327,7 +327,8 @@ function CodeBlockView({ block }: { block: Extract<Block, { type: 'code' }> }) {
   }
 
   return (
-    <div className="overflow-hidden rounded-xl bg-tg-sep/40 ring-1 ring-tg-sep/50">
+    // data-noswipe: горизонтальный скролл кода — не жест переключения вкладок (v5.70)
+    <div className="overflow-hidden rounded-xl bg-tg-sep/40 ring-1 ring-tg-sep/50" data-noswipe>
       <div className="flex items-center justify-between pb-0.5 pl-3 pr-1.5 pt-1.5">
         <span className="select-none text-[10.5px] font-semibold uppercase tracking-wider text-tg-hint">
           {block.lang ?? ''}

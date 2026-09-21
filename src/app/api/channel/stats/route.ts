@@ -229,7 +229,7 @@ export async function GET(request: Request) {
      * прежним одним batch-запросом.
      */
     if (IS_SQLITE) {
-      const [posts, viewRows] = await Promise.all([
+      const [posts, appViewsCount] = await Promise.all([
         db.post.findMany({
           where: { channelId: cid },
           orderBy: { publishedAt: 'desc' },
@@ -238,7 +238,9 @@ export async function GET(request: Request) {
             viewsTg: true, viewsCount: true, reactionsTg: true, likesCount: true,
           },
         }),
-        db.postView.findMany({
+        // v5.69: COUNT вместо findMany(select id) — раньше все строки PostView
+        // канала тащились в память ради одного числа
+        db.postView.count({
           where: {
             post: { channelId: cid },
             // Инкогнито (Snap Plus/Pro): активные платные подписчики не считаются
@@ -246,7 +248,6 @@ export async function GET(request: Request) {
               OR: [{ tier: 'free' }, { tierUntil: null }, { tierUntil: { lte: new Date() } }],
             },
           },
-          select: { id: true },
         }),
       ])
 
@@ -312,7 +313,7 @@ export async function GET(request: Request) {
 
       const topViews = rank('views')
       const topReactions = rank('reactions')
-      const appViews = viewRows.length
+      const appViews = appViewsCount
 
       const a = agg
       const built = finalizeStats({ a, bins, seriesRows, cadenceRows, topViews, topReactions, appViews, mediaRows, members: channel.membersCount ?? channel.subscribersCount, subscribers: channel.subscribersCount })

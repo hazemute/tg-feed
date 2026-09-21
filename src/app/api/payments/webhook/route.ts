@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
 import { creditPendingPayment } from '@/lib/payments'
+import { refundToBalance } from '@/lib/wallet'
 import { redis } from '@/lib/redis'
 import { yookassaEnabled, yookassaGetPayment } from '@/lib/yookassa'
 import { timingSafeEqualStr } from '@/lib/server'
@@ -155,10 +156,21 @@ export async function POST(request: Request) {
     }
 
     if (body.event === 'payment.canceled') {
-      await db.pendingPayment.updateMany({
+      const canceled = await db.pendingPayment.updateMany({
         where: { id: payment.id, status: 'pending' },
         data: { status: 'canceled' },
       })
+      // v5.69: счёт 50/50 за пакет продвижений отменён (не оплачен/истёк) —
+      // возвращаем половину, списанную с баланса при создании счёта. Возврат
+      // только если отмена реально перевела платёж из pending (count=1) —
+      // повторные вебхуки и успешные оплаты не задвоят компенсацию.
+      if (canceled.count === 1 && payment.purpose === 'promote_pack_half' && payment.amountKop > 0) {
+        await refundToBalance(
+          payment.userId,
+          payment.amountKop,
+          'возврат: счёт 50/50 отменён (пакет продвижений)',
+        ).catch((e) => console.error('[payments/webhook] half refund failed', e))
+      }
       return NextResponse.json({ ok: true })
     }
 

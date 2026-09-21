@@ -2,7 +2,16 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { AlertTriangle, BadgeCheck, Check, ExternalLink, RefreshCw, Sparkles } from 'lucide-react'
+import {
+  AlertTriangle,
+  BadgeCheck,
+  Check,
+  ExternalLink,
+  Music2,
+  RefreshCw,
+  Sparkles,
+  Upload,
+} from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { api, apiCached, invalidateApiCache } from '@/lib/api'
@@ -10,15 +19,21 @@ import { pluralRu } from '@/lib/format'
 import { formatSwipesFull } from '@/lib/money'
 import { haptic, tg } from '@/lib/tg'
 import { useApp } from '@/lib/store'
+import { uploadImage } from '@/lib/upload'
 import { SwipeIcon } from '@/components/tg/SwipeIcon'
 
 /**
- * Экран «Задания» (v5.51, вместо «Трендов»): подписка на канал / вступление
- * в чат за свайпы. Проверка честная — через Bot API; если юзер получил награду
- * и отписался, сервер аннулирует задание и списывает двойную награду.
+ * Экран «Задания» (v5.51, расширен в v5.70): подписка на канал, чат, буст,
+ * TikTok (скриншот + ИИ-проверка), ежедневный вход с серией, профиль,
+ * активность в ленте, рефералы. Проверка честная — через Bot API / поля БД /
+ * VLM; если юзер получил награду и отписался, сервер аннулирует задание и
+ * списывает двойную награду.
  *
  * Паттерн кнопки «в два тапа»: первый тап при not_member открывает цель,
- * после подписки второй тап проверяет и начисляет.
+ * после подписки второй тап проверяет и начисляет. Автозачётные виды
+ * (вход/профиль/активность/рефералы) показывают «Забрать» только когда
+ * условие выполнено — сервер проверяет ещё раз при клэйме. Ежедневный вход
+ * засчитывается сам при открытии вкладки.
  */
 
 type QuestItem = {
@@ -29,13 +44,24 @@ type QuestItem = {
   rewardSwp: number
   link: string
   myStatus: 'done' | 'revoked' | null
+  progress: number | null
+  goal: number | null
+  streak: number | null
 }
 
 type QuestsResponse = { items: QuestItem[]; balance: number }
 
+type VerifyNote = { text: string; tone: 'ok' | 'warn' | 'err'; support?: boolean }
+
 const KIND_META: Record<string, { emoji: string; label: string }> = {
   subscribe: { emoji: '📢', label: 'Подписка на канал' },
   join_chat: { emoji: '💬', label: 'Вступление в чат' },
+  tiktok_follow: { emoji: '🎵', label: 'Подписка в TikTok' },
+  daily_checkin: { emoji: '📅', label: 'Ежедневный вход' },
+  profile_setup: { emoji: '👤', label: 'Заполнение профиля' },
+  boost: { emoji: '🚀', label: 'Буст канала' },
+  activity_milestone: { emoji: '📖', label: 'Активность в ленте' },
+  referral: { emoji: '🤝', label: 'Пригласи друга' },
 }
 
 export function QuestsTab() {
@@ -45,9 +71,13 @@ export function QuestsTab() {
   const [claimingId, setClaimingId] = useState<string | null>(null)
   const [justDone, setJustDone] = useState<string | null>(null)
   const doneTimer = useRef(0)
+  // v5.70: VLM-проверка TikTok — состояние загрузки скриншота и последний вердикт
+  const [verifyingId, setVerifyingId] = useState<string | null>(null)
+  const [verifyNote, setVerifyNote] = useState<Record<string, VerifyNote>>({})
   // v5.54: гость не клэймит (сервер всё равно не сможет проверить tgId) —
   // показываем шторку входа; баланс мутаций пишем в общий стор
   const user = useApp((s) => s.user)
+  const setTab = useApp((s) => s.setTab)
   const openAuthGate = useApp((s) => s.openAuthGate)
   const patchBalance = useApp((s) => s.patchBalance)
 
@@ -79,8 +109,27 @@ export function QuestsTab() {
 
   useEffect(() => () => window.clearTimeout(doneTimer.current), [])
 
+  const markDone = (id: string, balance?: number, reward?: number) => {
+    if (typeof balance === 'number') patchBalance({ swipes: balance })
+    invalidateApiCache('/api/quests')
+    setData((prev) =>
+      prev
+        ? {
+            items: prev.items.map((it) => (it.id === id ? { ...it, myStatus: 'done' } : it)),
+            balance: typeof balance === 'number' ? balance : prev.balance,
+          }
+        : prev,
+    )
+    setJustDone(id)
+    window.clearTimeout(doneTimer.current)
+    doneTimer.current = window.setTimeout(() => setJustDone(null), 1600)
+    if (typeof reward === 'number') {
+      toast.success(`Награда получена: +${reward} ${pluralRu(reward, 'свайп', 'свайпа', 'свайпов')}`)
+    }
+  }
+
   const claim = async (q: QuestItem) => {
-    if (claimingId) return
+    if (claimingId || verifyingId) return
     if (user?.isGuest) {
       openAuthGate('quest')
       return
@@ -88,32 +137,28 @@ export function QuestsTab() {
     setClaimingId(q.id)
     haptic('light')
     try {
-      const res = await api<{ status: string; reward?: number; balance?: number; link?: string }>(
-        `/api/quests/${q.id}/claim`,
-        { method: 'POST' },
-      )
+      const res = await api<{
+        status: string
+        reward?: number
+        bonus?: number
+        balance?: number
+        link?: string
+        streak?: number
+      }>(`/api/quests/${q.id}/claim`, { method: 'POST' })
       if (res.status === 'done') {
         haptic('success')
-        // v5.54: баланс сразу в общий стор (кошелёк в профиле перестал показывать
-        // устаревшее значение) + сброс клиентского кэша списка заданий
-        patchBalance({ swipes: res.balance ?? 0 })
-        invalidateApiCache('/api/quests')
-        setData((prev) =>
-          prev
-            ? {
-                items: prev.items.map((it) => (it.id === q.id ? { ...it, myStatus: 'done' } : it)),
-                balance: res.balance ?? prev.balance,
-              }
-            : prev,
+        markDone(q.id, res.balance, res.reward)
+        if (res.bonus && res.bonus > 0) {
+          toast.success(`Бонус за ${res.streak ?? 7} дней подряд: +${res.bonus} 🔥`, { duration: 5000 })
+        }
+      } else if (res.status === 'not_member' || res.status === 'no_boost') {
+        // Не в цели / нет буста: открываем канал/чат, после действия — второй тап
+        if (res.link) openTarget(res.link)
+        toast.info(
+          res.status === 'no_boost'
+            ? 'Отдай буст каналу и нажми кнопку ещё раз — награда зачислится автоматически'
+            : 'Подпишитесь и нажмите кнопку ещё раз — награда зачислится автоматически',
         )
-        setJustDone(q.id)
-        window.clearTimeout(doneTimer.current)
-        doneTimer.current = window.setTimeout(() => setJustDone(null), 1600)
-        toast.success(`Награда получена: +${res.reward} ${pluralRu(res.reward ?? 0, 'свайп', 'свайпа', 'свайпов')}`)
-      } else if (res.status === 'not_member') {
-        // Не в цели: открываем канал/чат, после подписки — второй тап
-        openTarget(res.link ?? q.link)
-        toast.info('Подпишитесь и нажмите кнопку ещё раз — награда зачислится автоматически')
       } else if (res.status === 'already') {
         setData((prev) =>
           prev
@@ -123,6 +168,10 @@ export function QuestsTab() {
               }
             : prev,
         )
+        if (q.kind === 'daily_checkin') toast.info('Сегодня уже засчитано — приходи завтра')
+      } else if (res.status === 'not_done') {
+        haptic('light')
+        toast.info(q.kind === 'profile_setup' ? 'Установи аватар и имя в профиле — и забирай награду' : 'Условие пока не выполнено — продолжай, прогресс виден на карточке')
       } else if (res.status === 'revoked') {
         invalidateApiCache('/api/quests')
         setData((prev) =>
@@ -136,6 +185,8 @@ export function QuestsTab() {
         toast.error('Награда за это задание была аннулирована')
       } else if (res.status === 'cannot_verify') {
         toast.error('Проверка временно недоступна — попробуйте позже')
+      } else if (res.status === 'need_screenshot') {
+        toast.info('Пришлите скриншот с кнопкой «Вы подписаны» — кнопка на карточке')
       } else {
         toast.error('Задание недоступно')
       }
@@ -143,6 +194,59 @@ export function QuestsTab() {
       toast.error('Не удалось выполнить задание')
     } finally {
       setClaimingId(null)
+    }
+  }
+
+  /** TikTok: скриншот → сжатие → upload → VLM-проверка на сервере */
+  const verifyTiktok = async (q: QuestItem, file: File) => {
+    if (verifyingId) return
+    if (user?.isGuest) {
+      openAuthGate('quest')
+      return
+    }
+    setVerifyingId(q.id)
+    setVerifyNote((prev) => ({ ...prev, [q.id]: { text: 'Скриншот загружается…', tone: 'warn' } }))
+    try {
+      const url = await uploadImage(file)
+      setVerifyNote((prev) => ({ ...prev, [q.id]: { text: 'ИИ изучает скриншот… это до минуты', tone: 'warn' } }))
+      const res = await api<{
+        status: string
+        reward?: number
+        balance?: number
+        message?: string
+        supportHint?: boolean
+      }>(`/api/quests/${q.id}/tiktok-verify`, { method: 'POST', body: JSON.stringify({ url }) })
+      if (res.status === 'done') {
+        haptic('success')
+        setVerifyNote((prev) => ({ ...prev, [q.id]: { text: 'Подписка подтверждена 🎉', tone: 'ok' } }))
+        markDone(q.id, res.balance, res.reward)
+      } else if (res.status === 'already') {
+        setVerifyNote((prev) => ({ ...prev, [q.id]: { text: 'Подписка уже была зачтена', tone: 'ok' } }))
+        markDone(q.id)
+      } else {
+        setVerifyNote((prev) => ({
+          ...prev,
+          [q.id]: {
+            text: res.message ?? 'Подписка не распознана — попробуй другой скриншот',
+            tone: 'err',
+            support: res.supportHint,
+          },
+        }))
+        haptic('light')
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : ''
+      setVerifyNote((prev) => ({
+        ...prev,
+        [q.id]: {
+          text: msg.includes('429')
+            ? 'Слишком часто: проверка доступна раз в 5 минут'
+            : msg || 'Не удалось проверить — попробуй позже',
+          tone: 'err',
+        },
+      }))
+    } finally {
+      setVerifyingId(null)
     }
   }
 
@@ -156,7 +260,9 @@ export function QuestsTab() {
       <div className="mx-auto w-full max-w-[1000px]">
         <header className="px-4 pb-3 pt-4">
           <h1 className="text-screen-title text-tg-text">Задания</h1>
-          <p className="mt-1 text-[15px] text-tg-hint">Выполняйте задания и получайте свайпы</p>
+          <p className="mt-1 text-[15px] text-tg-hint">
+            Подписки, бусты, TikTok, серия входов — выполняй и получай свайпы
+          </p>
         </header>
 
         {failed ? (
@@ -251,7 +357,14 @@ export function QuestsTab() {
                       index={i}
                       claiming={claimingId === q.id}
                       justDone={justDone === q.id}
+                      verifying={verifyingId === q.id}
+                      verifyNote={verifyNote[q.id]}
                       onClaim={() => claim(q)}
+                      onVerify={(file) => void verifyTiktok(q, file)}
+                      onFillProfile={() => {
+                        haptic('light')
+                        setTab('profile')
+                      }}
                     />
                   ))}
                 </div>
@@ -259,8 +372,9 @@ export function QuestsTab() {
             </section>
 
             <p className="px-8 pb-4 text-center text-[11.5px] leading-relaxed text-tg-hint">
-              Награду нельзя получить повторно. Если отписаться от цели после получения, задание
-              аннулируется, а награда спишется в двойном размере.
+              Ежедневный вход засчитывается сам при открытии вкладки (серия 7 дней — бонус). За подписки
+              и бусты: отписался/снял буст после получения — задание аннулируется, награда спишется в
+              двойном размере.
             </p>
           </>
         )}
@@ -276,17 +390,37 @@ function QuestCard({
   index,
   claiming,
   justDone,
+  verifying,
+  verifyNote,
   onClaim,
+  onVerify,
+  onFillProfile,
 }: {
   quest: QuestItem
   index: number
   claiming: boolean
   justDone: boolean
+  verifying: boolean
+  verifyNote?: VerifyNote
   onClaim: () => void
+  onVerify: (file: File) => void
+  onFillProfile: () => void
 }) {
   const meta = KIND_META[quest.kind] ?? { emoji: '🎯', label: 'Задание' }
   const done = quest.myStatus === 'done'
   const revoked = quest.myStatus === 'revoked'
+  const fileRef = useRef<HTMLInputElement>(null)
+
+  // Автозачётные виды: условие уже выполнено? (север проверит ещё раз при клэйме)
+  const isMilestone = quest.kind === 'activity_milestone' || quest.kind === 'referral'
+  const isProfile = quest.kind === 'profile_setup'
+  const isDaily = quest.kind === 'daily_checkin'
+  const isTiktok = quest.kind === 'tiktok_follow'
+  const conditionMet =
+    isMilestone && quest.progress != null && quest.goal != null && quest.progress >= quest.goal
+  const profileReady = isProfile && (quest.progress ?? 0) >= 1
+  const canClaimAuto = (isMilestone && conditionMet) || (isProfile && profileReady)
+  const toBonus = isDaily && quest.streak ? 7 - (quest.streak % 7) : 7
 
   return (
     <motion.div
@@ -323,6 +457,51 @@ function QuestCard({
             <div className="mt-1 text-[13.5px] leading-snug text-tg-hint">{quest.description}</div>
           )}
 
+          {/* Серия ежедневного входа */}
+          {isDaily && (quest.streak ?? 0) > 0 && (
+            <div className="mt-1.5 inline-flex items-center gap-1.5 rounded-full bg-tg-star/10 px-2.5 py-1 text-[12px] font-semibold text-tg-star">
+              🔥 Серия: {quest.streak} {pluralRu(quest.streak ?? 0, 'день', 'дня', 'дней')}
+              {!done && <span className="font-normal text-tg-hint">· до бонуса: {toBonus}</span>}
+            </div>
+          )}
+
+          {/* Прогресс автозачётных заданий */}
+          {isMilestone && quest.progress != null && quest.goal != null && (
+            <div className="mt-1.5 flex items-center gap-2">
+              <div className="h-1.5 w-28 overflow-hidden rounded-full bg-tg-sep/50">
+                <div
+                  className="h-full rounded-full bg-tg-link transition-all"
+                  style={{
+                    width: `${Math.min(100, Math.round((quest.progress / Math.max(1, quest.goal)) * 100))}%`,
+                  }}
+                />
+              </div>
+              <span className="text-[12px] font-medium text-tg-hint tabular-nums">
+                {Math.min(quest.progress, quest.goal)} / {quest.goal}
+              </span>
+            </div>
+          )}
+
+          {/* Вердикт ИИ-проверки TikTok */}
+          {isTiktok && verifyNote && !done && (
+            <div
+              className={cn(
+                'mt-1.5 rounded-xl px-2.5 py-1.5 text-[12.5px] leading-snug',
+                verifyNote.tone === 'ok' && 'bg-tg-green/10 text-tg-green',
+                verifyNote.tone === 'warn' && 'bg-tg-star/10 text-tg-star',
+                verifyNote.tone === 'err' && 'bg-tg-like/10 text-tg-like',
+              )}
+              role="status"
+            >
+              {verifyNote.text}
+              {verifyNote.support && (
+                <span className="mt-1 block text-[12px] text-tg-hint">
+                  Уже третья неудачная попытка — напиши в поддержку из профиля, поможем зачесть вручную.
+                </span>
+              )}
+            </div>
+          )}
+
           <div className="mt-2.5 flex items-center justify-between gap-2">
             <span
               className={cn(
@@ -353,7 +532,7 @@ function QuestCard({
                     className="inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-green/12 px-4 text-[13.5px] font-semibold text-tg-green"
                   >
                     <Check className="size-4" strokeWidth={2.6} aria-hidden />
-                    Выполнено
+                    {isDaily ? 'Зачтено сегодня' : 'Выполнено'}
                   </motion.span>
                 )}
               </AnimatePresence>
@@ -362,15 +541,75 @@ function QuestCard({
                 <AlertTriangle className="size-4" aria-hidden />
                 Аннулировано
               </span>
+            ) : isTiktok ? (
+              /* TikTok: открыть профиль + загрузить скриншот */
+              <div className="flex items-center gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    openExternal(quest.link)
+                  }}
+                  aria-label="Открыть TikTok @snapteamdev"
+                  className="press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-sep/40 px-3.5 text-[13px] font-semibold text-tg-text"
+                >
+                  <Music2 className="size-3.5" aria-hidden />
+                  TikTok
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    fileRef.current?.click()
+                  }}
+                  disabled={verifying}
+                  aria-label="Проверить подписку по скриншоту"
+                  className={cn(
+                    'press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white',
+                    verifying && 'opacity-60',
+                  )}
+                >
+                  {verifying ? (
+                    <span
+                      className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
+                      aria-hidden
+                    />
+                  ) : (
+                    <Upload className="size-3.5" aria-hidden />
+                  )}
+                  {verifying ? 'Проверяем…' : 'Проверить'}
+                </button>
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => {
+                    const f = e.target.files?.[0]
+                    e.target.value = ''
+                    if (f) onVerify(f)
+                  }}
+                />
+              </div>
+            ) : isProfile && !profileReady ? (
+              <button
+                type="button"
+                onClick={onFillProfile}
+                aria-label="Перейти в профиль и заполнить его"
+                className="press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white"
+              >
+                <ExternalLink className="size-3.5" aria-hidden />
+                Заполнить
+              </button>
             ) : (
               <button
                 type="button"
                 onClick={onClaim}
-                disabled={claiming}
+                disabled={claiming || (isMilestone && !conditionMet)}
                 aria-label={`Получить награду за задание «${quest.title}»`}
                 className={cn(
                   'press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white',
-                  claiming && 'opacity-60',
+                  (claiming || (isMilestone && !conditionMet)) && 'opacity-60',
                 )}
               >
                 {claiming ? (
@@ -378,10 +617,16 @@ function QuestCard({
                     className="size-4 animate-spin rounded-full border-2 border-white/40 border-t-white"
                     aria-hidden
                   />
+                ) : canClaimAuto ? (
+                  <BadgeCheck className="size-3.5" aria-hidden />
                 ) : (
                   <ExternalLink className="size-3.5" aria-hidden />
                 )}
-                {claiming ? 'Проверяем…' : 'Получить'}
+                {claiming
+                  ? 'Проверяем…'
+                  : canClaimAuto || !isMilestone
+                    ? 'Получить'
+                    : `${quest.progress ?? 0} / ${quest.goal ?? '—'}`}
               </button>
             )}
           </div>
@@ -396,6 +641,16 @@ function openTarget(link: string): void {
   const w = tg()
   if (w?.openTelegramLink) {
     w.openTelegramLink(link)
+    return
+  }
+  window.open(link, '_blank', 'noopener')
+}
+
+/** Внешняя ссылка (TikTok и т.п.) — openLink в миниаппе, иначе новая вкладка */
+function openExternal(link: string): void {
+  const w = tg()
+  if (w?.openLink) {
+    w.openLink(link)
     return
   }
   window.open(link, '_blank', 'noopener')

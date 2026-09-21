@@ -32,4 +32,14 @@ export async function register() {
   } catch (e) {
     console.error('[boot] sterilize failed:', e)
   }
+  // v5.70: сид заданий по умолчанию (create-only по стабильным id: админские
+  // правки наград/текстов не перетираются). Гарантированно исполняется и в
+  // проде, и локально; при сбое БД на старте досеет из GET /api/quests.
+  try {
+    const { seedDefaultQuests } = await import('@/lib/quests-seed')
+    const s = await seedDefaultQuests({ force: true })
+    if (s.created > 0) console.log(`[boot] quests-seed: created ${s.created}, skipped ${s.skipped}`)
+  } catch (e) {
+    console.error('[boot] quests-seed failed:', e)
+  }
 }

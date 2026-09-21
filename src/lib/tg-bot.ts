@@ -489,7 +489,11 @@ export async function isTelegramMember(
   opts?: { fresh?: boolean },
 ): Promise<boolean | null> {
   if (!botEnabled()) return null
-  const clean = username.replace(/^@/, '')
+  // v5.70: цель может быть числовым chat_id (приватный чат из BotChat) —
+  // getChatMember вызывается по Number, а не по @username
+  const raw = username.trim()
+  const isNumericChat = /^-?\d{6,}$/.test(raw)
+  const clean = isNumericChat ? raw : raw.replace(/^@/, '')
 
   const mk = `cm:${clean}:${tgUserId}`
   // v5.51: opts.fresh — анти-фарм реверификация заданий читает ТОЛЬКО свежий
@@ -504,7 +508,7 @@ export async function isTelegramMember(
     const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getChatMember`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ chat_id: `@${clean}`, user_id: tgUserId }),
+      body: JSON.stringify({ chat_id: isNumericChat ? Number(clean) : `@${clean}`, user_id: tgUserId }),
       signal: AbortSignal.timeout(8000),
     })
     const data = (await res.json()) as {

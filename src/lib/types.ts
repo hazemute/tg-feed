@@ -30,6 +30,8 @@ export type ChannelDTO = {
   teaserMode: string
   /** Сколько символов показывать в режиме cut */
   teaserLimit: number
+  /** v5.70: кому из постов применять тизер: all | long (лонгриды 600+ симв.) | text (без медиа) */
+  teaserApplyTo?: 'all' | 'long' | 'text'
   /** Владелец канала с активным тиром Snap Pro (бейдж Premium-автора) */
   proOwner?: boolean
   /** CTA-кнопка Pro-автора в раскрытом посте (текст + https-ссылка) */
@@ -190,6 +192,8 @@ export type MyChannelDTO = {
   categoryTitle: string
   teaserMode: string
   teaserLimit: number
+  /** v5.70: гибкий показ в ленте — каким постам применять тизер (вкладка «Промо») */
+  teaserApplyTo: 'all' | 'long' | 'text'
   /** CTA-кнопка в конце раскрытых постов (Snap Pro) */
   ctaLabel: string | null
   ctaUrl: string | null
@@ -211,8 +215,19 @@ export type MyChannelResponse = {
   advertiser: AdvertiserDTO
   /** Тариф владельца канала (учитывает срок подписки) */
   tier: 'free' | 'plus' | 'pro'
-  /** Продвижение в ленте (Snap Pro): потрачено/лимит за последние 7 дней */
-  promotion: { used: number; limit: number; available: boolean }
+  /** Продвижение в ленте (Snap Pro): использовано бесплатных за текущий месяц + кредиты пакета */
+  promotion: { used: number; limit: number; available: boolean; credits: number }
+  /** v5.69: плоские поля продвижения — использовано/лимит за календарный месяц (UTC) */
+  promoteMonthlyUsed: number
+  promoteMonthlyLimit: number
+  /** Купленные продвижения (пакет), тратятся после бесплатного месячного */
+  promoteCredits: number
+  /** Цена пакета продвижений в копейках (PROMOTE_PACK.priceKop) */
+  promotePackPrice: number
+  /** Сколько продвижений в пакете (PROMOTE_PACK.count) */
+  promotePackCount: number
+  /** Когда вернётся бесплатное продвижение (начало следующего месяца UTC, ISO) */
+  promoteResetAt: string
 }
 
 /** Живая статистика площадки для шита продвижения (GET /api/ads/stats) */
@@ -359,7 +374,8 @@ export type ThemeMode =
   | 'custom' // v5.28: своя палитра (фон+акцент в localStorage, vars поверх data-theme)
 export type FontScale = 'sm' | 'md' | 'lg'
 
-export type Tab = 'feed' | 'quests' | 'channel' | 'search' | 'profile'
+/* v5.70: 'promo' — 6-я вкладка «Промо» (хаб продвижения канала) */
+export type Tab = 'feed' | 'quests' | 'channel' | 'promo' | 'search' | 'profile'
 
 /** Один день статистики активности в профиле (мини-барчарт «Активность за 7 дней») */
 export type ActivityDayDTO = {

@@ -12,6 +12,7 @@ import { fullDateLocalized, useT } from '@/lib/i18n'
 import { haptic, openTelegram, useBackButton } from '@/lib/tg'
 import { formatCount, timeAgo } from '@/lib/format'
 import { stripMarkdown } from '@/lib/markdown'
+import { normalizeTeaserApplyTo, teaserApplies, teaserHasMedia } from '@/lib/teaser'
 import type { PostDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { RichText } from '@/components/feed/RichText'
@@ -291,13 +292,19 @@ export function PostOverlay() {
   }
 
   const fullDate = current ? fullDateLocalized(lang, current.publishedAt) : ''
-  // Тизер-режим канала: полный текст — только у подписчиков оригинала
+  // Тизер-режим канала: полный текст — только у подписчиков оригинала.
+  // v5.70: тот же фильтр teaserApplyTo, что в ленте (PostCard) и на сервере.
   const chTeaser = current?.channel
   const teaser =
     chTeaser &&
     !chTeaser.subscribed &&
     chTeaser.teaserMode !== 'none' &&
-    current.text.length > chTeaser.teaserLimit
+    current.text.length > chTeaser.teaserLimit &&
+    teaserApplies(normalizeTeaserApplyTo(chTeaser.teaserApplyTo), {
+      textLen: current.text.length,
+      hasMedia: teaserHasMedia(current),
+      teaserLimit: chTeaser.teaserLimit,
+    })
   const teaserText =
     chTeaser && current && chTeaser.teaserMode === 'cut'
       ? current.text.slice(0, Math.max(60, chTeaser.teaserLimit)).trimEnd() + '…'

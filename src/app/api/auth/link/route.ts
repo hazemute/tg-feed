@@ -7,6 +7,7 @@ import { guardIp } from '@/lib/guard'
 import { signSession } from '@/lib/session'
 import { getBotUsername, getUserPhotoFileId } from '@/lib/tg-bot'
 import { adminUids, isMaintenanceOn } from '@/lib/maintenance'
+import { userAvatarProxyUrl } from '@/lib/media'
 import type { UserDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -76,7 +77,8 @@ function userDto(u: {
     username: u.username,
     firstName: u.firstName,
     lastName: u.lastName,
-    photoUrl: u.photoUrl,
+    // v5.69: прокси-аватар (tgfile → /api/avatar, telesco.pe → /api/media)
+    photoUrl: userAvatarProxyUrl(u.id, u.photoUrl),
     isGuest: u.isGuest,
     isPremium: u.isPremium,
     languageCode: u.languageCode,

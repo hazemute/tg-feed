@@ -11,8 +11,9 @@ import { useApp } from '@/lib/store'
 import { haptic, useBackButton } from '@/lib/tg'
 import { stripMarkdown } from '@/lib/markdown'
 import { timeAgo, timeAgoRu, pluralRu } from '@/lib/format'
-import type { PostDTO } from '@/lib/types'
+import type { MediaItemDTO, PostDTO } from '@/lib/types'
 import { RichText } from '@/components/feed/RichText'
+import { MediaLightbox } from '@/components/feed/MediaLightbox'
 import { Avatar } from '@/components/tg/Avatar'
 import { VerifiedBadge } from '@/components/tg/VerifiedBadge'
 import { ChatInput } from '@/components/ai/ChatInput'
@@ -213,6 +214,130 @@ function InlineButtons({
           {b.label}
         </button>
       ))}
+    </div>
+  )
+}
+
+/**
+ * v5.70: голые ссылки на сгенерированные картинки из текста ответа убираем —
+ * картинка рендерится под сообщением отдельно, а ссылки (особенно pollinations,
+ * где при холодном кэше белый экран) в тексте только мешают.
+ * Старая история в localStorage тоже проходит через эту чистку при рендере.
+ */
+function stripImageLinks(text: string): string {
+  return text
+    // markdown-ссылки/картинки на pollinations — целиком (ведут на «белую страницу»)
+    .replace(/!?\[[^\]\n]*\]\(\s*https?:\/\/image\.pollinations\.ai\/[^\s)]*\s*\)/g, '')
+    // голые pollinations-ссылки (с хвостовой пунктуацией не тянем)
+    .replace(/https?:\/\/image\.pollinations\.ai\/[^\s)"'<>]+[^\s)"'<>.,!?;:]/g, '')
+    // голые пути нашего хранилища /api/upload/<id>
+    .replace(/(^|[^\w/\-])\/api\/upload\/[a-zA-Z0-9_-]+/g, '$1')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+/* ============================ Картинка ассистента (generate_image) ============================ */
+
+/**
+ * v5.70: инлайн-рендер сгенерированной картинки — БЕЗ голых ссылок.
+ * Скелет на время загрузки, клик → полноэкранный лайтбокс (MediaLightbox),
+ * фолбэк-URL pollinations сам перезагружается, пока CDN досоздаёт файл.
+ */
+function ChatImage({ url, pending }: { url: string; pending?: boolean }) {
+  const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [attempt, setAttempt] = useState(0)
+  const [lightbox, setLightbox] = useState(false)
+
+  // Фолбэк-картинка pollinations дозревает на их CDN (10–40с) — автоповторы
+  const isPollinations = url.includes('pollinations.ai')
+  useEffect(() => {
+    if (!failed || !isPollinations || attempt >= 5) return
+    const t = setTimeout(() => setAttempt((a) => a + 1), 10_000)
+    return () => clearTimeout(t)
+  }, [failed, isPollinations, attempt])
+
+  // Повторная попытка — cache-buster меняет src и заставляет <img> перезагрузиться
+  // (buster «липкий»: после первой попытки остаётся, чтобы не было лишних ремоунтов)
+  const src = attempt > 0 ? `${url}${url.includes('?') ? '&' : '?'}retry=${attempt}` : url
+
+  return (
+    <>
+      <button
+        type="button"
+        data-noswipe
+        onClick={() => {
+          if (failed) {
+            // повтор: сбрасываем флаг — эффект сам перезапустит таймер,
+            // а клик при живом url немедленно пробует загрузить снова
+            setAttempt((a) => a + 1)
+            setFailed(false)
+            return
+          }
+          if (!loaded) return
+          haptic('light')
+          setLightbox(true)
+        }}
+        aria-label={failed ? 'Повторить загрузку картинки' : 'Открыть картинку во весь экран'}
+        className="relative mt-1.5 block aspect-square w-full max-w-[300px] overflow-hidden rounded-2xl border border-tg-sep bg-tg-surface/60"
+      >
+        {/* img всегда с layout-боксом (display:none ломает lazy-load) —
+            до загрузки он прозрачен, поверх лежит скелет */}
+        <img
+          key={src}
+          src={src}
+          alt="Сгенерированная иллюстрация"
+          loading="lazy"
+          decoding="async"
+          onLoad={() => {
+            setLoaded(true)
+            setFailed(false)
+          }}
+          onError={() => setFailed(true)}
+          className={cn(
+            'h-full w-full object-cover transition-opacity duration-300',
+            loaded ? 'opacity-100' : 'opacity-0',
+          )}
+        />
+        {!loaded && !failed && (
+          <span className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
+            <span className="text-[11.5px] text-tg-hint">{pending ? 'Картинка досоздаётся…' : 'Загружаю…'}</span>
+          </span>
+        )}
+        {failed && (
+          <span className="absolute inset-0 flex flex-col items-center justify-center gap-2">
+            <AlertCircle className="h-5 w-5 text-tg-hint" />
+            <span className="text-[11.5px] text-tg-hint">Не удалось загрузить картинку</span>
+            <span className="rounded-lg bg-tg-surface2 px-2.5 py-1 text-[11.5px] font-semibold text-tg-link">Повторить</span>
+          </span>
+        )}
+      </button>
+      {lightbox &&
+        createPortal(
+          <AnimatePresence>
+            <MediaLightbox
+              items={[{ kind: 'image', url: src } as MediaItemDTO]}
+              index={0}
+              onClose={() => setLightbox(false)}
+            />
+          </AnimatePresence>,
+          document.body,
+        )}
+    </>
+  )
+}
+
+/** Плейсхолдер «рисую…» — пока картинка ещё не имеет URL вовсе */
+function ImagePendingPlaceholder() {
+  return (
+    <div
+      className="mt-1.5 flex aspect-square w-full max-w-[300px] flex-col items-center justify-center gap-2 rounded-2xl border border-tg-sep bg-tg-surface/60"
+      data-noswipe
+      aria-live="polite"
+    >
+      <Sparkles className="h-5 w-5 animate-pulse text-tg-hint" />
+      <span className="text-[11.5px] text-tg-hint">Рисую картинку…</span>
     </div>
   )
 }
@@ -691,31 +816,17 @@ export function AiChat({
                   >
                     {m.role === 'assistant' ? (
                       <RichText
-                        text={aiNormalize(m.text)}
+                        text={aiNormalize(stripImageLinks(m.text))}
                         className="animate-[fade-in_0.35s_ease-out] text-[14.5px] leading-relaxed [&_a]:text-tg-link"
                       />
                     ) : (
                       <span className="whitespace-pre-wrap break-words text-[14.5px] leading-relaxed">{m.text}</span>
                     )}
                   </div>
-                  {/* Картинка (generate_image) */}
-                  {m.imageUrl && (
-                    <button
-                      type="button"
-                      data-noswipe
-                      onClick={() => window.open(m.imageUrl, '_blank')}
-                      className="mt-1.5 block w-full overflow-hidden rounded-2xl border border-tg-sep"
-                      aria-label="Открыть картинку"
-                    >
-                      { }
-                      <img src={m.imageUrl} alt="Сгенерированная иллюстрация" className="max-h-80 w-full object-cover" loading="lazy" />
-                    </button>
-                  )}
-                  {m.imagePending && (
-                    <div className="mt-1 rounded-xl bg-tg-star/[0.08] px-3 py-1.5 text-[11.5px] text-tg-hint">
-                      Картинка досоздаётся — откройте через минуту
-                    </div>
-                  )}
+                  {/* Картинка (generate_image) — v5.70: инлайн <img> + лайтбокс,
+                      без голых ссылок; фолбэк-pollinations сам перезагружается */}
+                  {m.imageUrl && <ChatImage url={m.imageUrl} pending={m.imagePending} />}
+                  {m.imagePending && !m.imageUrl && <ImagePendingPlaceholder />}
                   {/* v5.64: чипы результата — отложенный пост и пригласительная ссылка */}
                   {m.scheduledAt && (
                     <div className="mt-1.5 flex items-center gap-1.5 rounded-xl bg-tg-surface px-3 py-1.5 text-[11.5px] font-medium text-tg-hint" data-noswipe>

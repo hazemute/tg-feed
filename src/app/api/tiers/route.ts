@@ -133,7 +133,7 @@ export async function POST(request: Request) {
     const title = `${plan === 'pro' ? 'Snap Pro' : 'Snap Plus'} — 1 ${periodLabel}`
     const description =
       plan === 'pro'
-        ? 'Безлимитный Snap Search, Snap Ассистент для канала, продвижение 7/нед, CTA-кнопка, бейдж автора.'
+        ? 'Безлимитный Snap Search, Snap Ассистент для канала, продвижение 1/мес + пакеты, CTA-кнопка, бейдж автора.'
         : 'Безлимитный Snap Search, инкогнито, приоритетная скорость, анимированные премиум-эмодзи.'
 
     /* Карта: ЮKassa embedded (виджет на сайте, без переадресаций) */

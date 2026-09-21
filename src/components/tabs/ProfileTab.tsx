@@ -327,11 +327,14 @@ export function ProfileTab() {
       </div>
 
       {/* Шиты */}
+      {/* v5.69: полноэкранная страница (была полувысотная шторка — низ
+          «шрифт/язык» на мобиле недолистывался). Скролл у самого контента. */}
       <BottomSheet
         open={settingsOpen}
         onClose={() => setSettingsOpen(false)}
         title="Настройки"
         subtitle="Оформление, тариф и информация — всё здесь"
+        variant="full"
       >
         <div className="space-y-4">
           <button
@@ -471,8 +474,6 @@ export function ProfileTab() {
               инкогнито, приоритетная скорость, премиум-эмодзи;</li>
               <li>• Snap Pro — 1 490 ₽/мес или 9 990 ₽/год: всё из Plus,
               ИИ-контентщик, продвижение до 7 постов в неделю, CTA-кнопка;</li>
-              <li>• Реклама: оплата с рублёвого баланса — CPA-кампании
-              за уникальных читателей.</li>
             </ul>
           </section>
           <section className="rounded-2xl bg-tg-surface/70 p-3.5">
@@ -694,7 +695,7 @@ const PLAN_META: { plan: 'plus' | 'pro'; title: string; features: string[] }[] =
     features: [
       'Всё из Snap Plus',
       'ИИ-контентщик: пост + картинка + публикация в канал',
-      'Продвижение в ленте 7 раз в неделю',
+      '1 бесплатное продвижение в месяц + пакеты (5 за 199 ₽)',
       'Бейдж Premium-автора',
       'Кастомная CTA-кнопка в постах',
     ],

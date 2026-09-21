@@ -3,7 +3,8 @@ import { db } from '@/lib/db'
 import { guardAuth } from '@/lib/guard'
 import { err } from '@/lib/server'
 import { cacheAside, famKey } from '@/lib/redis'
-import { questLinkOf } from '@/lib/quests'
+import { claimQuest, questLinkFor, questProgressInfo } from '@/lib/quests'
+import { seedDefaultQuests } from '@/lib/quests-seed'
 
 export const dynamic = 'force-dynamic'
 
@@ -11,16 +12,19 @@ export const dynamic = 'force-dynamic'
  * GET /api/quests — список активных заданий + мой статус по каждому.
  *
  * Сам список заданий почти не меняется → кэшируется (cacheAside, 20с fresh);
- * персональный статус (done/revoked) кладётся поверх после — строк на юзера
- * единицы, запрос дешёвый. Лимит 60/мин.
+ * персональный статус (done/revoked/прогресс) кладётся поверх после — строк на
+ * юзера единицы, запрос дешёвый. Лимит 60/мин.
+ *
+ * v5.70: прогресс автозачётных видов (прочитано N/M, серия входа) + автозачёт
+ * ежедневного входа прямо при открытии вкладки (идемпотентно, раз в сутки).
  */
-
 type QuestItem = {
   id: string
   kind: string
   title: string
   description: string | null
   rewardSwp: number
+  target: string
   link: string
 }
 
@@ -29,6 +33,10 @@ type QuestListPayload = { items: QuestItem[] }
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'quests' })
   if (!g.ok) return g.res
+
+  // Самолечение сида (троттлинг внутри: 1 проверка/10 мин на инстанс) —
+  // основной вызов живёт в instrumentation при старте сервера
+  void seedDefaultQuests().catch(() => {})
 
   try {
     const [list, mine, user] = await Promise.all([
@@ -57,7 +65,8 @@ export async function GET(request: Request) {
               title: q.title,
               description: q.description,
               rewardSwp: q.rewardSwp,
-              link: questLinkOf(q.target, q.link),
+              target: q.target,
+              link: questLinkFor(q.kind, q.target, q.link),
             })),
           }
         },
@@ -70,10 +79,41 @@ export async function GET(request: Request) {
     ])
 
     const status = new Map(mine.map((m) => [m.questId, m.status]))
-    return NextResponse.json({
-      items: list.items.map((q) => ({ ...q, myStatus: status.get(q.id) ?? null })),
-      balance: user?.swipes ?? 0,
-    })
+    let balance = user?.swipes ?? 0
+
+    // Автозачёт ежедневного входа: вкладка открыта → день засчитан (раз в сутки,
+    // атомарно; гости не зарабатывают). Свежая серия вернётся из прогресса ниже.
+    const dailyQuest = list.items.find((q) => q.kind === 'daily_checkin')
+    if (dailyQuest && !g.guest) {
+      const claimed = await claimQuest(g.uid, dailyQuest.id).catch(() => null)
+      if (claimed?.status === 'done' && typeof claimed.balance === 'number') {
+        balance = claimed.balance
+      }
+    }
+
+    const items = await Promise.all(
+      list.items.map(async (q) => {
+        const info = await questProgressInfo(g.uid, q).catch(() => ({
+          progress: null,
+          goal: null,
+          streak: null,
+        }))
+        return {
+          ...q,
+          // daily_checkin: QuestCompletion не создаётся — статус «зачтено сегодня»
+          // выводим из прогресса (progress=1 → done)
+          myStatus:
+            status.get(q.id) ??
+            (q.kind === 'daily_checkin' && info.progress === 1 ? 'done' : null),
+          progress: info.progress,
+          goal: info.goal,
+          streak: info.streak,
+          target: undefined,
+        }
+      }),
+    )
+
+    return NextResponse.json({ items, balance })
   } catch (e) {
     console.error('[quests]', e)
     return err('failed', 500)

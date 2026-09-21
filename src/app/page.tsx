@@ -42,10 +42,26 @@ const QuestsTab = dynamic(() => import('@/components/tabs/QuestsTab').then((m) =
 const SearchTab = dynamic(() => import('@/components/tabs/SearchTab').then((m) => m.SearchTab), { ssr: false })
 const ChannelTab = dynamic(() => import('@/components/tabs/ChannelTab').then((m) => m.ChannelTab), { ssr: false })
 const ProfileTab = dynamic(() => import('@/components/tabs/ProfileTab').then((m) => m.ProfileTab), { ssr: false })
+const PromoTab = dynamic(() => import('@/components/tabs/PromoTab').then((m) => m.PromoTab), { ssr: false })
 const AuthGateSheet = dynamic(() => import('@/components/tg/AuthGateSheet').then((m) => m.AuthGateSheet), { ssr: false })
 const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').then((m) => m.LoginByTelegram), { ssr: false })
 
-const TABS: Tab[] = ['feed', 'quests', 'channel', 'search', 'profile']
+const TABS: Tab[] = ['feed', 'quests', 'channel', 'promo', 'search', 'profile']
+
+/*
+ * v5.70 ЖЕСТ-ФИЛЬТР свайпа вкладок: раньше решение принималось только по
+ * конечным точкам (dx>64, dy<48) — вертикальный скролл ленты с дрейфом
+ * пальца и горизонтальные жесты внутри каруселей/пилюл ошибочно
+ * переключали вкладку. Теперь жест отслеживается по ВСЕЙ траектории
+ * (onTouchMove): как только вертикальное смещение превысило 24px ДО того,
+ * как горизонтальное достигло 64px — жест помечен вертикальным (скролл)
+ * и вкладка не переключается. Быстрый флик (<220мс) проходит с укороченным
+ * порогом 48px, но всё так же требует чисто горизонтального характера.
+ */
+const SWIPE_DIST = 64 // порог горизонтали для обычного свайпа
+const FLICK_DIST = 48 // порог для быстрого флика
+const FLICK_MS = 220 // быстрее этого — флик
+const VERTICAL_LIMIT = 24 // дрейф по вертикали до победы горизонтали — это скролл
 
 /*
  * v5.28: фактическая «темнота» активной темы — нужна для синхрона класса
@@ -75,7 +91,18 @@ export default function Home() {
    * API всё равно отвечает 503, не тратим запросы и не сыпем ошибками.
    */
   const appOpen = !maintenance && !prerelease
-  const touchRef = useRef<{ x: number; y: number; valid: boolean } | null>(null)
+  /* Траектория жеста: x/y — точка старта, t — время старта, maxDx/maxDy —
+   * накопленные экстремумы смещения, dirty — жест испорчен (вёл себя как
+   * вертикальный скролл), valid — старт не в data-noswipe-зоне. */
+  const touchRef = useRef<{
+    x: number
+    y: number
+    t: number
+    valid: boolean
+    maxDx: number
+    maxDy: number
+    dirty: boolean
+  } | null>(null)
   // Сплэш живёт минимум 0.7с (v5.52, было 1.05с): влёт самолётика виден, но
   // лента начинается заметно раньше — каждые 100мс до первого кадра на счету.
   const [splashMinDone, setSplashMinDone] = useState(false)
@@ -359,6 +386,7 @@ export default function Home() {
       void import('@/components/tabs/QuestsTab')
       void import('@/components/tabs/ChannelTab')
       void import('@/components/tabs/ProfileTab')
+      void import('@/components/tabs/PromoTab')
     }, 3_500)
     return () => window.clearTimeout(t)
   }, [authReady, user, appOpen])
@@ -419,28 +447,51 @@ export default function Home() {
     }
   }
 
-  // Горизонтальный свайп между вкладками (нативный жест мобильных приложений)
+  // Горизонтальный свайп между вкладками (нативный жест мобильных приложений).
+  // v5.70: с фильтром траектории (см. комментарий у констант выше) — не
+  // срабатывает на вертикальном скролле с дрейфом и на каруселях/пилюлах
+  // (те дополнительно закрыты data-noswipe). Свои touch-жесты FeedView
+  // (pull-to-refresh) и PostOverlay (листание постов) не трогаем: мы ничего
+  // не preventDefault/stopPropagation — события доходят до них как раньше.
   const onTouchStart = (e: React.TouchEvent) => {
     const t = e.touches[0]
     const target = e.target as HTMLElement
     touchRef.current = {
       x: t.clientX,
       y: t.clientY,
+      t: Date.now(),
       valid: !target.closest('[data-noswipe]'),
+      maxDx: 0,
+      maxDy: 0,
+      dirty: false,
     }
+  }
+  const onTouchMove = (e: React.TouchEvent) => {
+    const st = touchRef.current
+    if (!st || st.dirty) return
+    const t = e.touches[0]
+    // maxDx обновляем ПЕРВЫМ: если в одном кадре переехали и 64px по X,
+    // и 24px по Y — горизонталь считается достигнутой первой (жест плоский)
+    st.maxDx = Math.max(st.maxDx, Math.abs(t.clientX - st.x))
+    st.maxDy = Math.max(st.maxDy, Math.abs(t.clientY - st.y))
+    // Вертикаль «победила» первой — это скролл ленты/контента, не свайп вкладок
+    if (st.maxDy >= VERTICAL_LIMIT && st.maxDx < SWIPE_DIST) st.dirty = true
   }
   const onTouchEnd = (e: React.TouchEvent) => {
     const st = touchRef.current
     touchRef.current = null
-    if (!st?.valid) return
+    if (!st?.valid || st.dirty) return
     const t = e.changedTouches[0]
     const dx = t.clientX - st.x
-    const dy = t.clientY - st.y
-    if (Math.abs(dx) > 64 && Math.abs(dy) < 48 && Math.abs(dx) > Math.abs(dy) * 1.5) {
-      const idx = TABS.indexOf(tab)
-      const next = dx < 0 ? idx + 1 : idx - 1
-      if (next >= 0 && next < TABS.length) switchTo(TABS[next])
-    }
+    const adx = Math.abs(dx)
+    const ady = Math.abs(t.clientY - st.y)
+    // Флик быстрее 220мс переключает с мягкого порога; обычный свайп — с 64px
+    if (adx < (Date.now() - st.t < FLICK_MS ? FLICK_DIST : SWIPE_DIST)) return
+    // Жест обязан быть чисто горизонтальным на финише: горизонталь ≥ 2× вертикали
+    if (adx <= ady * 2) return
+    const idx = TABS.indexOf(tab)
+    const next = dx < 0 ? idx + 1 : idx - 1
+    if (next >= 0 && next < TABS.length) switchTo(TABS[next])
   }
 
   if (!authReady || !user || !splashMinDone) {
@@ -500,12 +551,14 @@ export default function Home() {
               transition={{ duration: 0.22, ease: 'easeOut' }}
               className="min-h-0 flex-1"
               onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
               onTouchEnd={onTouchEnd}
             >
               {tab === 'feed' && <FeedView />}
               {tab === 'quests' && <QuestsTab />}
               {tab === 'search' && <SearchTab />}
               {tab === 'channel' && <ChannelTab />}
+              {tab === 'promo' && <PromoTab />}
               {tab === 'profile' && <ProfileTab />}
             </motion.main>
           </AnimatePresence>

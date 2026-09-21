@@ -267,6 +267,35 @@ export async function refundToBalance(
   await invalidateBalance(userId)
 }
 
+/**
+ * v5.69: купить пакет продвижений С БАЛАНСА — атомарно одной транзакцией:
+ * условный декремент рублей (не уйдёт в минус) + начисление кредитов
+ * (User.promoteCredits) + журнал 'purchase'. false — денег не хватает.
+ * Оплата картой (полная/50/50) идёт через PendingPayment → creditPendingPayment.
+ */
+export async function buyPromotePackWithBalance(
+  userId: string,
+  priceKop: number,
+  credits: number,
+  note?: string,
+): Promise<boolean> {
+  if (priceKop <= 0 || credits <= 0) return false
+  const ok = await db.$transaction(async (tx) => {
+    const updated = await tx.user.updateMany({
+      where: { id: userId, balanceKop: { gte: priceKop } },
+      data: {
+        balanceKop: { decrement: priceKop },
+        promoteCredits: { increment: credits },
+      },
+    })
+    if (updated.count === 0) return false
+    await log(tx, userId, 'purchase', 'rub', -priceKop, note)
+    return true
+  })
+  if (ok) await invalidateBalance(userId)
+  return ok
+}
+
 /** Журнал кошелька (новые сверху) */
 export async function walletHistory(userId: string, take = 20) {
   return db.balanceLog.findMany({

@@ -1,13 +1,22 @@
 import { NextResponse } from 'next/server'
-import { proxiedMediaUrl } from '@/lib/media'
+import { channelAvatarUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createHash } from 'crypto'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { isValidChannelUsername } from '@/lib/server'
-import { PRO_PROMOTE_HOT_BOOST, PRO_PROMOTE_WEEKLY_LIMIT, tierAtLeast, tierOfUser } from '@/lib/tiers'
+import {
+  PRO_PROMOTE_HOT_BOOST,
+  PRO_PROMOTE_MONTHLY_LIMIT,
+  PROMOTE_PACK,
+  nextMonthStart,
+  tierAtLeast,
+  tierOfUser,
+  utcMonthKey,
+} from '@/lib/tiers'
 import { sweepScheduledPostsThrottled } from '@/lib/scheduled-posts'
+import { normalizeTeaserApplyTo } from '@/lib/teaser'
 
 export const dynamic = 'force-dynamic'
 
@@ -23,9 +32,11 @@ export const dynamic = 'force-dynamic'
  * ДЕЙСТВИЯ POST:
  *  - claimStart  {username}      → {code} — показать код-слово с инструкцией
  *  - claimVerify {username,code} → {ok} — проверка поста с кодом на t.me/s
- *  - settings    {channelId, teaserMode, teaserLimit, categorySlug?} — настройки
+ *  - settings    {channelId, teaserMode, teaserLimit, teaserApplyTo?, categorySlug?} — настройки
+ *                 (v5.70: teaserApplyTo — каким постам применять тизер: all|long|text)
  *  - cta         {channelId, ctaLabel, ctaUrl} — CTA-кнопка в постах (Snap Pro)
- *  - promote     {channelId, postId} — протолкнуть пост в ленту (Snap Pro ≤7/нед)
+ *  - promote     {channelId, postId} — протолкнуть пост в ленту (Snap Pro:
+ *                 1 бесплатно в месяц, сверх — купленные кредиты пакета)
  */
 
 const bodySchema = z.discriminatedUnion('action', [
@@ -40,6 +51,8 @@ const bodySchema = z.discriminatedUnion('action', [
     channelId: z.string().min(1),
     teaserMode: z.enum(['none', 'cut', 'blur']),
     teaserLimit: z.number().int().min(60).max(600).optional(),
+    // v5.70: гибкий показ в ленте — всем постам / только лонгридам / только текстовым без медиа
+    teaserApplyTo: z.enum(['all', 'long', 'text']).optional(),
     categorySlug: z.string().trim().max(40).optional(),
   }),
   z.object({
@@ -91,28 +104,43 @@ export async function GET(request: Request) {
     const since24h = new Date(Date.now() - 24 * 60 * 60_000)
     // egress (11-a): select вместо include — styleProfile и прочие тяжёлые
     // служебные колонки канала в кабинет не отдаются (форма ответа прежняя)
-    const channels = await db.channel.findMany({
-      where: { claimedById: g.uid },
-      select: {
-        id: true,
-        title: true,
-        username: true,
-        description: true,
-        avatarColor: true,
-        avatarUrl: true,
-        photoFileId: true,
-        membersCount: true,
-        subscribersCount: true,
-        status: true,
-        teaserMode: true,
-        teaserLimit: true,
-        ctaLabel: true,
-        ctaUrl: true,
-        styleAt: true,
-        category: { select: { slug: true, title: true } },
-      },
-      orderBy: { createdAt: 'asc' },
-    })
+    //
+    // СКОРОСТЬ (v5.69-perf): каналы, рекламный счёт, тариф и состояние
+    // продвижения раньше шли ТРЕМЯ последовательными волнами
+    // (channels → account → tier/promoState) — в проде это +3 RTT к каждому
+    // открытию кабинета. Всё независимo → одна параллельная волна.
+    const [channels, account, tier, promoState] = await Promise.all([
+      db.channel.findMany({
+        where: { claimedById: g.uid },
+        select: {
+          id: true,
+          title: true,
+          username: true,
+          description: true,
+          avatarColor: true,
+          avatarUrl: true,
+          photoFileId: true,
+          membersCount: true,
+          subscribersCount: true,
+          status: true,
+          teaserMode: true,
+          teaserLimit: true,
+          teaserApplyTo: true,
+          ctaLabel: true,
+          ctaUrl: true,
+          styleAt: true,
+          category: { select: { slug: true, title: true } },
+        },
+        orderBy: { createdAt: 'asc' },
+      }),
+      db.advertiserAccount.findUnique({ where: { userId: g.uid } }),
+      tierOfUser(g.uid),
+      // Состояние продвижения: ключ месяца бесплатного слота + кредиты пакета
+      db.user.findUnique({
+        where: { id: g.uid },
+        select: { promoteFreeMonth: true, promoteCredits: true },
+      }),
+    ])
 
     const result = await Promise.all(
       channels.map(async (c) => {
@@ -151,13 +179,16 @@ export async function GET(request: Request) {
           description: c.description,
           avatarColor: c.avatarColor,
           // v5.33: Storage-аватарка через /api/media (CDN-кэш, экономия egress Supabase)
-          avatarUrl: proxiedMediaUrl(c.avatarUrl) ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+          // v5.69: единый хелпер — вечный photoFileId (Bot API) приоритетнее сырой ссылки
+          avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
           subscribersCount: c.membersCount ?? c.subscribersCount,
           status: c.status,
           categorySlug: c.category.slug,
           categoryTitle: c.category.title,
           teaserMode: c.teaserMode,
           teaserLimit: c.teaserLimit,
+          // v5.70: гибкий тизер — нормализация на выдаче (неизвестное → all)
+          teaserApplyTo: normalizeTeaserApplyTo(c.teaserApplyTo),
           ctaLabel: c.ctaLabel,
           ctaUrl: c.ctaUrl,
           styleAt: c.styleAt?.toISOString() ?? null,
@@ -189,14 +220,13 @@ export async function GET(request: Request) {
       }),
     )
 
-    const account = await db.advertiserAccount.findUnique({ where: { userId: g.uid } })
-
-    // Продвижение (Snap Pro): сколько протолкнуто за последние 7 дней
-    const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000)
-    const tier = await tierOfUser(g.uid)
-    const promotedUsed = await db.post.count({
-      where: { channel: { claimedById: g.uid }, promotedAt: { gte: weekAgo } },
-    })
+    // Продвижение (v5.69): 1 бесплатное продвижение в календарный месяц (UTC).
+    // Использование — ключ месяца в User.promoteFreeMonth ('' / прошлый месяц →
+    // слот свободен), кредиты пакета — в User.promoteCredits.
+    // (v5.69-perf: account/tier/promoState читаются выше, одной волной с каналами)
+    const monthKey = utcMonthKey()
+    const monthlyUsed = promoState?.promoteFreeMonth === monthKey ? 1 : 0
+    const promoteCredits = promoState?.promoteCredits ?? 0
 
     return NextResponse.json({
       channels: result,
@@ -207,10 +237,19 @@ export async function GET(request: Request) {
       },
       tier,
       promotion: {
-        used: promotedUsed,
-        limit: PRO_PROMOTE_WEEKLY_LIMIT,
+        used: monthlyUsed,
+        limit: PRO_PROMOTE_MONTHLY_LIMIT,
         available: tierAtLeast(tier, 'pro'),
+        credits: promoteCredits,
       },
+      // v5.69: плоские поля для UI кабинета (остаток месяца, кредиты, цена пакета)
+      promoteMonthlyUsed: monthlyUsed,
+      promoteMonthlyLimit: PRO_PROMOTE_MONTHLY_LIMIT,
+      promoteCredits,
+      promotePackPrice: PROMOTE_PACK.priceKop,
+      promotePackCount: PROMOTE_PACK.count,
+      // Когда вернётся бесплатное продвижение (начало следующего месяца UTC)
+      promoteResetAt: nextMonthStart().toISOString(),
     })
   } catch (e) {
     console.error('[mychannel:get]', e)
@@ -340,36 +379,79 @@ export async function POST(request: Request) {
     }
 
     if (d.action === 'promote') {
-      // Протолкнуть пост в общую ленту: Snap Pro — до 7 раз в неделю
-      // (обычные каналы — раз в месяц; здесь только Pro-путь кабинета)
+      // Протолкнуть пост в общую ленту: Snap Pro — 1 бесплатно в календарный
+      // месяц (UTC), сверх лимита — купленные кредиты (User.promoteCredits).
+      // Расход атомарен в одной транзакции: сначала бесплатный слот месяца
+      // (условное владение ключом promoteFreeMonth), затем кредиты — параллельные
+      // запросы не смогут списать дважды (updateMany с условием даёт count=0).
       const tier = await tierOfUser(g.uid)
       if (!tierAtLeast(tier, 'pro')) {
         return NextResponse.json(
-          { error: 'pro_required', message: 'Продвижение 7 раз в неделю — на тарифе Snap Pro' },
+          { error: 'pro_required', message: 'Продвижение доступно на тарифе Snap Pro' },
           { status: 402 },
         )
-      }
-      const weekAgo = new Date(Date.now() - 7 * 24 * 3600 * 1000)
-      const used = await db.post.count({
-        where: { channel: { claimedById: g.uid }, promotedAt: { gte: weekAgo } },
-      })
-      if (used >= PRO_PROMOTE_WEEKLY_LIMIT) {
-        return err('Лимит продвижений на этой неделе исчерпан (7 из 7)', 429)
       }
       const post = await db.post.findFirst({
         where: { id: d.postId, channelId: channel.id },
         select: { id: true },
       })
       if (!post) return err('Пост не найден', 404)
-      await db.post.update({
-        where: { id: post.id },
-        data: { promotedAt: new Date(), hotScore: { increment: PRO_PROMOTE_HOT_BOOST } },
+
+      const monthKey = utcMonthKey()
+      // Единая атомарная транзакция: расход (бесплатный слот → кредит) + сам
+      // буст поста закоммичиваются вместе. Сбой на любом шаге откатывает всё —
+      // не бывает «кредит списан, а пост не продвинут».
+      const source = await db.$transaction(async (tx) => {
+        // 1) Бесплатный слот месяца: NOT monthKey покрывает '' (никогда) и прошлые месяцы
+        const claimed = await tx.user.updateMany({
+          where: { id: g.uid, promoteFreeMonth: { not: monthKey } },
+          data: { promoteFreeMonth: monthKey },
+        })
+        let spent: 'free' | 'credit'
+        if (claimed.count === 1) {
+          spent = 'free'
+        } else {
+          // 2) Слота нет — списываем купленный кредит (условный декремент ≥ 0)
+          const dec = await tx.user.updateMany({
+            where: { id: g.uid, promoteCredits: { gte: 1 } },
+            data: { promoteCredits: { decrement: 1 } },
+          })
+          if (dec.count === 0) return null
+          spent = 'credit'
+        }
+        await tx.post.update({
+          where: { id: post.id },
+          data: { promotedAt: new Date(), hotScore: { increment: PRO_PROMOTE_HOT_BOOST } },
+        })
+        return spent
       })
-      return NextResponse.json({ ok: true, used: used + 1, limit: PRO_PROMOTE_WEEKLY_LIMIT })
+      if (!source) {
+        return NextResponse.json(
+          {
+            error: 'promote_exhausted',
+            message:
+              'Бесплатное продвижение месяца уже использовано — купите пакет (5 продвижений за 199 ₽) или приходите в следующем месяце',
+          },
+          { status: 429 },
+        )
+      }
+
+      const state = await db.user.findUnique({
+        where: { id: g.uid },
+        select: { promoteCredits: true, promoteFreeMonth: true },
+      })
+      return NextResponse.json({
+        ok: true,
+        source, // 'free' | 'credit'
+        used: state?.promoteFreeMonth === monthKey ? 1 : 0,
+        limit: PRO_PROMOTE_MONTHLY_LIMIT,
+        credits: state?.promoteCredits ?? 0,
+      })
     }
 
     const data: Record<string, unknown> = { teaserMode: d.teaserMode }
     if (d.teaserLimit != null) data.teaserLimit = d.teaserLimit
+    if (d.teaserApplyTo != null) data.teaserApplyTo = d.teaserApplyTo
     if (d.categorySlug) {
       const cat = await db.category.findUnique({ where: { slug: d.categorySlug } })
       if (cat) data.categoryId = cat.id

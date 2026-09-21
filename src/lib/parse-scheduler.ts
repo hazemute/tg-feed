@@ -34,7 +34,18 @@ export async function nextAdaptiveBatch(): Promise<string[]> {
   if (rows.length === 0) return []
 
   const usernames = rows.map((r) => r.username)
-  const lastPost = new Map(rows.map((r) => [r.username, r.last_post]))
+  /* Task 5-c: raw MAX(publishedAt) приходит в разных шкуках: Postgres — Date,
+   * SQLite — BigInt (INTEGER ms) («t.getTime is not a function» на каждом тике
+   * и «Cannot convert a BigInt value to a number» после первой наивной правки).
+   * Нормализуем все шкуки в Date явно. */
+  const asDate = (v: unknown): Date | null => {
+    if (v instanceof Date) return v
+    if (v === null || v === undefined) return null
+    if (typeof v === 'number' || typeof v === 'bigint') return new Date(Number(v))
+    const p = new Date(String(v))
+    return Number.isNaN(p.getTime()) ? null : p
+  }
+  const lastPost = new Map(rows.map((r) => [r.username, asDate(r.last_post)]))
 
   // указатель ротации (SystemSetting — одна дешёвая строка, не Redis)
   const ptr = await db.systemSetting.findUnique({ where: { key: POINTER_KEY } })

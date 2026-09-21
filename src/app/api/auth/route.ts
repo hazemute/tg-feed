@@ -9,6 +9,7 @@ import { guardAuth, guardIp } from '@/lib/guard'
 import { effectiveTier } from '@/lib/tiers'
 import { parseBadges } from '@/lib/badges'
 import { activateReferrals } from '@/lib/giveaway-tickets'
+import { userAvatarProxyUrl } from '@/lib/media'
 import type { UserDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -54,7 +55,9 @@ export async function GET(request: Request) {
       username: user.username,
       firstName: user.firstName,
       lastName: user.lastName,
-      photoUrl: user.photoUrl,
+      // v5.69: аватарка через прокси (/api/avatar или /api/media) — сырые
+      // telesco.pe-ссылки протухают через час и ломают картинку
+      photoUrl: userAvatarProxyUrl(user.id, user.photoUrl),
       isGuest: user.isGuest,
       isPremium: user.isPremium,
       languageCode: user.languageCode,
@@ -170,7 +173,8 @@ export async function POST(request: Request) {
       username: user.username,
       firstName: user.firstName,
       lastName: user.lastName,
-      photoUrl: user.photoUrl,
+      // v5.69: прокси-аватар (см. GET выше)
+      photoUrl: userAvatarProxyUrl(user.id, user.photoUrl),
       isGuest: user.isGuest,
       isPremium: user.isPremium,
       languageCode: user.languageCode,

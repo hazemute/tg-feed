@@ -106,3 +106,17 @@ export function putFlagsOverride(uid: string, postId: string, flags: Flags) {
 export function clearPageCache() {
   pages.clear()
 }
+
+/**
+ * Выборочная очистка кэша страниц ОДНОГО пользователя (Task 5-c):
+ * «Не интересно»/жалоба/мьют обязаны примениться МГНОВЕННО, но L0-кэш
+ * страниц (90с) отдаёт готовый JSON ДО свежих фильтров видимости в
+ * /api/feed — без сброса скрытый пост доживал бы в кэше до минуты.
+ * Снапшот порядка при этом НЕ трогаем (lib/feed-session.ts): страницы
+ * перестраиваются из того же порядка, пагинация не дёргается, а свежий
+ * фильтр исключений убирает скрытое уже на следующем запросе.
+ */
+export function clearUserPages(uid: string) {
+  const prefix = `${uid}|`
+  for (const k of pages.keys()) if (k.startsWith(prefix)) pages.delete(k)
+}

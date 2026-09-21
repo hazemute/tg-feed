@@ -4,6 +4,7 @@ import { channelAvatarUrl, proxiedMediaUrl } from '@/lib/media'
 import { animatedEmojiKinds } from '@/lib/emoji-registry'
 import { cleanPostText } from '@/lib/text-clean'
 import { effectiveTier, tierAtLeast } from '@/lib/tiers'
+import { cutAtWord, normalizeTeaserApplyTo, teaserApplies, teaserHasMedia } from '@/lib/teaser'
 
 type ChannelWithCategory = Channel & {
   category?: { slug: string; title: string } | null
@@ -48,6 +49,7 @@ export const CHANNEL_LIST_SELECT = {
   status: true,
   teaserMode: true,
   teaserLimit: true,
+  teaserApplyTo: true,
   ctaLabel: true,
   ctaUrl: true,
   claimedBy: { select: { tier: true, tierUntil: true } },
@@ -138,6 +140,8 @@ export function toChannelDTO(
     subscribed,
     teaserMode: c.teaserMode,
     teaserLimit: c.teaserLimit,
+    // v5.70: гибкий тизер — каким постам применять (неизвестное значение → all)
+    teaserApplyTo: normalizeTeaserApplyTo(c.teaserApplyTo),
     proOwner,
     ctaLabel: proOwner ? (c.ctaLabel ?? null) : null, // CTA виден только у Pro-авторов
     ctaUrl: proOwner ? (c.ctaUrl ?? null) : null,
@@ -214,13 +218,37 @@ export function toPostDTO(
   // — они остаются только внутренним сигналом качества в ранжировании.
   const likesCount = p.likesCount
 
+  // v5.70 (Task 7-a): ТЕЗЕР НА ВЫДАЧЕ. Режим канала «Обрезка» теперь режет
+  // текст ещё на сервере — до клиента уходит уже тизер (клиент поверх него
+  // рисует CTA «Читать полностью в Telegram», его условие text.length >
+  // teaserLimit остаётся истинным: обрезанный текст = лимит+1 символ «…»).
+  // Блюр сервером не эмулируется (текст нужен целиком — клиент размывает его
+  // визуально). Применяется только НЕ-подписчикам и только постам, подходящим
+  // под teaserApplyTo (all | long | text) — иначе пост уходит полностью.
+  const cleaned = upgradeAnimatedEmoji(cleanPostText(p.text))
+  let text = cleaned
+  if (!flags.subscribed && p.channel.teaserMode === 'cut') {
+    const limit = Math.max(60, p.channel.teaserLimit)
+    const hasMedia = teaserHasMedia({ media: media as MediaItemDTO | null, gallery })
+    if (
+      cleaned.length > limit &&
+      teaserApplies(normalizeTeaserApplyTo(p.channel.teaserApplyTo), {
+        textLen: cleaned.length,
+        hasMedia,
+        teaserLimit: limit,
+      })
+    ) {
+      text = `${cutAtWord(cleaned, limit).trimEnd()}…`
+    }
+  }
+
   return {
     id: p.id,
     // cleanPostText — ПОЛНАЯ зачистка НА ВЫДАЧЕ: покрывает легаси-посты БД
     // (дубли строк, хэштег-простыни, utm-хвосты, канальные призывы, невидимые
     // символы), не трогая данные. Дешёво: линейные + построчные проходы,
     // страницы кэшируются выше по стеку.
-    text: upgradeAnimatedEmoji(cleanPostText(p.text)),
+    text,
     mediaUrl: proxiedMediaUrl(p.mediaUrl) ?? p.mediaUrl,
     mediaType: kind,
     media: media as MediaItemDTO | null,

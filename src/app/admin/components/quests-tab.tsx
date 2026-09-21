@@ -1,8 +1,12 @@
 'use client'
 
 /**
- * Вкладка «Задания» (v5.51): награды за подписку на канал / вступление в чат.
+ * Вкладка «Задания» (v5.51, расширены в v5.70): награды за подписку на канал /
+ * вступление в чат / буст / TikTok / ежедневный вход / профиль / активность /
+ * рефералов.
  *  - CRUD заданий с ВАЛИДАЦИЕЙ цели (getChat + бот-админ) до публикации;
+ *  - привязка chat_id к приватным инвайт-чатам (селектор «чат, где бот админ»
+ *    из /api/panel/bot-chats — реестр копится вебхуком my_chat_member);
  *  - статистика по каждому заданию: выполнено / аннулировано (отписался);
  *  - включение/выключение и удаление.
  * Умная защита на сервере: отписался → аннулирование + штраф ×2 (lib/quests.ts).
@@ -36,6 +40,7 @@ type PanelQuest = {
   description: string | null
   kind: string
   target: string
+  targetType: string
   link: string
   rewardSwp: number
   active: boolean
@@ -54,10 +59,41 @@ type Validation = {
   verificationProblem?: string | null
 }
 
+type BotChatItem = { chatId: string; title: string; type: string }
+
 const KIND_OPTIONS = [
+  { value: 'daily_checkin', label: '📅 Ежедневный вход (серия)' },
   { value: 'subscribe', label: '📢 Подписка на канал' },
+  { value: 'profile_setup', label: '👤 Заполнение профиля' },
   { value: 'join_chat', label: '💬 Вступление в чат' },
+  { value: 'tiktok_follow', label: '🎵 Подписка в TikTok (скриншот)' },
+  { value: 'boost', label: '🚀 Буст канала' },
+  { value: 'activity_milestone', label: '📖 Активность (прочитай N постов)' },
+  { value: 'referral', label: '🤝 Пригласи друга' },
 ]
+
+const KIND_EMOJI: Record<string, string> = {
+  subscribe: '📢',
+  join_chat: '💬',
+  tiktok_follow: '🎵',
+  daily_checkin: '📅',
+  profile_setup: '👤',
+  boost: '🚀',
+  activity_milestone: '📖',
+  referral: '🤝',
+}
+
+const KIND_TARGET_LABEL: Record<string, string> = {
+  subscribe: 'Цель — @username канала',
+  join_chat: 'Цель — @username, инвайт-ссылка или chat_id',
+  boost: 'Канал для буста — @username',
+  tiktok_follow: 'TikTok-хэндл (проверка скриншотом через ИИ)',
+  activity_milestone: 'Сколько постов нужно открыть',
+  referral: 'Сколько друзей нужно пригласить',
+}
+
+const KINDS_WITHOUT_TARGET = new Set(['daily_checkin', 'profile_setup'])
+const NUMBER_TARGET_KINDS = new Set(['activity_milestone', 'referral'])
 
 const EMPTY_FORM = {
   title: '',
@@ -79,6 +115,10 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
   const [formOpen, setFormOpen] = useState(false)
   const [validation, setValidation] = useState<Validation | null>(null)
 
+  // Чаты, где бот админ (для join_chat: привязка числового chat_id к инвайту)
+  const [botChats, setBotChats] = useState<BotChatItem[] | null>(null)
+  const [chatsLoaded, setChatsLoaded] = useState(false)
+
   const load = useCallback(async () => {
     setError(null)
     try {
@@ -96,6 +136,21 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
   useEffect(() => {
     void load()
   }, [load, tick])
+
+  const loadBotChats = useCallback(async () => {
+    try {
+      const r = await panelFetch<{ items: BotChatItem[] }>('/api/panel/bot-chats', { timeoutMs: 12_000 })
+      setBotChats(r.items)
+    } catch {
+      setBotChats([])
+    } finally {
+      setChatsLoaded(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (formOpen && form.kind === 'join_chat' && !chatsLoaded) void loadBotChats()
+  }, [formOpen, form.kind, chatsLoaded, loadBotChats])
 
   const act = async (json: Record<string, unknown>, okMsg: string) => {
     if (busy) return
@@ -115,7 +170,7 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
 
   const checkTarget = async () => {
     if (!form.target.trim()) {
-      toast.error('Введите @username цели')
+      toast.error('Введите цель задания')
       return
     }
     setBusy(true)
@@ -133,13 +188,22 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
     }
   }
 
+  /** Цель, отправляемая на сервер: интерпретация поля под вид задания */
+  const targetForSubmit = (): string => {
+    const kind = form.kind
+    if (KINDS_WITHOUT_TARGET.has(kind)) return 'none'
+    if (kind === 'activity_milestone') return `posts:${Math.max(1, Math.round(Number(form.target) || 1))}`
+    if (kind === 'referral') return String(Math.max(1, Math.round(Number(form.target) || 1)))
+    return form.target.trim()
+  }
+
   const submitForm = async () => {
     if (!form.title.trim() || form.title.trim().length < 3) {
       toast.error('Название: минимум 3 символа')
       return
     }
-    if (!form.target.trim()) {
-      toast.error('Укажите цель — @username канала или чата')
+    if (!KINDS_WITHOUT_TARGET.has(form.kind) && !form.target.trim()) {
+      toast.error('Укажите цель задания')
       return
     }
     setBusy(true)
@@ -151,7 +215,7 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
           title: form.title.trim(),
           description: form.description.trim() || null,
           kind: form.kind,
-          target: form.target.trim(),
+          target: targetForSubmit(),
           link: form.link.trim() || null,
           rewardSwp: Math.max(1, Math.round(Number(form.rewardSwp) || 0)),
           sort: Math.max(0, Math.round(Number(form.sort) || 0)),
@@ -175,19 +239,30 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
   }
 
   const startEdit = (q: PanelQuest) => {
+    // Цель распаковываем обратно в поле формы: posts:10 → «10»
+    let target = q.target
+    if (q.kind === 'activity_milestone' && /^posts:\d+$/.test(q.target)) target = q.target.slice(6)
+    if (KINDS_WITHOUT_TARGET.has(q.kind)) target = ''
+    // Кастомную ссылку тереть можно только если она просто автоген t.me/<target>
+    // (иначе при правке chat_id-квеста инвайт-ссылка затиралась бы — v5.70)
+    const autoLink = `https://t.me/${q.target.replace(/^@/, '')}`
+    const link = q.targetType === 'username' && q.link === autoLink ? '' : q.link
     setForm({
       id: q.id,
       title: q.title,
       description: q.description ?? '',
       kind: q.kind,
-      target: q.target,
-      link: q.link.startsWith('https://t.me/') ? '' : q.link,
+      target,
+      link,
       rewardSwp: q.rewardSwp,
       sort: q.sort,
     })
     setValidation(null)
     setFormOpen(true)
   }
+
+  const isJoinChat = form.kind === 'join_chat'
+  const boundChat = isJoinChat ? botChats?.find((c) => c.chatId === form.target.trim()) : undefined
 
   return (
     <motion.div variants={fadeUp} initial="hidden" animate="show" className="space-y-4">
@@ -198,7 +273,7 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
             Задания с наградой
           </h2>
           <p className="mt-0.5 text-xs text-slate-500">
-            Подписка/вступление за свайпы · проверка Bot API · отписался → аннулирование + штраф ×2
+            8 видов: подписка/чат/буст/TikTok/вход/профиль/активность/рефералы · проверка Bot API и ИИ · отписался → штраф ×2
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -257,7 +332,10 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
               <select
                 id="q-kind"
                 value={form.kind}
-                onChange={(e) => setForm((f) => ({ ...f, kind: e.target.value }))}
+                onChange={(e) => {
+                  setForm((f) => ({ ...f, kind: e.target.value }))
+                  setValidation(null)
+                }}
                 className="h-9 w-full rounded-md border border-slate-200 bg-slate-100 px-3 text-sm text-slate-800"
               >
                 {KIND_OPTIONS.map((o) => (
@@ -267,60 +345,85 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
                 ))}
               </select>
             </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="q-target" className="text-xs text-slate-600">
-                Цель — @username канала/чата
-              </Label>
-              <div className="flex gap-2">
-                <Input
-                  id="q-target"
-                  value={form.target}
-                  onChange={(e) => setForm((f) => ({ ...f, target: e.target.value }))}
-                  placeholder="@durov или https://t.me/durov"
-                  className={cn(inputDark, 'font-mono')}
-                  maxLength={120}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => void checkTarget()}
-                  disabled={busy}
-                  className="shrink-0 border-slate-300 text-slate-700 hover:bg-slate-100"
-                >
-                  Проверить
-                </Button>
-              </div>
-              {validation && (
-                <div
-                  className={cn(
-                    'rounded-md px-2.5 py-1.5 text-[11.5px] leading-snug',
-                    !validation.ok
-                      ? 'bg-red-50 text-red-700'
-                      : validation.verificationProblem
-                        ? 'bg-amber-50 text-amber-700'
-                        : 'bg-emerald-50 text-emerald-700',
-                  )}
-                >
-                  {!validation.ok ? (
-                    validation.verificationProblem ?? 'Цель не найдена'
-                  ) : validation.verificationProblem ? (
-                    <span className="flex items-start gap-1.5">
-                      <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                      {validation.title ? `«${validation.title}» — ` : ''}
-                      {validation.verificationProblem}
-                    </span>
-                  ) : (
-                    <span className="flex items-start gap-1.5">
-                      <BadgeCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
-                      {validation.title ? `«${validation.title}»` : 'Цель найдена'} — бот в цели,
-                      проверка работает
-                      {validation.members ? ` · ${validation.members.toLocaleString('ru')} подписчиков` : ''}
-                    </span>
+
+            {!KINDS_WITHOUT_TARGET.has(form.kind) && (
+              <div className="space-y-1.5">
+                <Label htmlFor="q-target" className="text-xs text-slate-600">
+                  {KIND_TARGET_LABEL[form.kind] ?? 'Цель задания'}
+                </Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="q-target"
+                    value={form.target}
+                    onChange={(e) => setForm((f) => ({ ...f, target: e.target.value }))}
+                    placeholder={
+                      form.kind === 'tiktok_follow'
+                        ? '@snapteamdev'
+                        : form.kind === 'activity_milestone'
+                          ? '10'
+                          : form.kind === 'referral'
+                            ? '1'
+                            : '@durov или https://t.me/durov'
+                    }
+                    className={cn(inputDark, !NUMBER_TARGET_KINDS.has(form.kind) && 'font-mono')}
+                    maxLength={200}
+                    {...(NUMBER_TARGET_KINDS.has(form.kind)
+                      ? { type: 'number', min: 1, max: 1000 }
+                      : {})}
+                  />
+                  {!NUMBER_TARGET_KINDS.has(form.kind) && form.kind !== 'tiktok_follow' && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void checkTarget()}
+                      disabled={busy}
+                      className="shrink-0 border-slate-300 text-slate-700 hover:bg-slate-100"
+                    >
+                      Проверить
+                    </Button>
                   )}
                 </div>
-              )}
-            </div>
+                {form.kind === 'tiktok_follow' && (
+                  <p className="text-[11px] leading-snug text-slate-500">
+                    Юзер загружает скриншот с кнопкой «Вы подписаны» — проверяет ИИ (VLM), зачёт только при
+                    высокой уверенности. 1 попытка / 5 мин.
+                  </p>
+                )}
+                {validation && (
+                  <div
+                    className={cn(
+                      'rounded-md px-2.5 py-1.5 text-[11.5px] leading-snug',
+                      !validation.ok
+                        ? 'bg-red-50 text-red-700'
+                        : validation.verificationProblem
+                          ? 'bg-amber-50 text-amber-700'
+                          : 'bg-emerald-50 text-emerald-700',
+                    )}
+                  >
+                    {!validation.ok ? (
+                      validation.verificationProblem ?? 'Цель не найдена'
+                    ) : validation.verificationProblem ? (
+                      <span className="flex items-start gap-1.5">
+                        <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        {validation.title ? `«${validation.title}» — ` : ''}
+                        {validation.verificationProblem}
+                      </span>
+                    ) : (
+                      <span className="flex items-start gap-1.5">
+                        <BadgeCheck className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                        {validation.title ? `«${validation.title}»` : 'Цель найдена'} — бот в цели,
+                        проверка работает
+                        {validation.members
+                          ? ` · ${validation.members.toLocaleString('ru')} подписчиков`
+                          : ''}
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="space-y-1.5">
               <Label htmlFor="q-reward" className="text-xs text-slate-600">
                 Награда, свайпов
@@ -335,6 +438,56 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
                 className={inputDark}
               />
             </div>
+
+            {/* Приватный инвайт-чат: селектор чата, где бот админ */}
+            {isJoinChat && (
+              <div className="space-y-1.5 sm:col-span-2">
+                <Label htmlFor="q-chat" className="text-xs text-slate-600">
+                  Чат, где бот админ (привязка chat_id для приватного инвайта)
+                </Label>
+                <select
+                  id="q-chat"
+                  value={boundChat ? boundChat.chatId : ''}
+                  onChange={(e) => {
+                    const v = e.target.value
+                    if (!v) return
+                    setForm((f) => {
+                      // Инвайт из поля цели переезжает в «свою ссылку-кнопку»:
+                      // после привязки target=chat_id, а юзер открывает инвайт
+                      const wasInvite = /^https:\/\/t\.me\/(\+|joinchat\/)/i.test(f.target.trim())
+                      return { ...f, target: v, link: wasInvite && !f.link.trim() ? f.target.trim() : f.link }
+                    })
+                    setValidation(null)
+                    toast.info(`Цель привязана к chat_id ${v} — сохраните задание`)
+                  }}
+                  className="h-9 w-full rounded-md border border-slate-200 bg-slate-100 px-3 text-sm text-slate-800"
+                >
+                  <option value="">
+                    {chatsLoaded ? '— без привязки (инвайт проверяется только по chat_id) —' : '— загрузка… —'}
+                  </option>
+                  {(botChats ?? []).map((c) => (
+                    <option key={c.chatId} value={c.chatId}>
+                      {c.title} ({c.type === 'channel' ? 'канал' : c.type === 'group' ? 'группа' : 'супергруппа'} · {c.chatId})
+                    </option>
+                  ))}
+                </select>
+                {chatsLoaded && (botChats ?? []).length === 0 ? (
+                  <p className="flex items-start gap-1.5 rounded-md bg-amber-50 px-2.5 py-1.5 text-[11.5px] leading-snug text-amber-700">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
+                    Пока нет ни одного чата, где бот админ. Добавьте @tgswipe_bot админом в чат — он появится
+                    здесь автоматически (вебхук my_chat_member), затем привяжите его к заданию.
+                  </p>
+                ) : (
+                  boundChat && (
+                    <p className="text-[11.5px] text-emerald-700">
+                      Привязано: «{boundChat.title}» · chat_id {boundChat.chatId} — проверка getChatMember
+                      работает. Инвайт-ссылка для кнопки — в поле «Своя ссылка-кнопка».
+                    </p>
+                  )
+                )}
+              </div>
+            )}
+
             <div className="space-y-1.5 sm:col-span-2">
               <Label htmlFor="q-desc" className="text-xs text-slate-600">
                 Описание (необязательно)
@@ -410,7 +563,7 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
         <EmptyState
           icon={ListChecks}
           title="Заданий ещё нет"
-          hint="Создайте первое задание — юзеры увидят его во вкладке «Задания» и получат свайпы за подписку."
+          hint="Создайте первое задание — юзеры увидят его во вкладке «Задания» и получат свайпы."
         />
       ) : (
         <div className="overflow-hidden rounded-xl border border-slate-200">
@@ -438,10 +591,22 @@ export function QuestsTab({ tick, onSettled }: TabProps) {
                 >
                   <td className="max-w-[280px] px-3 py-2.5">
                     <div className="flex items-center gap-2">
-                      <span aria-hidden>{q.kind === 'join_chat' ? '💬' : '📢'}</span>
+                      <span aria-hidden>{KIND_EMOJI[q.kind] ?? '🎯'}</span>
                       <div className="min-w-0">
                         <div className="truncate font-medium text-slate-900">{q.title}</div>
-                        <div className="truncate font-mono text-[11px] text-slate-500">@{q.target}</div>
+                        <div className="truncate font-mono text-[11px] text-slate-500">
+                          {q.targetType === 'invite'
+                            ? `${q.target} · инвайт — chat_id не привязан`
+                            : q.targetType === 'chat_id'
+                              ? `chat_id ${q.target} · проверка работает`
+                              : q.targetType === 'metric'
+                                ? `posts:${q.target.replace(/^posts:/, '')}`
+                                : q.targetType === 'tiktok'
+                                  ? `@${q.target} (tiktok)`
+                                  : q.targetType === 'none'
+                                    ? 'автозачёт'
+                                    : `@${q.target}`}
+                        </div>
                       </div>
                     </div>
                   </td>

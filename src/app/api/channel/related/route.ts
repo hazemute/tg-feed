@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
 import { getNsfwChannelIds } from '@/lib/moderation'
+import { channelAvatarUrl } from '@/lib/media'
 import type { RelatedChannelDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -92,7 +93,8 @@ export async function GET(request: Request) {
         isPremium: c.isPremium,
         verified: c.verified,
         avatarColor: c.avatarColor,
-        avatarUrl: c.avatarUrl ?? (c.photoFileId ? `/api/avatar/c_${c.id}` : null),
+        // v5.69: единый хелпер (photoFileId приоритет, telesco.pe → прокси)
+        avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
         categorySlug: c.category?.slug ?? null,
         // После фильтрации всегда false (поле — для честного DTO и будущих переиспользований)
         subscribed: subscribedIds.has(c.id),

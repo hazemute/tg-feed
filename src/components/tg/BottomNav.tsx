@@ -1,6 +1,6 @@
 'use client'
 
-import { Home, ListChecks, Megaphone, Search, UserRound } from 'lucide-react'
+import { Home, ListChecks, Megaphone, Rocket, Search, UserRound } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
@@ -12,7 +12,7 @@ import type { Tab } from '@/lib/types'
  * рабочий стол: управление каналом, статистика и ИИ-ассистент в одном месте. */
 const items: {
   id: Tab
-  labelKey: 'nav.feed' | 'nav.quests' | 'nav.channel' | 'nav.search' | 'nav.profile'
+  labelKey: 'nav.feed' | 'nav.quests' | 'nav.channel' | 'nav.promo' | 'nav.search' | 'nav.profile'
   icon: typeof Home
   /** fill активной иконки (мини-акцент, как у Ленты/Заданий) */
   fillActive?: boolean
@@ -20,6 +20,7 @@ const items: {
   { id: 'feed', labelKey: 'nav.feed', icon: Home, fillActive: true },
   { id: 'quests', labelKey: 'nav.quests', icon: ListChecks, fillActive: true },
   { id: 'channel', labelKey: 'nav.channel', icon: Megaphone },
+  { id: 'promo', labelKey: 'nav.promo', icon: Rocket },
   { id: 'search', labelKey: 'nav.search', icon: Search },
   { id: 'profile', labelKey: 'nav.profile', icon: UserRound },
 ]
@@ -29,6 +30,8 @@ const items: {
  * пилюлей (layoutId). Контент вкладок прокручивается под ней — вкладки
  * дают нижний паддинг. safe-area учтена в pb капсулы.
  * v5.58: 5 пунктов — капсула адаптирована (узкие кнопки, компактные лейблы).
+ * v5.70: 6 пунктов («Промо») — кнопка 54px вместо 64px: 6×54+паддинг = 336px,
+ * помещается в вьюпорт 360px с запасом по бокам; лейблы с truncate на всякий случай.
  */
 export function BottomNav() {
   const { tab, goToTab } = useApp()
@@ -58,7 +61,7 @@ export function BottomNav() {
               }}
               aria-current={active ? 'page' : undefined}
               aria-label={label}
-              className="relative flex h-[52px] w-[64px] flex-col items-center justify-center gap-[3px] transition active:scale-95 motion-reduce:transition-none"
+              className="relative flex h-[52px] w-[54px] flex-col items-center justify-center gap-[3px] transition active:scale-95 motion-reduce:transition-none"
             >
               {active && (
                 <motion.span
@@ -78,7 +81,7 @@ export function BottomNav() {
               />
               <span
                 className={cn(
-                  'relative z-10 text-[10px] leading-none transition-colors',
+                  'relative z-10 max-w-full truncate text-[10px] leading-none transition-colors',
                   active ? 'font-semibold text-tg-link' : 'font-medium text-tg-hint',
                 )}
               >

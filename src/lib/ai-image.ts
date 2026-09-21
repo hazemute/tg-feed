@@ -8,11 +8,18 @@
  * уникальную картинку и отдаёт её. Полностью бесплатно и без лимитов,
  * весь ИИ-контентщик (текст + визуал) стоит ноль рублей.
  *
- * Мы НЕ храним картинку у себя: URL детерминирован промптом+сидом и кэшируется
- * CDN'ом pollinations. Если сервис недоступен — публикация просто уходит без
- * картинки (текст главнее).
+ * v5.70: картинка НЕ отдаётся клиенту сырой pollinations-ссылкой (10–40с
+ * генерации при холодном кэше, белая страница по клику, домен недоступен
+ * из части регионов). После генерации байты скачиваются сервером, сжимаются
+ * sharp'ом в визуально безпотерьный WebP (≤350КБ — лимит таблицы Upload)
+ * и сохраняются в БД → стабильный вечный URL /api/upload/<id> (immutable,
+ * раздаётся нашим доменом и в TG WebView, и Telegram-ботом при публикации).
+ * Сырая ссылка pollinations остаётся только фолбэком, если скачивание не
+ * удалось — чат в этом случае ведёт себя по-старому и не роняется.
  */
 
+import sharp from 'sharp'
+import { db } from '@/lib/db'
 import { chatSimple } from '@/lib/openrouter'
 
 export function pollinationsImageUrl(prompt: string, seed?: number): string {
@@ -117,23 +124,147 @@ export async function enVisualPrompt(text: string): Promise<string> {
   return `editorial illustration about: ${src.slice(0, 220)}, soft lighting, harmonious colors, ${QUALITY_TAGS}`
 }
 
+/* ====================== СКАЧИВАНИЕ + СЖАТИЕ + ХРАНЕНИЕ (v5.70) ====================== */
+
 export type ResolvedImage = {
-  /** Публичный https-URL (для показа и публикации) */
+  /** URL для показа и публикации: наш /api/upload/<id> либо фолбэк-pollinations */
   url: string | null
-  via: 'pollinations'
+  via: 'upload' | 'pollinations'
   /** Не успела догенерироваться — можно публиковать без неё */
   pending: boolean
 }
 
+/** Лимит бинарника: POST /api/upload принимает ~350КБ (base64 ≤ 480К символов) */
+const UPLOAD_BINARY_LIMIT = 340_000
+/** Ниже q80 не опускаемся — приказ владельца про качество */
+const WEBP_QUALITIES = [90, 85, 80]
+
+/** Детерминированный сид из промпта: тот же текст → та же картинка → кэш работает.
+ *  Экспорт — для отладочных скриптов (воспроизвести точный pollinations-URL). */
+export function seedFromPrompt(en: string): number {
+  let h = 2166136261
+  for (let i = 0; i < en.length; i++) {
+    h ^= en.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return Math.abs(h) % 1_000_000
+}
+
+/** Кэш готовых результатов (по детерминированному pollinations-URL = промпт+сид) */
+const STORED_CACHE = new Map<string, ResolvedImage>()
+const STORED_CACHE_MAX = 120
+
+function cachePut(key: string, value: ResolvedImage): void {
+  if (STORED_CACHE.size >= STORED_CACHE_MAX) {
+    const first = STORED_CACHE.keys().next().value
+    if (first !== undefined) STORED_CACHE.delete(first)
+  }
+  STORED_CACHE.set(key, value)
+}
+
 /**
- * Сгенерировать бесплатную картинку и вернуть публичный https-URL:
- * суть текста → английский промпт (glm-5.3-flash:free) → pollinations/flux.
- * URL детерминирован, но догенерация асинхронная — pending=true, если сервис
- * ещё не успел отдать файл (клиент покажет картинку, когда она дозреет).
+ * Скачать байты готовой картинки с pollinations, сжать sharp'ом в WebP
+ * (визуально без потерь: max 1024×1024 без апскейла, q90→85→80, effort 6,
+ * smartSubsample) и сохранить в таблицу Upload (base64) → /api/upload/<id>.
+ * null — скачать/сжать/сохранить не удалось (вызывающий уйдёт в фолбэк).
  */
-export async function generatePublicImage(prompt: string): Promise<ResolvedImage> {
+async function storeImageFromPollinations(
+  pollUrl: string,
+  ownerId: string | undefined,
+): Promise<{ url: string; bytes: number } | null> {
+  if (!ownerId) return null
+  try {
+    // 1) Скачиваем готовые байты (генерация на стороне pollinations уже
+    //    завершилась после verifyImageUrl; холодный кэш — до 60с)
+    const res = await fetch(pollUrl, { signal: AbortSignal.timeout(60_000) })
+    if (!res.ok) return null
+    const ct = (res.headers.get('content-type') ?? '').toLowerCase()
+    if (ct && !ct.startsWith('image/')) return null
+    const src = Buffer.from(await res.arrayBuffer())
+    if (src.length < 1024) return null
+
+    // 2) Ресайз до max 1024×1024 (без апскейла) + EXIF-поворот
+    const resized = await sharp(src, { failOn: 'none' })
+      .rotate()
+      .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+      .toBuffer()
+    const meta = await sharp(resized).metadata()
+    const width = meta.width ?? 0
+    const height = meta.height ?? 0
+
+    // 3) WebP-ступени качества: 90 → 85 → 80 (ниже не опускаемся)
+    let best: Buffer | null = null
+    for (const q of WEBP_QUALITIES) {
+      const buf = await sharp(resized)
+        .webp({ quality: q, effort: 6, smartSubsample: true })
+        .toBuffer()
+      best = buf
+      if (buf.length <= UPLOAD_BINARY_LIMIT) break
+    }
+    if (!best || best.length > UPLOAD_BINARY_LIMIT) return null
+
+    // 4) Прямая запись в таблицу Upload (мы на сервере — свой HTTP дёргать незачем)
+    const up = await db.upload.create({
+      data: {
+        ownerId,
+        mime: 'image/webp',
+        data: best.toString('base64'),
+        bytes: best.length,
+        width,
+        height,
+      },
+      select: { id: true },
+    })
+    return { url: `/api/upload/${up.id}`, bytes: best.length }
+  } catch {
+    // pollinations не отдал байты / sharp упал / БД недоступна — фолбэк
+    return null
+  }
+}
+
+/**
+ * Сгенерировать бесплатную картинку и вернуть URL для клиента:
+ * суть текста → английский промпт (glm-5.3-flash:free) → pollinations/flux
+ * → скачивание → WebP ≤350КБ → Upload → стабильный /api/upload/<id>.
+ *
+ * Сид детерминирован промптом: повторный запрос того же текста возвращается
+ * из кэша процесса мгновенно и не генерируется заново.
+ *
+ * ВАЖНО: проверка готовности — сам GET-скачивание (до 60с, генерация на
+ * стороне pollinations идёт 10–40с при холодном кэше). HEAD у pollinations
+ * ненадёжен (на холодном URL отдаёт 500 при живом GET) — поэтому сначала
+ * качаем байты, и только если не вышло, отличаем «ещё рисуется» (pending)
+ * от «сервис лежит» по контрольному HEAD. Фолбэк при любом сбое хранения —
+ * прежнее поведение (ссылка pollinations / pending), чат не роняем.
+ */
+export async function generatePublicImage(
+  prompt: string,
+  opts?: { ownerId?: string },
+): Promise<ResolvedImage> {
   const en = await enVisualPrompt(prompt).catch(() => prompt.slice(0, 220))
-  const poll = pollinationsImageUrl(en)
+  const poll = pollinationsImageUrl(en, seedFromPrompt(en))
+
+  const cached = STORED_CACHE.get(poll)
+  if (cached) return cached
+
+  // 1) Основной путь: скачиваем готовые байты и сохраняем к себе
+  const stored = await storeImageFromPollinations(poll, opts?.ownerId)
+  if (stored) {
+    const result: ResolvedImage = { url: stored.url, via: 'upload', pending: false }
+    cachePut(poll, result)
+    return result
+  }
+
+  // 2) Скачивание не удалось — HEAD подскажет, жив ли файл вообще
   const ok = await verifyImageUrl(poll).catch(() => false)
-  return { url: poll, via: 'pollinations', pending: !ok }
+  if (ok) {
+    // Файл есть (доступен), но скачать/сохранить не вышло — сырая ссылка
+    const fallback: ResolvedImage = { url: poll, via: 'pollinations', pending: false }
+    cachePut(poll, fallback)
+    return fallback
+  }
+
+  // 3) Ещё рисуется (или сервис лежит) — pending-фолбэк, НЕ кэшируем:
+  //    следующий запрос попробует скачать и сохраниться снова
+  return { url: poll, via: 'pollinations', pending: true }
 }

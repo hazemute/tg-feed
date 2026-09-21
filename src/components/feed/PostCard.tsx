@@ -20,6 +20,7 @@ import { ListenButton } from '@/components/feed/TTSButton'
 import { RailButton, SubscribeCircle } from '@/components/feed/actions'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { cutAtWord, TEASER_LINES, useLineTruncate } from '@/lib/clamp-text'
+import { normalizeTeaserApplyTo, teaserApplies, teaserHasMedia } from '@/lib/teaser'
 import { useIsDesktop } from '@/lib/use-desktop'
 
 /**
@@ -435,9 +436,20 @@ export function PostCard({
   /** «...еще» → полный экран поста */
   const openFullPost = () => openPost(post)
 
-  // Тизер-режим канала: для неподписанных текст ограничивается
+  // Тизер-режим канала: для неподписанных текст ограничивается.
+  // v5.70: учитывается teaserApplyTo — сервер уже отрезал текст подходящим
+  // постам (длина тизера = лимит+1 → условие ниже остаётся истинным), а узкие
+  // applyTo ('long'/'text') исключают короткие/медийные посты — они видны целиком.
+  const teaserApplyTo = normalizeTeaserApplyTo(ch.teaserApplyTo)
   const teaser =
-    !ch.subscribed && ch.teaserMode !== 'none' && post.text.length > ch.teaserLimit
+    !ch.subscribed &&
+    ch.teaserMode !== 'none' &&
+    post.text.length > ch.teaserLimit &&
+    teaserApplies(teaserApplyTo, {
+      textLen: post.text.length,
+      hasMedia: teaserHasMedia(post),
+      teaserLimit: ch.teaserLimit,
+    })
   const teaserText =
     ch.teaserMode === 'cut'
       ? // Срез по границе слова: превью не должно резать слова посередине

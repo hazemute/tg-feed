@@ -416,7 +416,7 @@ export default function AdminPage() {
       case 'quests':
         return <QuestsTab tick={tick} onSettled={handleSettled} />
       case 'promos':
-        return <PromosTab onSettled={handleSettled} />
+        return <PromosTab tick={tick} onSettled={handleSettled} />
       case 'system':
         return <SystemTab tick={tick} onSettled={handleSettled} onMaintenance={handleMaintenance} />
       case 'tools':

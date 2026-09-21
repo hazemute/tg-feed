@@ -5,6 +5,7 @@ import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { IS_SQLITE } from '@/lib/server'
 import { logAdmin } from '@/lib/admin-log'
+import { avatarUrlOf } from '@/lib/comments-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -21,12 +22,6 @@ function ci(value: string): Record<string, unknown> {
  * DELETE /api/panel/comments { id } — удалить ЛЮБОЙ комментарий
  *   (счётчик Post.commentsCount уменьшается, не ниже 0).
  */
-
-function avatarUrlOf(userId: string, photoUrl: string | null): string | null {
-  if (!photoUrl) return null
-  if (photoUrl.startsWith('tgfile:')) return `/api/avatar/${userId}`
-  return photoUrl
-}
 
 export async function GET(request: Request) {
   const g = guardAdmin(request, { limit: 120, windowMs: 60_000, bucket: 'panel-comments' })
