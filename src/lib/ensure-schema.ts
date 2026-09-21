@@ -391,12 +391,12 @@ export async function checkSchema(): Promise<SchemaState> {
       FROM information_schema.columns c
       WHERE c.table_schema = 'public' AND (
         c.table_name = 'AiSearchLog' OR c.table_name = 'AdminLog' OR
-        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame','promoteCredits','promoteFreeMonth','xp','level')) OR
+        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame','promoteCredits','promoteFreeMonth','xp','level','swipeAddress','rubAddress','referredById')) OR
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt','teaserApplyTo')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR
         (c.table_name = 'Notification' AND c.column_name = 'commentId') OR
-        (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
+        (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral' OR c.table_name = 'WalletTx') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
         (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
         (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport' OR c.table_name = 'DailyCheckin' OR c.table_name = 'QuestVerifyLog' OR c.table_name = 'BotChat' OR c.table_name = 'AiChatSession' OR c.table_name = 'XpLog') OR
