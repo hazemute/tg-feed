@@ -60,13 +60,17 @@ function saveHidden(ids: Set<string>) {
  */
 const LANG_KEY = 'tgfeed_postlang'
 const LANG_CYCLE: LangFilter[] = ['any', 'ru', 'foreign']
+/** v5.66: дефолт «ru» — меньше нерусских постов (запрос владельца). Посты без
+ * букв (мемы) в режиме ru всё равно проходят — лента не пустеет. Явно выбранный
+ * фильтр сохранён в localStorage и не перезаписывается. */
+const DEFAULT_LANG: LangFilter = 'ru'
 function loadLangPref(): LangFilter {
-  if (typeof window === 'undefined') return 'any'
+  if (typeof window === 'undefined') return DEFAULT_LANG
   try {
     const raw = window.localStorage.getItem(LANG_KEY)
-    return raw === 'ru' || raw === 'foreign' ? raw : 'any'
+    return raw === 'ru' || raw === 'foreign' || raw === 'any' ? raw : DEFAULT_LANG
   } catch {
-    return 'any'
+    return DEFAULT_LANG
   }
 }
 function saveLangPref(v: LangFilter) {
@@ -312,6 +316,13 @@ export function FeedView() {
   // Смена языка идёт БЕЗ скелетона: старая лента остаётся на экране, сверху —
   // тонкий индикатор; прогретый вариант (prefetch) подменяется мгновенно
   const [langSwitching, setLangSwitching] = useState(false)
+  // v5.66: гайд/другие экраны могут выставить фильтр языка после монтирования
+  // ленты (WelcomeGuide ставит «ru» при первом входе) — перечитываем prefs
+  useEffect(() => {
+    const onLangPref = () => setLang(loadLangPref())
+    window.addEventListener('tgfeed:langpref', onLangPref)
+    return () => window.removeEventListener('tgfeed:langpref', onLangPref)
+  }, [])
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => loadHidden())
   // «Не интересно» (v5.10): замьютнутые каналы текущей сессии (сервер хранит
   // полный список в ChannelMute — локальный сет нужен только для мгновенной

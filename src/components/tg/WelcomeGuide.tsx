@@ -1,24 +1,31 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
-import { ArrowRight, ChevronDown, ListChecks, Megaphone, Search, Sparkles, UserRound, Zap } from 'lucide-react'
+import { ArrowRight, Check, ChevronDown, ListChecks, Loader2, Megaphone, Search, Sparkles, UserRound, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
+import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
 import { SwipeIcon } from '@/components/tg/SwipeIcon'
 import type { Tab } from '@/lib/types'
 
 /**
- * WELCOME-ГАЙД (v5.58): приветственный интерактивный экран при первом входе.
+ * WELCOME-ГАЙД (v5.58, редизайн v5.66):
  *
- *  • 3 слайда: что за сервис → свайпы/задания → пульт для владельцев каналов;
- *  • «Пропустить» доступен всегда (никогда не блокируем вход в ленту);
- *  • графические стрелочки-подсказки указывают на элементы интерфейса
- *    (мини-макет нижней навигации с подсветкой нужной вкладки);
- *  • показывается ОДИН раз: флаг tgfeed_welcome_v1 в localStorage.
+ *  • 4 слайда: что за сервис → свайпы/задания → пульт каналов → ВЫБОР ИНТЕРЕСОВ;
+ *  • слайд 4: категории — лента «Всё» сразу подстраивается под выбор
+ *    (POST /api/user/categories), а фильтр языка по умолчанию становится «ru»
+ *    (меньше нерусских постов, v5.66 — по запросу владельца);
+ *  • подсказки-пилюли В ПОТОКЕ (не absolute) — ничего не наезжает на текст
+ *    на низких экранах (фикс вёрстки v5.66);
+ *  • «Пропустить» доступен всегда; показывается один раз (tgfeed_welcome_v1).
  */
 
 const DONE_KEY = 'tgfeed_welcome_v1'
+const POSTLANG_KEY = 'tgfeed_postlang'
+/** Событие для FeedView: перечитать фильтр языка из localStorage */
+export const LANGPREF_EVENT = 'tgfeed:langpref'
 
 export function welcomeDone(): boolean {
   try {
@@ -36,7 +43,7 @@ function markWelcomeDone(): void {
   }
 }
 
-/* ---------------- Мини-макет нижней навигации (для стрелок-подсказок) ---------------- */
+/* ---------------- Мини-макет нижней навигации (подсказки) ---------------- */
 
 const NAV_MOCK: { id: Tab; icon: typeof Zap; label: string }[] = [
   { id: 'feed', icon: Zap, label: 'Лента' },
@@ -49,48 +56,46 @@ const NAV_MOCK: { id: Tab; icon: typeof Zap; label: string }[] = [
 function NavMock({ highlight, hint }: { highlight: Tab; hint: string }) {
   const hi = NAV_MOCK.findIndex((n) => n.id === highlight)
   return (
-    <div className="relative mx-auto mt-7 w-fit">
-      {/* Стрелка-подсказка сверху */}
+    <div className="mx-auto mt-5 flex w-fit flex-col items-center" aria-hidden>
+      {/* Пилюля-подсказка В ПОТОКЕ — v5.66: раньше absolute -top-11 наезжала на текст */}
       <motion.div
         initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: [0, -4, 0] }}
+        animate={{ opacity: 1, y: [0, -3, 0] }}
         transition={{
-          opacity: { delay: 0.5, duration: 0.3 },
-          y: { delay: 0.5, duration: 1.6, repeat: Infinity, ease: 'easeInOut' },
+          opacity: { delay: 0.4, duration: 0.3 },
+          y: { delay: 0.4, duration: 1.6, repeat: Infinity, ease: 'easeInOut' },
         }}
-        className="absolute -top-11 left-1/2 z-10 -translate-x-1/2"
-        aria-hidden
+        className="flex flex-col items-center"
       >
-        <div className="whitespace-nowrap rounded-full bg-tg-link px-3 py-1.5 text-[11.5px] font-bold text-white shadow-lg shadow-tg-link/40">
+        <span className="whitespace-nowrap rounded-full bg-tg-link px-3 py-1 text-[11.5px] font-bold text-white shadow-md shadow-tg-link/30">
           {hint}
-        </div>
-        <ChevronDown className="mx-auto -mt-1 h-5 w-5 text-tg-link" strokeWidth={2.5} />
+        </span>
+        <ChevronDown className="-mt-0.5 h-4 w-4 text-tg-link" strokeWidth={2.5} />
       </motion.div>
-      {/* Капсула навигации как в приложении (v5.66: синхронизирована с BottomNav) */}
-      <div className="flex items-center gap-0 rounded-[26px] border border-tg-sep/80 bg-tg-surface/85 p-1.5 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:bg-tg-surface/80 dark:shadow-[0_2px_10px_rgba(0,0,0,0.35),0_16px_40px_-10px_rgba(0,0,0,0.55)]">
+      {/* Капсула навигации как в приложении */}
+      <div className="mt-0.5 flex items-center gap-0 rounded-[24px] border border-tg-sep/80 bg-tg-surface/85 p-1 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-8px_rgba(0,0,0,0.24)] backdrop-blur-xl dark:bg-tg-surface/80 dark:shadow-[0_2px_10px_rgba(0,0,0,0.35),0_16px_40px_-10px_rgba(0,0,0,0.5)]">
         {NAV_MOCK.map(({ id, icon: Icon, label }, i) => {
           const active = id === highlight
           return (
             <div
               key={id}
               className={cn(
-                'relative flex h-[50px] w-[58px] flex-col items-center justify-center gap-[3px] rounded-[19px] transition-colors',
+                'relative flex h-[46px] w-[54px] flex-col items-center justify-center gap-[3px] rounded-[17px] transition-colors',
                 active && 'bg-tg-link/12',
               )}
-              aria-hidden
             >
               <motion.span
                 animate={active ? { scale: [1, 1.12, 1] } : {}}
                 transition={{ duration: 1.6, repeat: Infinity, ease: 'easeInOut' }}
               >
                 <Icon
-                  className={cn('h-[21px] w-[21px]', active ? 'text-tg-link' : 'text-tg-hint')}
+                  className={cn('h-[19px] w-[19px]', active ? 'text-tg-link' : 'text-tg-hint')}
                   strokeWidth={active ? 2.3 : 1.8}
                 />
               </motion.span>
               <span
                 className={cn(
-                  'text-[9.5px] leading-none',
+                  'text-[9px] leading-none',
                   active ? 'font-semibold text-tg-link' : 'font-medium text-tg-hint',
                 )}
               >
@@ -101,29 +106,6 @@ function NavMock({ highlight, hint }: { highlight: Tab; hint: string }) {
           )
         })}
       </div>
-      {/* Стрелка к вкладке снизу-справа */}
-      {hi >= 0 && (
-        <motion.span
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ delay: 0.7 }}
-          className="absolute -bottom-9 h-8 w-8 text-tg-link"
-          style={{ left: `${hi * 58 + 29}px` }}
-          aria-hidden
-        >
-          <svg viewBox="0 0 32 32" className="h-full w-full">
-            <path
-              d="M16 2 C 16 12, 16 18, 16 26"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeDasharray="4 5"
-            />
-            <path d="M10 21 16 28 22 21" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </motion.span>
-      )}
     </div>
   )
 }
@@ -133,12 +115,9 @@ function NavMock({ highlight, hint }: { highlight: Tab; hint: string }) {
 /** Слайд 1: карточка поста с жестом свайпа */
 function SwipeVisual() {
   return (
-    <div className="relative mx-auto mt-6 h-[168px] w-[220px]" aria-hidden>
-      {/* Задняя карточка */}
-      <div className="absolute inset-x-6 top-3 h-[140px] rotate-[6deg] rounded-2xl bg-tg-surface opacity-70 shadow-sm" />
-      {/* Средняя */}
-      <div className="absolute inset-x-3 top-1.5 h-[146px] -rotate-[3deg] rounded-2xl bg-tg-surface opacity-85 shadow" />
-      {/* Передняя — анимированный свайп влево-вправо */}
+    <div className="relative mx-auto mt-4 h-[150px] w-[220px]" aria-hidden>
+      <div className="absolute inset-x-6 top-3 h-[128px] rotate-[6deg] rounded-2xl bg-tg-surface opacity-70 shadow-sm" />
+      <div className="absolute inset-x-3 top-1.5 h-[134px] -rotate-[3deg] rounded-2xl bg-tg-surface opacity-85 shadow" />
       <motion.div
         animate={{ x: [-14, 14, -14], rotate: [-4, 4, -4] }}
         transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
@@ -163,7 +142,6 @@ function SwipeVisual() {
           <span className="text-[10px] font-bold text-tg-like">128</span>
         </div>
       </motion.div>
-      {/* Жест-палец, скользящий вдоль карточки */}
       <motion.div
         animate={{ x: [-28, 28, -28] }}
         transition={{ duration: 2.6, repeat: Infinity, ease: 'easeInOut' }}
@@ -179,44 +157,44 @@ function SwipeVisual() {
   )
 }
 
-/** Слайд 2: свайпы — молния-иконка с искрами */
+/** Слайд 2: свайпы — молния с искрами (v5.66: компактнее, чипы внутри контейнера) */
 function SwipesVisual() {
   return (
-    <div className="relative mx-auto mt-8 flex h-[150px] w-[220px] items-center justify-center" aria-hidden>
+    <div className="relative mx-auto mt-4 flex h-[132px] w-[240px] items-center justify-center" aria-hidden>
       <motion.div
         animate={{ scale: [1, 1.06, 1] }}
         transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-        className="relative flex h-24 w-24 items-center justify-center rounded-3xl bg-tg-link/12"
+        className="relative flex h-20 w-20 items-center justify-center rounded-3xl bg-tg-link/12"
       >
-        <SwipeIcon size={52} className="text-tg-link" />
+        <SwipeIcon size={44} className="text-tg-link" />
         {[0, 1, 2].map((i) => (
           <motion.span
             key={i}
             className="absolute h-2 w-2 rounded-full bg-tg-link"
-            animate={{ opacity: [0, 1, 0], scale: [0.4, 1, 0.4], y: [-6, -14, -6], x: [0, i === 1 ? -18 : i === 0 ? 18 : 0, 0] }}
+            animate={{ opacity: [0, 1, 0], scale: [0.4, 1, 0.4], y: [-6, -13, -6], x: [0, i === 1 ? -16 : i === 0 ? 16 : 0, 0] }}
             transition={{ duration: 1.8, repeat: Infinity, delay: i * 0.45 }}
           />
         ))}
       </motion.div>
-      {/* Чипы-подсказки вокруг */}
+      {/* Чипы-подсказки — строго внутри контейнера, за границы не вылезают */}
       <motion.span
-        animate={{ y: [0, -4, 0] }}
+        animate={{ y: [0, -3, 0] }}
         transition={{ duration: 2.2, repeat: Infinity, delay: 0.3 }}
-        className="absolute left-0 top-2 flex items-center gap-1 rounded-full bg-tg-green/15 px-2.5 py-1 text-[11px] font-bold text-tg-green"
+        className="absolute left-0 top-1 flex items-center gap-1 rounded-full bg-tg-green/15 px-2.5 py-1 text-[11px] font-bold text-tg-green"
       >
         <SwipeIcon size={12} />+500
       </motion.span>
       <motion.span
-        animate={{ y: [0, -4, 0] }}
+        animate={{ y: [0, -3, 0] }}
         transition={{ duration: 2.2, repeat: Infinity, delay: 1 }}
         className="absolute right-0 top-9 rounded-full bg-tg-star/15 px-2.5 py-1 text-[11px] font-bold text-tg-star"
       >
         Нейросети
       </motion.span>
       <motion.span
-        animate={{ y: [0, -4, 0] }}
+        animate={{ y: [0, -3, 0] }}
         transition={{ duration: 2.2, repeat: Infinity, delay: 1.6 }}
-        className="absolute bottom-1 right-3 rounded-full bg-tg-link/12 px-2.5 py-1 text-[11px] font-bold text-tg-link"
+        className="absolute bottom-0 right-1 rounded-full bg-tg-link/12 px-2.5 py-1 text-[11px] font-bold text-tg-link"
       >
         500 свайпов = 1 ₽
       </motion.span>
@@ -237,61 +215,132 @@ type Slide = {
 
 export function WelcomeGuide({ onDone }: { onDone: () => void }) {
   const [step, setStep] = useState(0)
+  const categories = useApp((s) => s.categories)
+  const user = useApp((s) => s.user)
+  const setUser = useApp((s) => s.setUser)
+  const setInterests = useApp((s) => s.setInterests)
+  const setCategory = useApp((s) => s.setCategory)
+  // предвыбор: текущие интересы (обычно пусто — гайд на первом входе)
+  const [picked, setPicked] = useState<string[]>(() => {
+    const cats = useApp.getState().categories
+    const pre = useApp.getState().user?.categories ?? []
+    // предвыбор только по категориям, которые реально показаны (без «other»)
+    const visible = new Set(cats.map((c) => c.slug))
+    return pre.filter((s) => visible.has(s))
+  })
+  const [saving, setSaving] = useState(false)
 
-  const slides: Slide[] = [
-    {
-      title: 'Добро пожаловать в Tg Swipe',
-      text: (
-        <>
-          Единая интерактивная лента ваших любимых Telegram-каналов: листайте посты свайпом,
-          как в привычных приложениях — без переходов и лишних тапов.
-        </>
-      ),
-      visual: <SwipeVisual />,
-      cta: 'Дальше',
-    },
-    {
-      title: 'Свайпы — валюта приложения',
-      text: (
-        <>
-          Выполняйте простые задания во вкладке «Задания» и получайте свайпы. Ими оплачиваются
-          запросы к нейросетям, а обменять можно в кошельке: <b>500 свайпов = 1 ₽</b>.
-        </>
-      ),
-      visual: <SwipesVisual />,
-      navHighlight: 'quests',
-      navHint: 'Задания за свайпы',
-      cta: 'Дальше',
-    },
-    {
-      title: 'Владельцам каналов — полный пульт',
-      text: (
-        <>
-          Привяжите свой канал во вкладке «Канал»: живая статистика, показ в ленте, продвижение
-          и <b>ИИ-ассистент</b>, который напишет и опубликует пост, удалит лишнее и даже сменит
-          название канала — по одной фразе.
-        </>
-      ),
-      visual: null,
-      navHighlight: 'channel',
-      navHint: 'Пульт вашего канала',
-      cta: 'Всё понятно!',
-    },
-  ]
+  const toggle = (slug: string) => {
+    haptic('light')
+    setPicked((p) => (p.includes(slug) ? p.filter((x) => x !== slug) : [...p, slug]))
+  }
 
-  const slide = slides[step]
-  const last = step === slides.length - 1
-
-  const finish = () => {
+  // Финал: сохраняем интересы (не гостям), фильтр языка ru по умолчанию, лента «Всё»
+  const finishWithPrefs = async () => {
+    setSaving(true)
+    try {
+      // 1) язык ленты: «ru» по умолчанию (меньше нерусских постов); явный выбор не трогаем
+      try {
+        const cur = localStorage.getItem(POSTLANG_KEY)
+        if (!cur) localStorage.setItem(POSTLANG_KEY, 'ru')
+      } catch { /* приватный режим */ }
+      // 2) интересы → лента «Всё» фильтруется по выбранным категориям
+      //    (гостям тоже сохраняем в их строку User — персонализация сессии)
+      if (picked.length > 0) {
+        await api('/api/user/categories', {
+          method: 'POST',
+          body: JSON.stringify({ categoryIds: picked }),
+        }).catch(() => {})
+        setInterests(picked)
+        if (user) setUser({ ...user, categories: picked })
+      }
+      setCategory('all')
+    } finally {
+      setSaving(false)
+    }
+    window.dispatchEvent(new CustomEvent(LANGPREF_EVENT))
     haptic('success')
     markWelcomeDone()
     onDone()
   }
 
+  // Быстрый выход «Пропустить» — без сохранения выбора, но язык по умолчанию ставим
+  const skip = () => {
+    try {
+      if (!localStorage.getItem(POSTLANG_KEY)) localStorage.setItem(POSTLANG_KEY, 'ru')
+    } catch { /* приватный режим */ }
+    window.dispatchEvent(new CustomEvent(LANGPREF_EVENT))
+    haptic('light')
+    markWelcomeDone()
+    onDone()
+  }
+
+  const slides: Slide[] = useMemo(
+    () => [
+      {
+        title: 'Добро пожаловать в Tg Swipe',
+        text: (
+          <>
+            Единая интерактивная лента ваших любимых Telegram-каналов: листайте посты свайпом,
+            как в привычных приложениях — без переходов и лишних тапов.
+          </>
+        ),
+        visual: <SwipeVisual />,
+        cta: 'Дальше',
+      },
+      {
+        title: 'Свайпы — валюта приложения',
+        text: (
+          <>
+            Выполняйте простые задания и получайте свайпы. Ими оплачиваются запросы к нейросетям,
+            а обменять можно в кошельке: <b>500 свайпов = 1 ₽</b>.
+          </>
+        ),
+        visual: <SwipesVisual />,
+        navHighlight: 'quests',
+        navHint: 'Задания за свайпы',
+        cta: 'Дальше',
+      },
+      {
+        title: 'Владельцам каналов — полный пульт',
+        text: (
+          <>
+            Привяжите канал во вкладке «Канал»: живая статистика, показ в ленте, продвижение
+            и <b>ИИ-ассистент</b>, который напишет и опубликует пост — по одной фразе.
+          </>
+        ),
+        visual: null,
+        navHighlight: 'channel',
+        navHint: 'Пульт вашего канала',
+        cta: 'Дальше',
+      },
+      {
+        title: 'Что вам интересно?',
+        text: (
+          <>
+            Выберите темы — <b>лента подстроится под ваш выбор</b>. Изменить можно в любой
+            момент в профиле.
+          </>
+        ),
+        visual: null,
+        cta: picked.length > 0 ? 'Начать читать' : 'Выберите хотя бы одну',
+      },
+    ],
+    [picked.length],
+  )
+
+  const slide = slides[step]!
+  const last = step === slides.length - 1
+  const canNext = !last || picked.length > 0
+
   const next = () => {
     haptic('light')
-    if (last) finish()
-    else setStep((s) => s + 1)
+    if (last) {
+      if (!canNext) return
+      void finishWithPrefs()
+    } else {
+      setStep((s) => s + 1)
+    }
   }
 
   // Кнопка «Пропустить» всегда видна — гайд никогда не блокирует приложение
@@ -306,7 +355,7 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
       aria-label="Знакомство с Tg Swipe"
     >
       {/* Верх: прогресс + пропуск */}
-      <div className="flex items-center justify-between px-5 pt-4">
+      <div className="flex shrink-0 items-center justify-between px-5 pt-4">
         <div className="flex items-center gap-1.5" aria-hidden>
           {slides.map((_, i) => (
             <span
@@ -320,7 +369,7 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
         </div>
         <button
           type="button"
-          onClick={finish}
+          onClick={skip}
           className="flex h-9 items-center rounded-full px-3.5 text-[13.5px] font-semibold text-tg-hint transition active:scale-95 motion-reduce:transition-none"
         >
           Пропустить
@@ -328,7 +377,7 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
       </div>
 
       {/* Контент слайда */}
-      <div className="flex flex-1 flex-col overflow-y-auto px-6 pb-4">
+      <div className="no-scrollbar flex flex-1 flex-col overflow-y-auto px-6 pb-2">
         <AnimatePresence mode="wait">
           <motion.div
             key={step}
@@ -339,14 +388,55 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
             className="flex flex-1 flex-col"
           >
             {slide.visual}
-            <h1 className="mt-7 text-[23px] font-bold leading-tight tracking-tight text-tg-text">
+            <h1 className="mt-5 text-[23px] font-bold leading-tight tracking-tight text-tg-text">
               {slide.title}
             </h1>
             <p className="mt-2 text-[14.5px] leading-relaxed text-tg-hint [&_b]:font-semibold [&_b]:text-tg-text">
               {slide.text}
             </p>
-            {slide.navHighlight && (
+            {slide.navHighlight ? (
               <NavMock highlight={slide.navHighlight} hint={slide.navHint ?? ''} />
+            ) : null}
+            {last && (
+              <div className="mt-4 flex-1">
+                {categories.length === 0 ? (
+                  <div className="flex h-24 items-center justify-center gap-2 text-[13.5px] text-tg-hint">
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    Загружаем категории…
+                  </div>
+                ) : (
+                  <div
+                    className="flex flex-wrap content-start gap-2 pb-2"
+                    role="group"
+                    aria-label="Выберите интересующие категории"
+                  >
+                    {categories.map((c) => {
+                      const on = picked.includes(c.slug)
+                      return (
+                        <button
+                          key={c.slug}
+                          type="button"
+                          onClick={() => toggle(c.slug)}
+                          aria-pressed={on}
+                          className={cn(
+                            'press flex h-10 items-center gap-1.5 rounded-full px-4 text-[14px] font-medium',
+                            on
+                              ? 'bg-tg-link text-white shadow-sm shadow-tg-link/30'
+                              : 'bg-tg-surface text-tg-text',
+                          )}
+                        >
+                          {on && <Check className="h-3.5 w-3.5" strokeWidth={3} aria-hidden />}
+                          <span aria-hidden>{c.emoji}</span>
+                          {c.title}
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="mt-2 text-[12px] text-tg-hint" aria-live="polite">
+                  Выбрано: {picked.length} · в ленте будут приоритетны ваши темы
+                </p>
+              </div>
             )}
           </motion.div>
         </AnimatePresence>
@@ -357,14 +447,21 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
         <button
           type="button"
           onClick={next}
-          className="press flex h-[54px] w-full items-center justify-center gap-2 rounded-full bg-tg-link text-[16px] font-bold text-white shadow-lg shadow-tg-link/25"
+          disabled={!canNext || saving}
+          className={cn(
+            'press flex h-[54px] w-full items-center justify-center gap-2 rounded-full text-[16px] font-bold shadow-lg transition',
+            canNext && !saving
+              ? 'bg-tg-link text-white shadow-tg-link/25'
+              : 'cursor-not-allowed bg-tg-surface text-tg-hint shadow-none',
+          )}
         >
-          {last ? <Sparkles className="h-[18px] w-[18px]" aria-hidden /> : null}
-          {slide.cta}
-          {!last && <ArrowRight className="h-[18px] w-[18px]" aria-hidden />}
+          {saving ? <Loader2 className="h-[18px] w-[18px] animate-spin" aria-hidden /> : null}
+          {saving ? 'Сохраняем…' : slide.cta}
+          {!last && !saving && <ArrowRight className="h-[18px] w-[18px]" aria-hidden />}
+          {last && canNext && !saving && <Sparkles className="h-[18px] w-[18px]" aria-hidden />}
         </button>
         <p className="mt-2.5 text-center text-[11px] leading-snug text-tg-hint">
-          {last ? 'Приятного чтения — лента уже ждёт' : 'Гайд можно пропустить и вернуться позже'}
+          {last ? 'Лента уже ждёт — приятного чтения' : 'Гайд можно пропустить и вернуться позже'}
         </p>
       </div>
     </motion.div>

@@ -655,12 +655,22 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
       seats,
     )
     const hasTickets = entries.some((e) => e.ticketsCount > 0)
-    // Фолбэк для розыгрышей БЕЗ билетных заданий: равномерный shuffle по всем заявкам
-    const winnersIds = new Set(hasTickets ? weighted.map((w) => w.userId) : pickUniform(entries, seats))
+    // v5.66 ФИКС: раньше победители собирались через filter+splice-перестановку —
+    // splice(idx,1) удалял элемент ПО ПОЗИЦИИ, а не искомого участника: при
+    // несовпадении порядка легитимный победитель ВЫПАДАЛ, а другой дублировался
+    // (одна и та же ссылка объекта дважды в массиве → двойное начисление приза,
+    // второй приз уходил в никуда). Теперь места строятся напрямую из порядка
+    // выпадения взвешенного рандома (уникальность там гарантирована) или из
+    // порядка shuffle-фолбэка.
     const ticketsByUser = new Map(entries.map((e) => [e.userId, e.ticketsCount]))
+    const entryByUser = new Map(entries.map((e) => [e.userId, e]))
+    const placeIds = hasTickets
+      ? weighted.map((w) => w.userId)
+      : pickUniform(entries, seats)
 
-    participants = entries
-      .filter((e) => winnersIds.has(e.userId))
+    participants = placeIds
+      .map((uid) => entryByUser.get(uid))
+      .filter((e): e is (typeof entries)[number] => !!e)
       .map((e) => ({
         userId: e.userId,
         name: nameOf(e),
@@ -668,19 +678,6 @@ export async function finalizeGiveaway(giveawayId: string): Promise<{ ok: boolea
         prizeIndex: 0,
         ...(hasTickets ? { tickets: ticketsByUser.get(e.userId) ?? 0 } : {}),
       }))
-    // Порядок мест: победители взвешенного выбора — по порядку выпадения; фолбэк — как вышел shuffle
-    if (hasTickets) {
-      let idx = 0
-      for (const w of weighted) {
-        if (idx >= participants.length) break
-        const p = participants.find((x) => x.userId === w.userId)
-        if (p) {
-          participants.splice(idx, 1)
-          participants.splice(idx, 0, p)
-          idx++
-        }
-      }
-    }
     // распределение по призам: первый приз — первые места
     let pidx = 0
     for (let pi = 0; pi < prizes.length && pidx < participants.length; pi++) {
