@@ -369,10 +369,11 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
         (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
-        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport' OR c.table_name = 'DailyCheckin' OR c.table_name = 'QuestVerifyLog' OR c.table_name = 'BotChat') OR
+        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport' OR c.table_name = 'DailyCheckin' OR c.table_name = 'QuestVerifyLog' OR c.table_name = 'BotChat' OR c.table_name = 'AiChatSession') OR
         (c.table_name = 'Quest' AND c.column_name = 'targetType') OR
         (c.table_name = 'Comment' AND c.column_name IN ('hidden','adScore','reportsCount')) OR
-        (c.table_name = 'Post' AND c.column_name = 'reportsCount')
+        (c.table_name = 'Post' AND c.column_name IN ('reportsCount','promoteSpent')) OR
+        (c.table_name = 'AiChatMessage' AND c.column_name = 'sessionId')
       )`)
     const tables = new Set<string>()
     const cols = new Set<string>()
