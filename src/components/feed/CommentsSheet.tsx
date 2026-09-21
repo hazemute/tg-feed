@@ -530,10 +530,12 @@ export function CommentsSheet() {
                 </button>
               </div>
             ) : items.length === 0 ? (
-              <div className="py-10 text-center">
-                <MessageCircle className="mx-auto h-8 w-8 text-tg-hint/40" strokeWidth={1.5} aria-hidden />
+              <div className="flex flex-col items-center py-10 text-center">
+                <span className="flex size-14 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+                  <MessageCircle className="size-6" strokeWidth={1.7} />
+                </span>
                 <p className="mt-2.5 text-[14px] font-medium text-tg-text">{t('comments.emptyTitle')}</p>
-                <p className="mt-1 text-[13px] text-tg-hint">{t('comments.emptyHint')}</p>
+                <p className="mt-1 max-w-[280px] text-[13px] leading-snug text-tg-hint">{t('comments.emptyHint')}</p>
               </div>
             ) : (
               <ul className="space-y-3.5 py-1">
@@ -603,7 +605,7 @@ export function CommentsSheet() {
                   <span
                     className={cn(
                       'mb-1.5 ml-auto block w-fit text-[11px] font-medium tabular-nums',
-                      draft.length > MAX_LEN ? 'text-red-500' : 'text-tg-hint',
+                      draft.length > MAX_LEN ? 'text-tg-like' : 'text-tg-hint',
                     )}
                   >
                     {MAX_LEN - draft.length}
@@ -710,7 +712,7 @@ function CommentRow({
         className={cn(
           'transition-colors',
           isReply ? 'h-4 w-4' : 'h-[18px] w-[18px]',
-          c.likedByMe ? 'fill-rose-500 text-rose-500' : 'text-tg-hint/70',
+          c.likedByMe ? 'fill-tg-like text-tg-like' : 'text-tg-hint/70',
         )}
         strokeWidth={1.9}
       />
@@ -719,7 +721,7 @@ function CommentRow({
           className={cn(
             'font-semibold tabular-nums',
             isReply ? 'text-[10.5px]' : 'text-[11px]',
-            c.likedByMe ? 'text-rose-500' : 'text-tg-hint',
+            c.likedByMe ? 'text-tg-like' : 'text-tg-hint',
           )}
         >
           {c.likesCount > 999 ? '1k+' : c.likesCount}
@@ -742,7 +744,7 @@ function CommentRow({
           type="button"
           onClick={() => onDelete(c)}
           aria-label={t('comments.delete')}
-          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-red-50 hover:text-red-600 active:scale-90 dark:hover:bg-red-500/10"
+          className="ml-auto flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-tg-hint/70 transition hover:bg-tg-like/10 hover:text-tg-like active:scale-90 motion-reduce:transition-none"
         >
           <Trash2 className="h-3.5 w-3.5" strokeWidth={1.8} />
         </button>

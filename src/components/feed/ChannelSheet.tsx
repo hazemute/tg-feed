@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Forward, Heart, ImageOff, Loader2, Plus, Sparkle } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Forward, Heart, ImageOff, Loader2, Plus, Sparkle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -326,12 +326,15 @@ function ChannelScreen({
           <ChannelSkeleton />
         ) : error || !channel ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
+            <span className="flex size-16 items-center justify-center rounded-full bg-tg-like/10 text-tg-like" aria-hidden>
+              <AlertCircle className="size-8" strokeWidth={1.7} />
+            </span>
             <p className="text-[15px] font-semibold text-tg-text">Канал не найден</p>
             <p className="text-snippet text-tg-hint">Возможно, он ещё проходит модерацию</p>
             <button
               type="button"
               onClick={onClose}
-              className="mt-1 h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link active:scale-95"
+              className="press mt-1 h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link"
             >
               Вернуться назад
             </button>
@@ -466,8 +469,10 @@ function ChannelScreen({
             </div>
 
             {!initial && !loading && items.length === 0 && (
-              <div className="flex flex-col items-center gap-2 py-10 text-center">
-                <ImageOff className="h-7 w-7 text-tg-hint" aria-hidden />
+              <div className="flex flex-col items-center gap-2.5 py-10 text-center">
+                <span className="flex size-14 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+                  <ImageOff className="size-6" strokeWidth={1.7} />
+                </span>
                 <p className="text-[14px] text-tg-hint">{t('ch.tabEmpty')}</p>
               </div>
             )}

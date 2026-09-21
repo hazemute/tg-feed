@@ -60,8 +60,8 @@ export function AdCard({ ad }: { ad: AdDTO }) {
   }
 
   return (
-    <aside ref={rootRef} className="px-4 py-3" aria-label="Реклама">
-      <div className="overflow-hidden rounded-2xl bg-tg-surface">
+    <aside ref={rootRef} className="feed-card px-4 py-3" aria-label="Реклама">
+      <div className="card-soft overflow-hidden rounded-2xl border border-tg-sep/50 bg-tg-surface">
         {ad.imageUrl && (
           <img
             src={ad.imageUrl}
@@ -79,7 +79,7 @@ export function AdCard({ ad }: { ad: AdDTO }) {
           <button
             type="button"
             onClick={onClick}
-            className="mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+            className="press mt-3 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white shadow-sm shadow-tg-link/25"
           >
             {isTg ? (
               <svg viewBox="0 0 24 24" className="h-4.5 w-4.5 fill-white" aria-hidden>

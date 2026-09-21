@@ -51,7 +51,7 @@ function CopyTextButton({ text }: { text: string }) {
         }
       }}
       aria-label={t('post.copyText')}
-      className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-surface text-[14px] font-semibold text-tg-link active:opacity-70"
+      className="press flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-surface text-[14px] font-semibold text-tg-link"
     >
       {copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
       {copied ? t('post.copied') : t('post.copyText')}
@@ -445,7 +445,7 @@ export function PostOverlay() {
                     haptic('light')
                     openTelegram(current.link ?? `https://t.me/${chTeaser.username}`)
                   }}
-                  className="flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link transition active:scale-[0.98]"
+                  className="press flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link"
                 >
                   <Send className="h-4 w-4" aria-hidden />
                   {t('post.readInTg')}
@@ -489,7 +489,7 @@ export function PostOverlay() {
                   haptic('light')
                   setSummaryPost(current)
                 }}
-                className="mt-3 mx-4 inline-flex h-11 items-center gap-1.5 rounded-xl bg-tg-surface px-4 text-[14px] font-semibold text-tg-link active:opacity-70"
+                className="press mt-3 mx-4 inline-flex h-11 items-center gap-1.5 rounded-xl bg-tg-surface px-4 text-[14px] font-semibold text-tg-link"
               >
                 <Sparkle className="h-4 w-4" aria-hidden />
                 {t('post.summary')}
@@ -506,7 +506,7 @@ export function PostOverlay() {
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => haptic('light')}
-                  className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white active:opacity-80"
+                  className="press flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white"
                 >
                   {ch.ctaLabel}
                   <ArrowUpRight className="h-4.5 w-4.5" aria-hidden />
@@ -548,7 +548,7 @@ export function PostOverlay() {
                 onClick={onBookmark}
                 aria-label={t('post.save')}
                 aria-pressed={current.bookmarked}
-                className="flex min-h-[44px] items-center gap-1.5 py-1.5"
+                className="flex min-h-[44px] items-center gap-1.5 py-1.5 transition active:opacity-60 motion-reduce:transition-none"
               >
                 <Bookmark
                   className={cn(
@@ -568,7 +568,7 @@ export function PostOverlay() {
                   openComments(current)
                 }}
                 aria-label={t('comments.title')}
-                className="flex min-h-[44px] items-center gap-1.5 py-1.5"
+                className="flex min-h-[44px] items-center gap-1.5 py-1.5 transition active:opacity-60 motion-reduce:transition-none"
               >
                 <MessageCircle className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
                 <span className="text-[13px] font-medium tabular-nums text-tg-text2">
@@ -582,7 +582,7 @@ export function PostOverlay() {
                   openShareSheet(current)
                 }}
                 aria-label={t('post.shareAria')}
-                className="flex min-h-[44px] items-center gap-1.5 py-1.5"
+                className="flex min-h-[44px] items-center gap-1.5 py-1.5 transition active:opacity-60 motion-reduce:transition-none"
               >
                 <Forward className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
                 <span className="text-[13px] font-medium text-tg-text2">{t('post.share')}</span>

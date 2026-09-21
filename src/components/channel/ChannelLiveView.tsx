@@ -126,6 +126,15 @@ export function ChannelLiveView({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /* Портал монтируем ПОСЛЕ первого коммита: createPortal во время
+   * mount-прохода внутри AnimatePresence роняет React 19 (dev) с ошибкой
+   * «Target container is not a DOM element» — это чисто технический guard,
+   * на поведение оверлея не влияет (анимации входа/выхода сохраняются). */
+  const [portalReady, setPortalReady] = useState(false)
+  useEffect(() => {
+    setPortalReady(true)
+  }, [])
+
   /* ----------------------------- данные ----------------------------- */
 
   const load = useCallback(async () => {
@@ -326,6 +335,8 @@ export function ChannelLiveView({
     return sorted
   }, [posts])
 
+  if (!portalReady) return null
+
   return createPortal(
     <motion.div
       className="live-view-layer fixed inset-0 z-[70] flex flex-col bg-tg-bg"
@@ -386,19 +397,23 @@ export function ChannelLiveView({
           </div>
         ) : failed ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <AlertTriangle className="text-tg-hint" size={30} />
+            <span className="flex size-14 items-center justify-center rounded-full bg-tg-star/10 text-tg-star" aria-hidden>
+              <AlertTriangle size={26} strokeWidth={1.8} />
+            </span>
             <p className="text-sm text-tg-hint">Не удалось загрузить канал</p>
             <button
               type="button"
               onClick={() => void load()}
-              className="rounded-full bg-tg-link px-4 py-1.5 text-[13px] font-medium text-white"
+              className="press rounded-full bg-tg-link px-4 py-1.5 text-[13px] font-medium text-white"
             >
               Повторить
             </button>
           </div>
         ) : rendered.length === 0 ? (
-          <div className="flex h-full flex-col items-center justify-center gap-2 px-8 text-center">
-            <MessageSquare className="text-tg-hint" size={30} />
+          <div className="flex h-full flex-col items-center justify-center gap-2.5 px-8 text-center">
+            <span className="flex size-14 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+              <MessageSquare size={26} strokeWidth={1.8} />
+            </span>
             <p className="text-[15px] font-medium text-tg-text">Канал пуст</p>
             <p className="text-[13px] leading-snug text-tg-hint">
               Опубликуйте первый пост через строку ниже — он появится и в Telegram
@@ -489,7 +504,7 @@ export function ChannelLiveView({
             onClick={() => void send()}
             disabled={sending || (!draft.trim() && !attached)}
             aria-label="Отправить"
-            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tg-link text-white shadow-sm transition-transform active:scale-90 disabled:opacity-40"
+            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tg-link text-white shadow-md shadow-tg-link/40 transition-transform active:scale-90 disabled:opacity-40 disabled:shadow-none"
           >
             {sending ? <Loader2 size={19} className="animate-spin" /> : <Send size={18} />}
           </button>
@@ -510,7 +525,7 @@ export function ChannelLiveView({
             role="presentation"
           >
             <motion.div
-              className="mb-4 w-[min(92vw,320px)] overflow-hidden rounded-2xl bg-tg-surface shadow-2xl sm:mb-0"
+              className="mb-4 w-[min(92vw,320px)] overflow-hidden rounded-2xl border border-tg-sep/50 bg-tg-surface shadow-2xl sm:mb-0"
               initial={{ y: 40, opacity: 0, scale: 0.97 }}
               animate={{ y: 0, opacity: 1, scale: 1 }}
               exit={{ y: 30, opacity: 0 }}
@@ -577,7 +592,7 @@ export function ChannelLiveView({
             role="presentation"
           >
             <motion.div
-              className="w-full max-w-[340px] rounded-2xl bg-tg-surface p-4 shadow-2xl"
+              className="w-full max-w-[340px] rounded-2xl bg-tg-surface p-5 shadow-2xl"
               initial={{ scale: 0.94, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.96, opacity: 0 }}
@@ -596,11 +611,11 @@ export function ChannelLiveView({
                   </p>
                 </div>
               </div>
-              <div className="mt-4 flex gap-2.5">
+              <div className="mt-5 flex gap-2.5">
                 <button
                   type="button"
                   onClick={() => setConfirmDelete(null)}
-                  className="h-10 flex-1 rounded-xl bg-tg-surface2 text-[14px] font-medium text-tg-text transition-transform active:scale-95"
+                  className="press h-11 flex-1 rounded-xl bg-tg-surface2 text-[14px] font-medium text-tg-text"
                 >
                   Отмена
                 </button>
@@ -608,7 +623,7 @@ export function ChannelLiveView({
                   type="button"
                   disabled={busyPost === confirmDelete.id}
                   onClick={() => void doDelete(confirmDelete)}
-                  className="flex h-10 flex-1 items-center justify-center gap-1.5 rounded-xl bg-red-500 text-[14px] font-semibold text-white transition-transform active:scale-95 disabled:opacity-60"
+                  className="press flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-red-500 text-[14px] font-semibold text-white disabled:opacity-60"
                 >
                   {busyPost === confirmDelete.id ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={15} />}
                   Удалить
@@ -639,7 +654,7 @@ export function ChannelLiveView({
             <button
               type="button"
               onClick={() => setEditSheet(null)}
-              className="h-11 flex-1 rounded-xl bg-tg-surface2 text-[14px] font-medium text-tg-text"
+              className="press h-11 flex-1 rounded-xl bg-tg-surface2 text-[14px] font-medium text-tg-text"
             >
               Отмена
             </button>
@@ -647,7 +662,7 @@ export function ChannelLiveView({
               type="button"
               disabled={editSaving || !editText.trim()}
               onClick={() => void doEditSave()}
-              className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-tg-link text-[14px] font-semibold text-white disabled:opacity-50"
+              className="press flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-tg-link text-[14px] font-semibold text-white disabled:opacity-50"
             >
               {editSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
               Сохранить
@@ -771,7 +786,7 @@ export function ChannelLiveView({
             <button
               type="button"
               onClick={() => setMetaSheet(null)}
-              className="h-11 flex-1 rounded-xl bg-tg-surface2 text-[14px] font-medium text-tg-text"
+              className="press h-11 flex-1 rounded-xl bg-tg-surface2 text-[14px] font-medium text-tg-text"
             >
               Отмена
             </button>
@@ -783,7 +798,7 @@ export function ChannelLiveView({
                 else void saveMeta({ description: metaValue.trim() })
                 setMetaSheet(null)
               }}
-              className="flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-tg-link text-[14px] font-semibold text-white disabled:opacity-50"
+              className="press flex h-11 flex-1 items-center justify-center gap-1.5 rounded-xl bg-tg-link text-[14px] font-semibold text-white disabled:opacity-50"
             >
               {metaSaving ? <Loader2 size={16} className="animate-spin" /> : <Check size={16} />}
               Сохранить
@@ -802,11 +817,12 @@ function bubbleGapMs(a: LivePost, b: LivePost): number {
   return Math.abs(+new Date(b.publishedAt) - +new Date(a.publishedAt))
 }
 
-/** Разделитель дней — капсула по центру, как в Telegram */
+/** Разделитель дней — матовая капсула по центру, как в Telegram:
+ * лёгкий блюр + hairline + мягкая тень, чтобы читалась поверх баблов */
 function DayChip({ label }: { label: string }) {
   return (
     <div className="sticky top-1 z-[1] flex justify-center py-1.5">
-      <span className="rounded-full bg-tg-surface px-3 py-1 text-[12px] font-medium text-tg-hint shadow-sm">
+      <span className="rounded-full border border-tg-sep/60 bg-tg-surface2/90 px-3 py-1 text-[11.5px] font-semibold tracking-wide text-tg-hint shadow-sm backdrop-blur-sm">
         {label}
       </span>
     </div>
@@ -838,14 +854,14 @@ function Bubble({
   onPressEnd: () => void
 }) {
   return (
-    <div className={cn('chat-bubble flex items-end gap-2', showAvatar ? 'mb-2.5' : 'mb-0.5')}>
+    <div className={cn('chat-bubble bubble-in flex items-end gap-2', showAvatar ? 'mb-2.5' : 'mb-0.5')}>
       {/* Колонка аватарок: пусто у баблов в середине серии */}
       <div className="w-8 shrink-0 self-end">
         {showAvatar && <Avatar name={title} src={avatarSrc} size={32} />}
       </div>
 
       <div
-        className="relative min-w-0 max-w-[85%] flex-1 select-none rounded-2xl rounded-bl-md bg-tg-surface2 px-3 py-2 shadow-[0_1px_1px_rgba(0,0,0,0.06)]"
+        className="relative min-w-0 max-w-[85%] flex-1 select-none rounded-2xl rounded-bl-md bg-tg-surface2 px-3 py-2 shadow-[0_1px_2px_rgba(0,0,0,0.08)] transition-transform active:scale-[0.99] motion-reduce:transition-none"
         onClick={onTap}
         onContextMenu={(e) => {
           e.preventDefault()

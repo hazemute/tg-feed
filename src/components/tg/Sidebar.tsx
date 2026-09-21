@@ -65,7 +65,7 @@ export function Sidebar() {
               }}
               aria-current={active ? 'page' : undefined}
               className={cn(
-                'relative flex h-11 items-center gap-3 rounded-xl px-3.5 text-[14.5px] font-medium transition',
+                'relative flex h-11 items-center gap-3 rounded-xl px-3.5 text-[14.5px] font-medium transition active:scale-[0.98] motion-reduce:transition-none',
                 active ? 'text-tg-link' : 'text-tg-hint hover:bg-tg-surface hover:text-tg-text2',
               )}
             >

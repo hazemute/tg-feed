@@ -90,7 +90,7 @@ export function BottomSheet({
                 type="button"
                 onClick={onClose}
                 aria-label="Закрыть"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint active:scale-90"
+                className="press flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint active:scale-90"
               >
                 <X className="h-4 w-4" />
               </button>

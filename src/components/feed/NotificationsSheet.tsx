@@ -151,15 +151,15 @@ function NotificationsScreen({
 
         {failed && (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-tg-surface">
-              <AlertCircle className="h-7 w-7 text-tg-hint" aria-hidden />
+            <span className="flex size-16 items-center justify-center rounded-full bg-tg-like/10 text-tg-like" aria-hidden>
+              <AlertCircle className="size-8" strokeWidth={1.7} />
             </span>
             <p className="text-[15px] font-semibold text-tg-text">{t('notif.failed')}</p>
             <p className="text-snippet text-tg-hint">{t('notif.failedHint')}</p>
             <button
               type="button"
               onClick={onRetry}
-              className="mt-1 h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link active:scale-95"
+              className="press mt-1 h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link"
             >
               {t('notif.retry')}
             </button>
@@ -170,8 +170,8 @@ function NotificationsScreen({
           <>
             {postsEmpty && (
               <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-tg-surface">
-                  <Bell className="h-12 w-12 text-tg-hint" aria-hidden />
+                <span className="flex size-16 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+                  <Bell className="size-8" strokeWidth={1.7} />
                 </span>
                 <p className="text-[15px] font-semibold text-tg-text">{t('notif.emptyPosts')}</p>
                 <p className="text-snippet text-tg-hint">{t('notif.emptyPostsHint')}</p>
@@ -185,8 +185,8 @@ function NotificationsScreen({
           <>
             {activityEmpty && (
               <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-tg-surface">
-                  <Megaphone className="h-12 w-12 text-tg-hint" aria-hidden />
+                <span className="flex size-16 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+                  <Megaphone className="size-8" strokeWidth={1.7} />
                 </span>
                 <p className="text-[15px] font-semibold text-tg-text">{t('notif.emptyActivity')}</p>
                 <p className="text-snippet text-tg-hint">{t('notif.emptyActivityHint')}</p>

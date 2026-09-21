@@ -724,3 +724,77 @@ button {
     content-visibility: visible;
   }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   v5.66 СТИЛИСТ — общие утилиты премиум-полировки (задача 4)
+   Всё на токенах/transform/opacity: без новых цветов и layout-анимаций.
+   ═══════════════════════════════════════════════════════════════════════ */
+
+/* Мягкая iOS-тень для приподнятых карточек (bg-tg-surface на --tg-bg).
+ * В тёмных палитрах тень поверх тёмного фона естественно почти не видна —
+ * глубину там держит тон самой поверхности + hairline-бордер. */
+.card-soft {
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.04),
+    0 8px 24px -12px rgba(0, 0, 0, 0.14);
+}
+
+/* Единый нажим тапабельных поверхностей: ТОЛЬКО transform (композитор,
+ * 60 FPS), пружинная кривая выката iOS. Прочие переходы (цвета) сохраняются
+ * — перечислены явно, чтобы не перебивать Tailwind-утилиты. */
+.press {
+  transition-property: transform, color, background-color, border-color, opacity, box-shadow;
+  transition-duration: 180ms;
+  transition-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+.press:active {
+  transform: scale(0.97);
+}
+
+/* Появление нового бабла чата (transform+opacity only, без reflow) */
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.bubble-in {
+  animation: bubble-in 0.2s cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/* Боковое затухание горизонтальных скроллов (категории/чипы/рельсы):
+ * край растворяется на 12px вместо жёсткого среза. Столько же — px-3
+ * контейнера, поэтому статичный контент под маску не попадает. */
+.fade-x {
+  -webkit-mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    #000 12px,
+    #000 calc(100% - 12px),
+    transparent 100%
+  );
+}
+
+/* Reduced-motion: системное уважение ко всем новым анимациям */
+@media (prefers-reduced-motion: reduce) {
+  .press {
+    transition: none;
+  }
+  .press:active {
+    transform: none;
+  }
+  .bubble-in {
+    animation: none;
+  }
+}

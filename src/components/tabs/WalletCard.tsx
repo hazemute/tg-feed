@@ -212,7 +212,7 @@ export function WalletCard({
             </button>
           </div>
         ) : (
-        <div className="overflow-hidden rounded-2xl bg-tg-surface">
+        <div className="card-soft overflow-hidden rounded-2xl bg-tg-surface">
           {/* ВКЛАДКИ: Рубли | Свайпы — горизонтальные, с бегущим подчёркиванием */}
           <div className="flex items-stretch border-b border-tg-sep/60" role="tablist" aria-label="Валюта кошелька">
             {tabs.map((tb) => {
@@ -398,7 +398,7 @@ export function WalletCard({
                         <div
                           className={cn(
                             'shrink-0 text-[13.5px] font-semibold tabular-nums',
-                            plus ? 'text-tg-link' : 'text-tg-text',
+                            plus ? 'text-tg-green' : 'text-tg-text',
                           )}
                         >
                           {plus ? '+' : '−'}

@@ -218,7 +218,7 @@ export function MediaLightbox({
             type="button"
             aria-label="Предыдущее"
             onClick={() => go(-1)}
-            className="absolute left-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm active:scale-90"
+            className="absolute left-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition active:scale-90 motion-reduce:transition-none"
           >
             <ChevronLeft className="h-6 w-6" />
           </button>
@@ -228,7 +228,7 @@ export function MediaLightbox({
             type="button"
             aria-label="Следующее"
             onClick={() => go(1)}
-            className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm active:scale-90"
+            className="absolute right-1 top-1/2 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-black/40 text-white backdrop-blur-sm transition active:scale-90 motion-reduce:transition-none"
           >
             <ChevronRight className="h-6 w-6" />
           </button>

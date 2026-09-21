@@ -155,8 +155,11 @@ export function ChannelTab() {
           </div>
         ) : failed && !data ? (
           <div className="mt-6 flex flex-col items-center gap-3 rounded-2xl bg-tg-surface px-4 py-10 text-center">
-            <AlertTriangle className="h-7 w-7 text-tg-hint" aria-hidden />
-            <p className="text-[14.5px] text-tg-hint">Не удалось загрузить кабинет</p>
+            <span className="flex size-16 items-center justify-center rounded-full bg-tg-like/10 text-tg-like" aria-hidden>
+              <AlertTriangle className="size-8" strokeWidth={1.7} />
+            </span>
+            <p className="text-[15px] font-semibold text-tg-text">Не удалось загрузить кабинет</p>
+            <p className="text-snippet text-tg-hint">Проверьте соединение и попробуйте ещё раз</p>
             <button
               type="button"
               onClick={() => {
@@ -165,7 +168,7 @@ export function ChannelTab() {
                 setLoading(true)
                 reload()
               }}
-              className="flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white active:opacity-80"
+              className="press mt-1 flex items-center gap-1.5 rounded-full bg-tg-link px-4 py-2 text-[14px] font-semibold text-white"
             >
               <RefreshCw className="h-4 w-4" aria-hidden /> Повторить
             </button>
@@ -368,7 +371,7 @@ function LiveSection({ channel, onOpen }: { channel: MyChannelDTO; onOpen: () =>
             haptic('light')
             onOpen()
           }}
-          className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-bold text-white shadow-lg transition-transform active:scale-[0.98]"
+          className="press mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-bold text-white shadow-lg shadow-tg-link/25"
         >
           <MessageSquare className="h-5 w-5" aria-hidden />
           Открыть живой канал
@@ -1424,11 +1427,11 @@ function CampaignForm({ channel, onDone }: { channel: MyChannelDTO; onDone: () =
 /* ------------------------------------------------------------------ */
 
 const CAMPAIGN_STATUS: Record<string, { label: string; cls: string }> = {
-  moderation: { label: 'на модерации', cls: 'bg-amber-500/12 text-amber-600 dark:text-amber-400' },
-  active: { label: 'идёт показ', cls: 'bg-emerald-500/12 text-emerald-600 dark:text-emerald-400' },
+  moderation: { label: 'на модерации', cls: 'bg-tg-star/12 text-tg-star' },
+  active: { label: 'идёт показ', cls: 'bg-tg-green/12 text-tg-green' },
   paused: { label: 'пауза', cls: 'bg-tg-sep/60 text-tg-hint' },
   completed: { label: 'завершена', cls: 'bg-tg-sep/60 text-tg-hint' },
-  rejected: { label: 'отклонена', cls: 'bg-rose-500/12 text-rose-500' },
+  rejected: { label: 'отклонена', cls: 'bg-tg-like/12 text-tg-like' },
   canceled: { label: 'отменена', cls: 'bg-tg-sep/60 text-tg-hint' },
 }
 

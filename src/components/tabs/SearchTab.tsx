@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronRight, History, Plus, Search, Trash2, TrendingUp, X, Check, Sparkles } from 'lucide-react'
+import { ChevronRight, History, Plus, Search, SearchX, Trash2, TrendingUp, X, Check, Sparkles } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -612,8 +612,14 @@ function SubscribePill({ subscribed, onClick }: { subscribed: boolean; onClick: 
 
 function Empty({ text }: { text: string }) {
   return (
-    <div className="px-8 py-14 text-center">
-      <p className="text-[15px] font-medium text-tg-hint">{text}</p>
+    <div className="flex flex-col items-center px-8 py-14 text-center">
+      <span
+        className="flex size-16 items-center justify-center rounded-full bg-tg-link/10 text-tg-link"
+        aria-hidden
+      >
+        <SearchX className="size-8" strokeWidth={1.7} />
+      </span>
+      <p className="mt-3 max-w-[300px] text-[14.5px] leading-relaxed text-tg-hint">{text}</p>
     </div>
   )
 }

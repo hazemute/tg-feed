@@ -134,7 +134,7 @@ export function SummarySheet({ post, onClose }: { post: PostDTO | null; onClose:
               <button
                 type="button"
                 onClick={onClose}
-                className="rounded-full bg-tg-surface px-3 py-1.5 text-[12px] font-medium text-tg-text2"
+                className="press rounded-full bg-tg-surface px-3 py-1.5 text-[12px] font-medium text-tg-text2"
               >
                 {t('summary.close')}
               </button>

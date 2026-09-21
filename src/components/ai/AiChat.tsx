@@ -184,7 +184,7 @@ function InlineButtons({
         href={msg.publishedLink}
         target="_blank"
         rel="noreferrer"
-        className="mt-2 inline-flex h-10 items-center gap-1.5 rounded-xl bg-tg-link px-4 text-[13.5px] font-semibold text-white transition active:scale-95"
+        className="press mt-2 inline-flex h-10 items-center gap-1.5 rounded-xl bg-tg-link px-4 text-[13.5px] font-semibold text-white"
       >
         <Rocket className="h-4 w-4" />
         Открыть пост в Telegram
@@ -202,7 +202,7 @@ function InlineButtons({
           onClick={b.onClick}
           disabled={b.disabled}
           className={cn(
-            'flex h-10 items-center gap-1.5 rounded-xl px-3.5 text-[13.5px] font-semibold transition active:scale-95',
+            'flex h-10 items-center gap-1.5 rounded-xl px-3.5 text-[13.5px] font-semibold press',
             b.kind === 'primary'
               ? 'bg-tg-link text-white shadow-sm' // Telegram: filled primary
               : 'bg-tg-surface text-tg-link', // Telegram: secondary tint

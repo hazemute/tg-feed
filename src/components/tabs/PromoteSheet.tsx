@@ -235,7 +235,7 @@ export function PromoteSheet({
               <button
                 type="button"
                 onClick={contact}
-                className="h-12 w-full rounded-xl bg-tg-star text-[15px] font-bold text-white transition active:scale-[0.98]"
+                className="press h-12 w-full rounded-xl bg-tg-star text-[15px] font-bold text-white"
               >
                 <span className="inline-flex items-center gap-2">
                   <Sparkles className="h-4 w-4" />
@@ -249,7 +249,7 @@ export function PromoteSheet({
                   onClose()
                   useApp.getState().goToTab('channel')
                 }}
-                className="h-11 w-full rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link transition active:scale-[0.98]"
+                className="press h-11 w-full rounded-xl bg-tg-link/10 text-[14.5px] font-semibold text-tg-link"
               >
                 Самостоятельно во вкладке «Мой канал»
               </button>
@@ -267,7 +267,7 @@ export function PromoteSheet({
 function Stat({ value, label }: { value: string; label: string }) {
   return (
     <div className="rounded-xl bg-tg-bg px-1 py-2.5">
-      <div className="text-[17px] font-bold leading-none text-tg-text">{value}</div>
+      <div className="text-[17px] font-bold leading-none tabular-nums text-tg-text">{value}</div>
       <div className="mt-1 text-[10.5px] leading-tight text-tg-hint">{label}</div>
     </div>
   )

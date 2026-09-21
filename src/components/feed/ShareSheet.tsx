@@ -73,7 +73,7 @@ export function ShareSheet() {
       zClass="z-[80]"
     >
       {/* Мини-превью поста: контекст — что именно делимся */}
-      <div className="mb-3 flex items-center gap-3 rounded-2xl bg-tg-surface/70 p-3">
+      <div className="mb-3 flex items-center gap-3 rounded-2xl border border-tg-sep/50 bg-tg-surface/70 p-3">
         <Avatar
           name={post.channel.title}
           color={post.channel.avatarColor}

@@ -41,7 +41,7 @@ export function BottomNav() {
     >
       <div
         data-noswipe
-        className="pointer-events-auto flex items-center gap-0 rounded-[24px] border border-tg-sep/70 bg-tg-surface/85 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.16)] backdrop-blur-xl dark:bg-tg-surface/75"
+        className="pointer-events-auto flex items-center gap-0 rounded-[26px] border border-tg-sep/80 bg-tg-surface/85 p-1.5 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:bg-tg-surface/80 dark:shadow-[0_2px_10px_rgba(0,0,0,0.35),0_16px_40px_-10px_rgba(0,0,0,0.55)]"
       >
         {items.map(({ id, labelKey, icon: Icon, fillActive }) => {
           const active = tab === id
@@ -58,14 +58,14 @@ export function BottomNav() {
               }}
               aria-current={active ? 'page' : undefined}
               aria-label={label}
-              className="relative flex h-[52px] w-[64px] flex-col items-center justify-center gap-[3px] transition active:scale-95"
+              className="relative flex h-[52px] w-[64px] flex-col items-center justify-center gap-[3px] transition active:scale-95 motion-reduce:transition-none"
             >
               {active && (
                 <motion.span
                   layoutId="bottomnav-pill"
                   transition={{ type: 'spring', stiffness: 480, damping: 36 }}
                   aria-hidden
-                  className="absolute inset-x-0.5 inset-y-0 rounded-[18px] bg-tg-link/12"
+                  className="absolute inset-x-0.5 inset-y-0 rounded-[19px] bg-tg-link/12 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                 />
               )}
               <Icon

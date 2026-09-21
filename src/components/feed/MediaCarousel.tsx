@@ -408,7 +408,7 @@ export function VideoPlayer({
           setMuted(v.muted)
         }}
         aria-label={muted ? 'Включить звук' : 'Выключить звук'}
-        className="absolute bottom-3.5 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-sm transition active:scale-90"
+        className="absolute bottom-3.5 right-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/45 text-white backdrop-blur-sm transition active:scale-90 motion-reduce:transition-none"
       >
         {muted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
       </button>

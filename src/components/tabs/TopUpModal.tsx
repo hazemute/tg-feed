@@ -340,7 +340,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
       type="button"
       onClick={pay}
       disabled={busy || (method === 'stars' ? !starsValid : !cardValid)}
-      className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:bg-tg-sep/60 disabled:text-tg-hint"
+      className="press mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white disabled:bg-tg-sep/60 disabled:text-tg-hint"
     >
       {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Wallet className="h-4.5 w-4.5" />}
       {method === 'stars'
@@ -609,7 +609,7 @@ function TonWaiting({
         <button
           type="button"
           onClick={onClose}
-          className="mt-4 h-12 w-full rounded-2xl bg-tg-link text-[15px] font-semibold text-white active:scale-[0.98]"
+          className="press mt-4 h-12 w-full rounded-2xl bg-tg-link text-[15px] font-semibold text-white"
         >
           {t('topup.great')}
         </button>
@@ -677,7 +677,7 @@ function TonWaiting({
           <button
             type="button"
             onClick={() => openTelegram(invoice.url)}
-            className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+            className="press mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white"
           >
             <ExternalLink className="h-4.5 w-4.5" />
             {t('topup.openTonkeeper')}
@@ -690,7 +690,7 @@ function TonWaiting({
           type="button"
           onClick={onCancel}
           className={cn(
-            'flex h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl text-[14px] font-semibold active:scale-[0.98]',
+            'press flex h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl text-[14px] font-semibold',
             status === 'expired' ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text2',
           )}
         >
@@ -718,7 +718,7 @@ function CopyRow({
     <button
       type="button"
       onClick={onCopy}
-      className="flex w-full items-center justify-between gap-3 rounded-2xl border border-tg-sep/60 bg-tg-bg px-3.5 py-2.5 text-left transition active:scale-[0.99]"
+      className="press flex w-full items-center justify-between gap-3 rounded-2xl border border-tg-sep/60 bg-tg-bg px-3.5 py-2.5 text-left"
     >
       <span className="min-w-0">
         <span className="block text-[11px] font-medium uppercase tracking-wide text-tg-hint">{label}</span>

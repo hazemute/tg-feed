@@ -92,7 +92,7 @@ function TeaserCta({ post }: { post: PostDTO }) {
           haptic('light')
           openTelegram(post.link ?? `https://t.me/${post.channel.username}`)
         }}
-        className="flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-tg-link/10 text-[14px] font-semibold text-tg-link transition active:scale-[0.98]"
+        className="press flex h-10 w-full items-center justify-center gap-2 rounded-xl bg-tg-link/10 text-[14px] font-semibold text-tg-link"
       >
         <Send className="h-4 w-4" aria-hidden />
         {t('post.readInTg')}
@@ -273,7 +273,7 @@ function TextActionsRow({
           openComments(post)
         }}
         aria-label={t('comments.title')}
-        className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2"
+        className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2 transition active:opacity-60 motion-reduce:transition-none"
       >
         <MessageCircle className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
         {post.commentsCount > 0 && (
@@ -291,7 +291,7 @@ function TextActionsRow({
         }}
         aria-label={t('post.save')}
         aria-pressed={post.bookmarked}
-        className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2"
+        className="flex min-h-[44px] items-center gap-1.5 py-1.5 pr-2 transition active:opacity-60 motion-reduce:transition-none"
       >
         <Sparkle
           className={cn(
@@ -314,7 +314,7 @@ function TextActionsRow({
           openShareSheet(post)
         }}
         aria-label={t('post.share')}
-        className="flex min-h-[44px] items-center py-1.5"
+        className="flex min-h-[44px] items-center py-1.5 pr-2 transition active:opacity-60 motion-reduce:transition-none"
       >
         <Forward className="h-[24px] w-[24px] text-tg-text" strokeWidth={1.7} />
       </button>
@@ -705,7 +705,7 @@ export function PostCard({
             }}
             aria-label={t('feed.notInterested')}
             title={t('feed.notInterested')}
-            className="ml-auto -mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 active:bg-tg-sep/50"
+            className="ml-auto -mr-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-tg-hint transition active:scale-90 active:bg-tg-sep/50 motion-reduce:transition-none"
           >
             <EyeOff className="h-[15px] w-[15px]" aria-hidden />
           </button>

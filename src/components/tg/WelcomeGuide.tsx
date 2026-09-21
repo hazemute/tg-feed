@@ -66,15 +66,15 @@ function NavMock({ highlight, hint }: { highlight: Tab; hint: string }) {
         </div>
         <ChevronDown className="mx-auto -mt-1 h-5 w-5 text-tg-link" strokeWidth={2.5} />
       </motion.div>
-      {/* Капсула навигации как в приложении */}
-      <div className="flex items-center gap-0 rounded-[22px] border border-tg-sep/70 bg-tg-surface/90 p-1.5 shadow-[0_8px_32px_rgba(0,0,0,0.14)] backdrop-blur-xl">
+      {/* Капсула навигации как в приложении (v5.66: синхронизирована с BottomNav) */}
+      <div className="flex items-center gap-0 rounded-[26px] border border-tg-sep/80 bg-tg-surface/85 p-1.5 shadow-[0_2px_8px_rgba(0,0,0,0.06),0_16px_40px_-8px_rgba(0,0,0,0.28)] backdrop-blur-xl dark:bg-tg-surface/80 dark:shadow-[0_2px_10px_rgba(0,0,0,0.35),0_16px_40px_-10px_rgba(0,0,0,0.55)]">
         {NAV_MOCK.map(({ id, icon: Icon, label }, i) => {
           const active = id === highlight
           return (
             <div
               key={id}
               className={cn(
-                'relative flex h-[50px] w-[58px] flex-col items-center justify-center gap-[3px] rounded-[18px] transition-colors',
+                'relative flex h-[50px] w-[58px] flex-col items-center justify-center gap-[3px] rounded-[19px] transition-colors',
                 active && 'bg-tg-link/12',
               )}
               aria-hidden
@@ -321,7 +321,7 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
         <button
           type="button"
           onClick={finish}
-          className="flex h-9 items-center rounded-full px-3.5 text-[13.5px] font-semibold text-tg-hint transition active:scale-95"
+          className="flex h-9 items-center rounded-full px-3.5 text-[13.5px] font-semibold text-tg-hint transition active:scale-95 motion-reduce:transition-none"
         >
           Пропустить
         </button>
@@ -357,7 +357,7 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
         <button
           type="button"
           onClick={next}
-          className="flex h-[54px] w-full items-center justify-center gap-2 rounded-full bg-tg-link text-[16px] font-bold text-white shadow-lg shadow-tg-link/25 transition active:scale-[0.98]"
+          className="press flex h-[54px] w-full items-center justify-center gap-2 rounded-full bg-tg-link text-[16px] font-bold text-white shadow-lg shadow-tg-link/25"
         >
           {last ? <Sparkles className="h-[18px] w-[18px]" aria-hidden /> : null}
           {slide.cta}

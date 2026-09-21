@@ -161,6 +161,8 @@ export function QuestsTab() {
 
         {failed ? (
           <Empty
+            icon={AlertTriangle}
+            tone="warn"
             text="Не удалось загрузить задания. Проверьте соединение и попробуйте снова."
             action={
               <button
@@ -170,7 +172,7 @@ export function QuestsTab() {
                   setFailed(false)
                   setReloadKey((k) => k + 1)
                 }}
-                className="mt-4 h-10 rounded-full bg-tg-link px-6 text-[14px] font-semibold text-white transition active:scale-95"
+                className="press mt-4 h-10 rounded-full bg-tg-link px-6 text-[14px] font-semibold text-white"
               >
                 Повторить
               </button>
@@ -182,7 +184,7 @@ export function QuestsTab() {
           <>
             {/* Сводка: доступно к получению + баланс + прогресс */}
             <section className="px-4 pb-1" aria-label="Сводка по заданиям">
-              <div className="rounded-2xl bg-tg-surface p-4">
+              <div className="card-soft rounded-2xl bg-tg-surface p-4">
                 <div className="flex items-center gap-3">
                   <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-tg-link/12">
                     <Sparkles className="size-5 text-tg-link" />
@@ -232,7 +234,10 @@ export function QuestsTab() {
             {/* Список заданий */}
             <section className="pb-6 pt-3" aria-label="Список заданий">
               {data.items.length === 0 ? (
-                <Empty text="Новых заданий пока нет — заглядывайте позже, они появляются регулярно." />
+                <Empty
+                  icon={Sparkles}
+                  text="Новых заданий пока нет — заглядывайте позже, они появляются регулярно."
+                />
               ) : (
                 <div className="space-y-2.5 px-4">
                   {data.items.map((q, i) => (
@@ -285,7 +290,7 @@ function QuestCard({
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: Math.min(index * 0.04, 0.2), duration: 0.25, ease: 'easeOut' }}
       className={cn(
-        'relative overflow-hidden rounded-2xl bg-tg-surface p-4 transition',
+        'card-soft relative overflow-hidden rounded-2xl bg-tg-surface p-4 transition',
         revoked && 'opacity-60',
       )}
     >
@@ -360,7 +365,7 @@ function QuestCard({
                 disabled={claiming}
                 aria-label={`Получить награду за задание «${quest.title}»`}
                 className={cn(
-                  'inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white transition active:scale-95',
+                  'press inline-flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-4 text-[13.5px] font-bold text-white',
                   claiming && 'opacity-60',
                 )}
               >
@@ -394,10 +399,29 @@ function openTarget(link: string): void {
 
 /* --------------------------- Служебные блоки --------------------------- */
 
-function Empty({ text, action }: { text: string; action?: React.ReactNode }) {
+function Empty({
+  icon: Icon,
+  tone = 'accent',
+  text,
+  action,
+}: {
+  icon: typeof Sparkles
+  tone?: 'accent' | 'warn'
+  text: string
+  action?: React.ReactNode
+}) {
   return (
-    <div className="px-8 py-14 text-center">
-      <p className="text-[14px] leading-relaxed text-tg-hint">{text}</p>
+    <div className="flex flex-col items-center px-8 py-14 text-center">
+      <span
+        className={cn(
+          'flex size-16 items-center justify-center rounded-full',
+          tone === 'warn' ? 'bg-tg-star/10 text-tg-star' : 'bg-tg-link/10 text-tg-link',
+        )}
+        aria-hidden
+      >
+        <Icon className="size-8" strokeWidth={1.7} />
+      </span>
+      <p className="mt-3 max-w-[300px] text-[14.5px] leading-relaxed text-tg-hint">{text}</p>
       {action}
     </div>
   )

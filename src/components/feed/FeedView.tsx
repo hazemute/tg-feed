@@ -1191,7 +1191,7 @@ export function FeedView() {
           {/* Категории — скроллящиеся табы: лёгкий визуальный вес, крупная
               тач-зона (h-10), активная — мягкая заливка акцентом */}
           <div
-            className="no-scrollbar flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-3 pb-1"
+            className="no-scrollbar fade-x flex min-w-0 flex-1 items-center gap-2 overflow-x-auto px-3 pb-1"
             role="tablist"
             aria-label="Категории ленты"
           >
@@ -1282,7 +1282,7 @@ export function FeedView() {
             )}
           </div>
         </div>
-        <div className="no-scrollbar flex items-center gap-2.5 overflow-x-auto px-3 pb-2.5 pt-1" data-noswipe>
+        <div className="no-scrollbar fade-x flex items-center gap-2.5 overflow-x-auto px-3 pb-2.5 pt-1" data-noswipe>
           <FilterChip
             active={mediaOnly}
             onClick={() => setMediaOnly((v) => !v)}
@@ -1425,23 +1425,23 @@ export function FeedView() {
           </>
         ) : items.length === 0 && loadFailed ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-tg-surface">
-              <AlertCircle className="h-7 w-7 text-tg-hint" aria-hidden />
+            <span className="flex size-16 items-center justify-center rounded-full bg-tg-like/10 text-tg-like" aria-hidden>
+              <AlertCircle className="size-8" strokeWidth={1.7} />
             </span>
             <p className="text-[15px] font-semibold text-tg-text">Не удалось загрузить ленту</p>
             <p className="text-snippet text-tg-hint">Проверьте соединение и попробуйте ещё раз</p>
             <button
               type="button"
               onClick={bumpFeed}
-              className="mt-1 h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link active:scale-95"
+              className="press mt-1 h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link"
             >
               Обновить
             </button>
           </div>
         ) : items.length === 0 ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-tg-surface">
-              <Inbox className="h-12 w-12 text-tg-hint" aria-hidden />
+            <span className="flex size-16 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+              <Inbox className="size-8" strokeWidth={1.7} />
             </span>
             <p className="text-[15px] font-semibold text-tg-text">Здесь пока пусто</p>
             <p className="text-snippet text-tg-hint">
@@ -1453,7 +1453,7 @@ export function FeedView() {
                 haptic('light')
                 openSearchWith('')
               }}
-              className="mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white active:scale-95"
+              className="press mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white"
             >
               Открыть поиск
             </button>
@@ -1461,8 +1461,8 @@ export function FeedView() {
         ) : visibleItems.length === 0 ? (
           /* Фильтры/поиск отсекли всё — предлагаем сброс */
           <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-tg-surface">
-              <Search className="h-7 w-7 text-tg-hint" aria-hidden />
+            <span className="flex size-16 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+              <Search className="size-8" strokeWidth={1.7} />
             </span>
             <p className="text-[15px] font-semibold text-tg-text">{t('toolbar.empty')}</p>
             <p className="text-snippet text-tg-hint">{t('toolbar.emptyHint')}</p>
@@ -1474,7 +1474,7 @@ export function FeedView() {
                 setHiddenIds(new Set())
                 saveHidden(new Set())
               }}
-              className="mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white active:scale-95"
+              className="press mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white"
             >
               {t('toolbar.resetFilters')}
             </button>
@@ -1577,7 +1577,7 @@ export function FeedView() {
               scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' })
             }}
             aria-label="Наверх"
-            className="absolute bottom-24 right-4 z-20 flex h-11 w-11 items-center justify-center rounded-full bg-tg-button text-white shadow-lg transition active:scale-90"
+            className="absolute bottom-24 right-4 z-20 flex h-11 w-11 items-center justify-center rounded-full bg-tg-button text-white shadow-lg shadow-black/25 transition active:scale-90 motion-reduce:transition-none"
           >
             <ArrowUp className="h-5 w-5" strokeWidth={2.2} />
           </motion.button>

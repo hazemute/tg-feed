@@ -233,7 +233,7 @@ export function ProfileTab() {
                 haptic('light')
                 setLoginOpen(true)
               }}
-              className="mt-2 flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-3.5 text-[13px] font-bold text-white transition active:scale-95"
+              className="press mt-2 flex h-9 items-center gap-1.5 rounded-full bg-tg-link px-3.5 text-[13px] font-bold text-white"
             >
               <Send className="h-3.5 w-3.5" />
               Вход по Telegram
@@ -934,7 +934,7 @@ function TiersSheet({
           <button
             type="button"
             onClick={() => setReloadKey((k) => k + 1)}
-            className="mt-3 h-11 w-full rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+            className="press mt-3 h-11 w-full rounded-xl bg-tg-link text-[15px] font-semibold text-white"
           >
             Повторить
           </button>
@@ -944,7 +944,7 @@ function TiersSheet({
       {!loading && !failed && data && (
         <>
           {/* Текущий статус */}
-          <div className="rounded-2xl bg-tg-surface p-4">
+          <div className="card-soft rounded-2xl bg-tg-surface p-4">
             <p className="text-[15.5px] font-bold text-tg-text">
               Ваш тариф: {TIER_NAMES[data.tier]}
             </p>
@@ -970,7 +970,7 @@ function TiersSheet({
               const price = data.prices[meta.plan]
               const p = period[meta.plan]
               return (
-                <div key={meta.plan} className="rounded-2xl bg-tg-surface p-4">
+                <div key={meta.plan} className="card-soft rounded-2xl bg-tg-surface p-4">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-[17px] font-bold text-tg-text">{meta.title}</span>
                     {data.tier === meta.plan && (
@@ -1029,7 +1029,7 @@ function TiersSheet({
                     type="button"
                     disabled={buying !== null}
                     onClick={() => buy(meta.plan)}
-                    className="mt-2.5 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:bg-tg-sep/60 disabled:text-tg-hint"
+                    className="press mt-2.5 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white disabled:bg-tg-sep/60 disabled:text-tg-hint"
                   >
                     {buying === meta.plan ? (
                       <>
@@ -1050,7 +1050,7 @@ function TiersSheet({
                       type="button"
                       disabled={buying !== null}
                       onClick={() => buyBalance(meta.plan)}
-                      className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-green text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-50"
+                      className="press mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl bg-tg-green text-[15px] font-semibold text-white disabled:opacity-50"
                     >
                       {buying === meta.plan ? (
                         <Loader2 className="h-4.5 w-4.5 animate-spin" />
@@ -1066,7 +1066,7 @@ function TiersSheet({
                       type="button"
                       disabled={buying !== null}
                       onClick={() => buyCard(meta.plan)}
-                      className="mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-tg-sep bg-tg-bg text-[15px] font-semibold text-tg-text transition active:scale-[0.98] disabled:opacity-50"
+                      className="press mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-tg-sep bg-tg-bg text-[15px] font-semibold text-tg-text disabled:opacity-50"
                     >
                       <CreditCard className="h-4.5 w-4.5" strokeWidth={1.8} />
                       Картой {kopToRub(p === 'month' ? price.monthKop : price.yearKop)}
