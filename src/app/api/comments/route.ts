@@ -4,6 +4,7 @@ import { err, readJson } from '@/lib/server'
 import { guardAuth, guardPublic } from '@/lib/guard'
 import { authorOf, likedSetFor, notifyUser, toCommentDTO } from '@/lib/comments-server'
 import { scanAd, scanFloodBonus } from '@/lib/moderation'
+import { grantXpWithDailyCap, XP_RULES } from '@/lib/xp'
 import type { CommentDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -240,6 +241,14 @@ export async function POST(request: Request) {
       adScore: created.adScore,
     }
 
+    /* ---- XP (v5.75): толковый комментарий — +2 XP (дневной лимит от фарма).
+     * Скрытый антирекламой комментарий XP не приносит (штраф НЕ даём сразу:
+     * эвристика умеет ложные срабатывания, наказываем только по жалобам/админу) ---- */
+    let xpGain: Awaited<ReturnType<typeof grantXpWithDailyCap>> = null
+    if (!created.hidden && text.length >= XP_RULES.commentMinLen) {
+      xpGain = await grantXpWithDailyCap(g.uid, 'comment', XP_RULES.commentDailyCap * XP_RULES.comment, 'Комментарий')
+    }
+
     /* ---- Уведомления (fire-and-forget) ---- */
     if (rootId && replyToUserId && replyToUserId !== g.uid) {
       // Ответ на чей-то комментарий — инбокс автора родителя
@@ -271,7 +280,15 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ comment: dto, commentsCount: created.commentsCount, hidden: created.hidden })
+    return NextResponse.json({
+      comment: dto,
+      commentsCount: created.commentsCount,
+      hidden: created.hidden,
+      // v5.75: обратная связь геймификации — тост «+2 XP»/«Новый уровень!»
+      xp: xpGain
+        ? { gained: XP_RULES.comment, level: xpGain.level, levelUp: xpGain.levelUp, rewardSwipes: xpGain.rewardSwipes }
+        : null,
+    })
   } catch (e) {
     console.error('[comments POST]', e)
     return err('comment failed', 500)

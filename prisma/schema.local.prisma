@@ -38,6 +38,8 @@ model User {
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
   promoteCredits Int      @default(0) // v5.69: купленные продвижения (пакет 5 шт/199 ₽)
   promoteFreeMonth String @default("") // v5.69: 'YYYY-MM' (UTC) — месяц, в котором бесплатное уже использовано
+  xp             Int      @default(0) // v5.75: опыт за активность (уровни)
+  level          Int      @default(1) // v5.75: уровень (монотонно растёт)
   createdAt     DateTime @default(now())
 
   @@index([tier])
@@ -58,6 +60,7 @@ model User {
   campaigns     AdCampaign[]
   translations  TranslationLog[]
   balanceLogs   BalanceLog[]
+  xpLogs        XpLog[]
   questCompletions QuestCompletion[]
   postHides      PostHide[]
   postReports    PostReport[]
@@ -686,13 +689,28 @@ model BalanceLog {
   id        String   @id @default(cuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  kind      String // topup | convert | ai_spend | purchase | ad_campaign | refund | admin
+  kind      String // topup | convert | ai_spend | purchase | ad_campaign | refund | admin | quest | level_up
   currency  String   @default("rub") // rub | swp
   amount    Int // знаковый: + зачисление, − списание
   note      String?
   createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
+}
+
+// Опыт (v5.75): журнал начислений/штрафов XP + база дневных лимитов анти-абуза.
+// kind: comment | like | quest | checkin | bug | violation | admin
+model XpLog {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  kind      String
+  amount    Int // знаковый: + начисление, − штраф
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, kind, createdAt])
 }
 
 model Giveaway {

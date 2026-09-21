@@ -27,6 +27,7 @@ import {
   Trash2,
   Wallet,
   X,
+  Zap,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { toast } from 'sonner'
@@ -144,13 +145,14 @@ export function AdminBadgeChip({ slug }: { slug: string }) {
 
 /* ===================== v5.62: карточка-секция модалки «Действия» ===================== */
 
-type SectionTone = 'emerald' | 'violet' | 'slate' | 'red'
+type SectionTone = 'emerald' | 'violet' | 'slate' | 'red' | 'amber'
 
 const SECTION_TONE: Record<SectionTone, string> = {
   emerald: 'bg-emerald-50 text-emerald-700',
   violet: 'bg-violet-50 text-violet-700',
   slate: 'bg-slate-100 text-slate-600',
   red: 'bg-red-50 text-red-600',
+  amber: 'bg-amber-50 text-amber-600',
 }
 
 /** Секция модалки: белая карточка с иконкой в тонированном квадрате + заголовок + хинт */
@@ -232,6 +234,9 @@ export function UsersTab({ tick, onSettled }: TabProps) {
   const [swipesInput, setSwipesInput] = useState('')
   // v5.61: рублёвый баланс (ввод в ₽ с копейками, храним строкой из-за десятичной запятой)
   const [balanceInput, setBalanceInput] = useState('')
+  // v5.75: XP дельтой + причина (найденный баг и т.п.)
+  const [xpInput, setXpInput] = useState('')
+  const [xpReason, setXpReason] = useState('')
   const [actionBusy, setActionBusy] = useState(false)
   // v5.18: выдача подписки в модалке
   const [tierPlan, setTierPlan] = useState<'plus' | 'pro'>('plus')
@@ -352,6 +357,8 @@ export function UsersTab({ tick, onSettled }: TabProps) {
     setBanReason(u.banReason ?? '')
     setSwipesInput(u.swipes != null ? String(u.swipes) : '')
     setBalanceInput(u.balanceKop != null ? (u.balanceKop / 100).toFixed(2) : '')
+    setXpInput('')
+    setXpReason('')
     // Подписка: план/срок прематчиваем по текущему состоянию
     setTierPlan(u.tier === 'pro' ? 'pro' : 'plus')
     setTierDays('30')
@@ -603,7 +610,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                         aria-label={`Допуск мимо техработ: ${displayName(u)}`}
                       />
                     </div>
-                    <div className="mt-2 grid grid-cols-5 gap-1 text-center">
+                    <div className="mt-2 grid grid-cols-4 gap-1 text-center">
                       {(
                         [
                           ['Лайки', u.likes],
@@ -620,6 +627,16 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                           <div className="text-[11px] text-slate-500">{label}</div>
                         </div>
                       ))}
+                      <div className="rounded-lg bg-amber-50 py-1">
+                        <div className="text-sm font-semibold tabular-nums text-amber-700">
+                          {u.level ?? 1}
+                        </div>
+                        <div className="text-[11px] text-amber-600">Уровень</div>
+                      </div>
+                      <div className="rounded-lg bg-amber-50 py-1">
+                        <div className="text-sm font-semibold tabular-nums text-amber-700">{fmtNum(u.xp ?? 0)}</div>
+                        <div className="text-[11px] text-amber-600">XP</div>
+                      </div>
                     </div>
                     <div className="mt-1.5 text-[11px] text-slate-500">
                       {u.username ? `@${u.username} · ` : ''}регистрация {fmtAgo(u.createdAt)}
@@ -1059,7 +1076,68 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                     </div>
                   </SectionCard>
 
-                  {/* ===== Модерация: TG Premium + бан/разбан (danger zone) ===== */}
+                  {/* XP и уровни (v5.75): ручное начисление за найденный баг/вклад.
+                      Дельта −100…+1000; причина попадает в журнал XP юзера */}
+                  <SectionCard
+                    icon={Zap}
+                    tone="amber"
+                    title="XP — опыт и уровень"
+                    hint={`уровень ${actionUser.level ?? 1} · XP ${fmtNum(actionUser.xp ?? 0)}`}
+                    footer={
+                      <p className="text-[11px] leading-snug text-slate-500">
+                        Начисляйте дельтой: за найденный баг (проверив, что он реальный), вклад в
+                        проект. Штраф за нарушение — минусом. Уровень от штрафа не откатывается.
+                      </p>
+                    }
+                  >
+                    <div className="space-y-2">
+                      <Input
+                        id="xp-input"
+                        type="number"
+                        min={-1000}
+                        max={1000}
+                        value={xpInput}
+                        onChange={(e) => setXpInput(e.target.value)}
+                        className={cn('h-9 text-sm tabular-nums', inputDark)}
+                        aria-label="XP дельта (от −1000 до 1000)"
+                        placeholder="Например: 50"
+                      />
+                      <Input
+                        id="xp-reason"
+                        type="text"
+                        maxLength={140}
+                        value={xpReason}
+                        onChange={(e) => setXpReason(e.target.value)}
+                        className={cn('h-9 text-sm', inputDark)}
+                        aria-label="Причина начисления XP"
+                        placeholder="Причина: найден баг с аватарами…"
+                      />
+                      <Button
+                        size="sm"
+                        className="h-9 w-full bg-amber-600 text-white hover:bg-amber-700"
+                        disabled={
+                          actionBusy ||
+                          xpInput === '' ||
+                          !Number.isFinite(Number(xpInput)) ||
+                          Number(xpInput) === 0 ||
+                          Math.abs(Number(xpInput)) > 1000
+                        }
+                        onClick={() => {
+                          const delta = Math.round(Number(xpInput))
+                          if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 1000) return
+                          if (actionUser)
+                            void runUserAction(
+                              actionUser,
+                              { action: 'xp', userId: actionUser.id, xp: delta, reason: xpReason || undefined },
+                              `XP ${delta > 0 ? '+' : ''}${delta} — теперь ${fmtNum((actionUser.xp ?? 0) + delta)}`,
+                              { xp: (actionUser.xp ?? 0) + delta },
+                            )
+                        }}
+                      >
+                        Начислить XP
+                      </Button>
+                    </div>
+                  </SectionCard>
                   <SectionCard icon={ShieldCheck} tone="red" title="Модерация" hint="Флаг TG Premium, бан и разбан">
                     {/* Telegram Premium (флаг) */}
                     <div className="flex items-center justify-between gap-2">

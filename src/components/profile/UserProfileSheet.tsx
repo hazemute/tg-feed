@@ -20,6 +20,7 @@ import type { PublicProfileResponse } from '@/lib/types'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { Avatar } from '@/components/tg/Avatar'
 import { UserBadges } from '@/components/badges/UserBadges'
+import { LevelBar } from '@/components/profile/LevelBar'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 
 export function UserProfileSheet() {
@@ -136,6 +137,8 @@ export function UserProfileSheet() {
             {state.data.username && (
               <div className="mt-0.5 text-[14px] text-tg-hint">@{state.data.username}</div>
             )}
+            {/* v5.75: уровень и XP — публично, компактный неактивный бар */}
+            <LevelBar xp={state.data.xp} level={state.data.level} compact className="mt-1.5" />
             {memberSince && (
               <div className="mt-1 text-[12.5px] font-medium text-tg-link">В Tg Swipe с {memberSince}</div>
             )}

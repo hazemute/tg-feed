@@ -278,6 +278,17 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "AiChatMessage_sessionId_createdAt_idx" ON "AiChatMessage"("sessionId", "createdAt")`,
     `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "promoteSpent" TEXT`,
   ],
+  // v5.75: СИСТЕМА УРОВНЕЙ — XP за активность (комментарии/лайки/задания/чек-ин),
+  // штрафы за нарушения (скрытые жалобами/удалённые админом комментарии, бан),
+  // награда свайпами за повышение уровня. XpLog — журнал + дневные лимиты анти-абуза.
+  'v5.75-xp': [
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "xp" integer NOT NULL DEFAULT 0`,
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "level" integer NOT NULL DEFAULT 1`,
+    `CREATE TABLE IF NOT EXISTS "XpLog" ("id" text PRIMARY KEY, "userId" text NOT NULL, "kind" text NOT NULL, "amount" integer NOT NULL, "note" text, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE INDEX IF NOT EXISTS "XpLog_userId_createdAt_idx" ON "XpLog" ("userId", "createdAt")`,
+    `CREATE INDEX IF NOT EXISTS "XpLog_userId_kind_createdAt_idx" ON "XpLog" ("userId", "kind", "createdAt")`,
+    `ALTER TABLE "XpLog" ADD CONSTRAINT "XpLog_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User"("id") ON DELETE CASCADE ON UPDATE CASCADE`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -332,6 +343,9 @@ const CRITICAL: Array<[string, string | null]> = [
   ['AiChatSession', null],
   ['AiChatMessage', 'sessionId'],
   ['Post', 'promoteSpent'],
+  ['User', 'xp'],
+  ['User', 'level'],
+  ['XpLog', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }
@@ -361,7 +375,7 @@ export async function checkSchema(): Promise<SchemaState> {
       FROM information_schema.columns c
       WHERE c.table_schema = 'public' AND (
         c.table_name = 'AiSearchLog' OR c.table_name = 'AdminLog' OR
-        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame','promoteCredits','promoteFreeMonth')) OR
+        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame','promoteCredits','promoteFreeMonth','xp','level')) OR
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt','teaserApplyTo')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR
@@ -369,7 +383,7 @@ export async function checkSchema(): Promise<SchemaState> {
         (c.table_name = 'BotEmoji' OR c.table_name = 'BotSetting' OR c.table_name = 'Giveaway' OR c.table_name = 'GiveawayEntry' OR c.table_name = 'GiveawayTicket' OR c.table_name = 'GiveawayReferral') OR
         (c.table_name = 'Giveaway' AND c.column_name IN ('tasks','promoCode','losersRewardSwipes','photoFileId')) OR
         (c.table_name = 'GiveawayEntry' AND c.column_name IN ('ticketsCount','tasksDone')) OR
-        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport' OR c.table_name = 'DailyCheckin' OR c.table_name = 'QuestVerifyLog' OR c.table_name = 'BotChat' OR c.table_name = 'AiChatSession') OR
+        (c.table_name = 'UserSource' OR c.table_name = 'Quest' OR c.table_name = 'QuestCompletion' OR c.table_name = 'ScheduledPost' OR c.table_name = 'PromoCode' OR c.table_name = 'PromoRedemption' OR c.table_name = 'PostHide' OR c.table_name = 'PostReport' OR c.table_name = 'CommentReport' OR c.table_name = 'DailyCheckin' OR c.table_name = 'QuestVerifyLog' OR c.table_name = 'BotChat' OR c.table_name = 'AiChatSession' OR c.table_name = 'XpLog') OR
         (c.table_name = 'Quest' AND c.column_name = 'targetType') OR
         (c.table_name = 'Comment' AND c.column_name IN ('hidden','adScore','reportsCount')) OR
         (c.table_name = 'Post' AND c.column_name IN ('reportsCount','promoteSpent')) OR

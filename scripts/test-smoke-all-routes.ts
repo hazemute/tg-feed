@@ -109,6 +109,14 @@ check('wallet без сессии → 401', noAuth.status === 401, `status=${noA
 const noAuth2 = await fetch(BASE + '/api/notifications')
 check('notifications без сессии → 401', noAuth2.status === 401 || noAuth2.status === 200, `status=${noAuth2.status}`)
 
+// v5.75: уровень/XP — форма ответа под сессией
+const lvl = await get('/api/level')
+check(
+  'level: xp/level/пороги',
+  lvl.status === 200 && typeof lvl.body?.xp === 'number' && typeof lvl.body?.level === 'number' && typeof lvl.body?.needXp === 'number' && Array.isArray(lvl.body?.history),
+  `status=${lvl.status} body=${JSON.stringify(lvl.body).slice(0, 80)}`,
+)
+
 // невалидные входы
 const badLike = await get('/api/like', { method: 'POST', body: JSON.stringify({ userId: UID }) })
 check('like без postId → 400', badLike.status === 400, `status=${badLike.status}`)

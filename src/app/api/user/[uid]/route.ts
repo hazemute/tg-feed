@@ -75,6 +75,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ uid:
           profileBg: true,
           profileFrame: true,
           createdAt: true,
+          // v5.75: уровень — публично (прогресс-бар в чужом профиле)
+          xp: true,
+          level: true,
         },
       }),
       db.$queryRaw<{ comments: number; likesReceived: number }[]>`
@@ -105,6 +108,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ uid:
       badges: parseBadges(user.badges),
       memberSince: user.createdAt.toISOString(),
       stats: { comments: Number(st.comments), likesReceived: Number(st.likesReceived) },
+      // v5.75: уровень и XP — в публичном профиле
+      xp: user.xp,
+      level: user.level,
       style: {
         palette: user.profilePalette,
         bg: user.profileBg,

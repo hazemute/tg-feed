@@ -6,6 +6,7 @@ import { guardAdmin } from '@/lib/guard'
 import { IS_SQLITE } from '@/lib/server'
 import { logAdmin } from '@/lib/admin-log'
 import { avatarUrlOf } from '@/lib/comments-server'
+import { grantXp, XP_RULES } from '@/lib/xp'
 
 export const dynamic = 'force-dynamic'
 
@@ -114,7 +115,7 @@ export async function DELETE(request: Request) {
     const result = await db.$transaction(async (tx) => {
       const c = await tx.comment.findUnique({
         where: { id: parsed.data.id },
-        select: { id: true, postId: true },
+        select: { id: true, postId: true, userId: true },
       })
       if (!c) return null
       await tx.comment.delete({ where: { id: c.id } })
@@ -123,10 +124,13 @@ export async function DELETE(request: Request) {
         data: { commentsCount: { decrement: 1 } },
         select: { commentsCount: true },
       })
-      return { commentsCount: Math.max(0, p.commentsCount) }
+      return { commentsCount: Math.max(0, p.commentsCount), authorId: c.userId }
     })
 
     if (!result) return err('comment not found', 404)
+    // v5.75: удаление комментария модератором — нарушение (−15 XP автору).
+    // Гость штрафа не боится: grantXp сам пропускает guest_*.
+    void grantXp(result.authorId, 'violation', XP_RULES.violationComment, 'Комментарий удалён модератором')
     await logAdmin('comment', parsed.data.id, { op: 'delete_comment', postId: null })
     return NextResponse.json({ ok: true, commentsCount: result.commentsCount })
   } catch (e) {

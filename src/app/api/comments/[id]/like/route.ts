@@ -3,6 +3,7 @@ import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { authorOf, notifyUser } from '@/lib/comments-server'
+import { grantXpWithDailyCap, XP_RULES } from '@/lib/xp'
 
 export const dynamic = 'force-dynamic'
 
@@ -81,6 +82,9 @@ export async function POST(request: Request, ctx: Ctx) {
           channelUsername: comment.post.channel.username,
         })
       }
+      // v5.75: лайк на комментарий — +1 XP автору (лимит 30/день против кружков взаимности).
+      // Fire-and-forget: лайк не должен ждать XP-транзакцию.
+      void grantXpWithDailyCap(comment.userId, 'like', XP_RULES.likeDailyCap, 'Лайк на комментарий')
     }
 
     return NextResponse.json({ liked: true, likesCount: n.likesCount })

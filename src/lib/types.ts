@@ -270,6 +270,9 @@ export type UserDTO = {
   createdAt?: string
   /** v5.27: оформление профиля */
   style?: { palette: string; bg: string; frame: string }
+  /** v5.75: опыт и уровень (прогресс-бар под ником) */
+  xp?: number
+  level?: number
 }
 
 /** Ответ GET /api/user/[uid] — публичный профиль (без приватных полей) */
@@ -283,7 +286,25 @@ export type PublicProfileResponse = {
   badges: string[]
   memberSince: string // ISO createdAt
   stats: { comments: number; likesReceived: number }
+  /** v5.75: уровень и XP — публично */
+  xp: number
+  level: number
   style: { palette: string; bg: string; frame: string }
+}
+
+/** Ответ GET /api/level — мой уровень (v5.75) */
+export type LevelResponse = {
+  isGuest: boolean
+  xp: number
+  level: number
+  inLevelXp: number
+  needXp: number
+  levelStart: number
+  levelEnd: number
+  pct: number
+  nextRewardSwipes: number
+  today: { comment: number; commentCap: number; like: number; likeCap: number }
+  history: { id: string; kind: string; amount: number; note: string | null; createdAt: string }[]
 }
 
 /** Ответ GET /api/tiers — состояние тарифа и лимита ИИ-поиска */

@@ -3,6 +3,7 @@ import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { grantXp, XP_RULES } from '@/lib/xp'
 
 export const dynamic = 'force-dynamic'
 
@@ -56,6 +57,12 @@ export async function POST(request: Request, ctx: { params: Promise<{ id: string
       },
       select: { id: true },
     })
+
+    // v5.75: комментарий скрыт по жалобам сообщества — штраф XP автору.
+    // Только при фактическом скрытии (не за каждый повторный репорт) и один раз.
+    if (hide && !comment.hidden) {
+      void grantXp(comment.userId, 'violation', XP_RULES.violationComment, 'Комментарий скрыт по жалобам')
+    }
 
     return NextResponse.json({ ok: true, hidden: hide, reportsCount })
   } catch (e) {

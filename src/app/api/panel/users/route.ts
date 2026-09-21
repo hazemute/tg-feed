@@ -10,6 +10,7 @@ import { emitAppEvent } from '@/lib/events'
 import { sendBotNotification } from '@/lib/bot-notify'
 import { type Tier } from '@/lib/tiers'
 import { BADGES, parseBadges, serializeBadges } from '@/lib/badges'
+import { grantXp, XP_RULES } from '@/lib/xp'
 
 export const dynamic = 'force-dynamic'
 
@@ -95,6 +96,8 @@ export async function GET(request: Request) {
           createdAt: true,
           swipes: true,
           balanceKop: true,
+          xp: true,
+          level: true,
           _count: { select: { likes: true, subscriptions: true, bookmarks: true, views: true } },
         },
         orderBy:
@@ -130,6 +133,9 @@ export async function GET(request: Request) {
           // v5.61: рублёвый баланс кошелька (User.balanceKop, копейки) —
           // редактируется в модалке («Баланс рублей»), нужен для компенсаций
           balanceKop: u.balanceKop,
+          // v5.75: опыт/уровень (видны в панели, редактируются действием «XP»)
+          xp: u.xp,
+          level: u.level,
           createdAt: u.createdAt.toISOString(),
           likes: u._count.likes,
           subscriptions: u._count.subscriptions,
@@ -166,6 +172,7 @@ export async function PATCH(request: Request) {
       bypassMaintenance?: unknown
       action?: unknown
       swipes?: unknown
+      xp?: unknown
       balanceKop?: unknown
       reason?: unknown
       tier?: unknown
@@ -189,8 +196,37 @@ export async function PATCH(request: Request) {
     if (action === 'ban' || action === 'unban') {
       const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 200) : undefined
       await setBanned(userId, action === 'ban', reason)
+      // v5.75: бан — штраф XP (−50). Уровень не откатывается, но XP падает.
+      if (action === 'ban') {
+        void grantXp(userId, 'violation', XP_RULES.violationBan, 'Бан аккаунта')
+      }
       await logAdmin(action, userId, reason ? { reason } : undefined)
       return NextResponse.json({ ok: true, userId, banned: action === 'ban' })
+    }
+    // v5.75: ручное начисление XP админом (найденный баг, вклад в проект и т.п.).
+    // Дельта −100…+1000 за один раз, с причиной — она попадает в журнал XP юзера.
+    if (action === 'xp') {
+      const delta = typeof body.xp === 'number' ? Math.round(body.xp) : NaN
+      const reason = typeof body.reason === 'string' ? body.reason.trim().slice(0, 140) : ''
+      if (!Number.isFinite(delta) || delta === 0 || Math.abs(delta) > 1000) {
+        return err('xp must be nonzero, |xp| <= 1000')
+      }
+      const target = await db.user.findUnique({ where: { id: userId }, select: { id: true } })
+      if (!target) return err('user not found', 404)
+      const res = await grantXp(
+        userId,
+        delta > 0 ? 'bug' : 'admin',
+        delta,
+        delta > 0 ? `Награда от админа: ${reason || 'вклад в проект'}` : `Админ: ${reason || 'корректировка'}`,
+      )
+      await logAdmin('xp', userId, { delta, reason, result: res ? { xp: res.xp, level: res.level } : null })
+      return NextResponse.json({
+        ok: true,
+        userId,
+        xp: res?.xp ?? null,
+        level: res?.level ?? null,
+        levelUp: res?.levelUp ?? false,
+      })
     }
     if (action === 'swipes') {
       const swipes = typeof body.swipes === 'number' ? Math.round(body.swipes) : NaN

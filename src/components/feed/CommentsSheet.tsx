@@ -398,7 +398,13 @@ export function CommentsSheet() {
     if (inputRef.current) inputRef.current.style.height = 'auto'
 
     try {
-      const r = await api<{ comment: CommentDTO; commentsCount: number; hidden?: boolean }>('/api/comments', {
+      const r = await api<{
+        comment: CommentDTO
+        commentsCount: number
+        hidden?: boolean
+        // v5.75: геймификация — XP за толковый комментарий
+        xp?: { gained: number; level: number; levelUp: boolean; rewardSwipes: number } | null
+      }>('/api/comments', {
         method: 'POST',
         body: JSON.stringify({
           postId: post.id,
@@ -410,6 +416,15 @@ export function CommentsSheet() {
       if (r.hidden) {
         haptic('error')
         toast.error('Комментарий скрыт: похоже на рекламу или спам. Его видите только вы.')
+      }
+      // v5.75: обратная связь XP — «+2 XP» или «Новый уровень N!» (за уровень ещё и свайпы)
+      if (r.xp) {
+        if (r.xp.levelUp) {
+          haptic('success')
+          toast.success(`Новый уровень ${r.xp.level}! +${r.xp.rewardSwipes} свайпов`)
+        } else {
+          toast.success(`+${r.xp.gained} XP`)
+        }
       }
       setItems((prev) => {
         if (!replying) {

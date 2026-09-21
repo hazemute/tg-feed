@@ -41,6 +41,8 @@ import { WalletCard } from '@/components/tabs/WalletCard'
 import { TopUpModal } from '@/components/tabs/TopUpModal'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
+import { LevelBar } from '@/components/profile/LevelBar'
+import { LevelSheet } from '@/components/profile/LevelSheet'
 import { GiveawayCard } from '@/components/profile/GiveawayCard'
 
 
@@ -87,6 +89,8 @@ export function ProfileTab() {
   const [tiersData, setTiersData] = useState<TiersResponse | null>(null)
   // Оформление профиля (v5.27): отдельная полная страница кастомайзера
   const [customizerOpen, setCustomizerOpen] = useState(false)
+  // v5.75: шит уровня (тап по XP-бару под ником)
+  const [levelOpen, setLevelOpen] = useState(false)
   // Кошелёк (v5.39): шторка пополнения + счётчик изменений для обновления баланса
   const [topUpOpen, setTopUpOpen] = useState(false)
   const [walletReload, setWalletReload] = useState(0)
@@ -220,6 +224,18 @@ export function ProfileTab() {
           <div className="mt-0.5 truncate text-[15px] text-tg-hint">
             {user.username ? `@${user.username}` : user.isGuest ? t('profile.subGuestHint') : t('profile.noUsername')}
           </div>
+          {/* v5.75: XP-бар уровня под ником (гостю рано — уровни после входа) */}
+          {!user.isGuest && (
+            <LevelBar
+              xp={user.xp ?? 0}
+              level={user.level ?? 1}
+              className="mt-1.5"
+              onClick={() => {
+                haptic('light')
+                setLevelOpen(true)
+              }}
+            />
+          )}
           {!user.isGuest && (
             <div className="mt-1 flex items-center gap-1 text-[12px] font-medium text-tg-link">
               <ShieldCheck className="h-3.5 w-3.5" />
@@ -656,6 +672,14 @@ export function ProfileTab() {
 
       {/* Вход по Telegram (сайт + гости) */}
       <LoginByTelegram open={loginOpen} onClose={() => setLoginOpen(false)} />
+
+      {/* v5.75: шит уровня — прогресс, правила XP, история начислений */}
+      <LevelSheet
+        open={levelOpen}
+        onClose={() => setLevelOpen(false)}
+        isGuest={!!user.isGuest}
+        onLogin={() => setLoginOpen(true)}
+      />
 
       <Onboarding open={editOpen} mode="edit" onClose={() => setEditOpen(false)} />
       {/* Галерея тем оформления */}
