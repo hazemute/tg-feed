@@ -17,6 +17,20 @@ const nextConfig: NextConfig = {
      INVALID_IMAGE_OPTIMIZE_REQUEST на любой запрос, не используем его. */
   // Anti-scan: не раскрываем стек (X-Powered-By: Next.js) в ответах
   poweredByHeader: false,
+  /* v5.75.1: срез веса serverless-функций (Vercel «Function storage»).
+     Трейсинг тащил в КАЖДУЮ лямбду prisma CLI (67 МБ) + @prisma/engines
+     (36 МБ, schema/migration-движки) → деплой весил ~1.9 ГБ и на холдхобби
+     за неделю набегало 22+ ГБ. В рантайме Prisma нужен только
+     node_modules/.prisma/client (query-движок) — CLI и engines не трогаем.
+     Sharp НЕ исключаем: /api/media использует его честно. */
+  outputFileTracingExcludes: {
+    "/**": [
+      "./node_modules/prisma/**",
+      "./node_modules/@prisma/engines/**",
+      "./node_modules/@prisma/language-tools/**",
+      "./node_modules/.bin/**",
+    ],
+  },
   // Security-заголовки на все ответы (в т.ч. статику).
   // ВАЖНО: X-Frame-Options НЕ ставим — мини-апп работает в iframe Telegram Web
   // (web.telegram.org). Вместо него — CSP frame-ancestors с allowlist Telegram.

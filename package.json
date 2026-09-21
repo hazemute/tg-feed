@@ -12,7 +12,8 @@
     "db:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "db:reset": "prisma migrate reset --schema prisma/schema.prisma",
     "db:local:generate": "prisma generate --schema prisma/schema.local.prisma",
-    "db:local:push": "prisma db push --schema prisma/schema.local.prisma --accept-data-loss"
+    "db:local:push": "prisma db push --schema prisma/schema.local.prisma --accept-data-loss",
+    "cleanup:vercel": "node scripts/vercel-cleanup.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

@@ -1,0 +1,27 @@
+# Ежедневная очистка старых Vercel-деплоев — держит «Function storage»
+# минимальным (каждый деплой хранит свои serverless-функции до удаления).
+# Требует repo secret VERCEL_TOKEN (https://vercel.com/account/tokens).
+name: vercel-cleanup
+
+on:
+  schedule:
+    - cron: "37 3 * * *" # ежедневно 03:37 UTC
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Delete old deployments (keep current production only)
+        run: node scripts/vercel-cleanup.mjs
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
