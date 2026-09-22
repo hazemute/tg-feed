@@ -36,7 +36,9 @@ export async function GET(
   if (!/^\d{5,20}$/.test(id)) return new Response('bad id', { status: 400 })
 
   const target = await cacheAside({
-    key: `emoji:url:${id}`,
+    // v2: старый ключ держал токен-URL (теперь всегда наш fid-прокси);
+    // старые записи умрут по TTL — читаем только из нового неймспейса
+    key: `emoji:url:v2:${id}`,
     ttlSec: URL_TTL_SEC,
     memoryTtlMs: URL_MEM_TTL_MS,
     fetcher: async () => {
