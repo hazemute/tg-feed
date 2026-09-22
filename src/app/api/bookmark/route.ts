@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { putFlagsOverride } from '@/lib/page-cache'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { evaluateAchievements } from '@/lib/achievements-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -52,6 +53,8 @@ export async function POST(request: Request) {
       // гонка (двойной тап): закладка уже стоит — идемпотентно
     }
     putFlagsOverride(userId, postId, { bookmarked: true })
+    // v5.90: ачивка «Коллекционер» — fire-and-forget с guard'ом
+    void evaluateAchievements(userId, 'bookmark')
     return NextResponse.json({ bookmarked: true })
   } catch (e) {
     console.error('[bookmark]', e)

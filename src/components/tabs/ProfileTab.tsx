@@ -11,6 +11,7 @@ import {
   Landmark,
   Lightbulb,
   Loader2,
+  Medal,
   MousePointerClick,
   Pencil,
   Send,
@@ -43,6 +44,7 @@ import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 import { LevelBar } from '@/components/profile/LevelBar'
 import { LevelSheet } from '@/components/profile/LevelSheet'
+import { AchievementsSheet } from '@/components/profile/AchievementsSheet'
 import { LeaderboardSheet } from '@/components/profile/LeaderboardSheet'
 import { GiveawayCard } from '@/components/profile/GiveawayCard'
 
@@ -97,6 +99,8 @@ export function ProfileTab() {
   // v5.87: лидерборды (не рублёвые) — раздел держит ProfileTab, им управляет и шит уровня
   const [lbOpen, setLbOpen] = useState(false)
   const [lbTab, setLbTab] = useState<LbTab>('level')
+  // v5.90: достижения — полный экран ачивок с наградами
+  const [achOpen, setAchOpen] = useState(false)
 
   const reload = () => {
     if (!user) return
@@ -310,6 +314,23 @@ export function ProfileTab() {
           <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('profile.lbRow')}</span>
           <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
         </button>
+        {/* v5.90: достижения — награды свайпами и XP за активность (только вошедшим) */}
+        {!user.isGuest && (
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light')
+              setAchOpen(true)
+            }}
+            className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-500">
+              <Medal className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('ach.row')}</span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+          </button>
+        )}
       </div>
 
       {/* v5.46: активный розыгрыш — билеты/задания/промокод (скрыт, если розыгрыша нет) */}
@@ -716,6 +737,14 @@ export function ProfileTab() {
         onClose={() => setLbOpen(false)}
         tab={lbTab}
         onTabChange={setLbTab}
+        onLogin={() => setLoginOpen(true)}
+      />
+
+      {/* v5.90: достижения — ачивки с наградами (свайпы + XP) */}
+      <AchievementsSheet
+        open={achOpen}
+        onClose={() => setAchOpen(false)}
+        isGuest={!!user.isGuest}
         onLogin={() => setLoginOpen(true)}
       />
 

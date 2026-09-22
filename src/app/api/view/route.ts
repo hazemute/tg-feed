@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { checkAndAwardAuto } from '@/lib/giveaway-tickets'
+import { evaluateViewsAchievement } from '@/lib/achievements-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -90,6 +91,8 @@ export async function POST(request: Request) {
     // (fire-and-forget: проверка активных розыгрышей + выдача билетов, не тормозит ответ)
     if (added > 0 && !userId.startsWith('guest_')) {
       void checkAndAwardAuto({ id: userId, tgId: Number(userId.slice(3)) || undefined })
+      // v5.90: лёгкая проверка ачивки «Листатель» (guard 10 минут — см. модуль)
+      void evaluateViewsAchievement(userId)
     }
 
     return NextResponse.json({ ok: true, added })

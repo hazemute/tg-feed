@@ -4,6 +4,7 @@ import { db } from '@/lib/db'
 import { putFlagsOverride } from '@/lib/page-cache'
 import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
+import { evaluateAchievements } from '@/lib/achievements-server'
 
 export const dynamic = 'force-dynamic'
 
@@ -81,6 +82,8 @@ export async function POST(request: Request) {
         }),
       ])
       putFlagsOverride(userId, postId, { liked: true })
+      // v5.90: ачивки соц.активности («Щедрая душа») — fire-and-forget с guard'ом
+      void evaluateAchievements(userId, 'like')
       // v5.68: лайки автономны — только мини-апп (без reactionsTg)
       return NextResponse.json({ liked: true, likesCount: updated.likesCount })
     } catch {

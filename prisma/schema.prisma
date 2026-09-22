@@ -77,6 +77,24 @@ model User {
   postReports    PostReport[]
   commentReports CommentReport[]
   lbPayouts      LeaderboardPayout[]
+  achievements   UserAchievement[]
+}
+
+// Достижения (v5.90): одна запись на (юзер, ачивка) — tier это достигнутый
+// максимальный уровень (1 бронза | 2 серебро | 3 золото). Каталог ачивок —
+// статичный код (lib/achievements.ts), в БД только разблокировки.
+model UserAchievement {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievementId String   // ключ из каталога lib/achievements.ts
+  tier          Int      @default(1) // достигнутый максимальный тир (1..3)
+  unlockedAt    DateTime @default(now()) // время первого зачёта (tier 1)
+  tierAt        DateTime @default(now()) // время текущего тира (последний апгрейд)
+
+  @@unique([userId, achievementId])
+  @@index([achievementId, tier]) // админ-срез «кто получил»
+  @@index([userId, tierAt]) // «свежие награды» в профиле
 }
 
 model Category {

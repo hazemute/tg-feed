@@ -321,6 +321,15 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "LeaderboardPayout_period_periodKey_idx" ON "LeaderboardPayout"("period", "periodKey")`,
     `CREATE INDEX IF NOT EXISTS "LeaderboardPayout_userId_createdAt_idx" ON "LeaderboardPayout"("userId", "createdAt")`,
   ],
+  // v5.90: система достижений — разблокировки ачивок (каталог живёт в коде,
+  // lib/achievements.ts). Одна строка на (юзер, ачивка), tier — достигнутый
+  // максимум (1..3); unlockedAt — первый зачёт, tierAt — последний апгрейд.
+  'v5.90-achievements': [
+    `CREATE TABLE IF NOT EXISTS "UserAchievement" ("id" text PRIMARY KEY, "userId" text NOT NULL, "achievementId" text NOT NULL, "tier" integer NOT NULL DEFAULT 1, "unlockedAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "tierAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "UserAchievement_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "UserAchievement_userId_achievementId_key" ON "UserAchievement"("userId", "achievementId")`,
+    `CREATE INDEX IF NOT EXISTS "UserAchievement_achievementId_tier_idx" ON "UserAchievement"("achievementId", "tier")`,
+    `CREATE INDEX IF NOT EXISTS "UserAchievement_userId_tierAt_idx" ON "UserAchievement"("userId", "tierAt")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()

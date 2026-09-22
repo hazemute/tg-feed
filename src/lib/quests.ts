@@ -5,6 +5,7 @@ import { sendBotNotification } from '@/lib/bot-notify'
 import { plural } from '@/lib/giveaway-tickets'
 import { invalidateBalance } from '@/lib/balance-cache'
 import { grantXp, XP_RULES } from '@/lib/xp'
+import { evaluateAchievements } from '@/lib/achievements-server'
 
 /**
  * ЗАДАНИЯ С НАГРАДОЙ (v5.51, расширены в v5.70) — вкладка «Задания».
@@ -338,6 +339,8 @@ export async function grantQuestCompletion(
   notifyQuestReward(userId, quest.title, quest.rewardSwp, balance)
   // v5.75: задание — +5 XP (геймификация: задания теперь качают и уровень)
   void grantXp(userId, 'quest', XP_RULES.quest, `Задание: ${quest.title}`)
+  // v5.90: ачивка «Достигатор» — зачёт выполненного задания
+  void evaluateAchievements(userId, 'quest')
   return balance
 }
 
@@ -505,6 +508,8 @@ async function claimDailyQuest(
   notifyQuestReward(user.id, quest.title, reward, balance)
   // v5.75: ежедневный чек-ин — +3 XP
   void grantXp(user.id, 'checkin', XP_RULES.checkin, 'Ежедневный чек-ин')
+  // v5.90: ачивки серий («Терпение», «Верный читатель»)
+  void evaluateAchievements(user.id, 'checkin')
   return { status: 'done', reward, bonus, balance, streak }
 }
 

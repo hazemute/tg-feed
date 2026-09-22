@@ -5,6 +5,7 @@ import { guardAuth, guardPublic } from '@/lib/guard'
 import { authorOf, likedSetFor, notifyUser, toCommentDTO } from '@/lib/comments-server'
 import { scanAd, scanFloodBonus } from '@/lib/moderation'
 import { grantXpWithDailyCap, XP_RULES } from '@/lib/xp'
+import { evaluateAchievements } from '@/lib/achievements-server'
 import type { CommentDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -248,6 +249,10 @@ export async function POST(request: Request) {
     if (!created.hidden && text.length >= XP_RULES.commentMinLen) {
       xpGain = await grantXpWithDailyCap(g.uid, 'comment', XP_RULES.commentDailyCap * XP_RULES.comment, 'Комментарий')
     }
+
+    // v5.90: ачивки «Голос»/«Признание» — даже без XP (лимит/короткий текст),
+    // ведь скрытый антирекламой комментарий в метрику не входит
+    if (!created.hidden) void evaluateAchievements(g.uid, 'comment')
 
     /* ---- Уведомления (fire-and-forget) ---- */
     if (rootId && replyToUserId && replyToUserId !== g.uid) {

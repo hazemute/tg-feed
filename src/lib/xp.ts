@@ -62,7 +62,7 @@ export type GrantResult = {
  */
 export async function grantXp(
   userId: string,
-  kind: 'comment' | 'like' | 'quest' | 'checkin' | 'bug' | 'violation' | 'admin',
+  kind: 'comment' | 'like' | 'quest' | 'checkin' | 'bug' | 'violation' | 'admin' | 'achievement',
   amount: number,
   note?: string,
 ): Promise<GrantResult | null> {
@@ -122,6 +122,15 @@ export async function grantXp(
     })
 
     if (!res) return null
+
+    if (res.levelsGained > 0) {
+      // v5.90: уровень поднялся — проверяем ачивки прогресса («Восхождение»).
+      // Динамический импорт разрывает цикл (achievements-server статически
+      // импортирует grantXp для наград XP).
+      void import('@/lib/achievements-server')
+        .then((m) => m.evaluateAchievements(userId, 'level'))
+        .catch(() => {})
+    }
 
     if (res.rewardSwipes > 0) {
       await invalidateBalance(userId).catch(() => {})
