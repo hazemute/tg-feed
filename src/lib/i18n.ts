@@ -368,6 +368,12 @@ const DICT = {
   'topup.tonSub': ['Tonkeeper и любые TON-кошельки', 'Tonkeeper and any TON wallet'],
   'topup.soon': ['Скоро', 'Soon'],
   'topup.unavailable': ['Появится в ближайшее время', 'Coming soon'],
+  'topup.emptyTitle': ['Пополнение скоро появится', 'Top-up is coming soon'],
+  'topup.emptyBody': [
+    'Способы оплаты ещё настраиваются. А свайпы уже можно заработать: задания, уровни, розыгрыши.',
+    'Payment methods are being set up. Meanwhile you can already earn swipes: quests, levels, giveaways.',
+  ],
+  'topup.emptyOk': ['Понятно', 'Got it'],
   'topup.custom': ['Своя сумма — от 100 ₽', 'Custom amount — from ₽100'],
   'topup.customAria': ['Сумма пополнения в рублях', 'Top-up amount in rubles'],
   'topup.range': ['от 100 до 50 000 ₽', 'from ₽100 to ₽50,000'],

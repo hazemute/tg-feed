@@ -254,6 +254,40 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     }
   }
 
+  /*
+   * v5.78: пока методы грузятся — компактный спиннер вместо «мёртвых» табов
+   * (мигание disabled-вкладок выглядело как сломанные кнопки). Когда ни один
+   * способ не настроен (нет ключей ЮKassa/бота/TON-кошелька) — честное
+   * объяснение и подсказка, где взять свайпы уже сейчас.
+   */
+  if (methods === null) {
+    return (
+      <div className="flex justify-center py-10" role="status" aria-label="Загрузка способов оплаты">
+        <Loader2 className="h-5 w-5 animate-spin text-tg-hint" aria-hidden />
+      </div>
+    )
+  }
+  if (!methods.card && !methods.stars && !methods.ton) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-8 text-center">
+        <span className="flex h-12 w-12 items-center justify-center rounded-full bg-tg-surface">
+          <Wallet className="h-6 w-6 text-tg-hint" aria-hidden />
+        </span>
+        <p className="text-[15px] font-semibold text-tg-text">{t('topup.emptyTitle')}</p>
+        <p className="max-w-[300px] text-[13.5px] leading-relaxed text-tg-hint">
+          {t('topup.emptyBody')}
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="mt-1 h-11 w-full max-w-[300px] rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+        >
+          {t('topup.emptyOk')}
+        </button>
+      </div>
+    )
+  }
+
   /* ----- TON: экран ожидания перевода ----- */
   if (ton) {
     return (

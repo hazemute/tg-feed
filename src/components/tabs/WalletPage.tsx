@@ -21,7 +21,7 @@ import {
   ArrowLeftRight,
   ArrowUpRight,
   ChevronLeft,
-  Check,
+  ChevronRight,
   Copy,
   Gift,
   Loader2,
@@ -125,8 +125,13 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
         setFailed(false)
         patchBalance({ balanceKop: r.balanceKop, swipes: r.swipes })
       })
-      .catch(() => setFailed((f) => !f || !data))
-  }, [patchBalance, data])
+      .catch(() => {
+        // Есть данные с прошлого раза — молча оставляем их (не мигаем ошибкой);
+        // первый неудачный запрос → блок «Повторить» вместо пустого экрана
+        setFailed(true)
+        setData((d) => d)
+      })
+  }, [patchBalance])
 
   useEffect(() => {
     if (open) load()
@@ -209,6 +214,14 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
                 {account === 'swp' && <SwipeIcon className="h-8 w-8 text-tg-link" />}
                 {balance}
               </div>
+              {/* v5.78: сразу отвечаем на главный вопрос «а сколько это в деньгах» */}
+              {data && (
+                <div className="mt-1.5 text-[13px] text-tg-hint">
+                  {account === 'swp'
+                    ? `≈ ${fmtRub(Math.round((data.swipes / data.swpPerRub) * 100))} · ${fmtNum(data.swpPerRub)} свайпов = 1 ₽`
+                    : `1 ₽ = ${fmtNum(data.swpPerRub)} свайпов`}
+                </div>
+              )}
               {address && (
                 <button
                   type="button"
@@ -247,50 +260,39 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
               ))}
             </div>
 
-            {/* Счета */}
-            <div className="mx-4 mt-4 overflow-hidden rounded-2xl border border-tg-sep/60">
-              {(
-                [
-                  { id: 'swp', title: 'Swipe-счёт', addr: data?.swipeAddress, bal: data ? `${fmtNum(data.swipes)}` : '…', unit: 'SWP' },
-                  { id: 'rub', title: 'Рубль-счёт', addr: data?.rubAddress, bal: data ? fmtRub(data.balanceKop) : '…', unit: '' },
-                ] as const
-              ).map((acc, i) => (
+            {/* v5.78: другой счёт одной строкой (раньше был дублирующий блок
+                «Счета» с обоими адресами — та же информация, что сверху, —
+                и страница выглядела перегруженной). Тап — мгновенное переключение. */}
+            {data && (() => {
+              const otherId: 'swp' | 'rub' = account === 'swp' ? 'rub' : 'swp'
+              const isSwp = otherId === 'swp'
+              return (
                 <button
-                  key={acc.id}
                   type="button"
                   onClick={() => {
                     haptic('light')
-                    setAccount(acc.id)
+                    setAccount(otherId)
                   }}
-                  className={cn(
-                    'flex w-full items-center gap-3 px-4 py-3 text-left transition active:bg-tg-surface/60',
-                    i > 0 && 'border-t border-tg-sep/60',
-                    account === acc.id && 'bg-tg-link/5',
-                  )}
+                  className="mx-4 mt-3 flex w-[calc(100%-32px)] items-center gap-3 rounded-2xl border border-tg-sep/60 px-4 py-3 text-left transition active:bg-tg-surface/60"
                 >
                   <span
                     className={cn(
                       'flex h-10 w-10 items-center justify-center rounded-full',
-                      acc.id === 'swp' ? 'bg-tg-link/15 text-tg-link' : 'bg-emerald-500/15 text-emerald-500',
+                      isSwp ? 'bg-tg-link/15 text-tg-link' : 'bg-emerald-500/15 text-emerald-500',
                     )}
                   >
-                    {acc.id === 'swp' ? (
-                      <SwipeIcon className="h-5 w-5" />
-                    ) : (
-                      <span className="text-[16px] font-bold">₽</span>
-                    )}
+                    {isSwp ? <SwipeIcon className="h-5 w-5" /> : <span className="text-[16px] font-bold">₽</span>}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-[15px] font-semibold text-tg-text">{acc.title}</span>
-                    <span className="block truncate text-[12.5px] text-tg-hint">{acc.addr ?? 'адрес создаётся…'}</span>
+                    <span className="block text-[12.5px] text-tg-hint">Другой счёт</span>
+                    <span className="block text-[15px] font-semibold text-tg-text">
+                      {isSwp ? 'Swipe-счёт' : 'Рубль-счёт'} · {isSwp ? `${fmtNum(data.swipes)} SWP` : fmtRub(data.balanceKop)}
+                    </span>
                   </span>
-                  <span className="flex items-center gap-1 text-[15px] font-bold text-tg-text">
-                    {acc.bal}
-                    {acc.unit && <span className="text-[12px] font-semibold text-tg-hint">{acc.unit}</span>}
-                  </span>
+                  <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
                 </button>
-              ))}
-            </div>
+              )
+            })()}
 
             {/* Рефералка */}
             {data?.refLink && (
@@ -303,10 +305,9 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
                   <Gift className="h-5 w-5 text-tg-link" aria-hidden />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-[15px] font-semibold text-tg-text">
-                    Рефералка · {data.refPercent}% с трат друзей
-                  </span>
+                  <span className="block text-[15px] font-semibold text-tg-text">Приглашай друзей</span>
                   <span className="flex items-center gap-3 text-[12.5px] text-tg-hint">
+                    <span>{data.refPercent}% с их трат — твои</span>
                     <span className="flex items-center gap-1">
                       <Users className="h-3.5 w-3.5" aria-hidden /> {data.refInvited}
                     </span>
@@ -321,20 +322,24 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
 
             {/* История */}
             <h2 className="px-5 pb-1 pt-5 text-[16px] font-bold text-tg-text">История</h2>
-            {failed ? (
-              <button
-                type="button"
-                onClick={load}
-                className="mx-4 rounded-2xl bg-tg-surface px-4 py-4 text-[14px] text-tg-hint"
-              >
-                Не удалось загрузить · Повторить
-              </button>
-            ) : !data ? (
-              <div className="flex justify-center py-8">
-                <Loader2 className="h-5 w-5 animate-spin text-tg-hint" aria-hidden />
-              </div>
+            {!data ? (
+              failed ? (
+                <button
+                  type="button"
+                  onClick={load}
+                  className="mx-4 rounded-2xl bg-tg-surface px-4 py-4 text-[14px] text-tg-hint"
+                >
+                  Не удалось загрузить · Повторить
+                </button>
+              ) : (
+                <div className="flex justify-center py-8">
+                  <Loader2 className="h-5 w-5 animate-spin text-tg-hint" aria-hidden />
+                </div>
+              )
             ) : data.feed.length === 0 ? (
-              <p className="px-5 py-4 text-[13.5px] text-tg-hint">Пока пусто — всё впереди</p>
+              <p className="px-5 py-4 text-[13.5px] leading-relaxed text-tg-hint">
+                Пока операций нет — здесь появятся переводы, обмены и заработанные свайпы
+              </p>
             ) : (
               <div className="mx-4 divide-y divide-tg-sep/50 overflow-hidden rounded-2xl border border-tg-sep/60">
                 {data.feed.map((item) => (
@@ -356,13 +361,19 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
           />
           <ConvertSheet
             open={sheet === 'convert'}
+            rate={data?.swpPerRub ?? 500}
+            convertMin={data?.swpConvertMin ?? 500}
             onClose={() => setSheet(null)}
             onDone={() => {
               setSheet(null)
               load()
             }}
           />
-          <WithdrawSheet open={sheet === 'withdraw'} onClose={() => setSheet(null)} />
+          <WithdrawSheet
+            open={sheet === 'withdraw'}
+            onClose={() => setSheet(null)}
+            onExchange={() => setSheet('convert')}
+          />
 
           {/* Пополнение (существующий модал) */}
           <TopUpModal open={topUpOpen} onClose={() => setTopUpOpen(false)} onReload={load} />
@@ -408,9 +419,9 @@ function HistoryRow({ item }: { item: FeedItem }) {
             isSelf ? 'text-tg-hint' : isIn ? 'text-emerald-500' : 'text-red-500',
           )}
         >
+          {/* v5.78: рубли приходят КОПЕЙКАМИ — fmtRub, иначе «200 ₽» вместо «2,00 ₽» */}
           {isSelf ? '' : isIn ? '+' : '−'}
-          {fmtNum(item.amount)}
-          {item.currency === 'swp' ? ' SWP' : ' ₽'}
+          {item.currency === 'swp' ? `${fmtNum(item.amount)} SWP` : fmtRub(item.amount)}
         </span>
       </div>
     )
@@ -439,9 +450,9 @@ function HistoryRow({ item }: { item: FeedItem }) {
           positive ? 'text-emerald-500' : 'text-tg-hint',
         )}
       >
+        {/* v5.78: рубли приходят КОПЕЙКАМИ — fmtRub (см. выше) */}
         {positive ? '+' : '−'}
-        {fmtNum(Math.abs(item.amount))}
-        {item.currency === 'swp' ? ' SWP' : ' ₽'}
+        {item.currency === 'swp' ? `${fmtNum(Math.abs(item.amount))} SWP` : fmtRub(Math.abs(item.amount))}
       </span>
     </div>
   )
@@ -465,7 +476,13 @@ function TransferSheet({
   const [busy, setBusy] = useState(false)
   const swipes = useApp((s) => s.balance?.swipes ?? 0)
   const balanceKop = useApp((s) => s.balance?.balanceKop ?? 0)
-  const max = account === 'swp' ? swipes : balanceKop
+  /*
+   * v5.78: для рублей пользователь вводит РУБЛИ (как видит в балансе),
+   * сервер принимает КОПЕЙКИ — раньше input молча ждал копейки: «Всё»
+   * подставляло 150000 при балансе «1 500,00 ₽», и введённые «1500»
+   * уходили как 15 ₽. Теперь конвертация на границе UI/API.
+   */
+  const maxAmount = account === 'swp' ? swipes : Math.floor(balanceKop / 100)
 
   useEffect(() => {
     if (open) {
@@ -475,8 +492,11 @@ function TransferSheet({
   }, [open])
 
   const submit = async () => {
-    const amt = Math.floor(Number(amount))
-    if (!to.trim() || !Number.isFinite(amt) || amt <= 0) return
+    const raw = Number(amount)
+    if (!to.trim() || !Number.isFinite(raw) || raw <= 0) return
+    // свайпы — целые; рубли — на сервер уходим копейками
+    const amt = account === 'swp' ? Math.floor(raw) : Math.round(raw * 100)
+    if (amt <= 0) return
     setBusy(true)
     try {
       const r = await api<{ ok: boolean; amount: number; toLabel: string | null }>('/api/wallet/transfer', {
@@ -484,7 +504,9 @@ function TransferSheet({
         body: JSON.stringify({ to: to.trim(), amount: amt, currency: account }),
       })
       haptic('success')
-      toast.success(`Отправлено ${fmtNum(r.amount)} ${account === 'swp' ? 'SWP' : '₽'}${r.toLabel ? ` → ${r.toLabel}` : ''}`)
+      toast.success(
+        `Отправлено ${account === 'swp' ? `${fmtNum(r.amount)} SWP` : fmtRub(r.amount)}${r.toLabel ? ` → ${r.toLabel}` : ''}`,
+      )
       onDone()
     } catch (e) {
       toast.error((e as Error).message || 'Перевод не удался')
@@ -498,7 +520,9 @@ function TransferSheet({
       {open && (
         <SheetShell title="Перевести" onClose={onClose}>
           <label className="block">
-            <span className="mb-1.5 block text-[13px] font-medium text-tg-hint">Кому — адрес счёта или @username</span>
+            <span className="mb-1.5 block text-[13px] font-medium text-tg-hint">
+              Кому — адрес счёта или @username
+            </span>
             <input
               value={to}
               onChange={(e) => setTo(e.target.value)}
@@ -509,20 +533,20 @@ function TransferSheet({
           </label>
           <label className="mt-3 block">
             <span className="mb-1.5 flex items-center justify-between text-[13px] font-medium text-tg-hint">
-              Сколько
+              {account === 'swp' ? 'Сколько свайпов' : 'Сколько рублей'}
               <button
                 type="button"
-                onClick={() => setAmount(String(max))}
+                onClick={() => setAmount(String(maxAmount))}
                 className="rounded-full bg-tg-surface px-2.5 py-0.5 text-[12px] font-semibold text-tg-link"
               >
-                Всё
+                Всё ({fmtNum(maxAmount)})
               </button>
             </span>
             <input
               value={amount}
-              onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ''))}
-              inputMode="numeric"
-              placeholder="0"
+              onChange={(e) => setAmount(e.target.value.replace(account === 'swp' ? /[^\d]/g : /[^\d.,]/g, '').replace(',', '.'))}
+              inputMode="decimal"
+              placeholder={account === 'swp' ? '0' : '0,00'}
               className="h-12 w-full rounded-xl border border-tg-sep bg-tg-bg px-4 text-[16px] text-tg-text outline-none focus:border-tg-link"
             />
           </label>
@@ -542,11 +566,22 @@ function TransferSheet({
 
 /* --------------------------- Шит «Обменять» --------------------------- */
 
-function ConvertSheet({ open, onClose, onDone }: { open: boolean; onClose: () => void; onDone: () => void }) {
+function ConvertSheet({
+  open,
+  rate,
+  convertMin,
+  onClose,
+  onDone,
+}: {
+  open: boolean
+  rate: number
+  convertMin: number
+  onClose: () => void
+  onDone: () => void
+}) {
   const [dir, setDir] = useState<'swp2rub' | 'rub2swp'>('swp2rub')
   const [amount, setAmount] = useState('')
   const [busy, setBusy] = useState(false)
-  const [course, setCourse] = useState(500)
   const swipes = useApp((s) => s.balance?.swipes ?? 0)
   const balanceKop = useApp((s) => s.balance?.balanceKop ?? 0)
 
@@ -554,9 +589,26 @@ function ConvertSheet({ open, onClose, onDone }: { open: boolean; onClose: () =>
     if (open) setAmount('')
   }, [open])
 
+  /*
+   * v5.78: рубли теперь вводятся В РУБЛЯХ (сервер по-прежнему ждёт копейки —
+   * конвертируем при отправке). Живое превью «получишь N» — чтобы обмен был
+   * понятен до нажатия кнопки.
+   */
+  const numeric = Number(amount.replace(',', '.'))
+  const insufficient =
+    dir === 'swp2rub'
+      ? numeric > swipes
+      : Math.round(numeric * 100) > balanceKop
+  const canSubmit =
+    Number.isFinite(numeric) &&
+    numeric > 0 &&
+    !insufficient &&
+    (dir === 'swp2rub' ? numeric >= convertMin : numeric * 100 >= 1)
+
   const submit = async () => {
-    const amt = Math.floor(Number(amount))
-    if (!Number.isFinite(amt) || amt <= 0) return
+    if (!canSubmit) return
+    // сервер: swp2rub — свайпы; rub2swp — КОПЕЙКИ
+    const amt = dir === 'swp2rub' ? Math.floor(numeric) : Math.round(numeric * 100)
     setBusy(true)
     try {
       await api('/api/wallet', {
@@ -564,7 +616,11 @@ function ConvertSheet({ open, onClose, onDone }: { open: boolean; onClose: () =>
         body: JSON.stringify({ action: dir, amount: amt }),
       })
       haptic('success')
-      toast.success(dir === 'swp2rub' ? 'Обменяно в рубли' : 'Обменяно в свайпы')
+      toast.success(
+        dir === 'swp2rub'
+          ? `Обменяно: ${fmtNum(Math.floor(numeric))} SWP → ${fmtRub(Math.floor(numeric / rate) * 100)}`
+          : `Обменяно: ${fmtRub(Math.round(numeric * 100))} → ${fmtNum(Math.round(numeric * rate))} SWP`,
+      )
       onDone()
     } catch (e) {
       toast.error((e as Error).message || 'Обмен не удался')
@@ -605,10 +661,12 @@ function ConvertSheet({ open, onClose, onDone }: { open: boolean; onClose: () =>
           </div>
           <label className="mt-3 block">
             <span className="mb-1.5 flex items-center justify-between text-[13px] font-medium text-tg-hint">
-              {dir === 'swp2rub' ? 'Свайпы (кратно 500)' : 'Рубли'}
+              {dir === 'swp2rub' ? `Свайпы (мин. ${fmtNum(convertMin)})` : 'Рубли'}
               <button
                 type="button"
-                onClick={() => setAmount(String(dir === 'swp2rub' ? swipes : balanceKop))}
+                onClick={() =>
+                  setAmount(String(dir === 'swp2rub' ? swipes : Math.floor(balanceKop / 100)))
+                }
                 className="rounded-full bg-tg-surface px-2.5 py-0.5 text-[12px] font-semibold text-tg-link"
               >
                 Всё
@@ -616,22 +674,43 @@ function ConvertSheet({ open, onClose, onDone }: { open: boolean; onClose: () =>
             </span>
             <input
               value={amount}
-              onChange={(e) => setAmount(e.target.value.replace(/[^\d]/g, ''))}
-              inputMode="numeric"
-              placeholder="0"
+              onChange={(e) =>
+                setAmount(e.target.value.replace(dir === 'swp2rub' ? /[^\d]/g : /[^\d.,]/g, '').replace(',', '.'))
+              }
+              inputMode="decimal"
+              placeholder={dir === 'swp2rub' ? '0' : '0,00'}
               className="h-12 w-full rounded-xl border border-tg-sep bg-tg-bg px-4 text-[16px] text-tg-text outline-none focus:border-tg-link"
             />
           </label>
-          <p className="mt-2 text-center text-[12.5px] text-tg-hint">Курс: 500 свайпов = 1 ₽</p>
+          {/* Живое превью результата — обмен понятен до нажатия кнопки */}
+          <div className="mt-2 min-h-[20px] text-center text-[13px] text-tg-hint">
+            {Number.isFinite(numeric) && numeric > 0 ? (
+              insufficient ? (
+                <span className="text-red-500">
+                  {dir === 'swp2rub' ? 'Недостаточно свайпов' : 'Недостаточно рублей'}
+                </span>
+              ) : (
+                <span>
+                  Получишь{' '}
+                  <b className="font-semibold text-tg-text">
+                    {dir === 'swp2rub'
+                      ? fmtRub(Math.floor(numeric / rate) * 100)
+                      : `${fmtNum(Math.round(numeric * rate))} SWP`}
+                  </b>
+                </span>
+              )
+            ) : (
+              `Курс: ${fmtNum(rate)} свайпов = 1 ₽`
+            )}
+          </div>
           <button
             type="button"
-            disabled={busy || !Number(amount)}
+            disabled={busy || !canSubmit}
             onClick={submit}
             className="mt-3 flex h-12 w-full items-center justify-center rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-40"
           >
             {busy ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> : 'Обменять'}
           </button>
-          <input type="hidden" value={course} readOnly />
         </SheetShell>
       )}
     </AnimatePresence>
@@ -640,24 +719,42 @@ function ConvertSheet({ open, onClose, onDone }: { open: boolean; onClose: () =>
 
 /* --------------------------- Шит «Вывести» --------------------------- */
 
-function WithdrawSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
+function WithdrawSheet({
+  open,
+  onClose,
+  onExchange,
+}: {
+  open: boolean
+  onClose: () => void
+  onExchange: () => void
+}) {
   return (
     <AnimatePresence>
       {open && (
         <SheetShell title="Вывести" onClose={onClose}>
           <p className="text-[14.5px] leading-relaxed text-tg-text">
-            Вывод на карту появится в следующем обновлении.
+            Вывод на карту — скоро.
           </p>
-          <p className="mt-1.5 text-[13.5px] text-tg-hint">
-            Пока рубли работают внутри сервиса, а свайпы обмениваются на рубли кнопкой «Обменять».
+          <p className="mt-1.5 text-[13.5px] leading-relaxed text-tg-hint">
+            А свайпы уже можно превратить в рубли кнопкой «Обменять»: рубли работают
+            внутри сервиса — нейросети, продвижение канала, задания.
           </p>
-          <button
-            type="button"
-            onClick={onClose}
-            className="mt-4 flex h-12 w-full items-center justify-center rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
-          >
-            <Check className="mr-1.5 h-5 w-5" aria-hidden /> Понятно
-          </button>
+          <div className="mt-4 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={onExchange}
+              className="flex h-12 items-center justify-center rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98]"
+            >
+              Обменять свайпы
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-12 items-center justify-center rounded-xl bg-tg-surface text-[15px] font-semibold text-tg-text transition active:scale-[0.98]"
+            >
+              Понятно
+            </button>
+          </div>
         </SheetShell>
       )}
     </AnimatePresence>

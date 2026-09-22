@@ -149,21 +149,6 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   // 304 Not Modified — тело не изменилось: отдаём сохранённый ответ как есть
   if (res.status === 304 && known) return known.body as T
 
-  if (res.status === 401) {
-    // Сессия протухла/невалидна — сбрасываем и просим page.tsx пере-авторизоваться
-    setSessionToken(null)
-    // Кэш мог быть набран под старой сессией — мгновенно забываем всё
-    MEMO_CACHE.clear()
-    INFLIGHT.clear()
-    ETAG_CACHE.clear()
-    try {
-      localStorage.removeItem(ETAG_LS_KEY)
-    } catch {
-      /* не критично */
-    }
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
-  }
-
   if (!res.ok) {
     // Тело читаем ОДИН раз (повторный res.json() бросает «body used already»
     // и терял поле error — тост показывал безликое «HTTP 503»)
@@ -171,6 +156,8 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       error?: string
       maintenance?: unknown
       prerelease?: unknown
+      auth?: boolean
+      banned?: boolean
     }
     // Режим техработ: middleware режет API с {maintenance:true} — весь app на экран техработ
     if (data.maintenance === true && typeof window !== 'undefined') {
@@ -179,6 +166,27 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     // До релиза: экран «Приложение ещё разрабатывается» (НЕ техработы, приказ владельца)
     if (data.prerelease === true && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('tgfeed:prerelease'))
+    }
+    /*
+     * v5.78: 401 бывает «мягким» — {auth:true} (гостю нужен полный вход,
+     * напр. /api/giveaway) и {banned:true}. Сессия при этом ВАЛИДНА и стирать
+     * её нельзя: раньше ЛЮБОЙ 401 убивал токен, и один GET /api/giveaway на
+     * профиле разлогинивал всё приложение — кошелёк падал в «Не удалось
+     * загрузить», а все кнопки отдавали 401 до полной перезагрузки страницы.
+     */
+    if (res.status === 401 && data.auth !== true && data.banned !== true) {
+      // Сессия протухла/отозвана — сбрасываем и просим page.tsx пере-войти
+      setSessionToken(null)
+      // Кэш мог быть набран под старой сессией — мгновенно забываем всё
+      MEMO_CACHE.clear()
+      INFLIGHT.clear()
+      ETAG_CACHE.clear()
+      try {
+        localStorage.removeItem(ETAG_LS_KEY)
+      } catch {
+        /* не критично */
+      }
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
     }
     throw new Error(data.error || `HTTP ${res.status}`)
   }
@@ -274,21 +282,25 @@ export async function apiStream(
     signal: AbortSignal.timeout(60_000),
   })
 
-  if (res.status === 401) {
-    setSessionToken(null)
-    if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
-  }
   if (!res.ok || !res.body) {
+    // v5.78: «мягкие» 401 ({auth:true}/{banned:true}) не стирают сессию —
+    // см. развёрнутый комментарий в api() выше
     const data = (await res.json().catch(() => ({}))) as {
       error?: string
       maintenance?: unknown
       prerelease?: unknown
+      auth?: boolean
+      banned?: boolean
     }
     if (data.maintenance === true && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('tgfeed:maintenance'))
     }
     if (data.prerelease === true && typeof window !== 'undefined') {
       window.dispatchEvent(new Event('tgfeed:prerelease'))
+    }
+    if (res.status === 401 && data.auth !== true && data.banned !== true) {
+      setSessionToken(null)
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event('tgfeed:unauthorized'))
     }
     throw new Error(data.error || `HTTP ${res.status}`)
   }
