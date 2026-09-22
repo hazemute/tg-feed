@@ -333,14 +333,16 @@ export function SearchTab() {
             aria-label="Поиск каналов, тем, постов"
             className="h-[52px] w-full rounded-[14px] border border-tg-sep bg-tg-bg pl-11 pr-[76px] text-[16px] text-tg-text outline-none transition placeholder:text-tg-hint focus:border-tg-link"
           />
-          {/* v5.68: ИИ-поиск ПРЯМО В СТРОКЕ — кнопка-спарк справа: «Спросить нейросеть» */}
+          {/* v5.68: ИИ-поиск ПРЯМО В СТРОКЕ — кнопка-спарк справа: «Спросить нейросеть».
+              v5.96: набранный запрос уходит в ИИ ЦЕЛИКОМ при нажатии (любой непустой,
+              без порога в 3 символа) — чат открывается и сам отправляет его. */}
           <button
             type="button"
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => {
               haptic('light')
               inputRef.current?.blur()
-              setAiSeed(q.trim().length >= 3 ? q.trim() : null)
+              setAiSeed(q.trim().length >= 1 ? q.trim() : null)
               setAiChatOpen(true)
             }}
             aria-label="Спросить нейросеть по постам ленты"
@@ -388,21 +390,8 @@ export function SearchTab() {
               )
             })}
           </div>
-          <button
-            type="button"
-            onClick={() => {
-              haptic('light')
-              inputRef.current?.blur() // прячем клавиатуру — смотрим чат ИИ-поиска
-              setAiSeed(query.length >= 3 ? query : null) // с текущим запросом — автоотправка
-              setAiChatOpen(true)
-            }}
-            aria-label="ИИ-поиск: спросить нейросеть по постам ленты"
-            title="ИИ-поиск: спросит по свежим постам ленты и ответит со ссылками на источники"
-            className="flex h-10 shrink-0 items-center gap-1.5 rounded-[12px] border border-tg-link/35 bg-tg-link/10 px-4 text-[14.5px] font-semibold text-tg-link transition active:scale-95"
-          >
-            <Sparkles className="h-4 w-4" strokeWidth={2.2} />
-            ИИ-поиск
-          </button>
+        {/* v5.96: чип-кнопка «ИИ-поиск» под фильтрами УБРАНА (решение владельца:
+            дублировала кнопку в поле ввода) — ИИ теперь только спарк в строке поиска */}
         </div>
       </div>
 

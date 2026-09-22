@@ -31,6 +31,7 @@ import { RichText } from '@/components/feed/RichText'
 import { LazyImage } from '@/components/feed/LazyImage'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
+import { BackfillButton } from '@/components/channel/BackfillButton'
 
 /**
  * «Живой канал» (v5.65) — нативный вид чата своего канала, как в Telegram:
@@ -153,6 +154,24 @@ export function ChannelLiveView({
   useEffect(() => {
     void load()
   }, [load])
+
+  /* v5.96: тихий полл 15с, пока чат открыт и видим. После импорта истории
+     (или публикации поста прямо в Telegram) баблы появляются сами, без
+     переоткрытия экрана; если новых постов нет — сетевых телодвижений
+     минимум, UI не трогаем. */
+  useEffect(() => {
+    const iv = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      if (loading || failed) return
+      void api<LiveResponse>(`/api/channel/live?channelId=${encodeURIComponent(channelId)}`)
+        .then((r) => {
+          setInfo(r.channel)
+          setPosts(r.posts)
+        })
+        .catch(() => {}) // фоновый тик — сбои ждём следующего
+    }, 15_000)
+    return () => clearInterval(iv)
+  }, [channelId, loading, failed])
 
   /** Открытие чата = как в Telegram: сразу у последних сообщений */
   useEffect(() => {
@@ -418,6 +437,16 @@ export function ChannelLiveView({
             <p className="text-[13px] leading-snug text-tg-hint">
               Опубликуйте первый пост через строку ниже — он появится и в Telegram
             </p>
+            {/* v5.96: у канала почти всегда есть история в Telegram — её можно
+                завезти одной кнопкой (бэкфил из t.me/s), а не постить заново */}
+            {info?.username && (
+              <>
+                <BackfillButton channelId={channelId} className="mt-2" onProgress={() => void load()} />
+                <p className="text-[11.5px] leading-snug text-tg-hint/80">
+                  Импорт истории — один раз, дальше посты прилетают сами
+                </p>
+              </>
+            )}
           </div>
         ) : (
           <>

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { channelAvatarUrl } from '@/lib/media'
 import { z } from 'zod'
 import { createHash } from 'crypto'
@@ -23,6 +23,9 @@ import {
 } from '@/lib/tiers'
 import { sweepScheduledPostsThrottled } from '@/lib/scheduled-posts'
 import { normalizeTeaserApplyTo } from '@/lib/teaser'
+import { backfillChannelHistory, maybeBackfillEmptyChannel } from '@/lib/channel-backfill'
+
+export const maxDuration = 60
 
 export const dynamic = 'force-dynamic'
 
@@ -71,6 +74,12 @@ const bodySchema = z.discriminatedUnion('action', [
     action: z.literal('promote'),
     channelId: z.string().min(1),
     postId: z.string().min(1),
+  }),
+  // v5.96: импорт истории канала из t.me/s (кнопка в кабинете) — владелец запускает
+  // руками, если канал привязан, а посты ещё не завезлись
+  z.object({
+    action: z.literal('backfill'),
+    channelId: z.string().min(1),
   }),
   z.object({
     action: z.literal('unpromote'), // v5.74: снять продвижение (окно возврата 60 мин)
@@ -303,6 +312,17 @@ export async function GET(request: Request) {
       }),
     )
 
+    /* v5.96: САМОЛЕЧЕНИЕ ПУСТОГО КАБИНЕТА. Канал привязан, а постов в ленте
+     * 0 (историю раньше никто не импортировал — «0 постов», «Канал пуст»,
+     * статистика из нулей). Запускаем импорт истории из t.me/s после ответа
+     * (after) — один канал за запрос, троттлинг внутри backfill-модуля. */
+    const emptyChannel = result.find((c) => c.stats.posts === 0)
+    if (emptyChannel) {
+      after(() =>
+        maybeBackfillEmptyChannel(emptyChannel.id, emptyChannel.username).catch(() => {}),
+      )
+    }
+
     // Продвижение (v5.69): 1 бесплатное продвижение в календарный месяц (UTC).
     // Использование — ключ месяца в User.promoteFreeMonth ('' / прошлый месяц →
     // слот свободен), кредиты пакета — в User.promoteCredits.
@@ -500,6 +520,8 @@ export async function POST(request: Request) {
       if (rights?.isAdmin) {
         const done = await completeChannelClaim(uname, g.uid, { title: channel.title })
         if (done.ok) {
+          // v5.96: сразу импортируем историю канала — кабинет не пустой на первом открытии
+          after(() => backfillChannelHistory(uname, { pages: 12, per: 50 }).catch(() => {}))
           return NextResponse.json({ ok: true, claimed: true, title: done.title ?? channel.title, botUsername })
         }
         if (done.takenByOther) return err('Этот канал уже привязан к другому аккаунту')
@@ -576,6 +598,27 @@ export async function POST(request: Request) {
         data: { ctaLabel: d.ctaLabel, ctaUrl: d.ctaUrl },
       })
       return NextResponse.json({ ok: true })
+    }
+
+    // v5.96: ИМПОРТ ИСТОРИИ канала из t.me/s — кнопка в кабинете (стата/живой канал).
+    // Проверяем владение по channelId, дальше парсер сам собирает историю.
+    if (d.action === 'backfill') {
+      const ch = await db.channel.findUnique({
+        where: { id: d.channelId },
+        select: { id: true, username: true, claimedById: true },
+      })
+      if (!ch || ch.claimedById !== g.uid) return err('Канал не найден или не привязан', 404)
+      if (!ch.username) return err('У канала нет @username — импорт недоступен (приватный канал)')
+
+      after(() =>
+        backfillChannelHistory(ch.username!, { pages: 12, per: 50, manual: true })
+          .then((r) => {
+            if (r.ok) console.log(`[mychannel:backfill] @${ch.username}: +${r.added ?? 0} постов`)
+            else console.log(`[mychannel:backfill] @${ch.username}: ${r.reason ?? r.scannedError ?? 'пропущен'}`)
+          })
+          .catch(() => {}),
+      )
+      return NextResponse.json({ ok: true, started: true })
     }
 
     if (d.action === 'promote') {

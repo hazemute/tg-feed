@@ -382,8 +382,14 @@ export function ChannelTab() {
               )}
               {section === 'stats' && (
                 /* Большой дашборд именно этого канала (просмотры, ER, динамика,
-                    лучшее время, ритм, топ постов) — плоский, без карточек */
-                <ChannelCabinet key={channel!.username} username={channel!.username} title={channel!.title} />
+                    лучшее время, ритм, топ постов) — плоский, без карточек.
+                    v5.96: channelId — для кнопки импорта истории при пустом канале. */
+                <ChannelCabinet
+                  key={channel!.username}
+                  username={channel!.username}
+                  title={channel!.title}
+                  channelId={channel!.id}
+                />
               )}
               {section === 'ai' && (
                 <AssistantSection key={`ai-${channel!.id}`} channel={channel!} tier={tier} />

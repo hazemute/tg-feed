@@ -17,8 +17,9 @@ export type SessionPayload = {
   exp: number // expires at (unix sec)
 }
 
-/** TTL сессии по умолчанию: 30 дней */
-export const SESSION_TTL_SEC = 30 * 24 * 60 * 60
+/** TTL сессии по умолчанию: 90 дней (v5.96, было 30 — реже окно «вход по Telegram»:
+ *  каждая протухшая сессия на сайте выглядела как «снова регистрация через Telegram») */
+export const SESSION_TTL_SEC = 90 * 24 * 60 * 60
 
 /** Максимальный возраст initData на момент проверки (защита от replay) */
 export const INIT_DATA_MAX_AGE_SEC = 24 * 60 * 60

@@ -37,8 +37,10 @@ import {
 } from '@/lib/source-profile'
 import { FORWARD_SOURCES_GOAL } from '@/lib/giveaway-tickets'
 import { ingestChannelPost, type TgChannelMessage } from '@/lib/channel-ingest'
+import { backfillChannelHistory } from '@/lib/channel-backfill'
 import { getChatInfo } from '@/lib/tg-bot'
 import { setMailOptout } from '@/lib/retention-cron'
+import { after } from 'next/server'
 
 export const dynamic = 'force-dynamic'
 /**
@@ -1097,6 +1099,11 @@ export async function POST(request: Request) {
       if (isAdmin && type === 'channel') {
         const claimed = await completePendingClaim(mcm.chat)
         if (claimed) {
+          // v5.96: импорт истории канала сразу после привязки (after — не тормозим вебхук)
+          const uname = (mcm.chat.username ?? '').replace(/^@/, '').toLowerCase()
+          if (uname) {
+            after(() => backfillChannelHistory(uname, { pages: 12, per: 50 }).catch(() => {}))
+          }
           // Владелец узнаёт об успехе сразу — даже если миниапп закрыт
           await botCall(
             'sendMessage',

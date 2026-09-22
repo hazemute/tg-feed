@@ -316,12 +316,19 @@ export default function Home() {
   const authenticate = useCallback(async (): Promise<boolean> => {
     const w = initTelegram()
     /*
-     * САЙТ (не Mini App): если сессия уже есть — проверяем её лёгким GET /api/auth
-     * и выходим. Иначе POST ниже вернёт telegram_required. Внутри Telegram — всегда
-     * полный вход: initData заодно обновляет профиль/премиум/аватар.
+     * v5.96 ФИКС «окна регистрации после входа через Telegram»: если у нас
+     * уже есть токен сессии и initData ПУСТ (сайт в обычном браузере ИЛИ
+     * ссылка tg-swipe.vercel.app, открытая во встроенном браузере Telegram —
+     * там WebApp-объект есть, а initData не выдаётся), проверяем сессию
+     * лёгким GET /api/auth и входим БЕЗ всяких окон. Раньше условие было
+     * «только вне Telegram»: во встроенном браузере TG с истёкшим/выселенным
+     * localStorage каждый запуск требовал заново «входить/регистрировать».
+     * Внутри настоящего Mini App (initData есть) — всегда полный вход: он
+     * заодно обновляет профиль/премиум/аватар и продлевает сессию.
      */
     const existing = getSessionToken()
-    if (existing && !isInTelegram()) {
+    const hasInitData = (w?.initData ?? '').trim().length > 0
+    if (existing && !hasInitData) {
       try {
         const res = await fetch('/api/auth', {
           headers: { Authorization: `Bearer ${existing}` },
@@ -395,10 +402,25 @@ export default function Home() {
           .catch(() => {})
         return true
       } catch (e) {
-        // Не в Telegram (или бот-токен не настроен): предлагаем вход через бота
-        if ((e as Error).message === 'telegram_required' || (e as Error).message === 'telegram_invalid') {
+        const msg = (e as Error).message
+        // Нет initData (обычный сайт без сессии) — вход только через бота
+        if (msg === 'telegram_required') {
           setNeedLogin(true)
           return false
+        }
+        /* v5.96: initData ЕСТЬ, но подпись не сошлась — это переходное состояние
+           (ротация bot-токена и деплой, рассинхрон часов, старый клиент не
+           обновил initData), а не «плохой юзер». Раньше такой сбой мгновенно
+           рисовал экран «вход по Telegram» («почему я снова регистрируюсь?»).
+           Теперь тихо повторяем с бэк-оффом — Telegram выдаёт свежий initData
+           при повторной попытке, а деплой с новым токеном завершается. */
+        if (msg === 'telegram_invalid') {
+          if (attempt === 2) {
+            setNeedLogin(true)
+            return false
+          }
+          await sleep(1_200 * (attempt + 1))
+          continue
         }
         // последняя попытка — отдаём экран ошибки; иначе тихий повтор
         if (attempt === 2) {

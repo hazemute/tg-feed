@@ -1,12 +1,14 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { isValidChannelUsername } from '@/lib/server'
 import { getBotChatRights } from '@/lib/tg-bot'
 import { popPendingClaim, completeChannelClaim, normalizeChannelUsername } from '@/lib/channel-claim'
+import { backfillChannelHistory } from '@/lib/channel-backfill'
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 60
 
 /**
  * v5.80 — СТАТУС ПРИВЯЗКИ КАНАЛА (опрос из UI «Мой канал», шаг «добавьте бота»).
@@ -65,6 +67,8 @@ export async function GET(request: Request) {
       }
       const done = await completeChannelClaim(uname, pendingUserId, { title: channel.title })
       if (done.ok && pendingUserId === g.uid) {
+        // v5.96: импорт истории канала сразу после привязки — кабинет живой с первого открытия
+        after(() => backfillChannelHistory(uname, { pages: 12, per: 50 }).catch(() => {}))
         return NextResponse.json({ claimed: true, channelId: done.channelId })
       }
       // Заявка была чужой — канал уехал другому владельцу

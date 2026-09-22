@@ -12,12 +12,13 @@ import {
   XAxis,
   YAxis,
 } from 'recharts'
-import { BarChart3, Camera, Eye, Flame, Heart, Image as ImageIcon, TrendingUp, Users } from 'lucide-react'
+import { BarChart3, Camera, Eye, Flame, Heart, Image as ImageIcon, Inbox, TrendingUp, Users } from 'lucide-react'
 import { api } from '@/lib/api'
 import { haptic, sharePostToStory } from '@/lib/tg'
 import { formatCount, pluralRu, timeAgoRu } from '@/lib/format'
 import { toast } from 'sonner'
 import type { ChannelStatsDTO, TopPostDTO } from '@/lib/types'
+import { BackfillButton } from '@/components/channel/BackfillButton'
 
 /**
  * Кабинет канала — большая аналитическая страница вместо карточек.
@@ -181,10 +182,23 @@ function TopList({
 
 /* ---------- Основной кабинет ---------- */
 
-export function ChannelCabinet({ username, title }: { username: string; title: string }) {
+export function ChannelCabinet({
+  username,
+  title,
+  channelId,
+}: {
+  username: string
+  title: string
+  /** v5.96: id канала — нужен кнопке импорта истории */
+  channelId?: string
+}) {
   const [stats, setStats] = useState<ChannelStatsDTO | null>(null)
   const [failed, setFailed] = useState(false)
   const statsRef = useRef<ChannelStatsDTO | null>(null)
+
+  /* Загрузка/перезагрузка статистики. fetchStatsRef — чтобы кнопка импорта
+     могла дёргать перезагрузку без пересоздания эффекта. */
+  const fetchStatsRef = useRef<() => void>(() => {})
 
   useEffect(() => {
     let alive = true
@@ -202,6 +216,7 @@ export function ChannelCabinet({ username, title }: { username: string; title: s
         .catch(() => {
           if (alive && !statsRef.current) setFailed(true) // фоновые сбои не убивают экран
         })
+    fetchStatsRef.current = fetchStats
     void fetchStats()
     /* v5.80: живой дашборд — тихий опрос 30с, пока вкладка видима.
        Просмотры/ER/динамика обновляются на глазах, без перезагрузки. */
@@ -226,6 +241,32 @@ export function ChannelCabinet({ username, title }: { username: string; title: s
   }
 
   if (!stats) return <CabinetSkeleton />
+
+  /* v5.96: постов НОЛЬ — это почти всегда «канал привязан, но история ещё
+     не импортирована». Вместо простыни нулей — понятный экран с одной
+     кнопкой: импорт подтягивает историю из t.me/s один раз, дальше новые
+     посты прилетают сами (вебхук канала). */
+  if (stats.posts === 0 && channelId) {
+    return (
+      <div className="flex flex-col items-center gap-3 rounded-2xl bg-tg-surface/50 px-6 py-12 text-center">
+        <span className="flex size-16 items-center justify-center rounded-full bg-tg-link/10 text-tg-link" aria-hidden>
+          <Inbox className="size-8" strokeWidth={1.6} />
+        </span>
+        <p className="text-[15.5px] font-bold text-tg-text">Постов в ленте пока нет</p>
+        <p className="max-w-[300px] text-[13.5px] leading-relaxed text-tg-hint">
+          История канала ещё не импортирована: привязка забирает только новые
+          посты. Импортируйте прошлое — статистика, топы и графики заполнятся
+          автоматически.
+        </p>
+        <BackfillButton
+          channelId={channelId}
+          className="mt-1"
+          onProgress={() => fetchStatsRef.current()}
+        />
+        <p className="text-[11.5px] text-tg-hint/80">Один раз — дальше новые посты прилетают сами</p>
+      </div>
+    )
+  }
 
   const mediaTotal = stats.mediaMix.reduce((s, m) => s + m.count, 0) || 1
   const MEDIA_COLORS = ['var(--tg-link)', 'var(--tg-green)', 'var(--tg-star)', 'var(--tg-sep)']
