@@ -38,6 +38,7 @@ import {
 import { FORWARD_SOURCES_GOAL } from '@/lib/giveaway-tickets'
 import { ingestChannelPost, type TgChannelMessage } from '@/lib/channel-ingest'
 import { getChatInfo } from '@/lib/tg-bot'
+import { setMailOptout } from '@/lib/retention-cron'
 
 export const dynamic = 'force-dynamic'
 /**
@@ -1141,6 +1142,18 @@ export async function POST(request: Request) {
     // Розыгрыши: ленивый планировщик (публикация запланированных + итоги просроченных),
     // троттлинг внутри kickDueGiveaways (не чаще раза в 30с на инстанс)
     void kickDueGiveaways().catch(() => {})
+    // v5.93: «Не писать мне» — добровольный отказ от реактивационных пушей и
+    // дайджеста (кнопка есть в обоих письмах крона удержания). Наградные
+    // уведомления (лидерборды/стрики/цели) остаются — это транзакционные ЛС.
+    if (cq?.data === 'mail:off') {
+      const uid = cq.from?.id ? `tg_${cq.from.id}` : ''
+      if (uid) await setMailOptout(uid, true).catch(() => {})
+      await botCall('answerCallbackQuery', {
+        callback_query_id: cq.id,
+        text: 'Готово — такие сообщения больше не приходят',
+      })
+      return NextResponse.json({ ok: true })
+    }
     if (cq?.data?.startsWith('gw:join:')) {
       const gid = cq.data.slice('gw:join:'.length)
       // id — cuid (25 символов, латиница/цифры) — фильтр от мусорных колбэков

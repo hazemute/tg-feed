@@ -78,6 +78,8 @@ model User {
   commentReports CommentReport[]
   lbPayouts      LeaderboardPayout[]
   achievements   UserAchievement[]
+  readingDays    ReadingDay[]      @relation("readingDays")
+  readingStreak  ReadingStreak?    @relation("readingStreak")
 }
 
 // Достижения (v5.90): одна запись на (юзер, ачивка) — tier это достигнутый
@@ -1056,4 +1058,40 @@ model LeaderboardPayout {
   @@unique([period, periodKey, place])
   @@index([period, periodKey])
   @@index([userId, createdAt])
+}
+
+// v5.93: ЧТЕНИЕ И СТРИК. ReadingDay — дневные счётчики уникально прочитанных
+// постов (дедуп по Redis на (юзер, пост)); ReadingStreak — серия дней чтения
+// (день зачитывается автоматически, когда юзер открыл пост в полном экране),
+// заморозки (покрывают ОДИН пропущенный день, начисляются на вехах) и цель
+// недели (прочитано N постов за ISO-неделю MSK → разовая награда).
+model ReadingDay {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("readingDays", fields: [userId], references: [id], onDelete: Cascade)
+  day       String   // 'YYYY-MM-DD' UTC
+  reads     Int      @default(0) // уникальных постов за день
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, day])
+  @@index([userId, day])
+}
+
+model ReadingStreak {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  user          User     @relation("readingStreak", fields: [userId], references: [id], onDelete: Cascade)
+  streak        Int      @default(0) // текущая серия подряд
+  bestStreak    Int      @default(0) // рекорд
+  lastDate      String   @default("") // 'YYYY-MM-DD' UTC последнего зачтённого дня
+  freezes       Int      @default(0) // доступные заморозки (кап 3)
+  totalReads    Int      @default(0) // прочитано постов за всё время
+  weekKey       String   @default("") // 'YYYY-Wnn' (MSK) текущей недели счётчика
+  weekReads     Int      @default(0) // прочитано за текущую неделю
+  weekRewardKey String   @default("") // неделя, за которую награда за цель уже выдана
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([lastDate]) // выборка «давно не заходил» для реактивационного пуша
 }

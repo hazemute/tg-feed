@@ -961,3 +961,33 @@ model LeaderboardPayout {
   @@index([period, periodKey])
   @@index([userId, createdAt])
 }
+
+// v5.93: ЧТЕНИЕ И СТРИК (см. комментарий в schema.prisma)
+model ReadingDay {
+  id        String   @id @default(cuid())
+  userId    String
+  day       String
+  reads     Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, day])
+  @@index([userId, day])
+}
+
+model ReadingStreak {
+  id            String   @id @default(cuid())
+  userId        String   @unique
+  streak        Int      @default(0)
+  bestStreak    Int      @default(0)
+  lastDate      String   @default("")
+  freezes       Int      @default(0)
+  totalReads    Int      @default(0)
+  weekKey       String   @default("")
+  weekReads     Int      @default(0)
+  weekRewardKey String   @default("")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([lastDate])
+}

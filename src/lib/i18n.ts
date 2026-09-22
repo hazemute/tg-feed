@@ -529,6 +529,37 @@ const DICT = {
   'topup.plategaRetry': ['Попробовать снова', 'Try again'],
   'topup.returnedDone': ['Баланс пополнен', 'Balance topped up'],
   'topup.returnedFail': ['Платёж не завершён. Деньги вернутся автоматически', 'Payment incomplete. Your money will be refunded automatically'],
+
+  /* Активность: стрик чтения + цель недели (v5.93) */
+  'act.title': ['Активность', 'Activity'],
+  'act.subtitle': ['Стрик чтения и цель недели', 'Reading streak & weekly goal'],
+  'act.streak': ['Стрик', 'Streak'],
+  'act.best': ['Рекорд', 'Best'],
+  'act.freezes': ['Заморозки', 'Freezes'],
+  'act.weekGoal': ['Цель недели', 'Weekly goal'],
+  'act.postsShort': ['постов', 'posts'],
+  'act.weekRewardHint': ['Награда за цель:', 'Goal reward:'],
+  'act.calendar': ['Последние 5 недель', 'Last 5 weeks'],
+  'act.readToday': ['Сегодня:', 'Today:'],
+  'act.howItWorks': [
+    'День засчитывается, когда вы читаете хотя бы один пост. Заморозка сама покроет один пропущенный день.',
+    'A day counts when you read at least one post. A freeze covers one missed day automatically.',
+  ],
+  'act.milestones': ['Вехи стрика', 'Streak milestones'],
+  'act.milestoneDone': ['Стрик пройден', 'Milestone reached'],
+  'act.milestoneTodo': ['Дней подряд', 'days in a row'],
+  'act.freezesHintShort': ['+1 заморозка', '+1 freeze'],
+  'act.totalReads': ['Всего прочитано:', 'Total read:'],
+
+  /* Похожие каналы в полном экране поста (v5.93) */
+  'sim.title': ['Похожие каналы', 'Similar channels'],
+
+  /* Профиль: строка «Активность» (v5.93) */
+  'profile.activityRow': ['Активность', 'Activity'],
+  'profile.activityStreak': ['дн. 🔥', 'day streak 🔥'],
+
+  /* Лидерборд: соцдоказательство (v5.93) */
+  'lb.newReaders': ['новых читателей за неделю', 'new readers this week'],
 } as const
 
 export type I18nKey = keyof typeof DICT

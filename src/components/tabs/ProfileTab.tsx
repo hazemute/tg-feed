@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CreditCard,
   FileText,
+  Flame,
   Headset,
   Info,
   Landmark,
@@ -47,6 +48,7 @@ import { LevelSheet } from '@/components/profile/LevelSheet'
 import { AchievementsSheet } from '@/components/profile/AchievementsSheet'
 import { LeaderboardSheet } from '@/components/profile/LeaderboardSheet'
 import { BookmarksSheet } from '@/components/profile/BookmarksSheet'
+import { StreakSheet, type ReadingStatsDTO } from '@/components/profile/StreakSheet'
 import { GiveawayCard } from '@/components/profile/GiveawayCard'
 
 
@@ -104,6 +106,9 @@ export function ProfileTab() {
   const [achOpen, setAchOpen] = useState(false)
   // v5.91: «Сохранённые посты» — экран закладок (тап по стату «Сохранено»)
   const [bmOpen, setBmOpen] = useState(false)
+  // v5.93: «Активность» — стрик чтения/цель недели; стрик в строку приходит лениво
+  const [actOpen, setActOpen] = useState(false)
+  const [actStreak, setActStreak] = useState<number | null>(null)
 
   const reload = () => {
     if (!user) return
@@ -128,6 +133,15 @@ export function ProfileTab() {
     if (editOpen) return
     reload()
   }, [user?.id, editOpen])
+
+  /* v5.93: стрик в строку «Активность» — один лёгкий GET при монтировании профиля
+     (для гостей — нули, скрываем значение); ответ кэшируется в модуле StreakSheet */
+  useEffect(() => {
+    if (!user || user.isGuest) return
+    api<ReadingStatsDTO>('/api/reading')
+      .then((d) => setActStreak(d.streak))
+      .catch(() => {})
+  }, [user?.id])
 
   // Событие из инбокса «Активность» (уведомление поддержки): открыть чат поддержки.
   // Чат смонтирован во вкладке профиля, уведомление переключает вкладку и шлёт событие.
@@ -339,6 +353,32 @@ export function ProfileTab() {
               <Medal className="h-5 w-5" strokeWidth={1.9} aria-hidden />
             </span>
             <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('ach.row')}</span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+          </button>
+        )}
+        {/* v5.93: Активность — стрик чтения и цель недели (одна строка, экран внутри);
+            справа — текущий стрик, чтобы экран открывали чаще нуля раз */}
+        {!user.isGuest && (
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light')
+              setActOpen(true)
+            }}
+            className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-500/15 text-orange-500">
+              <Flame className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('profile.activityRow')}</span>
+            <span
+              className={cn(
+                'shrink-0 rounded-full px-2.5 py-1 text-[12.5px] font-bold tabular-nums',
+                actStreak ? 'bg-orange-500/15 text-orange-500' : 'text-tg-hint',
+              )}
+            >
+              {actStreak != null && actStreak > 0 ? `${actStreak} ${t('profile.activityStreak')}` : '—'}
+            </span>
             <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
           </button>
         )}
@@ -761,6 +801,8 @@ export function ProfileTab() {
 
       {/* v5.91: сохранённые посты (закладки) — открывается статом «Сохранено» */}
       <BookmarksSheet open={bmOpen} onClose={() => setBmOpen(false)} onLogin={() => setLoginOpen(true)} />
+      {/* v5.93: экран «Активность» — стрик/цель недели/календарь */}
+      <StreakSheet open={actOpen} onClose={() => setActOpen(false)} />
 
       <Onboarding open={editOpen} mode="edit" onClose={() => setEditOpen(false)} />
       {/* Галерея тем оформления */}

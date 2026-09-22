@@ -330,6 +330,17 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "UserAchievement_achievementId_tier_idx" ON "UserAchievement"("achievementId", "tier")`,
     `CREATE INDEX IF NOT EXISTS "UserAchievement_userId_tierAt_idx" ON "UserAchievement"("userId", "tierAt")`,
   ],
+  // v5.93: ЧТЕНИЕ И СТРИК — ReadingDay (дневные счётчики уникально прочитанных
+  // постов) + ReadingStreak (серия дней чтения, заморозки, цель недели).
+  // Стрик считается ЛЕНИВО при записи прочтения (POST /api/reads), крон не нужен.
+  'v5.93-reading': [
+    `CREATE TABLE IF NOT EXISTS "ReadingDay" ("id" text PRIMARY KEY, "userId" text NOT NULL, "day" text NOT NULL, "reads" integer NOT NULL DEFAULT 0, "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ReadingDay_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "ReadingDay_userId_day_key" ON "ReadingDay"("userId", "day")`,
+    `CREATE INDEX IF NOT EXISTS "ReadingDay_userId_day_idx" ON "ReadingDay"("userId", "day")`,
+    `CREATE TABLE IF NOT EXISTS "ReadingStreak" ("id" text PRIMARY KEY, "userId" text NOT NULL, "streak" integer NOT NULL DEFAULT 0, "bestStreak" integer NOT NULL DEFAULT 0, "lastDate" text NOT NULL DEFAULT '', "freezes" integer NOT NULL DEFAULT 0, "totalReads" integer NOT NULL DEFAULT 0, "weekKey" text NOT NULL DEFAULT '', "weekReads" integer NOT NULL DEFAULT 0, "weekRewardKey" text NOT NULL DEFAULT '', "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "updatedAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "ReadingStreak_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "ReadingStreak_userId_key" ON "ReadingStreak"("userId")`,
+    `CREATE INDEX IF NOT EXISTS "ReadingStreak_lastDate_idx" ON "ReadingStreak"("lastDate")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()

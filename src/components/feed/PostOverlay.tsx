@@ -72,6 +72,91 @@ export function emitPostUpdated(patch: {
   window.dispatchEvent(new CustomEvent('tgfeed:post-updated', { detail: patch }))
 }
 
+/* ------------------- v5.93: учёт чтения + похожие каналы ------------------- */
+
+/** Сессионный дедуп прочтений (сервер дополнительно дедупится в Redis) */
+const sessionReads = new Set<string>()
+
+/** Похожие каналы: SWR-кэш модуля — переход пост→пост не перезапрашивает */
+type SimilarChannel = {
+  id: string
+  title: string
+  username: string
+  avatarColor: string
+  avatarUrl: string | null
+  subscribersCount: number
+  verified: boolean
+  subscribed: boolean
+}
+const similarCache = new Map<string, { at: number; items: SimilarChannel[] }>()
+const SIMILAR_TTL_MS = 10 * 60_000
+
+/**
+ * Строка «Похожие каналы» внизу поста (v5.93): 3 канала той же категории —
+ * глубина сессии, а не реклама. Скрывается, если похожих меньше двух или
+ * все уже подписаны (нет смысла рекомендовать своё).
+ */
+function SimilarChannels({ channelId, hidden }: { channelId: string; hidden: boolean }) {
+  const t = useT()
+  const openChannel = useApp((s) => s.openChannel)
+  const [items, setItems] = useState<SimilarChannel[] | null>(() => {
+    const c = similarCache.get(channelId)
+    return c && Date.now() - c.at < SIMILAR_TTL_MS ? c.items : null
+  })
+
+  useEffect(() => {
+    const cached = similarCache.get(channelId)
+    if (cached && Date.now() - cached.at < SIMILAR_TTL_MS) return // уже в state (lazy-инициализация)
+    let stopped = false
+    api<{ similar: SimilarChannel[] }>(`/api/channels/similar?channelId=${encodeURIComponent(channelId)}`)
+      .then((r) => {
+        similarCache.set(channelId, { at: Date.now(), items: r.similar })
+        if (!stopped) setItems(r.similar)
+      })
+      .catch(() => {})
+    return () => {
+      stopped = true
+    }
+  }, [channelId])
+
+  if (hidden) return null
+  // Не показываем: нет данных / меньше двух / все уже в подписках
+  const visible = items?.filter((c) => !c.subscribed) ?? []
+  if (visible.length < 2) return null
+
+  return (
+    <section className="mt-4 px-4" aria-label={t('sim.title')} data-noswipe>
+      <h3 className="text-[13px] font-bold uppercase tracking-wide text-tg-hint">{t('sim.title')}</h3>
+      <div className="mt-2 flex flex-col gap-2">
+        {visible.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            data-noswipe
+            onClick={() => {
+              haptic('light')
+              openChannel(c.username)
+            }}
+            className="flex items-center gap-2.5 rounded-2xl border border-tg-sep/50 bg-tg-surface/70 px-3 py-2.5 text-left transition active:scale-[0.99]"
+          >
+            <Avatar name={c.title} color={c.avatarColor} src={c.avatarUrl} size={38} className="ring-1 ring-tg-sep/60" />
+            <span className="min-w-0 flex-1">
+              <span className="flex items-center gap-1">
+                <span className="truncate text-[14.5px] font-semibold leading-tight text-tg-text">{c.title}</span>
+                {c.verified && <Star className="h-3.5 w-3.5 shrink-0 fill-tg-link text-tg-link" aria-hidden />}
+              </span>
+              <span className="mt-0.5 block truncate text-[12px] leading-tight text-tg-hint">
+                {formatCount(c.subscribersCount)} {t('post.subscribers')}
+              </span>
+            </span>
+            <ChevronRight className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
+          </button>
+        ))}
+      </div>
+    </section>
+  )
+}
+
 /**
  * Текст поста в полном экране + перевод на месте (Twitter-style).
  * Ключ по id поста: при свайпе ←/→ компонент пересоздаётся —
@@ -200,6 +285,21 @@ export function PostOverlay() {
       flushDwell() // закрытие оверлея
     }
   }, [open, current?.id, current, flushDwell])
+
+  /* v5.93: УЧЁТ ЧТЕНИЯ — открытие полного экрана поста = честный сигнал «читаю»
+     (в отличие от пролистывания ленты). Стрик/цель недели/календарь в профиле
+     растут отсюда. Дедуп сессии + Redis на сервере; гости не пишутся. */
+  useEffect(() => {
+    if (!open || !current) return
+    const u = useApp.getState().user
+    if (!u || u.isGuest) return
+    if (sessionReads.has(current.id)) return
+    sessionReads.add(current.id)
+    api('/api/reads', { method: 'POST', body: JSON.stringify({ postId: current.id }) }).catch(() => {
+      // Сеть моргнула — разрешим повтор при следующем открытии этого поста
+      sessionReads.delete(current.id)
+    })
+  }, [open, current?.id, current])
 
   // Touch-свайп: горизонталь должна доминировать над вертикалью (иначе это скролл),
   // порог 80px и не дольше 700мс — не мешает вертикальной прокрутке контента
@@ -521,6 +621,10 @@ export function PostOverlay() {
                 </a>
               </div>
             )}
+            {/* v5.93: похожие каналы той же категории — под текстом, до нижнего спейсера.
+                В тизер-режиме скрыты (там конверсия в подписку через CTA, не через рекомендации).
+                key по каналу — state не перетекает между постами разных каналов. */}
+            <SimilarChannels key={ch.id} channelId={ch.id} hidden={!!teaser} />
             <div className="h-24" />
             </motion.div>
           </div>

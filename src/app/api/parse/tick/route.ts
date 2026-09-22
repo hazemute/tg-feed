@@ -9,6 +9,7 @@ import { checkDueGiveaways } from '@/lib/giveaways'
 import { reverifyQuestCompletions } from '@/lib/quests'
 import { publishDueScheduledPosts } from '@/lib/scheduled-posts'
 import { runLbPayouts } from '@/lib/lb-payouts'
+import { runRetentionCron } from '@/lib/retention-cron'
 import { ensureContentCatalog, stepContentCatalog } from '@/lib/content-catalog'
 
 export const dynamic = 'force-dynamic'
@@ -154,6 +155,15 @@ async function handle(request: Request) {
       return null
     })
 
+    // v5.93: КРОН УДЕРЖАНИЯ — реактивационный пуш (неактив 3–30 дней, 1 раз
+    // в 72ч, топ-пост из подписок) + понедельничный дайджест (топ-5 недели +
+    // канал-рекомендация). Порции по 15/40 юзеров за тик, маркеры страхуют
+    // от дублей; при отказе юзера (кнопка в письме) — молча пропускаем.
+    const retention = await runRetentionCron().catch((e) => {
+      console.error('[tick] retention', e)
+      return null
+    })
+
     return NextResponse.json({
       ok: true,
       batch: batch.length,
@@ -172,6 +182,12 @@ async function handle(request: Request) {
         ? {
             week: { key: lbPayouts.week.periodKey, paid: lbPayouts.week.paid.length },
             month: { key: lbPayouts.month.periodKey, paid: lbPayouts.month.paid.length },
+          }
+        : null,
+      retention: retention
+        ? {
+            reactSent: retention.reactivation.sent,
+            digestSent: retention.digest.sent,
           }
         : null,
       ms: Date.now() - started,

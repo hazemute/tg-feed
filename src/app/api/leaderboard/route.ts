@@ -258,6 +258,18 @@ export async function GET(request: Request) {
       return null
     })
 
+    // v5.93: соцдоказательство — «+N читателей за неделю» (новые не-гостевые
+    // аккаунты). Индекс по createdAt есть, кэш 10 мин — копейки.
+    const newReaders = await cacheAside<number>({
+      key: 'lb:newReaders:7d',
+      ttlSec: 600,
+      memoryTtlMs: 30_000,
+      fetcher: () =>
+        db.user.count({
+          where: { isGuest: false, createdAt: { gte: new Date(Date.now() - 7 * 24 * 3_600_000) } },
+        }),
+    }).catch(() => 0)
+
     // Персональная часть
     const meUser = await db.user.findUnique({
       where: { id: g.uid },
@@ -308,6 +320,7 @@ export async function GET(request: Request) {
       me,
       guest: !!meUser.isGuest,
       prizes,
+      newReaders,
     }
     return NextResponse.json(res)
   } catch (e) {

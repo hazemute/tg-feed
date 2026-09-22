@@ -193,9 +193,19 @@ export function LeaderboardSheet({
               <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden />
             </button>
           </div>
-          {/* Окно раздела: «за всё время» / «за 30 дней» */}
-          <p className="mt-1.5 px-1 text-[12px] text-tg-hint" aria-live="polite">
-            {tab === 'level' || tab === 'swipes' ? t('lb.windowAll') : t('lb.window30d')}
+          {/* Окно раздела: «за всё время» / «за 30 дней».
+              v5.93: рядом — соцдоказательство «+N новых читателей за неделю»
+              (живость продукта; данные едут в том же ответе API). */}
+          <p className="mt-1.5 flex items-center gap-1.5 px-1 text-[12px] text-tg-hint" aria-live="polite">
+            <span>{tab === 'level' || tab === 'swipes' ? t('lb.windowAll') : t('lb.window30d')}</span>
+            {(data?.newReaders ?? 0) > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="font-semibold text-tg-link">
+                  +{data!.newReaders} {t('lb.newReaders')}
+                </span>
+              </>
+            )}
           </p>
         </div>
       }
