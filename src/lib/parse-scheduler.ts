@@ -18,9 +18,39 @@ import { IS_SQLITE } from '@/lib/server'
  */
 
 const POINTER_KEY = 'parse:pointer'
-const BATCH_SIZE = 8
-const HOT_SLOTS = 3 // слоты для горячих каналов поверх ротации
+/** v5.81: ротационная партия расширена (12+6) — полный круг по активным каналам быстрее */
+const BATCH_SIZE = 12
+const HOT_SLOTS = 6 // слоты для горячих каналов поверх ротации
 const ENRICH_PER_TICK = 2
+
+/**
+ * v5.81: СВЕЖЕСТЬ ПО ЧТЕНИЮ (fast-lane «мгновенного» парсинга).
+ * Самые горячие каналы (пост моложе 24ч, отсортированы по свежести) —
+ * небольшая партия для лёгкого прогона при активном чтении ленты
+ * (/api/feed/fresh поллит каждые ~45с; троттлинг вызова — на вызывающем).
+ * Это приближает задержку появления постов к 1-2 минутам без ожидания
+ * пятиминутного health-тика.
+ */
+export async function hotBatch(n = 3): Promise<string[]> {
+  if (IS_SQLITE) return [] // локальный dev: только ротация на health-тике
+  try {
+    const rows = await db.$queryRawUnsafe<Array<{ username: string; last_post: Date | null }>>(
+      `SELECT c."username", MAX(p."publishedAt") AS last_post
+         FROM "Channel" c
+         JOIN "Post" p ON p."channelId" = c."id"
+        WHERE c."status" = 'active'
+        GROUP BY c."username"
+        HAVING MAX(p."publishedAt") > now() - interval '24 hours'
+        ORDER BY last_post DESC
+        LIMIT $1`,
+      n,
+    )
+    return rows.map((r) => r.username)
+  } catch {
+    // SQLite/сбой — фолбэк: без hot-партии (сработает ротация на health-тике)
+    return []
+  }
+}
 
 /** Следующая партия каналов: ротация по всем активным + горячие слоты */
 export async function nextAdaptiveBatch(): Promise<string[]> {

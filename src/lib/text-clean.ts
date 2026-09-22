@@ -172,12 +172,19 @@ function stripTailPromo(t: string): string {
 /**
  * Полная зачистка markdown-текста поста. Вызывается в parse-engine при
  * СОЗДАНИИ поста (и при смене текста на ре-парсинге). БД хранит чистый текст.
+ * v5.81: + срез ведущих пробелов/табов/NBSP у КАЖДОЙ строки — Telegram
+ * (и парсер t.me/s) приносит абзацные отступы («красная строка»), которые
+ * в веб-рендере выглядят как случайные сдвиги текста. Разметка markdown-lite
+ * отступами не управляется — срез безопасен.
  */
+const LEADING_WS_RE = /^[ \t\u00A0\u2007\u202F]+/gm
+
 export function cleanPostText(text: string): string {
   if (!text) return text
   let t = text
     .replace(INVISIBLE_RE, '')
     .replace(/\r\n?/g, '\n')
+    .replace(LEADING_WS_RE, '')
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
 
@@ -195,12 +202,14 @@ export function cleanPostText(text: string): string {
 /**
  * Лёгкая зачистка НА ВЫДАЧЕ (dto): покрывает легаси-посты без перезаписи БД.
  * Быстрая — только линейные замены без split/по-строчных проходов.
+ * v5.81: + срез ведущих отступов строк (тот же «красная строка» у старых постов).
  */
 export function cleanForRender(text: string): string {
   if (!text) return text
   return text
     .replace(INVISIBLE_RE, '')
     .replace(/\r\n?/g, '\n')
+    .replace(LEADING_WS_RE, '')
     .replace(/\n{4,}/g, '\n\n\n')
     .replace(/([!?])\1{4,}/g, '$1$1$1')
     .replace(/\.{9,}/g, '…')

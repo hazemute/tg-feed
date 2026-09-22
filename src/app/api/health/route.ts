@@ -155,15 +155,15 @@ export async function GET(request: Request) {
     await ensureContentCatalog()
     after(async () => {
       stepContentCatalog().catch((e) => console.error('[health] catalog step', e))
-      // v5.77.4: ФОНОВЫЙ АВТОПАРСИНГ при health (троттлинг 10 мин, cross-instance).
-      // Vercel cron на Hobby — раз в сутки, этого мало для роста ленты (цель:
-      // 1000+ постов в категории). GH Actions пингует health каждые 5 минут —
-      // ротационная партия шедулера (8+3 канала) непрерывно обновляет посты,
-      // просмотры и аватарки без внешних cron-сервисов.
+      // v5.77.4: ФОНОВЫЙ АВТОПАРСИНГ при health (троттлинг 2.5 мин, cross-instance).
+      // Vercel cron на Hobby — раз в сутки, этого мало для роста ленты.
+      // v5.81: GH Actions пингует каждые 3 мин, троттлинг 2.5 мин → парсинг
+      // фактически на КАЖДЫЙ пинг; партия 12+6 каналов, бюджет 35с, 3 воркера —
+      // свежие посты появляются в среднем через 3-5 минут с публикации.
       try {
         const last = await db.botSetting.findUnique({ where: { key: 'health_parse_at' } })
         const lastAt = last ? Date.parse(last.value) : 0
-        if (Date.now() - lastAt < 10 * 60_000) return
+        if (Date.now() - lastAt < 150_000) return
         await db.botSetting
           .upsert({
             where: { key: 'health_parse_at' },
@@ -177,7 +177,7 @@ export async function GET(request: Request) {
         ])
         const batch = await nextAdaptiveBatch()
         if (batch.length > 0) {
-          const r = await runParser(6, undefined, batch.length, 25_000, 2, batch)
+          const r = await runParser(6, undefined, batch.length, 35_000, 3, batch)
           if (r.newPosts.length > 0) console.log('[health] auto-parse: +' + r.newPosts.length, 'posts')
         }
       } catch (e) {

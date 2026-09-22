@@ -10,7 +10,7 @@ name: health-watch
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/3 * * * *" # v5.81: каждые 3 мин — свежесть постов ~3-5 мин
   workflow_dispatch:
 
 concurrency:

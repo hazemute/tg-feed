@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
@@ -40,8 +40,8 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url)
     const parsed = querySchema.safeParse(Object.fromEntries(searchParams))
     if (!parsed.success) return err('after (ISO date) required')
-    const { category, after, lang } = parsed.data
-    const afterDate = new Date(after)
+    const { category, after: afterIso, lang } = parsed.data
+    const afterDate = new Date(afterIso)
 
     const scope = await buildFeedScope(userId, category)
     if (!scope) return err('user not found', 404)
@@ -98,6 +98,37 @@ export async function GET(request: Request) {
      * бы в конец ленты сплошной серией (главный источник «повторов подряд»).
      */
     const diversified = diversify(items, (x) => x.channel.id)
+
+    /* v5.81: СВЕЖЕСТЬ ПО ЧТЕНИЮ — пока кто-то смотрит ленту (этот роут поллится
+       каждые ~20-45с), лёгкий прогон 2-3 САМЫХ горячих каналов в фоне
+       (троттлинг 90с cross-instance). Задержка появления новых постов
+       падает с ~5-15 мин до ~1-2 мин в активные часы, Bot API не трогаем
+       (t.me/s — обычные HTTPS-фечи), бюджет 12с — в лимит функции укладываемся. */
+    after(async () => {
+      try {
+        const last = await db.botSetting.findUnique({ where: { key: 'fresh_parse_at' } })
+        const lastAt = last ? Date.parse(last.value) : 0
+        if (Date.now() - lastAt < 90_000) return
+        await db.botSetting
+          .upsert({
+            where: { key: 'fresh_parse_at' },
+            create: { key: 'fresh_parse_at', value: new Date().toISOString() },
+            update: { value: new Date().toISOString() },
+          })
+          .catch(() => {})
+        const [{ hotBatch }, { runParser }] = await Promise.all([
+          import('@/lib/parse-scheduler'),
+          import('@/lib/parse-engine'),
+        ])
+        const batch = await hotBatch(3)
+        if (batch.length > 0) {
+          const r = await runParser(4, undefined, batch.length, 12_000, 2, batch)
+          if (r.newPosts.length > 0) console.log('[feed/fresh] hot-parse: +' + r.newPosts.length, batch.join(','))
+        }
+      } catch (e) {
+        console.error('[feed/fresh] hot-parse failed', e)
+      }
+    })
 
     return NextResponse.json({ count: diversified.length, items: diversified })
   } catch (e) {

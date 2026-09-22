@@ -360,8 +360,11 @@ export default function Home() {
   }, [setPrerelease])
 
   // Прогрев ВСЕХ ключевых экранов ПОСЛЕ первого рендера ленты (v5.34): задания,
-  // каталог каналов и трендовые хэштеги ложатся в клиентский кэш apiCached —
-  // вкладки «Задания» и «Поиск» затем открываются МГНОВЕННО, без сетевого раунд-трипа
+  // каталог каналов, тренды, кабинет — ложатся в клиентский кэш apiCached —
+  // вкладки «Задания»/«Поиск»/«Каналы»/«Профиль» затем открываются МГНОВЕННО,
+  // без сетевого раунд-трипа и пустого экрана.
+  // v5.81: старт 800мс (было 2.5с), окно idle 20с (было 90с) + /api/mychannel —
+  // жалобы «лента загрузилась, а другие вкладки пустые» закрыты префетчем заранее.
   useEffect(() => {
     if (!authReady || !user || !appOpen) return
     const t = window.setTimeout(() => {
@@ -370,16 +373,18 @@ export default function Home() {
           '/api/quests',
           '/api/hashtags/trending',
           `/api/channels${user.id ? `?userId=${encodeURIComponent(user.id)}` : ''}`,
+          '/api/mychannel',
         ],
-        90_000,
+        20_000,
       )
-    }, 2_500)
+    }, 800)
     return () => window.clearTimeout(t)
   }, [authReady, user, appOpen])
 
   // Прогрев ленивых чанков в простое (после первых кадров ленты): первый тап
   // по посту/вкладке/профилю не ждёт докачку JS. Модули те же, что в dynamic —
   // повторный import() бесплатен, просто кладёт чанк в кэш браузера.
+  // v5.81: 1.2с вместо 3.5с — ранние тапи не качают чанк на медленной сети.
   useEffect(() => {
     if (!authReady || !user || !appOpen) return
     const t = window.setTimeout(() => {
@@ -390,7 +395,7 @@ export default function Home() {
       void import('@/components/tabs/QuestsTab')
       void import('@/components/tabs/ChannelTab')
       void import('@/components/tabs/ProfileTab')
-    }, 3_500)
+    }, 1_200)
     return () => window.clearTimeout(t)
   }, [authReady, user, appOpen])
 
