@@ -8,6 +8,7 @@ import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
 import { api } from '@/lib/api'
+import { reportFeedView } from '@/lib/feed-views'
 import { formatCount, timeAgo } from '@/lib/format'
 import { haptic, openTelegram } from '@/lib/tg'
 import type { PostDTO } from '@/lib/types'
@@ -507,16 +508,11 @@ function PostCardImpl({
         if (e.intersectionRatio >= 0.7) {
           viewedRef.current = true
           io.disconnect()
-          const userId = useApp.getState().user?.id
-          if (!userId) return
-          api<{ added: number }>('/api/view', {
-            method: 'POST',
-            body: JSON.stringify({ postIds: [post.id] }),
-          })
-            .then((r) => {
-              if (r?.added > 0) onViewed?.(post.id)
-            })
-            .catch(() => {})
+          // v5.95: батчинг — id копятся и уезжают ОДНИМ POST /api/view
+          // (до 50 id за раз). Раньше каждая карточка стреляла своим запросом:
+          // страница ленты порождала 20-30 POST-ов и дёргала скролл.
+          reportFeedView(post.id)
+          onViewed?.(post.id)
           startDwellTracking()
         }
       },

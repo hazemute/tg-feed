@@ -261,6 +261,40 @@ export const CATALOG: Array<{ slug: string; usernames: string[] }> = [
       'indiegameru',
       'gamedevru',
       'unreal_engine_ru',
+      // ── v5.95: ВТОРАЯ ВОЛНА — каждый username живьём проверен t.me/s
+      // (веб-превью + посты; checked 2025-09-22, урок v5.78: мёртвых имён нет) ──
+      'gabestore', // GABESTORE — магазин игр
+      'natus_vincere',
+      'team_spirit',
+      'worldoftanks',
+      'warthunder', // War Thunder RU
+      'tarkov', // Escape from Tarkov
+      'pubg_mobile',
+      'league_of_legends_ru',
+      'worldofwarships',
+      'mmorpg', // MMORPG RU
+      'valve_ru',
+      'stalcraft', // STALCRAFT
+      'stalker2_ru', // S.T.A.L.K.E.R. 2
+      'ksp_ru', // Kerbal Space Program RU
+      'androidgames_ru',
+      'mangodota', // Mango Dota — медиа Dota 2
+      'allstarsleague', // AllStars League
+      'ggsel', // GGSel — маркетплейс игр
+      'gigagames', // GigaGames
+      'psnstore_ru', // PSN Store RU
+      'steam_community_ru',
+      'games_keys', // игровые ключи
+      'ggdeals', // GG.deals — скидки
+      'vgtimes_discounts',
+      'vgtimes_plus',
+      'virtuspro_cs2',
+      'virtuspro_dota',
+      'virtuspro_mlbb',
+      'virtuspro_mobile',
+      'virtuspro_pubg',
+      'virtuspro_r6',
+      'virtusproapex',
     ],
   },
 ]

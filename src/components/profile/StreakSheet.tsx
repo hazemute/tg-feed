@@ -82,7 +82,7 @@ export function StreakSheet({ open, onClose }: { open: boolean; onClose: () => v
           {[
             {
               icon: Flame,
-              value: stats ? (stats.streak > 0 ? `${stats.streak}` : '—') : null,
+              value: stats ? `${stats.streak}` : null,
               label: t('act.streak'),
               tone: 'text-orange-500',
               bg: 'bg-orange-500/15',

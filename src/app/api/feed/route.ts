@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { Channel, Post } from '@prisma/client'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
-import { diversify, personalScoreParts, shuffleNoise, FOREIGN_LANG_MULTIPLIER, UNDETECTED_FROM_FOREIGN_CHANNEL_MULTIPLIER, isForeignForRanking } from '@/lib/rank'
+import { diversify, personalScoreParts, shuffleNoise, viewedShuffleNoise, FOREIGN_LANG_MULTIPLIER, UNDETECTED_FROM_FOREIGN_CHANNEL_MULTIPLIER, isForeignForRanking } from '@/lib/rank'
 import { toPostDTO } from '@/lib/dto'
 import { buildFeedScope, loadPersonalSignals, computeRankedIndex, FEED_INDEX_KEY_V } from '@/lib/feed'
 import type { RankedIndex, PersonalSignals } from '@/lib/feed'
@@ -627,6 +627,9 @@ async function buildFeedSnapshot(ctx: {
     }
     // Шум с userId внутри сида: у разных пользователей — разные сигнатуры
     w += shuffleNoise(`${userId}:${e.i}:${effSeed}`, e.w)
+    // v5.95: просмотренные дополнительно вращаются сидом (до +2600) — в пуле,
+    // где всё уже видно, каждый заход поднимает ДРУГИЕ посты (жалоба «одно и то же»)
+    if (signals.viewedIds.has(e.i)) w += viewedShuffleNoise(`${userId}:${e.i}:${effSeed}`, e.w)
     // Языковой множитель (Task 5-c): только к положительной части, штрафы
     // (просмотрено/не интересно/дизлайк тематики) не смягчаются
     if (isForeignForRanking(e.l, e.cl) && !interacted.has(e.c) && w > 0) {
@@ -640,6 +643,26 @@ async function buildFeedSnapshot(ctx: {
       Равные веса упорядочиваются по id — порядок воспроизводим между
       пересборками снапшота и одинаков у всех реплик инстанса. */
   scored.sort((a, b) => b.w - a.w || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  /* ---------- 5.5 v5.95: «при заходе — новое» — unseen-first голова ----------
+      Смешанный пул: в первых 10 позициях органики минимум 7 непросмотренных
+      (когда их хватает). Просмотренные не исчезают — стоят следом и ниже
+      (−5000), но голову при каждом заходе занимает то, что ещё не видели. */
+  const UNSEEN_HEAD_SLOTS = 10
+  const UNSEEN_HEAD_MIN = 7
+  if (scored.length > UNSEEN_HEAD_SLOTS * 2) {
+    const unseen = scored.filter((s) => !signals.viewedIds.has(s.id))
+    if (unseen.length >= UNSEEN_HEAD_SLOTS) {
+      const headUnseen = unseen.slice(0, UNSEEN_HEAD_MIN)
+      const headSeen = scored
+        .filter((s) => signals.viewedIds.has(s.id))
+        .slice(0, UNSEEN_HEAD_SLOTS - UNSEEN_HEAD_MIN)
+      const pinnedHeadIds = new Set([...headUnseen, ...headSeen].map((s) => s.id))
+      const rest = scored.filter((s) => !pinnedHeadIds.has(s.id))
+      scored.length = 0
+      scored.push(...headUnseen, ...headSeen, ...rest)
+    }
+  }
 
   /* ---------- 6. Промо + спонсоры: пиннинг в голову потока ----------
       Прежде промо/спонсоры вставлялись ТОЛЬКО на странице 0 с перевырезкой

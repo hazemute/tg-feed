@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { resolveTelegramFileUrl } from '@/lib/tg-bot'
 import { cacheAside } from '@/lib/redis'
 
 export const dynamic = 'force-dynamic'
@@ -11,19 +10,20 @@ export const dynamic = 'force-dynamic'
  * Пайплайн (см. src/components/feed/TelegramEmoji.tsx):
  *   парсер t.me/s извлекает custom_emoji_id из разметки постов → Bot API
  *   getCustomEmojiStickers кладёт file_id анимации в таблицу CustomEmoji
- *   (кэш навсегда) → здесь file_id резолвится в CDN-URL.
+ *   (кэш навсегда) → здесь отдаём 302 на НАШ /api/media?fid=<file_id>.
  *
- * Два типа анимации:
- *   • video (webm)    → 302 прямо на CDN Telegram — <video> кэширует редирект.
- *   • lottie (.tgs)   → 302 на НАШ /api/media?u=… (gzip-JSON): прямые ссылки
- *     cdn*.telesco.pe у части пользователей заблокированы провайдерами, поэтому
- *     байты идут через прокси (кэш CDN Vercel 7 дней), а распаковывает gzip
- *     сам браузер (DecompressionStream) — сервер не гоняет JSON-тело.
+ * v5.95 — ФИКС УТЕЧКИ ТОКЕНА: раньше ответ резолвился в
+ * api.telegram.org/file/bot<TOKEN>/… и уходил клиенту в Location (виден в
+ * DevTools/кэшах/логах). Теперь клиент получает только наш прокси:
+ * /api/media?fid=… сам делает getFile и качает байты сервер-сайд
+ * (механика v5.80 для медиа постов — reused). Оба вида анимации:
+ *   • video (webm) → /api/media?fid → video/webm (по расширению file_path)
+ *   • lottie (.tgs) → /api/media?fid → application/octet-stream,
+ *     gzip распаковывает браузер (DecompressionStream)
  *
- * Кэширование CDN-ссылки (чтобы не дёргать ни БД, ни Bot API повторно):
- *   L0 память 10 мин → L1 Upstash Redis 40 мин (URL живёт ~1 час) →
- *   браузер кэширует 302 ещё 30 мин. Публичный эндпоинт: <img>/<video> не
- *   умеют Authorization — редирект кэшируется на клиенте.
+ * Кэширование: L0 память 10 мин → Redis 40 мин (маркер «прокси существует»);
+ * браузер кэширует 302 ещё 30 мин. Публичный эндпоинт: <img>/<video> не
+ * умеют Authorization.
  */
 const URL_TTL_SEC = 40 * 60
 const URL_MEM_TTL_MS = 10 * 60_000
@@ -35,29 +35,24 @@ export async function GET(
   const { id } = await params
   if (!/^\d{5,20}$/.test(id)) return new Response('bad id', { status: 400 })
 
-  const url = await cacheAside({
+  const target = await cacheAside({
     key: `emoji:url:${id}`,
     ttlSec: URL_TTL_SEC,
     memoryTtlMs: URL_MEM_TTL_MS,
     fetcher: async () => {
       const row = await db.customEmoji
-        .findUnique({ where: { id }, select: { kind: true, fileId: true } })
+        .findUnique({ where: { id }, select: { fileId: true } })
         .catch(() => null)
+      // v5.95: ТОЛЬКО наш прокси (fid) — токен бота наружу не утекает
       if (!row?.fileId) return null
-      const cdn = await resolveTelegramFileUrl(row.fileId)
-      if (!cdn) return null
-      // Lottie: байты должны идти через наш медиа-прокси (недоступный напрямую
-      // CDN + распаковка gzip на клиенте). URL прокси стабилен → кэшируется.
-      if (row.kind === 'lottie') return `/api/media?u=${encodeURIComponent(cdn)}`
-      return cdn
+      return `/api/media?fid=${encodeURIComponent(row.fileId)}`
     },
   })
 
-  if (!url) return new Response('not found', { status: 404 })
+  if (!target) return new Response('not found', { status: 404 })
 
-  // Относительный URL (прокси) → абсолютный для Response.redirect
-  const target = url.startsWith('/') ? new URL(url, request.url).toString() : url
-  return NextResponse.redirect(target, {
+  const absolute = new URL(target, request.url).toString()
+  return NextResponse.redirect(absolute, {
     status: 302,
     headers: { 'Cache-Control': 'public, max-age=1800' },
   })

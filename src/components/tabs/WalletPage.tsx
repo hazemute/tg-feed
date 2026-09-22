@@ -262,39 +262,25 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
               ))}
             </div>
 
-            {/* v5.78: другой счёт одной строкой (раньше был дублирующий блок
-                «Счета» с обоими адресами — та же информация, что сверху, —
-                и страница выглядела перегруженной). Тап — мгновенное переключение. */}
-            {data && (() => {
-              const otherId: 'swp' | 'rub' = account === 'swp' ? 'rub' : 'swp'
-              const isSwp = otherId === 'swp'
-              return (
-                <button
-                  type="button"
-                  onClick={() => {
-                    haptic('light')
-                    setAccount(otherId)
-                  }}
-                  className="mx-4 mt-3 flex w-[calc(100%-32px)] items-center gap-3 rounded-2xl border border-tg-sep/60 px-4 py-3 text-left transition active:bg-tg-surface/60"
-                >
-                  <span
-                    className={cn(
-                      'flex h-10 w-10 items-center justify-center rounded-full',
-                      isSwp ? 'bg-tg-link/15 text-tg-link' : 'bg-emerald-500/15 text-emerald-500',
-                    )}
-                  >
-                    {isSwp ? <SwipeIcon className="h-5 w-5" /> : <span className="text-[16px] font-bold">₽</span>}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block text-[12.5px] text-tg-hint">Другой счёт</span>
-                    <span className="block text-[15px] font-semibold text-tg-text">
-                      {isSwp ? 'Swipe-счёт' : 'Рубль-счёт'} · {isSwp ? `${fmtNum(data.swipes)} SWP` : fmtRub(data.balanceKop)}
-                    </span>
-                  </span>
-                  <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
-                </button>
-              )
-            })()}
+            {/* v5.95: плашка «Промокоды» (владелец: «Другой счёт» лишний —
+                переключение счетов уже в пилюлях сверху). Тап — шит ввода кода. */}
+            <button
+              type="button"
+              onClick={() => {
+                haptic('light')
+                setSheet('promo')
+              }}
+              className="mx-4 mt-3 flex w-[calc(100%-32px)] items-center gap-3 rounded-2xl border border-tg-sep/60 px-4 py-3 text-left transition active:bg-tg-surface/60"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-tg-link/15 text-tg-link">
+                <Ticket className="h-5 w-5" aria-hidden />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block text-[15px] font-semibold text-tg-text">Промокоды</span>
+                <span className="block text-[12.5px] text-tg-hint">Ввести код — награда зачислится на счёт</span>
+              </span>
+              <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+            </button>
 
             {/* Рефералка */}
             {data?.refLink && (
