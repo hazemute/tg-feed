@@ -269,22 +269,27 @@ export function ProfileTab() {
         <StatBlock value={stats?.bookmarks} label="Сохранено" />
       </section>
 
-      {/* Кошелёк v2 (v5.77): кнопка вместо плашки — полная страница открывается по тапу */}
+      {/* Кошелёк v2 (v5.77): кнопка вместо плашки — полная страница открывается по тапу.
+          v5.79.1: обёртка px-4 + w-full — <button> не растягивается на ширину контейнера
+          сам (ширина «по контенту»), из-за этого кнопка висела узкой колбаской слева
+          и не совпадала краями со статистикой/секциями. Теперь края ровно по px-4. */}
       {!user.isGuest && (
-        <button
-          type="button"
-          onClick={() => {
-            haptic('light')
-            setWalletOpen(true)
-          }}
-          className="mx-4 mt-3 flex items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
-        >
-          <span className="flex h-10 w-10 items-center justify-center rounded-full bg-tg-link/15 text-tg-link">
-            <Wallet className="h-5 w-5" strokeWidth={1.9} aria-hidden />
-          </span>
-          <span className="flex-1 text-[16px] font-semibold text-tg-text">Кошелёк</span>
-          <ChevronRight className="h-5 w-5 text-tg-hint" aria-hidden />
-        </button>
+        <div className="mt-3 px-4">
+          <button
+            type="button"
+            onClick={() => {
+              haptic('light')
+              setWalletOpen(true)
+            }}
+            className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+          >
+            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tg-link/15 text-tg-link">
+              <Wallet className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+            </span>
+            <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">Кошелёк</span>
+            <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+          </button>
+        </div>
       )}
 
       {/* v5.46: активный розыгрыш — билеты/задания/промокод (скрыт, если розыгрыша нет) */}
