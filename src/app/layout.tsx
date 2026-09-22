@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next'
 import Script from 'next/script'
 import { Geist, Geist_Mono } from 'next/font/google'
+import { BootShellDismiss } from '@/components/boot-shell-dismiss'
 import { Toaster } from '@/components/ui/sonner'
 import { THEMES } from '@/lib/themes'
 import {
@@ -342,6 +343,9 @@ export default function RootLayout({
           (см. комментарий у bootGuard выше).
         */}
         <script dangerouslySetInnerHTML={{ __html: bootGuard }} />
+        {/* v5.86: React смонтировался → шторка гаснет на ЛЮБОМ маршруте
+            (раньше только page.tsx умел — /admin вечно показывал сплэш) */}
+        <BootShellDismiss />
         <Script id="tgfeed-theme-init" strategy="beforeInteractive">
           {themeInit}
         </Script>
