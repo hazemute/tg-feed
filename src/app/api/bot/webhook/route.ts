@@ -16,7 +16,7 @@ import {
   type BotButton,
 } from '@/lib/tg-buttons'
 import { externalOrigin, timingSafeEqualStr } from '@/lib/server'
-import { botBanned, markBotBan } from '@/lib/tg-bot'
+import { botBanned, markBotBan, TELEGRAM_REQUIRED_UPDATES } from '@/lib/tg-bot'
 import { joinGiveaway, kickDueGiveaways, refreshGiveawayButton } from '@/lib/giveaways'
 import {
   handleBoostCheck,
@@ -134,15 +134,10 @@ async function healWebhook(request: Request): Promise<void> {
     const currentUrl = info?.result?.url ?? ''
     /* v5.80: перерегистрируем не только при расхождении URL, но и когда в
        allowed_updates нет новых типов апдейтов (channel_post для мгновенных
-       постов привязанных каналов) — иначе фича молча не работает до смены URL. */
-    const REQUIRED_UPDATES = [
-      'message',
-      'callback_query',
-      'business_connection',
-      'my_chat_member',
-      'channel_post',
-      'edited_channel_post',
-    ]
+       постов привязанных каналов) — иначе фича молча не работает до смены URL.
+       v5.92: список вынесен в TELEGRAM_REQUIRED_UPDATES — health и вебхук
+       больше не могут разъехаться. */
+    const REQUIRED_UPDATES = TELEGRAM_REQUIRED_UPDATES
     const allowed = info?.result?.allowed_updates ?? []
     const updatesOk =
       allowed.length === 0 // пусто = дефолт Telegram (все кроме selected) — считаем нормой
@@ -162,14 +157,7 @@ async function healWebhook(request: Request): Promise<void> {
       body: JSON.stringify({
         url: expectedUrl,
         ...(secret ? { secret_token: secret } : {}),
-        allowed_updates: [
-          'message',
-          'callback_query',
-          'business_connection',
-          'my_chat_member',
-          'channel_post',
-          'edited_channel_post',
-        ],
+        allowed_updates: TELEGRAM_REQUIRED_UPDATES,
         max_connections: 40,
         drop_pending_updates: false,
       }),

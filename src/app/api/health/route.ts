@@ -1,6 +1,6 @@
 import { NextResponse, after } from 'next/server'
 import { db } from '@/lib/db'
-import { botEnabled, getBotUsername, botBanRemainSecAsync } from '@/lib/tg-bot'
+import { botEnabled, getBotUsername, botBanRemainSecAsync, TELEGRAM_REQUIRED_UPDATES } from '@/lib/tg-bot'
 import { redisHealth } from '@/lib/redis'
 import { APP_VERSION } from '@/lib/server'
 import { checkSchema, ensureAppSchema } from '@/lib/ensure-schema'
@@ -95,11 +95,20 @@ async function healBotWebhook(botEnabledFlag: boolean): Promise<{
     })
     const info = (await infoRes.json()) as {
       ok?: boolean
-      result?: { url?: string; last_error_message?: string; pending_update_count?: number }
+      result?: { url?: string; last_error_message?: string; pending_update_count?: number; allowed_updates?: string[] }
     }
     const currentUrl = info.result?.url ?? ''
     const lastError = info.result?.last_error_message ?? null
-    if (currentUrl === expectedUrl) {
+    /* v5.92: сверяем не только URL, но и allowed_updates (как это делает
+       webhook-роут) — раньше самолечение здесь регистрировало вебхук БЕЗ
+       channel_post/edited_channel_post, и мгновенные посты привязанных
+       каналов молча переставали доезжать. */
+    const allowed = info.result?.allowed_updates ?? []
+    const updatesOk =
+      allowed.length === 0 // пусто = дефолт Telegram (все кроме selected) — норма
+        ? true
+        : TELEGRAM_REQUIRED_UPDATES.every((u) => allowed.includes(u))
+    if (currentUrl === expectedUrl && updatesOk) {
       return { ok: true, url: currentUrl, expected: expectedUrl, healed: false, lastError }
     }
 
@@ -111,7 +120,7 @@ async function healBotWebhook(botEnabledFlag: boolean): Promise<{
       body: JSON.stringify({
         url: expectedUrl,
         ...(secret ? { secret_token: secret } : {}),
-        allowed_updates: ['message', 'callback_query', 'business_connection', 'my_chat_member'],
+        allowed_updates: TELEGRAM_REQUIRED_UPDATES,
         max_connections: 40,
         drop_pending_updates: false,
       }),

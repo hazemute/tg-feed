@@ -19,7 +19,9 @@ export const dynamic = 'force-dynamic'
  * my_chat_member не придёт никогда. Вебхук завершает привязку мгновенно,
  * этот роут — страховка и путь для «бот уже был админом».
  *
- * Ответ: { claimed: boolean, botAdmin?: boolean, taken?: boolean }
+ * Ответ: { claimed: boolean, botAdmin?: boolean, taken?: boolean, checkFailed?: boolean }
+ * checkFailed=true — Bot API недоступен (флуд-бан/сеть): прав бота мы НЕ знаем,
+ * клиент показывает «проверка не удалась», а не «бот не админ».
  */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'mychannel' })
@@ -47,7 +49,14 @@ export async function GET(request: Request) {
 
     // Бот уже админ канала? (свежая проверка — мимо 15-минутного кэша прав)
     const rights = await getBotChatRights(uname, { fresh: true })
-    if (rights?.isAdmin) {
+    if (!rights) {
+      /* v5.92: Bot API недоступен (глобальный флуд-бан 429 / сеть / таймаут).
+         Раньше это приравнивалось к «бот НЕ админ» — владелец канала, уже
+         добавивший бота, получал ложное «добавьте его и нажмите проверить»
+         и упирался в одно и то же место, пока не заканчивался бан. */
+      return NextResponse.json({ claimed: false, checkFailed: true })
+    }
+    if (rights.isAdmin) {
       const pendingUserId = await popPendingClaim(uname)
       if (!pendingUserId) {
         // Права есть, заявки нет: пусть юзер нажмёт «Привязать» ещё раз —

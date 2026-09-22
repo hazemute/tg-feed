@@ -579,7 +579,12 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
       ticks += 1
       if (ticks > 60) return // 5 мин опроса — дальше только вручную
       try {
-        const r = await api<{ claimed?: boolean; taken?: boolean; botAdmin?: boolean }>(
+        const r = await api<{
+          claimed?: boolean
+          taken?: boolean
+          botAdmin?: boolean
+          checkFailed?: boolean
+        }>(
           `/api/mychannel/claim-status?username=${encodeURIComponent(cleanName)}`,
         )
         if (stopped) return
@@ -623,15 +628,23 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
     setBusy(true)
     setClaimError(null)
     try {
-      const r = await api<{ claimed?: boolean; taken?: boolean; botAdmin?: boolean }>(
-        `/api/mychannel/claim-status?username=${encodeURIComponent(cleanName)}`,
-      )
+      const r = await api<{
+        claimed?: boolean
+        taken?: boolean
+        botAdmin?: boolean
+        checkFailed?: boolean
+      }>(`/api/mychannel/claim-status?username=${encodeURIComponent(cleanName)}`)
       if (r.claimed) {
         setStage('done')
         haptic('success')
         window.setTimeout(onDone, 900)
       } else if (r.taken) {
         setClaimError('Канал привязан к другому аккаунту')
+      } else if (r.checkFailed) {
+        /* v5.92: Telegram не ответил (флуд-бан/сеть) — НЕ говорим «бот не админ»,
+           это ложь: бот мог быть уже добавлен, а проверка просто не прошла */
+        toast.info('Проверка прав не удалась — Telegram временно не отвечает. Попробуйте ещё раз через минуту')
+        haptic('light')
       } else if (r.botAdmin === false) {
         toast.info('Бот пока не админ канала — добавьте его и нажмите проверить')
         haptic('light')
@@ -704,7 +717,7 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
           <div className="mt-4 px-5">
             <p className="text-[13.5px] leading-relaxed text-tg-text2">
               Добавьте бота <span className="font-semibold text-tg-link">@{botUser}</span> администратором
-              в канал <span className="font-semibold text-tg-text">{title}</span> — достаточно права
+              в ваш канал <span className="font-semibold text-tg-text">«{title}»</span> — достаточно права
               «Публикация сообщений». Привязка завершится автоматически.
             </p>
             <div className="mt-3 flex items-start gap-2.5 rounded-2xl bg-tg-link/[0.07] px-4 py-3 text-[13px] text-tg-text2">

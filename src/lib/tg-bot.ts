@@ -67,6 +67,20 @@ function memSet(key: string, v: string | null, ttlMs: number): void {
 
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
 
+/**
+ * v5.92: ЕДИНЫЙ список allowed_updates вебхука. Раньше webhook-роут и /api/health
+ * регистрировали вебхук РАЗНЫМИ списками — health-самолечение теряло channel_post,
+ * и мгновенные посты привязанных каналов молча переставали доезжать.
+ */
+export const TELEGRAM_REQUIRED_UPDATES = [
+  'message',
+  'callback_query',
+  'business_connection',
+  'my_chat_member',
+  'channel_post',
+  'edited_channel_post',
+] as const
+
 export function botEnabled(): boolean {
   return BOT_TOKEN().length > 0
 }
@@ -968,6 +982,10 @@ export type BotChatRights = {
 /** Кэш прав бота в конкретном канале (память 15 мин) */
 const rightsCache = new Map<string, { v: BotChatRights; exp: number }>()
 
+/** v5.92: id бота кэшируется на 10 мин — раньше каждый fresh-вызов прав
+ *  (опрос привязки каждые 5с!) дёргал getMe, удваивая расход лимита Bot API */
+let botIdCache: { id: number; exp: number } | null = null
+
 /**
  * Права НАШЕГО бота в канале: getMe → bot id, затем getChatMember(chat, bot_id).
  * Из статуса и флагов собирается матрица прав — ядро живого аудита:
@@ -991,14 +1009,21 @@ export async function getBotChatRights(
     rightsCache.delete(clean)
   }
 
-  // id бота (getMe кэшируется выше в getBotUsername только юзернеймом — тут нужен id)
+  // id бота (кэш 10 мин — getMe не меняется, а fresh-опрос прав долбит каждые 5с)
   let botId: number | null = null
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getMe`, { signal: AbortSignal.timeout(8000) })
-    const data = (await res.json()) as { ok?: boolean; result?: { id?: number } }
-    if (data?.ok && typeof data.result?.id === 'number') botId = data.result.id
-  } catch {
-    return null
+  if (botIdCache && botIdCache.exp > Date.now()) {
+    botId = botIdCache.id
+  } else {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getMe`, { signal: AbortSignal.timeout(8000) })
+      const data = (await res.json()) as { ok?: boolean; result?: { id?: number } }
+      if (data?.ok && typeof data.result?.id === 'number') {
+        botId = data.result.id
+        botIdCache = { id: botId, exp: Date.now() + 10 * 60_000 }
+      }
+    } catch {
+      return null
+    }
   }
   if (!botId) return null
 
