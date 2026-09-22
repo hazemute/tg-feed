@@ -1,16 +1,16 @@
-// TG-Feed — Prisma schema (SQLite) — ТОЛЬКО для локальной разработки в песочнице.
-// Каноническая схема проекта (Supabase/PostgreSQL) — prisma/schema.prisma;
-// модели в двух файлах должны оставаться идентичными (сверка при изменениях).
-// Клиент для локального рантайма генерится из ЭТОГО файла: bun run db:generate
-// Note: SQLite has no native arrays/enums → JSON strings + status fields.
+// TG-Feed — каноническая Prisma-схема (PostgreSQL / Supabase).
+// Единственная БД для локальной разработки и прода: Supabase Postgres.
+// Изменение моделей: bun run db:push (db push по этой схеме) и обновить
+// supabase/schema.sql — структура облачной БД должна совпадать.
 
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 // Telegram user (id from initData) or demo user (id from deviceId)
@@ -19,51 +19,58 @@ model User {
   username      String?
   firstName     String?
   lastName      String?
-  photoUrl      String?
-  isGuest       Boolean  @default(true) // в БД колонка исторически isDemo
-  isPremium     Boolean  @default(false)
-  languageCode  String?
-  bypassMaintenance Boolean @default(false)
+  photoUrl      String? // http URL или tgfile:<file_id> (аватар через /api/avatar)
+  isGuest       Boolean  @default(true) @map("isDemo")
+  isPremium     Boolean  @default(false) // Telegram Premium (из initData)
+  languageCode  String? // язык клиента Telegram (IETF-код)
   categories    String   @default("[]") // JSON array of category slugs (interests)
+  bypassMaintenance Boolean @default(false) // допуск в миниапп во время техработ (кроме админов из ADMIN_TG_IDS)
   lastSeenNotifiedAt DateTime? // граница «прочитанных» уведомлений (экран «Уведомления»)
   bannedAt      DateTime? // бан: null — активен; API отвечает 403 banned
   banReason     String?   // причина бана (видна админу)
-  tier          String   @default("free") // free | plus | pro (Snap Plus / Snap Pro)
-  tierUntil     DateTime? // срок действия оплаченного тира
-  badges        String   @default("[]") // v5.19: JSON-массив слагов бейджей (lib/badges.ts)
-  profilePalette String  @default("crimson") // v5.27: обложка профиля (lib/profile-style.ts)
-  profileBg      String  @default("none") // v5.27: фон обложки (узор/анимация)
-  profileFrame   String  @default("none") // v5.27: рамка аватара
+  // === Тарифы Tg Swipe: free | plus (Snap Plus) | pro (Snap Pro) ===
+  tier          String   @default("free")
+  tierUntil     DateTime? // срок действия оплаченного тира (null у free); истёкший → ведёт себя как free
+  // === Бейджи (v5.19): JSON-массив слагов — developer/manager/moderator/sponsor/vip/early (lib/badges.ts) ===
+  badges        String   @default("[]")
+  // === Оформление профиля (v5.27): обложка-палитра, фон обложки, рамка аватара ===
+  profilePalette String @default("crimson")
+  profileBg      String @default("none")
+  profileFrame   String @default("none")
+  // === Кошелёк (v5.38): единый баланс — рубли + свайпы (курс v5.40: 500 свайпов = 1 ₽) ===
   balanceKop     Int      @default(0) // рубли, в копейках
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
-  promoteCredits Int      @default(0) // v5.69: купленные продвижения (пакет 5 шт/199 ₽)
-  promoteFreeMonth String @default("") // v5.69: 'YYYY-MM' (UTC) — месяц, в котором бесплатное уже использовано
-  xp             Int      @default(0) // v5.75: опыт за активность (уровни)
-  level          Int      @default(1) // v5.75: уровень (монотонно растёт)
-  swipeAddress   String?  @unique // v5.77: адрес Swipe-счёта (SWP-XXXX-XXXX)
-  rubAddress     String?  @unique // v5.77: адрес Рубль-счёта (RUB-XXXX-XXXX)
-  referredById   String? // v5.77: tg_<uid> пригласившего (реферальные 5% от трат)
-  createdAt     DateTime @default(now())
+  // === Продвижение (v5.69): купленные кредиты пакета + ключ месяца бесплатного продвижения ===
+  promoteCredits Int      @default(0) // купленные продвижения (пакет 5 шт/199 ₽), тратятся после месячного бесплатного
+  promoteFreeMonth String @default("") // 'YYYY-MM' (UTC): месяц, в котором бесплатное продвижение уже использовано
+  // === Опыт и уровни (v5.75): XP за активность, уровень монотонно растёт (не падает при штрафах) ===
+  xp             Int      @default(0)
+  level          Int      @default(1)
+  // === Кошелёк v2 (v5.77): адреса двух счетов + кто пригласил (реферальные 5% от трат) ===
+  swipeAddress   String?  @unique // адрес Swipe-счёта (SWP-XXXX-XXXX)
+  rubAddress     String?  @unique // адрес Рубль-счёта (RUB-XXXX-XXXX)
+  referredById   String? // tg_<uid> пригласившего (лениво из GiveawayReferral)
+  createdAt      DateTime @default(now())
 
   @@index([tier])
   @@index([createdAt])
 
   likes         Like[]
-  uploads       Upload[]
   views         PostView[]
   subscriptions Subscription[]
   channelMutes  ChannelMute[]
-  channels      Channel[]
-  claimedChannels Channel[] @relation("claimedChannels")
+  channels      Channel[]      @relation("addedChannels")
+  claimed       Channel[]      @relation("claimedChannels")
   bookmarks     Bookmark[]
-  comments      Comment[]
-  notifications Notification[]
-  supportThreads SupportThread[]
   advertiser    AdvertiserAccount?
-  campaigns     AdCampaign[]
-  translations  TranslationLog[]
   balanceLogs   BalanceLog[]
   xpLogs        XpLog[]
+  campaigns     AdCampaign[]
+  translations  TranslationLog[]
+  supportThreads SupportThread[]
+  comments      Comment[]
+  notifications Notification[]
+  uploads       Upload[]
   questCompletions QuestCompletion[]
   postHides      PostHide[]
   postReports    PostReport[]
@@ -87,47 +94,50 @@ model Channel {
   username         String    @unique // without @
   description      String?
   avatarColor      String    @default("#3390ec")
-  photoFileId      String?
-  avatarUrl        String?
-  avatarHash       String?
-  avatarVideoUrl   String?
-  avatarFetchedAt  DateTime?
-  membersCount     Int?
-  membersFetchedAt DateTime?
+  photoFileId      String? // file_id аватарки канала (Bot API getChat) → /api/avatar/c_<id>
+  avatarUrl        String? // ПОСТОЯННАЯ ссылка на аватарку (Supabase Storage) — парсер берёт og:image с t.me/s, без Bot API
+  avatarHash       String? // sha1 байтов аватарки — чтобы не перезаливать ту же картинку каждый круг
+  avatarVideoUrl   String? // анимированная аватарка (видео с лендинга t.me) — играет как в Telegram
+  avatarFetchedAt  DateTime? // когда последний раз обновляли аватарку (TTL 7 дней)
+  membersCount     Int? // реальное число подписчиков из Bot API getChatMemberCount
+  membersFetchedAt DateTime? // когда последний раз обновляли счётчик (TTL 7 дней)
   categoryId       String
   category         Category  @relation(fields: [categoryId], references: [id])
   isPremium        Boolean   @default(false)
   premiumUntil     DateTime?
-  verified         Boolean   @default(false)
+  verified         Boolean   @default(false) // официальный канал (галочка) — вручную через админку
   status           String    @default("active") // active | moderation
   subscribersCount Int       @default(0)
   clicksCount      Int       @default(0) // клики по кнопке [+] подписки
-  claimedById      String?
+  // === Snap Pro (владелец — Pro-пользователь): CTA-кнопка в постах и ИИ-ассистент ===
+  ctaLabel      String? // текст кастомной кнопки в раскрытом посте (например «Забрать бонус»)
+  ctaUrl        String? // ссылка кнопки (https)
+  styleProfile  String? // цифровой слепок ИИ-ассистента: {tone,topics,style,at} (JSON)
+  styleAt       DateTime? // когда последний раз сканировали стиль (30 последних постов)
+  // === «Мой канал»: владение и гибкие настройки показа ===
+  claimedById      String? // пользователь, доказавший владение каналом
   claimedBy        User?     @relation("claimedChannels", fields: [claimedById], references: [id])
   claimedAt        DateTime?
-  ctaLabel      String? // Snap Pro: текст CTA-кнопки в раскрытом посте
-  ctaUrl        String? // Snap Pro: ссылка CTA-кнопки (https)
-  styleProfile  String? // Snap Pro: слепок стиля ИИ-ассистента (JSON)
-  styleAt       DateTime? // Snap Pro: когда последний раз сканировали стиль
+  // Тизер-режим: none — посты целиком; cut — первые N символов + «Читать в канале»;
+  // blur — весь текст виден, но размазан до подписки (жёстче конверсия)
   teaserMode       String    @default("none")
-  teaserLimit      Int       @default(160)
+  teaserLimit      Int       @default(160) // сколько символов показывать в режиме cut
   // v5.70: кому применять тизер: all | long (лонгриды 600+ симв.) | text (текстовые без медиа)
   teaserApplyTo    String    @default("all")
   addedById        String?
-  addedBy          User?     @relation(fields: [addedById], references: [id])
+  addedBy          User?     @relation("addedChannels", fields: [addedById], references: [id])
   createdAt        DateTime  @default(now())
 
   posts            Post[]
   scheduledPosts   ScheduledPost[] // v5.64: отложенные посты (Snap Ассистент)
   subscriptions    Subscription[]
-  mutedBy     ChannelMute[]
-  campaigns   AdCampaign[]
+  campaigns        AdCampaign[]
 
-  // v5.48: индексы каналов — зеркально с schema.prisma (локальная песочница)
   @@index([status])
-  @@index([categoryId])
-  @@index([addedById])
-  @@index([claimedById]) // v5.69: GET /api/mychannel (каналы владельца)
+  @@index([categoryId]) // v5.48: join категории в ленте/каталоге/трендах
+  @@index([addedById]) // v5.48: «каналы, добавленные модератором» в админке
+  @@index([claimedById]) // v5.69: GET /api/mychannel (каналы владельца) + promotedUsed-джойны
+  mutedBy     ChannelMute[]
 }
 
 model Post {
@@ -135,41 +145,45 @@ model Post {
   tgKey       String   @unique // "<username>:<messageId>"
   channelId   String
   channel     Channel  @relation(fields: [channelId], references: [id], onDelete: Cascade)
-  text        String   @default("")
+  text        String   @default("") // markdown-lite: **bold**, __italic__, `code`, ||спойлер||, > цитата, [текст](url)
   mediaUrl    String?
-  mediaType   String   @default("image") // image | video
+  // image | video | gif | sticker | audio | voice | file | poll | link | none
+  mediaType   String   @default("image")
   mediaMeta   String? // JSON: имя/размер файла, длительность, варианты опроса, превью ссылки и т.п.
-  gallery     String? // JSON array — дополнительные медиа (карусель)
+  gallery     String? // JSON array — дополнительные медиа (карусель фото)
   link        String? // original t.me link
   viewsCount  Int      @default(0)
-  viewsTg     Int? // просмотры из оригинального канала (t.me/s)
-  reactionsTg Int      @default(0) // сумма реакций исходного поста (t.me/s)
+  viewsTg     Int? // просмотры из оригинального канала Telegram (t.me/s) — обновляются при парсинге
+  reactionsTg Int      @default(0) // сумма всех реакций исходного поста (t.me/s) — обновляются при парсинге
   likesCount  Int      @default(0)
   commentsCount Int    @default(0) // денормализованный счётчик комментариев
-  reportsCount  Int    @default(0) // v5.68: жалобы на пост
-  hotScore    Float    @default(0) // «температура» поста
+  reportsCount  Int    @default(0) // v5.68: жалобы на пост («Пожаловаться») — сигнал антирекламы по каналу
+  hotScore    Float    @default(0) // «температура» поста: -1 просмотр, +3 дочитали 5с+, +10 лайк, +20 репост
   aiSummary   String? // кэш AI-саммари (JSON array из 3 пунктов)
-  aiFlag      String? // вердикт ИИ-модерации: ok | junk | nsfw | spam (null — не модерирован)
+  aiFlag      String? // вердикт бесплатной ИИ-модерации: ok | junk | nsfw | spam (null — ещё не модерирован)
   aiFlagAt    DateTime? // когда вынесен вердикт
-  translations String? // кэш переводов: {"ru":{"text":"…","at":"ISO"}}
-  ttsAudio    String?  // озвучка поста (base64 mp3)
-  ttsAt       DateTime?
+  translations String? // кэш переводов: {"en":{"text":"…","at":"ISO"}}
+  ttsAudio     String? // озвучка поста (base64 mp3, кэш; генерируется по запросу)
+  ttsAt        DateTime? // когда сгенерирована озвучка (для инвалидации при смене текста)
   publishedAt DateTime
-  notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API)
-  promotedAt  DateTime? // когда автор протолкнул пост в ленту (Snap Pro ≤7/нед)
+  notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
+  promotedAt  DateTime? // когда автор протолкнул пост в ленту (Snap Pro: ≤7 раз в неделю)
   promoteSpent String? // v5.74: источник продвижения 'free'|'credit' (null — не продвинут/уже снят или рефанд выдан)
-  embedTried  Boolean  @default(false) // бэкфилл медиа через t.me embed уже пробовали
 
+  embedTried  Boolean  @default(false) // бэкфилл медиа через t.me/<u>/<id>?embed=1 уже пробовали
   likedBy     Like[]
   viewedBy    PostView[]
   bookmarkedBy Bookmark[]
+  comments    Comment[]
   hides       PostHide[]
   reports     PostReport[]
-  comments    Comment[]
 
-  // v5.44 (скорость): срезы ленты по времени, категории/тренды, промо-посты (page 0)
   @@index([channelId, publishedAt])
+  // v5.44 (скорость): глобальный срез ленты (all-скоуп: orderBy publishedAt
+  // take 400), «новое за сегодня» в /api/categories, окна трендов и /api/feed/fresh —
+  // составной индекс (channelId, publishedAt) не обслуживает выборки без фильтра по каналу
   @@index([publishedAt])
+  // промо-посты (Snap Pro): выборка на КАЖДОЙ странице 0 ленты (не кэшируется)
   @@index([promotedAt])
 }
 
@@ -181,9 +195,9 @@ model ScheduledPost {
   imageUrl    String?
   scheduledAt DateTime
   publishedAt DateTime?
-  link        String?
-  error       String?
-  createdBy   String?
+  link        String? // ссылка на опубликованный пост (t.me/<u>/<id>)
+  error       String? // последняя ошибка публикации (если бот без прав)
+  createdBy   String? // id пользователя-админа (Snap Ассистент)
   createdAt   DateTime  @default(now())
 
   @@index([scheduledAt])
@@ -191,20 +205,22 @@ model ScheduledPost {
 }
 
 // Промокоды (v5.65): генератор в админ-панели, активация в миниаппе (кошелёк).
+// kind: swipes — зачисление свайпов; rub — зачисление рублей (amountKop);
+// tier — доступ Snap Plus/Pro на tierDays дней (plan: plus|pro).
 model PromoCode {
   id          String   @id @default(cuid())
-  code        String   @unique
-  kind        String // swipes | rub | tier
-  swipes      Int      @default(0)
-  amountKop   Int      @default(0)
-  tierPlan    String?
-  tierDays    Int      @default(0)
-  maxUses     Int      @default(1)
-  usedCount   Int      @default(0)
+  code        String   @unique // uppercase A-Z0-9 (4-24 символов)
+  kind        String   // swipes | rub | tier
+  swipes      Int      @default(0) // kind=swipes: сколько свайпов зачислить
+  amountKop   Int      @default(0) // kind=rub: сколько копеек зачислить
+  tierPlan    String?  // kind=tier: plus | pro
+  tierDays    Int      @default(0) // kind=tier: срок в днях (3/7/30)
+  maxUses     Int      @default(1) // сколько пользователей могут активировать
+  usedCount   Int      @default(0) // сколько активаций прошло
   active      Boolean  @default(true)
-  note        String?
-  expiresAt   DateTime?
-  createdById String?
+  note        String?  // служебная пометка админа (пользователю не видна)
+  expiresAt   DateTime? // код действует до (null — бессрочно)
+  createdById String?  // админ, создавший код
   createdAt   DateTime @default(now())
 
   redemptions PromoRedemption[]
@@ -212,12 +228,13 @@ model PromoCode {
   @@index([createdAt])
 }
 
+// Активации промокодов: один пользователь — одна активация конкретного кода
 model PromoRedemption {
   id        String    @id @default(cuid())
   promoId   String
   promo     PromoCode @relation(fields: [promoId], references: [id], onDelete: Cascade)
   userId    String
-  reward    String
+  reward    String // человекочитаемое описание награды («500 свайпов», «Pro на 7 дней»)
   createdAt DateTime  @default(now())
 
   @@unique([promoId, userId])
@@ -235,7 +252,9 @@ model Like {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
-  // v5.44 (скорость): счётчики по посту + «пульс» трендов за 24ч
+  @@index([userId])
+  // v5.44 (скорость): счётчики/джойны по посту и «пульс» трендов (createdAt за 24ч —
+  // раньше полный скан самой горячей таблицы лайков)
   @@index([postId])
   @@index([createdAt])
 }
@@ -245,17 +264,18 @@ model PostView {
   userId    String
   postId    String
   createdAt DateTime @default(now())
-  dwellMs   Int      @default(0) // суммарное время поста на экране — сигнал интереса
+  dwellMs   Int      @default(0) // суммарное время поста на экране/в оверлее — сигнал интереса для рекомендаций
 
   user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
-  // v5.44 (скорость): «пульс» трендов — count просмотров за 24ч
+  // v5.44 (скорость): «пульс» трендов — count просмотров за 24ч (раньше полный скан)
   @@index([createdAt])
-  // v5.46 (розыгрыши): прогресс задания «пролистай X свайпов»
+  // v5.46 (розыгрыши): прогресс задания «пролистай X свайпов» — count просмотров
+  // пользователя с начала розыгрыша (count по (userId, createdAt) — индексный сик)
   @@index([userId, createdAt])
-  // v5.48: счётчики/джойны просмотров по посту
+  // v5.48: счётчики/джойны просмотров по посту (канальная статистика, дедуп)
   @@index([postId])
 }
 
@@ -265,14 +285,14 @@ model Subscription {
   channelId String
   hidden    Boolean  @default(false) // скрыть канал из общей ленты
   notify    Boolean  @default(true)  // колокольчик: true — все уведомления, false — без звука
-  notInterestedAt DateTime? // «Не интересно»: канал вниз/вне ленты
+  notInterestedAt DateTime? // «Не интересно»: канал взвешивается вниз/убирается из ленты
   createdAt DateTime @default(now())
 
   user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   channel   Channel @relation(fields: [channelId], references: [id], onDelete: Cascade)
 
   @@unique([userId, channelId])
-  @@index([channelId]) // v5.48: рассылка новых постов подписчикам канала
+  @@index([channelId]) // v5.48: рассылка новых постов подписчикам канала (notifyNewPosts), панели
 }
 
 model ChannelMute {
@@ -298,238 +318,51 @@ model Bookmark {
   post      Post @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@unique([userId, postId])
-  // v5.44 (скорость): подзапрос COUNT bookmarksCount в SQL-странице ленты — на каждый пост
+  @@index([userId])
+  // v5.44 (скорость): подзапрос COUNT в SQL-странице ленты бежит ПО КАЖДОМУ ПОСТУ
+  // каждой страницы (bookmarksCount) — без индекса это скан таблицы на пост
   @@index([postId])
-  // v5.48: /api/bookmarks — сортировка «свежие сверху»
+  // v5.48: /api/bookmarks — сортировка «свежие сверху» без in-memory sort
   @@index([userId, createdAt])
 }
 
 model Ad {
-  id          String   @id @default(cuid())
-  title       String
-  body        String
-  ctaLabel    String   @default("Перейти")
-  link        String
-  imageUrl    String?
-  isActive    Boolean  @default(true)
-  impressions Int      @default(0) // показы в ленте (счётчик за всё время)
-  clicks      Int      @default(0) // клики по CTA (счётчик за всё время)
-  createdAt   DateTime @default(now())
+  id         String   @id @default(cuid())
+  title      String
+  body       String
+  ctaLabel   String   @default("Перейти")
+  link       String
+  imageUrl   String?
+  isActive   Boolean  @default(true)
+  impressions Int     @default(0) // показы в ленте (счётчик за всё время)
+  clicks     Int      @default(0) // клики по CTA (счётчик за всё время)
+  createdAt  DateTime @default(now())
 
-  stats       AdStat[]
+  stats      AdStat[]
 }
 
-// Дневная аналитика рекламы (одна строка на рекламу в день): CTR и динамика
-// для рекламодателей. Счётчики увеличиваются атомарным upsert.
-model AdStat {
-  id          String   @id @default(cuid())
-  adId        String
-  ad          Ad       @relation(fields: [adId], references: [id], onDelete: Cascade)
-  day         String // YYYY-MM-DD (UTC)
-  impressions Int      @default(0)
-  clicks      Int      @default(0)
-
-  @@unique([adId, day])
-  @@index([day])
-}
-
-// Клики по #хэштегам в постах — источник трендов «Сейчас обсуждают»
-model HashtagClick {
-  id        String   @id @default(cuid())
-  tag       String // без решётки, lowercase
-  userId    String? // кто кликнул (для анти-спама и аналитики)
-  createdAt DateTime @default(now())
-
-  @@index([tag, createdAt])
-  // v5.44 (скорость): «пульс» трендов — count кликов за 24ч
-  @@index([createdAt])
-}
-
-// Загруженные пользователями картинки (чат поддержки/предложка)
-model Upload {
-  id        String   @id @default(cuid())
-  ownerId   String
-  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  mime      String   // image/webp | image/jpeg | image/png
-  data      String   // base64
-  bytes     Int
-  width     Int      @default(0)
-  height    Int      @default(0)
-  createdAt DateTime @default(now())
-
-  @@index([ownerId, createdAt])
-}
-
-// === v5.15: синхронизация с прода (комментарии, лайки, уведы, эмодзи, поддержка) ===
-
-model Comment {
-  id        String   @id @default(cuid())
-  postId    String
-  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  text      String
-  createdAt DateTime @default(now())
-
-  parentId      String?
-  parent        Comment?  @relation("commentThread", fields: [parentId], references: [id], onDelete: Cascade)
-  replies       Comment[] @relation("commentThread")
-  replyToUserId String?
-  replyToName   String?
-
-  likesCount   Int @default(0)
-  repliesCount Int @default(0)
-  likedBy      CommentLike[]
-
-  // === v5.68: модерация без ИИ ===
-  hidden       Boolean @default(false)
-  adScore      Int     @default(0)
-  reportsCount Int     @default(0)
-  reports      CommentReport[]
-
-  @@index([postId, createdAt])
-  @@index([parentId, createdAt])
-  @@index([postId, likesCount])
-  @@index([userId])
-}
-
-model CommentLike {
-  id        String   @id @default(cuid())
-  userId    String
-  commentId String
-  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-
-  @@unique([userId, commentId])
-  @@index([commentId])
-}
-
-// === v5.68: жалобы и «Не интересно» (модерация без ИИ) ===
-
-model PostHide {
-  id        String   @id @default(cuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  postId    String
-  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-
-  @@unique([userId, postId])
-  @@index([userId])
-}
-
-model PostReport {
-  id        String   @id @default(cuid())
-  postId    String
-  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason    String   @default("other")
-  createdAt DateTime @default(now())
-
-  @@unique([userId, postId])
-  @@index([postId])
-  @@index([createdAt])
-}
-
-model CommentReport {
-  id        String   @id @default(cuid())
-  commentId String
-  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  reason    String   @default("other")
-  createdAt DateTime @default(now())
-
-  @@unique([userId, commentId])
-  @@index([commentId])
-}
-
-model Notification {
-  id              String    @id @default(cuid())
-  userId          String
-  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  type            String    @default("system")
-  title           String
-  body            String?
-  postId          String?
-  commentId       String?
-  channelUsername String?
-  readAt          DateTime?
-  createdAt       DateTime  @default(now())
-
-  @@index([userId, createdAt])
-  // v5.44 (скорость): бейдж непрочитанных поллится каждые ~20-45с
-  @@index([userId, readAt])
-  // v5.48: retention-очистка старых уведомлений
-  @@index([createdAt])
-}
-
-model CustomEmoji {
-  id        String   @id
-  kind      String   @default("static")
-  animated  Boolean  @default(false)
-  fileId    String?
-  fetchedAt DateTime @updatedAt
-}
-
-model SystemSetting {
-  key       String   @id
-  value     String
-  updatedAt DateTime @updatedAt
-}
-
-model SupportThread {
-  id            String   @id @default(cuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
-  status        String   @default("ai")
-  kind          String   @default("support")
-  topic         String?
-  unreadAdmin   Int      @default(0)
-  unreadUser    Int      @default(0)
-  lastMessageAt DateTime @default(now())
-  createdAt     DateTime @default(now())
-
-  messages SupportMessage[]
-
-  @@index([status, lastMessageAt])
-  @@index([userId])
-}
-
-model SupportMessage {
-  id        String   @id @default(cuid())
-  threadId  String
-  thread    SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
-  sender    String
-  text      String
-  images    String?
-  createdAt DateTime @default(now())
-
-  @@index([threadId, createdAt])
-}
-
-// === Реклама/кампании (v5.15 sync) ===
-
+// === CPA-реклама: платят за уникальные переходы, деньги списываются с
+// предоплаченного баланса (эскроу) — рекламодатель физически не может
+// «не оплатить»: кампания крутится ровно до исчерпания внесённого бюджета.
 model AdCampaign {
   id             String    @id @default(cuid())
   ownerId        String
   owner          User      @relation(fields: [ownerId], references: [id], onDelete: Cascade)
-  channelId      String?
+  channelId      String? // продвигаемый канал (если есть в базе)
   channel        Channel?  @relation(fields: [channelId], references: [id], onDelete: SetNull)
   title          String
   body           String
   ctaLabel       String    @default("Подписаться")
   link           String
   imageUrl       String?
-  costPerClickKop Int      @default(300)
-  budgetKop      Int       @default(0)
-  spentKop       Int       @default(0)
+  costPerClickKop Int      @default(300) // цена уникального перехода, копейки (≥100)
+  budgetKop      Int       @default(0) // внесённый бюджет, копейки
+  spentKop       Int       @default(0) // списано за подтверждённые клики
   impressions    Int       @default(0)
-  clicks         Int       @default(0)
-  rawClicks      Int       @default(0)
-  status         String    @default("moderation")
-  note           String?
+  clicks         Int       @default(0) // оплаченные уникальные клики
+  rawClicks      Int       @default(0) // все клики (для аналитики накрутки)
+  status         String    @default("moderation") // moderation | active | paused | completed | rejected
+  note           String? // комментарий модератора (причина отказа и т.п.)
   createdAt      DateTime  @default(now())
   startedAt      DateTime?
   completedAt    DateTime?
@@ -540,6 +373,8 @@ model AdCampaign {
   @@index([status])
 }
 
+// ЛЕГАСИ (v5.38): эскроу рекламодателя выведен из оборота — деньги живут
+// в User.balanceKop/swipes. Таблица оставлена для истории, не используется.
 model AdvertiserAccount {
   userId         String   @id
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -549,107 +384,9 @@ model AdvertiserAccount {
   updatedAt      DateTime @updatedAt
 }
 
-model CampaignClick {
-  id           String   @id @default(cuid())
-  campaignId   String
-  campaign     AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  userId       String
-  lastBilledAt DateTime @default(now())
-  billedCount  Int      @default(1)
-
-  @@unique([campaignId, userId])
-}
-
-model CampaignStat {
-  id          String @id @default(cuid())
-  campaignId  String
-  campaign    AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  day         String
-  impressions Int    @default(0)
-  clicks      Int    @default(0)
-  spentKop    Int    @default(0)
-
-  @@unique([campaignId, day])
-  @@index([day])
-}
-
-model TranslationLog {
-  id        String   @id @default(cuid())
-  userId    String?
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  postId    String
-  srcLang   String
-  createdAt DateTime @default(now())
-
-  @@index([postId])
-  @@index([createdAt]) // v5.48: retention-очистка логов переводов
-}
-
-// Вход на сайт через Telegram-бота (каноническая модель из schema.prisma):
-// гость жмёт «Вход по Telegram» → бот /start login_<id> → callback подтверждает
-// попытку, сайт (опрос) выдаёт JWT-сессию реального TG-аккаунта.
-model LoginAttempt {
-  id          String    @id // случайный токен из ссылки-приглашения
-  status      String    @default("pending") // pending | confirmed | used
-  tgUserJson  String?   // снимок tg-user из callback_query (id/username/имя/фото)
-  confirmedAt DateTime?
-  expiresAt   DateTime // 15 минут на подтверждение
-  createdAt   DateTime  @default(now())
-
-  @@index([status, expiresAt])
-}
-
-// ИИ-поиск: журнал для лимита бесплатного тира (3/день)
-model AiSearchLog {
-  id        String   @id @default(cuid())
-  userId    String
-  query     String
-  createdAt DateTime @default(now())
-
-  @@index([userId, createdAt])
-}
-
-// Журнал действий администратора (аудит панели) — идентично schema.prisma
-model AdminLog {
-  id        String   @id @default(cuid())
-  action    String // tier_grant | tier_revoke | tier_extend | ban | unban | swipes | premium_on | premium_off | bypass_on | bypass_off | ops
-  target    String // userId / @username / пост
-  meta      String? // JSON-снимок параметров (tier, days, reason…)
-  createdAt DateTime @default(now())
-
-  @@index([createdAt])
-  @@index([action, createdAt])
-}
-
-// Платежи (на проде — ЮKassa/Stars/TON; локально не используется, но нужен для tsc)
-model PendingPayment {
-  id                String   @id @default(cuid())
-  userId            String
-  amountKop         Int
-  status            String   @default("pending")
-  provider          String   @default("yookassa")
-  purpose           String   @default("balance") // balance | plus_month | plus_year | pro_month | pro_year
-  providerPaymentId String?
-  confirmationUrl   String?
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  @@index([userId, createdAt])
-}
-
-model BotEmoji {
-  slot          String   @id
-  emoji         String
-  customEmojiId String
-  updatedAt     DateTime @updatedAt
-}
-
-model BotSetting {
-  key       String   @id
-  value     String
-  updatedAt DateTime @updatedAt
-}
-
+// Журнал операций кошелька (v5.38): пополнения, конвертации, списания ИИ,
+// покупки за баланс. amount — знаковый: + зачисление, − списание.
+// currency: 'rub' (amount в копейках) | 'swp' (amount в свайпах).
 
 /// Память ИИ о пользователе (v5.73): компактный список фактов, пишет инструмент remember_fact
 model AiMemory {
@@ -701,17 +438,20 @@ model BalanceLog {
   @@index([userId, createdAt])
 }
 
-// Кошелёк v2 (v5.77): крипто-стиль журнал переводов «адрес → адрес».
-// kind: transfer | internal | ref_earn; amount положительный, направление — from/to.
+// Кошелёк v2 (v5.77): крипто-стиль журнала переводов. Одна строка = одна
+// транзакция «адрес → адрес» (переводы между пользователями, между своими
+// счетами, реферальные начисления). Внутренние проводки без адресов
+// (пополнения, траты ИИ, задания) живут в BalanceLog; клиент мержит оба
+// журнала в единую «Историю». Без FK — только индексы (журнал растёт всегда).
 model WalletTx {
   id         String   @id @default(cuid())
   kind       String // transfer | internal | ref_earn
   currency   String // swp | rub
-  amount     Int
-  fromAddr   String?
-  toAddr     String?
-  fromUserId String?
-  toUserId   String?
+  amount     Int // всегда положительный; направление задают from/to
+  fromAddr   String? // адрес отправителя
+  toAddr     String? // адрес получателя
+  fromUserId String? // tg_<uid> отправителя
+  toUserId   String? // tg_<uid> получателя
   note       String?
   createdAt  DateTime @default(now())
 
@@ -736,12 +476,360 @@ model XpLog {
   @@index([userId, kind, createdAt])
 }
 
+// Анти-накрутка: один оплаченный клик на пару (кампания, пользователь) в сутки.
+// Повторные клики того же пользователя не тарифицируются.
+model CampaignClick {
+  id           String   @id @default(cuid())
+  campaignId   String
+  campaign     AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  userId       String
+  lastBilledAt DateTime @default(now()) // день последнего тарифицируемого клика
+  billedCount  Int      @default(1)
+
+  @@unique([campaignId, userId])
+}
+
+// Дневная статистика кампании (аналог AdStat)
+model CampaignStat {
+  id          String @id @default(cuid())
+  campaignId  String
+  campaign    AdCampaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  day         String // YYYY-MM-DD (UTC)
+  impressions Int    @default(0)
+  clicks      Int    @default(0)
+  spentKop    Int    @default(0)
+
+  @@unique([campaignId, day])
+  @@index([day])
+}
+
+// Журнал переводов постов (анти-абьюз и статистика; кэш текста — в Post.translations)
+model TranslationLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  postId    String
+  srcLang   String
+  createdAt DateTime @default(now())
+
+  @@index([postId])
+  @@index([createdAt]) // v5.48: retention-очистка логов переводов (полный скан раньше)
+}
+
+// Дневная аналитика рекламы (одна строка на рекламу в день): CTR и динамика
+// для рекламодателей. Счётчики увеличиваются атомарным upsert.
+model AdStat {
+  id          String   @id @default(cuid())
+  adId        String
+  ad          Ad       @relation(fields: [adId], references: [id], onDelete: Cascade)
+  day         String // YYYY-MM-DD (UTC)
+  impressions Int      @default(0)
+  clicks      Int      @default(0)
+
+  @@unique([adId, day])
+  @@index([day])
+}
+
+// Клики по #хэштегам в постах — источник трендов «Сейчас обсуждают»
+model HashtagClick {
+  id        String   @id @default(cuid())
+  tag       String // без решётки, lowercase
+  userId    String? // кто кликнул (для анти-спама и аналитики)
+  createdAt DateTime @default(now())
+
+  @@index([tag, createdAt])
+  // v5.44 (скорость): «пульс» трендов — count кликов за 24ч (индекс по tag не помогает)
+  @@index([createdAt])
+}
+
+// Системные настройки (key-value): флаг техработ и прочее. Redis — рантайм,
+// эта таблица — зеркало для долговечности и восстановления после сбоя кэша.
+model SystemSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// Премиум-эмодзи Telegram (custom emoji): резолвер Bot API.
+// id — custom_emoji_id из разметки t.me/s (<tg-emoji emoji-id="…">);
+// fileId — файл анимированного видео-стикера (webm) для /api/emoji/[id].
+// kind: 'video' (анимированный webm) | 'static' (только статичная картинка)
+model CustomEmoji {
+  id        String   @id
+  kind      String   @default("static") // static | video (webm) | lottie (.tgs)
+  animated  Boolean  @default(false) // is_animated из Bot API (Lottie-наборы)
+  fileId    String?
+  fetchedAt DateTime @updatedAt
+}
+
+// Заготовка эквайринга ЮKassa: платёж, созданный рекламодателем.
+// После подключения эквайринга здесь появится providerPaymentId и
+// confirmationUrl, а статус поведёт вебхук ЮKassa (pending → succeeded).
+model PendingPayment {
+  id                String   @id @default(cuid())
+  userId            String
+  amountKop         Int
+  status            String   @default("pending") // pending | succeeded | canceled
+  provider          String   @default("yookassa")
+  purpose           String   @default("balance") // balance | plus_month | plus_year | pro_month | pro_year
+  providerPaymentId String?
+  confirmationUrl   String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([userId, createdAt])
+}
+
+// Журнал ИИ-поисков (умный поиск ленты): лимиты бесплатного тира (3/день)
+// считаются по строкам за текущие сутки UTC. Гостям — тоже (сессия guest_<deviceId>).
+model AiSearchLog {
+  id        String   @id @default(cuid())
+  userId    String
+  query     String
+  createdAt DateTime @default(now())
+
+  @@index([userId, createdAt])
+}
+
+// Журнал действий администратора (аудит панели): выдача/отзыв подписок,
+// баны, правки балансов, быстрые операции. Пишется автоматически из
+// /api/panel/* — по нему работает вкладка «Журнал».
+model AdminLog {
+  id        String   @id @default(cuid())
+  action    String // tier_grant | tier_revoke | tier_extend | badge_grant | badge_revoke | ban | unban | swipes | premium_on | premium_off | bypass_on | bypass_off | ops
+  target    String // userId / @username / пост
+  meta      String? // JSON-снимок параметров (tier, days, reason…)
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([action, createdAt])
+}
+
+// Вход на сайт через Telegram-бота: гость на сайте жмёт «Вход по Telegram»,
+// открывает бота (/start login_<id>), жмёт inline-кнопку «Войти» — вебхук
+// подтверждает попытку, сайт (опрос) выдаёт JWT-сессию реального TG-аккаунта.
+model LoginAttempt {
+  id          String    @id // случайный токен из ссылки-приглашения
+  status      String    @default("pending") // pending | confirmed | used
+  tgUserJson  String?   // снимок tg-user из callback_query (id/username/имя/фото)
+  confirmedAt DateTime?
+  expiresAt   DateTime // 15 минут на подтверждение
+  createdAt   DateTime  @default(now())
+
+  @@index([status, expiresAt])
+}
+
+// Чат поддержки: у пользователя одна нить (создаётся лениво при первом сообщении).
+// status: ai — отвечает нейросеть; human — обращение передано сотруднику
+// (эскалация), отвечает админ в панели; closed — закрыто.
+model SupportThread {
+  id            String   @id @default(cuid())
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+  status        String   @default("ai") // ai | human | closed
+  kind          String   @default("support") // support | feedback (предложка/баг)
+  topic         String?  // для feedback: idea | bug
+  unreadAdmin   Int      @default(0) // непрочитанные от пользователя для сотрудника
+  unreadUser    Int      @default(0) // непрочитанные от поддержки для пользователя
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  messages SupportMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([userId])
+}
+
+// Сообщение поддержки. sender: user — автор; ai — нейросеть;
+// admin — сотрудник (админ-панель); system — служебные заметки (эскалация и т.п.)
+model SupportMessage {
+  id        String        @id @default(cuid())
+  threadId  String
+  thread    SupportThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender    String
+  text      String
+  images    String? // JSON array URL картинок (/api/upload/{id})
+  createdAt DateTime      @default(now())
+
+  @@index([threadId, createdAt])
+}
+
+// Комментарий пользователя под постом. Только привязанные к Telegram
+// (гостям комментарий недоступен — Lazy Auth). Плейн-текст до 700 символов;
+// счётчик денормализован в Post.commentsCount (как likesCount).
+//
+// Дерево «как в TikTok»: ровно один уровень вложенности — parentId указывает
+// ТОЛЬКО на корневой комментарий (ответ на ответ хранит parentId корня,
+// а кому именно отвечали — в replyToUserId/replyToName). Лайки — таблица
+// CommentLike (уникальная пара юзер×коммент), счётчики денормализованы.
+model Comment {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text      String
+  createdAt DateTime @default(now())
+
+  // === Ответы (дерево, один уровень) ===
+  parentId     String? // id корневого комментария (null — корень)
+  parent       Comment?  @relation("commentThread", fields: [parentId], references: [id], onDelete: Cascade)
+  replies      Comment[] @relation("commentThread")
+  replyToUserId String? // кому отвечали (автор replies-комментария)
+  replyToName   String? // денормализованное имя для плашки «Ответ NAME»
+
+  // === Лайки (денормализованные счётчики) ===
+  likesCount   Int @default(0)
+  repliesCount Int @default(0)
+  likedBy      CommentLike[]
+
+  // === v5.68: модерация без ИИ ===
+  hidden       Boolean @default(false) // скрыт антирекламным скриптом или жалобами
+  adScore      Int     @default(0) // эвристическая оценка «похож на рекламу» (lib/moderation.ts)
+  reportsCount Int     @default(0) // жалобы пользователей (auto-hide при пороге)
+  reports      CommentReport[]
+
+  @@index([postId, createdAt])
+  @@index([parentId, createdAt])
+  @@index([postId, likesCount])
+  @@index([userId])
+}
+
+// Лайк комментария: уникальная пара (юзер, коммент) — тоггл атомарным upsert/delete.
+model CommentLike {
+  id        String   @id @default(cuid())
+  userId    String
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, commentId])
+  @@index([commentId])
+}
+
+// === v5.68: жалобы и «Не интересно» (модерация без ИИ) ===
+
+// «Не интересно» на конкретный пост: скрывает ТОЛЬКО пост (не канал) +
+// понижает приоритет категории в персональном ранжировании
+model PostHide {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([userId])
+}
+
+// Жалоба на пост: уникальна на (юзер, пост); агрегат по каналу — сигнал
+// антирекламы в ранжировании (канал с потоком жалоб понижается)
+model PostReport {
+  id        String   @id @default(cuid())
+  postId    String
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    String   @default("other") // spam | ad | abuse | misinfo | other
+  createdAt DateTime @default(now())
+
+  @@unique([userId, postId])
+  @@index([postId])
+  @@index([createdAt])
+}
+
+// Жалоба на комментарий: 3+ уникальных жалобщика → авто-скрытие
+model CommentReport {
+  id        String   @id @default(cuid())
+  commentId String
+  comment   Comment  @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  reason    String   @default("other")
+  createdAt DateTime @default(now())
+
+  @@unique([userId, commentId])
+  @@index([commentId])
+}
+
+// Уведомления-активность пользователя (централизованный инбокс): ответы
+// поддержки, новые комментарии под постами привязанного канала, статусы
+// рекламных кампаний, системные сообщения. «Новые посты каналов с
+// колокольчиком» хранятся вычислением по окну lastSeenNotifiedAt
+// (см. GET /api/notifications) — их в таблице нет.
+// type: comment | support | campaign | system
+model Notification {
+  id              String    @id @default(cuid())
+  userId          String
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type            String    @default("system")
+  title           String
+  body            String?
+  postId          String? // связанный пост (type=comment — куда ведёт тап)
+  commentId       String? // конкретный комментарий (тап открывает ветку и скроллит к нему)
+  channelUsername String? // канал для перехода (type=comment)
+  readAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  @@index([userId, createdAt])
+  // v5.44 (скорость): бейдж непрочитанных поллится каждые ~20-45с (count по userId+readAt)
+  @@index([userId, readAt])
+  // v5.48: retention-очистка старых уведомлений (полный скан раньше)
+  @@index([createdAt])
+}
+
+// Загруженные пользователями картинки (чат поддержки/предложка): клиент сжимает
+// до ≤350КБ (canvas → WebP/JPEG), сервер кладёт base64; выдаётся публично по
+// некугадарному cuid (/api/upload/{id}).
+model Upload {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  mime      String   // image/webp | image/jpeg | image/png
+  data      String   // base64
+  bytes     Int
+  width     Int      @default(0)
+  height    Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([ownerId, createdAt])
+}
+
+// Премиум-эмодзи бота (v5.22): слот → custom_emoji_id. Слот подставляется в
+// тексты бота по юникод-эмодзи; если ID не задан — остаётся обычное эмодзи.
+// ID берутся из премиум-паков (админ вставляет их в панели /api/panel/bot).
+model BotEmoji {
+  slot          String   @id // wave | fire | star | rocket | heart | bell | book | check | crown | zap | party | sparkles
+  emoji         String // юникод-эмодзи (фолбэк и то, что ищется в тексте)
+  customEmojiId String // custom_emoji_id премиум-пака; пусто → фолбэк
+  updatedAt     DateTime @updatedAt
+}
+
+// Настройки бота (k/v): business_connection_id — премиум-аккаунт-посредник,
+// через который бот умеет отправлять кастом-эмодзи (Telegram Business).
+model BotSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+// ===================== РОЗЫГРЫШИ (v5.40) =====================
+// Админ собирает конкурс в панели → бот публикует пост в канал с цветной
+// кнопкой «Участвовать (N)» (иконка — премиум-эмодзи, цвет — style Bot API).
+// Клик: бот проверяет подписки на обязательные каналы, принимает заявку,
+// счётчик кнопки обновляется в реальном времени (editMessageReplyMarkup).
+// В endAt бот сам выбирает победителей (крипто-RNG), начисляет призы и
+// публикует красивый пост со списком счастливчиков.
 model Giveaway {
   id          String    @id @default(cuid())
   title       String
   text        String    @default("") // markdown-lite описание (условия)
-  prizes      String    @default("[]") // JSON: [{kind:'swipes'|'rub'|'tier'|'custom', amount, period?, winners, label}]
-  channels    String    @default("[]") // JSON: ["SnapTeamDev", "sponsor_channel"]
+  // Призы — JSON: [{kind:'swipes'|'rub'|'tier'|'custom', amount, period?, winners, label}]
+  prizes      String    @default("[]")
+  // Обязательные подписки — JSON: ["SnapTeamDev", "sponsor_channel"]
+  channels    String    @default("[]")
+  // Кнопка «Участвовать»: цвет (Bot API style) + эмодзи (юникод-фолбэк) + премиум-иконка
   buttonStyle String    @default("primary") // primary | success | danger
   buttonEmoji String    @default("🎉")
   buttonEmojiId String  @default("") // custom_emoji_id для icon_custom_emoji_id
@@ -754,11 +842,14 @@ model Giveaway {
   winnersMessageId Int? // пост с победителями
   createdAt   DateTime  @default(now())
 
-  // ---- v5.46: билетная система ----
-  tasks       String    @default("[]") // JSON задания: [{kind, enabled, tickets, swipeGoal?, referralGoal?, boostChannel?, label?}]
-  promoCode   String? // секретный промокод (задание promo)
-  losersRewardSwipes Int @default(0) // утешительные свайпы проигравшим (0 = выкл)
-  photoFileId String? // file_id фото поста розыгрыша (sendPhoto)
+  // ---- v5.46: БИЛЕТНАЯ СИСТЕМА ----
+  // Задания розыгрыша — JSON: [{kind:'activity'|'promo'|'referral'|'boost',
+  //   enabled, tickets, swipeGoal?, referralGoal?, boostChannel?, label?}]
+  tasks       String    @default("[]")
+  promoCode   String?   // секретный промокод (задание promo); сравнение case-insensitive
+  // Утешительные свайпы ПРОИГРАВШИМ участникам (ticketsCount>0, без победы): 0 = выключено
+  losersRewardSwipes Int @default(0)
+  photoFileId String?   // file_id фото поста розыгрыша (бот отправляет sendPhoto с caption)
 
   entries     GiveawayEntry[]
   tickets     GiveawayTicket[]
@@ -766,6 +857,8 @@ model Giveaway {
   @@index([status, endAt])
 }
 
+// Заявка участника: уникальная пара (розыгрыш, юзер) — повторный клик не дублирует.
+// tgId/name снимком на момент заявки — для поста победителей и ссылок.
 model GiveawayEntry {
   id         String   @id @default(cuid())
   giveawayId String
@@ -778,7 +871,7 @@ model GiveawayEntry {
 
   // ---- v5.46: билетная система ----
   ticketsCount Int    @default(0) // баланс билетов = вес во взвешенном рандоме
-  tasksDone    String @default("[]") // JSON: [{task, tickets, at}]
+  tasksDone    String @default("[]") // JSON: [{task, tickets, at}] — что выполнено (панель/миниапп)
 
   tickets    GiveawayTicket[]
 
@@ -787,7 +880,8 @@ model GiveawayEntry {
   @@index([giveawayId, ticketsCount])
 }
 
-// Аудит билетов: повторная выдача того же задания невозможна (unique)
+// Аудит билетов: каждая выдача — одна строка; повторная выдача того же задания
+// невозможна (уникальность розыгрыш+юзер+задание на уровне БД)
 model GiveawayTicket {
   id         String         @id @default(cuid())
   giveawayId String
@@ -797,26 +891,27 @@ model GiveawayTicket {
   userId     String
   task       String // activity | promo | referral | boost | manual
   tickets    Int            @default(1)
-  note       String?
+  note       String? // промокод / детали (канал буста и т.п.)
   createdAt  DateTime       @default(now())
 
   @@unique([giveawayId, userId, task])
   @@index([userId, createdAt])
 }
 
-// Реферальные приглашения (глобальные): /start ref_<referrerTgId> в боте;
-// activatedAt — когда друг впервые открыл Mini App
+// Реферальные приглашения (глобальные, вне конкретного розыгрыша): друг переходит
+// по t.me/<bot>?start=ref_<referrerTgId> — запись создаёт бот; activatedAt ставится,
+// когда друг впервые открыл Mini App (POST /api/auth)
 model GiveawayReferral {
   id             String    @id @default(cuid())
-  referrerUserId String
-  invitedTgId    String
-  invitedUserId  String?
+  referrerUserId String // tg_<uid> того, кто пригласил
+  invitedTgId    String // числовой id приглашённого
+  invitedUserId  String? // tg_<uid> после первого входа друга в миниапп
   activatedAt    DateTime?
   createdAt      DateTime  @default(now())
 
   @@unique([referrerUserId, invitedTgId])
   @@index([referrerUserId, activatedAt])
-  @@index([invitedTgId, activatedAt]) // v5.48: activateReferrals на каждый вход
+  @@index([invitedTgId, activatedAt]) // v5.48: activateReferrals ищет неактивированные приглашения на КАЖДЫЙ вход
 }
 
 // Источники рекомендаций (v5.50): механика «В один клик» — юзер пересылает боту
