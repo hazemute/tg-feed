@@ -232,14 +232,6 @@ export function LeaderboardSheet({
             ))}
           </ul>
         )}
-
-        {/* ---------- Сноски ---------- */}
-        {data && top.length > 0 && (
-          <p className="flex items-center justify-center gap-1.5 pb-1 text-center text-[12px] text-tg-hint">
-            <Star className="h-3 w-3" aria-hidden />
-            {t('lb.updated')} · {t('lb.noRubles')}
-          </p>
-        )}
       </div>
     </BottomSheet>
   )

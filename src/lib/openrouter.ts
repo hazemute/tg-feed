@@ -40,18 +40,21 @@ function usageOf(u: ApiUsage | undefined, model: string): AiUsage | null {
 
 /** Приоритет бесплатных моделей: первая живая отвечает. Только :free — ноль рублей.
  *  Переопределяется env OPENROUTER_MODELS.
- *  v5.35: z-ai/glm-5.3-flash:free ИСЧЕЗ из каталога OpenRouter (2026-09) —
- *  каждый запрос начинался с 404, а фолбэки упирались в лимиты. Слоты :free
- *  на OpenRouter появляются/исчезают, поэтому: (1) держим glm-5.3-flash:free
- *  первой — живая дискавери (ниже) вернёт её в цепочку автоматически,
- *  (2) сегодня фактически отвечает glm-5.2:free (та же GLM, бесплатно). */
+ *  v5.88: цепочка обновлена по живому каталогу (2026-09-22): из неё выброшены
+ *  исчезнувшие слоты (glm-5.3-flash:free, deepseek-v4-flash-0731:free дают 404),
+ *  добавлены живые бесплатные модели. Дискавери (ниже) всё равно пересобирает
+ *  цепочку по факту — этот список нужен для холодного пути и порядка приоритета. */
 const PREFERRED_FREE = [
   'z-ai/glm-5.3-flash:free', // вернётся в каталог — снова станет первой (решение владельца)
-  'z-ai/glm-5.2:free', // сегодня: единственный бесплатный GLM — фактический основной
-  'google/gemma-4-26b-a4b-it:free',
+  'z-ai/glm-5.2:free', // GLM: фактический основной
+  'qwen/qwen3.8-27b:free',
+  'nvidia/nemotron-3.5-lightning:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
   'google/gemma-4-31b-it:free',
-  'deepseek/deepseek-v4-flash-0731:free',
+  'google/gemma-4-26b-a4b-it:free',
+  'thinkingmachines/inkling-small:free',
   'inclusionai/ling-3.0-flash-vl:free',
+  'nex-agi/nex-n2.5-mini:free',
 ]
 
 const DEFAULT_MODELS = PREFERRED_FREE
@@ -235,18 +238,15 @@ async function postWith429Retry(body: Record<string, unknown>, timeoutMs: number
   return res
 }
 
-/** Человеческое сообщение об ошибке OpenRouter (для SSE 'error' и JSON-ответов) */
+/** Человеческое сообщение об ошибке OpenRouter (для SSE 'error' и JSON-ответов).
+ *  v5.88: коротко и по-продуктовому, без объяснений «как всё устроено». */
 export function openRouterErrorText(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e)
-  if (/HTTP 429|rate\s*limit/i.test(msg))
-    return 'Бесплатная нейросеть перегружена (лимит запросов) — подождите минуту и попробуйте снова'
-  if (/HTTP 402|credits/i.test(msg))
-    return 'Суточный лимит бесплатной нейросети исчерпан — попробуйте завтра'
-  if (/timeout|time\s*out|abort/i.test(msg))
-    return 'Нейросеть отвечала слишком долго — попробуйте ещё раз'
-  if (/HTTP 40[134]/.test(msg))
-    return 'Нейросеть временно недоступна — попробуйте ещё раз через минуту'
-  return 'Нейросеть не ответила — попробуйте ещё раз'
+  if (/HTTP 429|rate\s*limit/i.test(msg)) return 'Нейросеть перегружена · попробуйте через минуту'
+  if (/HTTP 402|credits/i.test(msg)) return 'Лимит нейросети исчерпан · попробуйте завтра'
+  if (/timeout|time\s*out|abort/i.test(msg)) return 'Нейросеть не ответила · попробуйте снова'
+  if (/HTTP 40[134]/.test(msg)) return 'Нейросеть недоступна · попробуйте позже'
+  return 'Нейросеть не ответила · попробуйте снова'
 }
 
 export function openRouterEnabled(): boolean {
@@ -297,12 +297,22 @@ export async function chatMessages(
   kickModelDiscovery()
 
   let lastError: unknown = null
+  let rateLimited = 0 // v5.88: 2 подряд 429 = лимит аккаунта, а не модели — рвём цепочку
   for (const model of chain) {
     if (opts?.models === undefined && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
     try {
       const res = await rawComplete({ model, max_tokens: maxTokens, temperature, messages }, timeoutMs)
       if (!res.ok) {
         if (res.status === 404) markDeadSlot(model) // v5.56: слот исчез из каталога
+        if (res.status === 429) {
+          rateLimited++
+          if (rateLimited >= 2) {
+            lastError = new Error(`OpenRouter: HTTP 429`)
+            break
+          }
+        } else {
+          rateLimited = 0
+        }
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
         continue
       }
@@ -357,6 +367,7 @@ export async function chatStream(
 
   kickModelDiscovery()
   let lastError: unknown = null
+  let rateLimited = 0 // v5.88: 2 подряд 429 = лимит аккаунта — рвём цепочку без перебора
   for (const model of chain) {
     if (!opts?.models?.length && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
     let accumulated = ''
@@ -376,6 +387,15 @@ export async function chatStream(
       )
       if (!res.ok || !res.body) {
         if (res.status === 404) markDeadSlot(model) // v5.56: слот исчез из каталога
+        if (res.status === 429) {
+          rateLimited++
+          if (rateLimited >= 2) {
+            lastError = new Error(`OpenRouter: HTTP 429`)
+            break
+          }
+        } else {
+          rateLimited = 0
+        }
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
         continue
       }
