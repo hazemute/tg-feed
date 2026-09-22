@@ -145,6 +145,13 @@ function CustomThemeSection({
     onApply(next)
   }
 
+  /* v5.94: применение по тапу — тот же путь, что и смена цвета,
+     но без необходимости трогать сами цвета */
+  const apply = () => {
+    onApply(draft)
+    haptic('light')
+  }
+
   return (
     <section aria-label="Своя палитра" className="pt-4">
       <h3 className="px-0.5 text-[15px] font-bold text-tg-text">Своя палитра</h3>
@@ -157,8 +164,18 @@ function CustomThemeSection({
           active ? 'border-tg-link' : 'border-tg-sep',
         )}
       >
-        {/* Живое превью из выбранных цветов */}
-        <div className="h-24 p-2.5" style={{ background: draft.bg }}>
+        {/* Живое превью из выбранных цветов. v5.94: ТАП ПО ПРЕВЬЮ ПРИМЕНЯЕТ
+            палитру — раньше тема «custom» включалась ТОЛЬКО сменой цвета
+            (input[type=color] не шлёт change при выборе того же значения),
+            и вернуться к своей палитре с другой темы без подкрутки цвета
+            было невозможно. Теперь тап применяет текущие цвета сразу. */}
+        <button
+          type="button"
+          onClick={apply}
+          aria-label={active ? 'Своя палитра применена' : 'Применить свою палитру'}
+          className="block h-24 w-full p-2.5 text-left active:opacity-90"
+          style={{ background: draft.bg }}
+        >
           <div className="flex items-center gap-1.5">
             <span className="h-5 w-5 rounded-full" style={{ background: draft.accent }} />
             <span className="h-2 w-14 rounded-full" style={{ background: fg, opacity: 0.85 }} />
@@ -172,14 +189,21 @@ function CustomThemeSection({
             <span className="h-4 w-12 rounded-md" style={{ background: draft.accent }} />
             <span className="h-1.5 w-6 rounded-full" style={{ background: fg, opacity: 0.3 }} />
           </div>
-        </div>
+        </button>
         <div className="flex items-center gap-2.5 bg-tg-surface px-3 py-2.5">
           <ColorDot value={draft.bg} label="Фон" onChange={(v) => patch({ bg: v })} />
           <ColorDot value={draft.accent} label="Акцент" onChange={(v) => patch({ accent: v })} />
-          <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={apply}
+            aria-label={active ? 'Своя палитра применена' : 'Применить свою палитру'}
+            className="min-w-0 flex-1 text-left"
+          >
             <span className="block text-[13.5px] font-semibold text-tg-text">Фон и акцент</span>
-            <span className="block text-[12px] text-tg-hint">Тапни по кругу — откроется выбор цвета</span>
-          </div>
+            <span className="block text-[12px] text-tg-hint">
+              Тап — применить · кружки — выбрать цвет
+            </span>
+          </button>
           {active && (
             <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-tg-link">
               <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} />

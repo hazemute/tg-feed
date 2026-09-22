@@ -341,6 +341,11 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE UNIQUE INDEX IF NOT EXISTS "ReadingStreak_userId_key" ON "ReadingStreak"("userId")`,
     `CREATE INDEX IF NOT EXISTS "ReadingStreak_lastDate_idx" ON "ReadingStreak"("lastDate")`,
   ],
+  // v5.94: серверный синк темы оформления — JSON {mode, custom:{bg,accent}} на User.
+  // Устройство А меняет тему → PUT; устройство Б при входе тянет GET и применяет.
+  'v5.94-theme': [
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "themeSettings" text`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -400,6 +405,7 @@ const CRITICAL: Array<[string, string | null]> = [
   ['Post', 'promoteSpent'],
   ['User', 'xp'],
   ['User', 'level'],
+  ['User', 'themeSettings'],
   ['XpLog', null],
 ]
 
@@ -476,7 +482,7 @@ export async function checkSchema(): Promise<SchemaState> {
       FROM information_schema.columns c
       WHERE c.table_schema = 'public' AND (
         c.table_name = 'AiSearchLog' OR c.table_name = 'AdminLog' OR
-        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame','promoteCredits','promoteFreeMonth','xp','level','swipeAddress','rubAddress','referredById')) OR
+        (c.table_name = 'User' AND c.column_name IN ('tier','tierUntil','badges','profilePalette','profileBg','profileFrame','promoteCredits','promoteFreeMonth','xp','level','themeSettings','swipeAddress','rubAddress','referredById')) OR
         (c.table_name = 'Channel' AND c.column_name IN ('ctaLabel','ctaUrl','styleProfile','styleAt','teaserApplyTo')) OR
         (c.table_name = 'Post' AND c.column_name IN ('promotedAt','hotScore','aiFlag')) OR
         (c.table_name = 'PendingPayment' AND c.column_name = 'purpose') OR

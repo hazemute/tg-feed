@@ -23,6 +23,7 @@ import {
   type CustomTheme,
 } from '@/lib/custom-theme'
 import type { CategoryDTO, FontScale, Tab, ThemeMode, UserDTO } from '@/lib/types'
+import { pullServerTheme, pushThemeSoon } from '@/lib/theme-sync'
 import { BottomNav } from '@/components/tg/BottomNav'
 import { Sidebar } from '@/components/tg/Sidebar'
 import { Splash } from '@/components/tg/Splash'
@@ -248,6 +249,8 @@ export default function Home() {
 
   useEffect(() => {
     applyThemeDom()
+    // v5.94: тема изменилась (в т.ч. удалённо через pull) — уезжает на сервер
+    pushThemeSoon()
   }, [theme, applyThemeDom])
 
   /*
@@ -261,6 +264,8 @@ export default function Home() {
       if (useApp.getState().theme !== 'custom') return
       applyThemeDom()
       applyFrame()
+      // v5.94: палитру правили без смены темы — синкаем её на сервер
+      pushThemeSoon()
     }
     window.addEventListener(CUSTOM_THEME_EVENT, onCustomTheme)
     return () => window.removeEventListener(CUSTOM_THEME_EVENT, onCustomTheme)
@@ -290,6 +295,18 @@ export default function Home() {
   useEffect(() => {
     document.documentElement.dataset.fontscale = fontScale
   }, [fontScale])
+
+  /*
+   * v5.94: серверный синк темы. После входа (userId известен, не гость)
+   * тянем тему юзера: на сервере есть — применяем (сервер главнее),
+   * пусто — устройство выгружает локальную. Дальше любое изменение
+   * темы/палитры уходит на сервер через pushThemeSoon (эффекты выше).
+   */
+  const userId = user?.id
+  useEffect(() => {
+    if (!userId || userId.startsWith('guest_')) return
+    void pullServerTheme()
+  }, [userId])
 
   // Шаг 1 PRD: авторизация через initData без паролей и регистраций.
   // Сервер проверяет подпись Telegram и выдаёт JWT-сессию — дальше все запросы

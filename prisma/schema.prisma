@@ -37,6 +37,8 @@ model User {
   profilePalette String @default("crimson")
   profileBg      String @default("none")
   profileFrame   String @default("none")
+  // === Тема приложения (v5.94): серверный синк между устройствами — JSON {mode, custom:{bg,accent}} ===
+  themeSettings  String?
   // === Кошелёк (v5.38): единый баланс — рубли + свайпы (курс v5.40: 500 свайпов = 1 ₽) ===
   balanceKop     Int      @default(0) // рубли, в копейках
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)

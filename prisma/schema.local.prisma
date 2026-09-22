@@ -34,6 +34,7 @@ model User {
   profilePalette String  @default("crimson") // v5.27: обложка профиля (lib/profile-style.ts)
   profileBg      String  @default("none") // v5.27: фон обложки (узор/анимация)
   profileFrame   String  @default("none") // v5.27: рамка аватара
+  themeSettings  String? // v5.94: серверный синк темы — JSON {mode, custom:{bg,accent}}
   balanceKop     Int      @default(0) // рубли, в копейках
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
   promoteCredits Int      @default(0) // v5.69: купленные продвижения (пакет 5 шт/199 ₽)
