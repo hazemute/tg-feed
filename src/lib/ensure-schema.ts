@@ -311,6 +311,16 @@ export const MIGRATIONS: Record<string, string[]> = {
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "onboardedAt" timestamp(3)`,
     `UPDATE "User" SET "onboardedAt" = CURRENT_TIMESTAMP WHERE "onboardedAt" IS NULL AND "createdAt" < CURRENT_TIMESTAMP - INTERVAL '1 day'`,
   ],
+  // v5.88: награды лидербордов — журнал начислений топ-3 (неделя/месяц по XP).
+  // Два unique-индекса: один пользователь в периоде и одно место в периоде
+  // могут быть выплачены ровно один раз (страховка от рестарта крона).
+  'v5.88-lbpayouts': [
+    `CREATE TABLE IF NOT EXISTS "LeaderboardPayout" ("id" text PRIMARY KEY, "period" text NOT NULL, "periodKey" text NOT NULL, "userId" text NOT NULL, "place" integer NOT NULL, "xpGained" integer NOT NULL, "amount" integer NOT NULL, "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "LeaderboardPayout_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "LeaderboardPayout_period_periodKey_userId_key" ON "LeaderboardPayout"("period", "periodKey", "userId")`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "LeaderboardPayout_period_periodKey_place_key" ON "LeaderboardPayout"("period", "periodKey", "place")`,
+    `CREATE INDEX IF NOT EXISTS "LeaderboardPayout_period_periodKey_idx" ON "LeaderboardPayout"("period", "periodKey")`,
+    `CREATE INDEX IF NOT EXISTS "LeaderboardPayout_userId_createdAt_idx" ON "LeaderboardPayout"("userId", "createdAt")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()

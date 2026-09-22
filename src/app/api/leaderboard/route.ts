@@ -3,12 +3,17 @@ import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { cacheAside } from '@/lib/redis'
-import type { LbEntry, LbTab, LeaderboardResponse } from '@/lib/types'
+import { adminUids } from '@/lib/maintenance'
+import { fetchLbPrizes } from '@/lib/lb-payouts'
+import type { LbEntry, LbTab, LeaderboardResponse, LbPrizes } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
 
 /**
  * v5.87: ЛИДЕРБОРДЫ — не рублёвые (решение владельца).
+ * v5.88: админы (ADMIN_TG_IDS) в таблицах и рангах НЕ участвуют (приказ
+ * владельца «админы — те, у кого доступ к техработам»); в ответ добавлен
+ * блок prizes (награды за активность: топ-3 по XP недели/месяца).
  *
  * Пять таблиц (таб):
  *  - level    — топ по XP (уровень выводится из XP, сортировка по опыту);
@@ -26,7 +31,7 @@ export const dynamic = 'force-dynamic'
  *  - активные табы ограничены окном 30 дней (индексы createdAt) и take 1000.
  *
  * Приватность: только публичные поля (имя/@username/аватар/уровень/премиум).
- * Гостевые аккаунты в таблицах не участвуют и не влияют на чужие ранги.
+ * Гостевые аккаунты и админы в таблицах не участвуют и не влияют на чужие ранги.
  */
 
 const TABS: LbTab[] = ['level', 'swipes', 'views', 'likes', 'comments']
@@ -88,10 +93,19 @@ function toEntry(u: UserRow, rank: number, value: number, sub: string | null): L
   }
 }
 
+/** Условие «валидный участник» — не гость, не бан, не админ (v5.88) */
+function validUserWhere(admins: string[]): { isGuest: false; bannedAt: null; id?: { notIn: string[] } } {
+  return {
+    isGuest: false,
+    bannedAt: null,
+    ...(admins.length ? { id: { notIn: admins } } : {}),
+  }
+}
+
 /** Глобальная часть для «пожизненных» табов (уровни/свайпы) — один запрос User */
-async function fetchStaticGlobal(tab: 'level' | 'swipes'): Promise<CachedGlobal> {
+async function fetchStaticGlobal(tab: 'level' | 'swipes', admins: string[]): Promise<CachedGlobal> {
   const rows: UserRow[] = await db.user.findMany({
-    where: { isGuest: false, bannedAt: null },
+    where: validUserWhere(admins),
     orderBy: [{ xp: 'desc' }, { swipes: 'desc' }, { id: 'asc' }],
     take: MASTER_TAKE,
     select: USER_SELECT,
@@ -130,6 +144,7 @@ async function activityCount(
 /** Глобальная часть для активных табов (окно 30 дней) — groupBy по журналу */
 async function fetchActivityGlobal(
   tab: 'views' | 'likes' | 'comments',
+  admins: string[],
 ): Promise<CachedGlobal> {
   const start = new Date(Date.now() - WINDOW_MS)
   const createdAt = { gte: start }
@@ -167,12 +182,12 @@ async function fetchActivityGlobal(
     for (const x of g) pairs.push([x.userId, x._count.userId])
   }
 
-  // Пользователи только не-гости и не забаненные: гость в топе ленты не виден
-  // и НЕ должен занимать место/сдвигать чужие ранги → мастер-список строим
-  // сразу из валидных участников.
+  // Пользователи только не-гости и не забаненные (и не админы — v5.88):
+  // гость в топе ленты не виден и НЕ должен занимать место/сдвигать чужие ранги
+  // → мастер-список строим сразу из валидных участников.
   const users = await db.user.findMany({
     where: {
-      id: { in: pairs.map(([uid]) => uid) },
+      id: { in: pairs.map(([uid]) => uid), ...(admins.length ? { notIn: admins } : {}) },
       isGuest: false,
       bannedAt: null,
     },
@@ -188,9 +203,9 @@ async function fetchActivityGlobal(
   return { top, master }
 }
 
-function fetchGlobal(tab: LbTab): Promise<CachedGlobal> {
-  if (tab === 'level' || tab === 'swipes') return fetchStaticGlobal(tab)
-  return fetchActivityGlobal(tab)
+function fetchGlobal(tab: LbTab, admins: string[]): Promise<CachedGlobal> {
+  if (tab === 'level' || tab === 'swipes') return fetchStaticGlobal(tab, admins)
+  return fetchActivityGlobal(tab, admins)
 }
 
 export async function GET(request: Request) {
@@ -204,12 +219,27 @@ export async function GET(request: Request) {
     tab === 'views' || tab === 'likes' || tab === 'comments' ? '30d' : 'all'
 
   try {
-    // Глобальная часть — общий кэш на всех пользователей (60с)
+    const admins = adminUids()
+
+    // Глобальная часть — общий кэш на всех пользователей (60с).
+    // v5.88: ключ v2 — из таблиц удалены админы, старый кэш невалиден.
     const glob = await cacheAside<CachedGlobal>({
-      key: `lb:v1:${tab}`,
+      key: `lb:v2:${tab}`,
       ttlSec: 60,
       memoryTtlMs: 10_000,
-      fetcher: () => fetchGlobal(tab),
+      fetcher: () => fetchGlobal(tab, admins),
+    })
+
+    // Блок наград (v5.88) — общий на все табы, свой кэш 60с.
+    // Ошибка снапшота не роняет таблицу — prizes: null (UI просто скрывает блок).
+    const prizes = await cacheAside<LbPrizes>({
+      key: 'lb:prizes:v1',
+      ttlSec: 60,
+      memoryTtlMs: 10_000,
+      fetcher: () => fetchLbPrizes(),
+    }).catch((e) => {
+      console.error('[leaderboard] prizes', e)
+      return null
     })
 
     // Персональная часть
@@ -224,10 +254,10 @@ export async function GET(request: Request) {
       if (tab === 'level' || tab === 'swipes') {
         const mine = tab === 'level' ? meUser.xp : meUser.swipes
         // Точный ранг одним count — дешевле любого полного скана
+        // (валидные участники: не гость, не бан, не админ — как в таблице)
         const ahead = await db.user.count({
           where: {
-            isGuest: false,
-            bannedAt: null,
+            ...validUserWhere(admins),
             ...(tab === 'level' ? { xp: { gt: mine } } : { swipes: { gt: mine } }),
           },
         })
@@ -252,6 +282,7 @@ export async function GET(request: Request) {
       top: glob.top,
       me,
       guest: !!meUser.isGuest,
+      prizes,
     }
     return NextResponse.json(res)
   } catch (e) {

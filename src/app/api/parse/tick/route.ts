@@ -8,6 +8,7 @@ import { pruneAll } from '@/lib/retention'
 import { checkDueGiveaways } from '@/lib/giveaways'
 import { reverifyQuestCompletions } from '@/lib/quests'
 import { publishDueScheduledPosts } from '@/lib/scheduled-posts'
+import { runLbPayouts } from '@/lib/lb-payouts'
 import { ensureContentCatalog, stepContentCatalog } from '@/lib/content-catalog'
 
 export const dynamic = 'force-dynamic'
@@ -145,6 +146,14 @@ async function handle(request: Request) {
     // публикуем через бота и добавляем в ленту (до 5 за тик — не мешаем парсингу)
     const scheduled = await publishDueScheduledPosts(5).catch(() => null)
 
+    // v5.88: НАГРАДЫ ЛИДЕРБОРДОВ — итоги завершившейся недели/месяца (топ-3 по
+    // набранному XP получают свайпы, см. lib/lb-payouts.ts). Идемпотентно
+    // (маркер + unique-индексы): на большинстве тиков — почти бесплатно.
+    const lbPayouts = await runLbPayouts().catch((e) => {
+      console.error('[tick] lb-payouts', e)
+      return null
+    })
+
     return NextResponse.json({
       ok: true,
       batch: batch.length,
@@ -159,6 +168,12 @@ async function handle(request: Request) {
       giveaways,
       questChecks,
       scheduled,
+      lbPayouts: lbPayouts
+        ? {
+            week: { key: lbPayouts.week.periodKey, paid: lbPayouts.week.paid.length },
+            month: { key: lbPayouts.month.periodKey, paid: lbPayouts.month.paid.length },
+          }
+        : null,
       ms: Date.now() - started,
     })
   } catch (e) {

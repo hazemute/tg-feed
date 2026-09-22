@@ -69,6 +69,7 @@ model User {
   postHides      PostHide[]
   postReports    PostReport[]
   commentReports CommentReport[]
+  lbPayouts      LeaderboardPayout[]
 }
 
 model Category {
@@ -921,4 +922,24 @@ model BotChat {
   type      String   @default("supergroup") // group | supergroup | channel
   isAdmin   Boolean  @default(false) // бот administrator в этом чате
   updatedAt DateTime @updatedAt
+}
+
+// v5.88: начисления наград лидербордов — топ-3 по набранному XP за период
+// (неделя/месяц, Europe/Moscow) получают свайпы. Unique-ключи страхуют от
+// двойной выплаты при рестарте/гонке крона.
+model LeaderboardPayout {
+  id        String   @id @default(cuid())
+  period    String   // 'week' | 'month'
+  periodKey String   // '2026-W38' (ISO-неделя) | '2026-09' (месяц), Europe/Moscow
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  place     Int      // 1..3
+  xpGained  Int      // нетто-XP участника за период
+  amount    Int      // начислено свайпов
+  createdAt DateTime @default(now())
+
+  @@unique([period, periodKey, userId])
+  @@unique([period, periodKey, place])
+  @@index([period, periodKey])
+  @@index([userId, createdAt])
 }

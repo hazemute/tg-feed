@@ -18,7 +18,7 @@ import { useApp } from '@/lib/store'
 import { formatCount } from '@/lib/format'
 import { haptic, userAvatarUrl } from '@/lib/tg'
 import { cn } from '@/lib/utils'
-import type { LbEntry, LbTab, LeaderboardResponse, UserDTO } from '@/lib/types'
+import type { LbEntry, LbPrizes, LbTab, LeaderboardResponse, UserDTO } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 
@@ -216,6 +216,9 @@ export function LeaderboardSheet({
           </div>
         )}
 
+        {/* ---------- Награды за активность (v5.88) — только «Уровни» ---------- */}
+        {tab === 'level' && data?.prizes && <PrizesCard prizes={data.prizes} />}
+
         {/* ---------- Подиум (топ-3) ---------- */}
         {data && top.length > 0 && (
           <Podium first={top[0]} second={top[1] ?? null} third={top[2] ?? null} tab={tab} myRank={me?.rank ?? null} />
@@ -295,6 +298,84 @@ function MeCard({
           {formatCount(me.value)} {unitLabel(tab, me.value, lang, t)}
         </div>
       </div>
+    </div>
+  )
+}
+
+/* ---------- Награды за активность (v5.88) ---------- */
+
+/** Топ недели/месяца по набранному XP получает свайпы (lib/lb-payouts.ts) */
+const PRIZE_MEDALS = ['🥇', '🥈', '🥉']
+
+function swipesWord(n: number, lang: Lang, t: (k: I18nKey) => string): string {
+  if (lang === 'ru') return ruPlural(n, ['свайп', 'свайпа', 'свайпов'])
+  return t('lb.swipesValue')
+}
+
+function PrizesCard({ prizes }: { prizes: LbPrizes }) {
+  const t = useT()
+  const lang = useApp((s) => s.lang)
+  const eachOf = (amount: number) =>
+    `${t('lb.prizeEach')} ${formatCount(amount)} ${swipesWord(amount, lang, t)}`
+
+  return (
+    <div
+      className="overflow-hidden rounded-2xl border border-amber-400/30 bg-amber-400/[0.06]"
+      aria-label={t('lb.prizeTitle')}
+    >
+      <div className="flex items-center gap-1.5 px-4 pt-3">
+        <Trophy className="h-4 w-4 shrink-0 text-amber-500" aria-hidden />
+        <span className="text-[14px] font-bold text-tg-text">{t('lb.prizeTitle')}</span>
+      </div>
+      <div className="mt-1 space-y-0.5 px-4 text-[12.5px] leading-snug text-tg-hint">
+        <p className="tabular-nums">
+          <span className="font-semibold text-tg-text">{t('lb.prizeWeek')}</span> — {eachOf(prizes.weeklyAmount)}
+        </p>
+        <p className="tabular-nums">
+          <span className="font-semibold text-tg-text">{t('lb.prizeMonth')}</span> — {eachOf(prizes.monthlyAmount)}
+        </p>
+      </div>
+
+      {/* Живой топ текущей недели (XP, набранный с понедельника) */}
+      {prizes.liveWeek.length > 0 && (
+        <div className="mt-2 border-t border-amber-400/20 px-2 pt-2">
+          <p className="px-2 pb-1 text-[11px] font-semibold uppercase tracking-wide text-tg-hint">
+            {t('lb.prizeLiveWeek')}
+          </p>
+          <ul>
+            {prizes.liveWeek.map((e, i) => (
+              <li key={e.uid} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
+                <span className="w-5 shrink-0 text-center text-[13px]" aria-hidden>
+                  {PRIZE_MEDALS[i] ?? `#${e.rank}`}
+                </span>
+                <Avatar name={e.name} src={userAvatarUrl(e.uid, e.photoUrl)} size={28} />
+                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-tg-text">{e.name}</span>
+                <span className="shrink-0 text-[12px] font-bold text-amber-500 tabular-nums">
+                  +{formatCount(e.value)} XP
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* Итоги последних выплат */}
+      {(prizes.lastWeek.length > 0 || prizes.lastMonth.length > 0) && (
+        <div className="space-y-0.5 border-t border-amber-400/20 px-4 py-2.5 text-[12px] leading-snug text-tg-hint">
+          {prizes.lastWeek.length > 0 && (
+            <p className="truncate">
+              <span className="font-semibold">{t('lb.prizeLastWeek')}:</span>{' '}
+              {prizes.lastWeek.map((r) => `${PRIZE_MEDALS[r.place - 1] ?? ''} ${r.name}`).join(' · ')}
+            </p>
+          )}
+          {prizes.lastMonth.length > 0 && (
+            <p className="truncate">
+              <span className="font-semibold">{t('lb.prizeLastMonth')}:</span>{' '}
+              {prizes.lastMonth.map((r) => `${PRIZE_MEDALS[r.place - 1] ?? ''} ${r.name}`).join(' · ')}
+            </p>
+          )}
+        </div>
+      )}
     </div>
   )
 }

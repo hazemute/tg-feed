@@ -640,4 +640,35 @@ export type LeaderboardResponse = {
   /** Моё место: rank null — вне топа; null целиком — гость/нет данных */
   me: { rank: number | null; value: number; level: number | null } | null
   guest: boolean
+  /** v5.88: награды за активность (топ-3 по XP недели/месяца получают свайпы) */
+  prizes: LbPrizes | null
+}
+
+/* ================= Награды лидербордов (v5.88) ================= */
+
+/** Строка «итоги прошлой недели/месяца»: кто получил приз и сколько */
+export type LbPrizeRow = {
+  place: number
+  uid: string
+  name: string
+  username: string | null
+  photoUrl: string | null
+  premium: boolean
+  level: number | null
+  /** Начислено свайпов */
+  amount: number
+}
+
+/** Блок наград: суммы + живой топ текущих периодов + итоги прошлых */
+export type LbPrizes = {
+  weekKey: string
+  monthKey: string
+  weeklyAmount: number
+  monthlyAmount: number
+  /** Живой топ-3 по XP, набранному с начала текущей недели/месяца */
+  liveWeek: LbEntry[]
+  liveMonth: LbEntry[]
+  /** Выплаты за последний завершившийся период */
+  lastWeek: LbPrizeRow[]
+  lastMonth: LbPrizeRow[]
 }
