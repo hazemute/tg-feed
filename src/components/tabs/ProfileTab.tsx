@@ -17,6 +17,7 @@ import {
   Settings,
   ShieldCheck,
   Sparkles,
+  Trophy,
   Wallet,
 } from 'lucide-react'
 import { toast } from 'sonner'
@@ -25,7 +26,7 @@ import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatCount } from '@/lib/format'
 import { haptic, openExternal, openInvoiceUrl, userAvatarUrl } from '@/lib/tg'
-import type { SubscriptionDTO, TiersResponse } from '@/lib/types'
+import type { LbTab, SubscriptionDTO, TiersResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { ThemeGallery } from '@/components/tg/ThemeGallery'
@@ -42,6 +43,7 @@ import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
 import { LevelBar } from '@/components/profile/LevelBar'
 import { LevelSheet } from '@/components/profile/LevelSheet'
+import { LeaderboardSheet } from '@/components/profile/LeaderboardSheet'
 import { GiveawayCard } from '@/components/profile/GiveawayCard'
 
 
@@ -92,6 +94,9 @@ export function ProfileTab() {
   const [levelOpen, setLevelOpen] = useState(false)
   // Кошелёк v2 (v5.77): полная страница вместо плашки; пополнение живёт внутри неё
   const [walletOpen, setWalletOpen] = useState(false)
+  // v5.87: лидерборды (не рублёвые) — раздел держит ProfileTab, им управляет и шит уровня
+  const [lbOpen, setLbOpen] = useState(false)
+  const [lbTab, setLbTab] = useState<LbTab>('level')
 
   const reload = () => {
     if (!user) return
@@ -269,12 +274,12 @@ export function ProfileTab() {
         <StatBlock value={stats?.bookmarks} label="Сохранено" />
       </section>
 
-      {/* Кошелёк v2 (v5.77): кнопка вместо плашки — полная страница открывается по тапу.
+      {/* Кошелёк v2 (v5.77) + Лидерборды (v5.87): кнопки-строки — полные страницы по тапу.
           v5.79.1: обёртка px-4 + w-full — <button> не растягивается на ширину контейнера
           сам (ширина «по контенту»), из-за этого кнопка висела узкой колбаской слева
           и не совпадала краями со статистикой/секциями. Теперь края ровно по px-4. */}
-      {!user.isGuest && (
-        <div className="mt-3 px-4">
+      <div className="mt-3 space-y-2 px-4">
+        {!user.isGuest && (
           <button
             type="button"
             onClick={() => {
@@ -289,8 +294,23 @@ export function ProfileTab() {
             <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">Кошелёк</span>
             <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
           </button>
-        </div>
-      )}
+        )}
+        {/* v5.87: лидерборды — таблицы уровней/свайпов/активности (рубли не участвуют) */}
+        <button
+          type="button"
+          onClick={() => {
+            haptic('light')
+            setLbOpen(true)
+          }}
+          className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+        >
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
+            <Trophy className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+          </span>
+          <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('profile.lbRow')}</span>
+          <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+        </button>
+      </div>
 
       {/* v5.46: активный розыгрыш — билеты/задания/промокод (скрыт, если розыгрыша нет) */}
       <GiveawayCard />
@@ -683,6 +703,19 @@ export function ProfileTab() {
         open={levelOpen}
         onClose={() => setLevelOpen(false)}
         isGuest={!!user.isGuest}
+        onLogin={() => setLoginOpen(true)}
+        onOpenLeaderboard={() => {
+          setLbTab('level')
+          setLbOpen(true)
+        }}
+      />
+
+      {/* v5.87: лидерборды — уровни/свайпы/просмотры/лайки/комментарии (без рублей) */}
+      <LeaderboardSheet
+        open={lbOpen}
+        onClose={() => setLbOpen(false)}
+        tab={lbTab}
+        onTabChange={setLbTab}
         onLogin={() => setLoginOpen(true)}
       />
 

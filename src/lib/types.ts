@@ -609,3 +609,35 @@ export type TrendingResponse = {
   topPosts: PostDTO[]
   topChannels: ChannelDTO[]
 }
+
+/* ================= Лидерборды (v5.87) — не рублёвые ================= */
+
+/** Раздел лидерборда: уровни/свайпы — за всё время; просмотры/лайки/комментарии — за 30 дней */
+export type LbTab = 'level' | 'swipes' | 'views' | 'likes' | 'comments'
+
+/** Строка таблицы лидерборда (только публичные данные участника) */
+export type LbEntry = {
+  rank: number
+  uid: string
+  name: string
+  username: string | null
+  photoUrl: string | null
+  premium: boolean
+  /** Уровень участника (для подписи под именем) */
+  level: number | null
+  /** Значение метрики: уровень / свайпы / просмотры / лайки / комментарии */
+  value: number
+  /** Подпись под значением (например «1 234 XP») */
+  sub: string | null
+}
+
+/** Ответ GET /api/leaderboard?tab=… */
+export type LeaderboardResponse = {
+  tab: LbTab
+  /** 'all' — за всё время, '30d' — за последние 30 дней */
+  window: 'all' | '30d'
+  top: LbEntry[]
+  /** Моё место: rank null — вне топа; null целиком — гость/нет данных */
+  me: { rank: number | null; value: number; level: number | null } | null
+  guest: boolean
+}

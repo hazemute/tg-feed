@@ -10,12 +10,14 @@ import { useEffect, useState } from 'react'
 import {
   Bug,
   CalendarCheck,
+  ChevronRight,
   Heart,
   ListChecks,
   MessageCircle,
   Send,
   ShieldAlert,
   Sparkles,
+  Trophy,
 } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useT } from '@/lib/i18n'
@@ -49,12 +51,15 @@ export function LevelSheet({
   onClose,
   isGuest,
   onLogin,
+  onOpenLeaderboard,
 }: {
   open: boolean
   onClose: () => void
   isGuest: boolean
   /** Открыть логин по Telegram (модалка живёт в ProfileTab) */
   onLogin?: () => void
+  /** v5.87: перейти в лидерборды на раздел «Уровни» (шит живёт в ProfileTab) */
+  onOpenLeaderboard?: () => void
 }) {
   const t = useT()
   const [data, setData] = useState<LevelResponse | null>(null)
@@ -150,6 +155,27 @@ export function LevelSheet({
                     +{p.nextRewardSwipes} свайпов
                   </span>
                 </div>
+                {/* v5.87: переход в лидерборд уровней — соревновательный контекст */}
+                {onOpenLeaderboard && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      haptic('light')
+                      onClose()
+                      onOpenLeaderboard()
+                    }}
+                    className="mt-2 flex w-full items-center gap-3 rounded-xl bg-tg-bg px-3 py-2.5 text-left transition active:opacity-70"
+                  >
+                    <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
+                      <Trophy className="h-4 w-4" strokeWidth={2} aria-hidden />
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[14px] font-semibold text-tg-text">{t('lb.openFromLevel')}</span>
+                      <span className="block text-[12px] text-tg-hint">{t('lb.openFromLevelHint')}</span>
+                    </span>
+                    <ChevronRight className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
+                  </button>
+                )}
                 {/* Дневные лимиты (сегодня засчитано) — v5.77: убрано (лишний текст) */}
               </>
             ) : (
