@@ -3,8 +3,10 @@ name: health-watch
 # v5.77: стор здоровья прода. После «чистки деплоев» вебхук бота остался
 # на мёртвом dpl-URL — Telegram шлёт апдейты в никуда, бот молчит.
 # Самолечение живёт в /api/health, но его никто не пингует регулярно
-# (Vercel cron на Hobby — раз в сутки). Поэтому пингуем оттуда, где кроны
-# бесплатны и часты — GitHub Actions (каждые 5 минут).
+# (Vercel cron на Hobby — раз в сутки; GitHub */5 под нагрузкой пропускает).
+# Решение: каждый job ПИНГУЕТ 10 минут (каждые ~50с) — наложение jobs даёт
+# практически непрерывный пинг: шаги content-catalog (90с), автопарсинг
+# (10 мин) и самолечение вебхука идут без пауз.
 
 on:
   schedule:
@@ -18,19 +20,19 @@ concurrency:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 11
     steps:
-      - name: Ping /api/health (bot webhook self-heal + schema + catalog)
+      - name: Ping /api/health for 10 minutes (self-heal + catalog + auto-parse)
         run: |
-          set -o pipefail
-          code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 40 \
-            "https://tg-swipe.vercel.app/api/health" || echo "000")
-          echo "HTTP ${code}"
-          cat /tmp/health.json | head -c 600 || true
-          echo
-          # 200 = ок; 503 (схема/бд) тоже считаем «доехавшим» — health внутри
-          # сам запускает лечение. Бьём тревогу только на сеть (000/timeout).
-          if [ "$code" = "000" ]; then
-            echo "::warning::prod unreachable (network)"
-            exit 0
-          fi
+          for i in $(seq 1 12); do
+            code=$(curl -sS -o /tmp/health.json -w "%{http_code}" --max-time 40 \
+              "https://tg-swipe.vercel.app/api/health" || echo "000")
+            echo "[$i] HTTP ${code} $(date -u +%H:%M:%S)"
+            # каталог: фаза/счётчики — видно в логах Actions
+            grep -o '"catalog":{[^}]*}' /tmp/health.json | head -c 200 || true
+            echo
+            if [ "$code" = "000" ]; then
+              echo "::warning::prod unreachable (network)"
+            fi
+            sleep 50
+          done
