@@ -524,6 +524,20 @@ export function ChannelCabinet({
       </Section>
       </div>
 
+      {/* v5.96: догрузка истории — всегда под рукой (импортируется
+          ~15-20 свежих постов при привязке; старые страницы владелец
+          докатывает этой кнопкой, пока не появится «больше нечего») */}
+      {channelId && (
+        <div className="flex justify-center border-t border-tg-sep/60 px-4 py-3">
+          <BackfillButton
+            channelId={channelId}
+            label="Импортировать ещё истории"
+            className="h-9 bg-tg-surface px-4 text-[13px] text-tg-link"
+            onProgress={() => fetchStatsRef.current()}
+          />
+        </div>
+      )}
+
       <p className="border-t border-tg-sep/60 px-4 pb-4 pt-3 text-[11.5px] leading-snug text-tg-hint">
         Просмотры и реакции — данные исходного канала Telegram, обновляются при парсинге.
         Лайки и открытия — активность пользователей Tg Swipe.

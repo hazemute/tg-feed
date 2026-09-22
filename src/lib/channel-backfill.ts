@@ -104,10 +104,13 @@ export async function backfillChannelHistory(
 }
 
 /**
- * Самолечение при открытии кабинета: канал владельца есть, публичный,
- * а постов в ленте НОЛЬ → запускаем импорт истории. Возвращает true, если
- * бэкфил реально запущен (вызывающий код делает это через after()).
+ * Самолечение при открытии кабинета: канал владельца есть, публичный, а
+ * постов в ленте МАЛО (< BACKFILL_MIN_POSTS — обычно это «историю ещё не
+ * завезли» или импорт оборвался по дедлайну) → догружаем историю. Троттлинг
+ * 30 мин не даёт долбить t.me/s: канал дозревает за несколько открытий.
  */
+const BACKFILL_MIN_POSTS = 30
+
 export async function maybeBackfillEmptyChannel(
   channelId: string,
   username: string | null,
@@ -119,7 +122,7 @@ export async function maybeBackfillEmptyChannel(
   })
   if (!ch || !ch.claimedById || !ch.username) return false
   const posts = await db.post.count({ where: { channelId: ch.id } })
-  if (posts > 0) return false
+  if (posts >= BACKFILL_MIN_POSTS) return false
   const r = await backfillChannelHistory(ch.username, { pages: 8, per: 50 })
   if (r.added) {
     console.log(`[channel-backfill] @${ch.username}: +${r.added} постов истории`)
