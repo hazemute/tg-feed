@@ -197,6 +197,27 @@ const DICT = {
   'lb.retry': ['Повторить', 'Retry'],
   'lb.openFromLevel': ['Лидерборд уровней', 'Level leaderboard'],
   'lb.openFromLevelHint': ['топ по XP', 'top by XP'],
+  // v5.91: экран «Сохранённые посты» (BookmarksSheet)
+  'bm.title': ['Сохранённые', 'Saved'],
+  'bm.subtitle': ['Закладки постов', 'Bookmarked posts'],
+  'bm.all': ['Все', 'All'],
+  'bm.unread': ['Непрочитанные', 'Unread'],
+  'bm.markRead': ['Прочитано', 'Mark read'],
+  'bm.filterAria': ['Фильтр сохранённых', 'Saved filter'],
+  'bm.guestTitle': ['Сохраняйте посты в один тап', 'Save posts in one tap'],
+  'bm.guestHint': [
+    'Войдите — и закладка в карточке поста начнёт работать: всё сохранённое будет здесь',
+    'Sign in — the bookmark button will work and everything you save lands here',
+  ],
+  'bm.empty': ['Пока ничего не сохранено', 'Nothing saved yet'],
+  'bm.emptyHint': [
+    'Жмите закладку в карточке поста — вернуться к нему можно будет отсюда',
+    'Tap the bookmark on any post to keep it here for later',
+  ],
+  'bm.allRead': ['Всё прочитано 👌', 'All caught up 👌'],
+  'bm.failed': ['Не удалось загрузить', 'Failed to load'],
+  'bm.retry': ['Повторить', 'Retry'],
+  'bm.remove': ['Убрать из сохранённых', 'Remove from saved'],
   // v5.89: клик по игроку в таблице/подиуме — открыть его публичный профиль
   'user.openProfile': ['Открыть профиль', 'Open profile'],
   // v5.88: награды за активность (топ-3 по XP недели/месяца получают свайпы)

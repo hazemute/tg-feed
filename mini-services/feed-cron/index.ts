@@ -13,12 +13,12 @@
  * Любой новый пост возвращает ритм к быстрому. Реакции/просмотры при этом
  * всё равно обновляются: полный круг по каналам при простое ≈ 1–2 часа.
  *
- * ПРЕДПРОГРЕВ ОЗВУЧКИ: после тика с НОВЫМИ постами (или раз в 6 «пустых»
- * тиков — v5.88) движок просит приложение подготовить озвучку/переводы
- * (/api/warm) — кэш в общей БД тёплый, пользователи прода слушают посты
- * мгновенно. Раньше warm дёргался на КАЖДОМ тике — на Vercel Fluid каждый
- * запуск функции с ИИ-работой стоит память-секунды, это разжигало лимит
- * «Fluid Provisioned Memory».
+ * ПРЕДПРОГРЕВ ЛЕНТЫ (v5.91, раньше назывался «озвучкой» — TTS убран ещё в v5.35):
+ * после тика с НОВЫМИ постами (или раз в 12 «пустых» тиков) движок просит
+ * приложение подготовить переводы/саммари/модерацию (/api/warm) — кэш в общей
+ * БД тёплый, пользователи прода читают мгновенно. Раньше warm дёргался на
+ * КАЖДОМ тике — на Vercel Fluid каждый запуск функции с ИИ-работой стоит
+ * память-секунды, это разжигало лимит «Fluid Provisioned Memory».
  *
  * Авторизация: Authorization: Bearer <CRON_SECRET> из корневого .env.
  *
@@ -113,7 +113,7 @@ async function tick(reason: string): Promise<TickResult> {
   }
 }
 
-async function prewarmTts(): Promise<void> {
+async function prewarmWarm(): Promise<void> {
   try {
     const res = await fetch(`${MAIN_APP}/api/warm`, {
       method: 'POST',
@@ -125,8 +125,9 @@ async function prewarmTts(): Promise<void> {
       signal: AbortSignal.timeout(90_000),
     })
     if (res.ok) {
-      const data = (await res.json()) as { generated?: number }
-      if (data.generated) console.log(`[warm] +${data.generated} озвучек`)
+      const data = (await res.json()) as { translated?: number; summarized?: number }
+      const n = (data.translated ?? 0) + (data.summarized ?? 0)
+      if (n) console.log(`[warm] +${n} (переводы+саммари)`)
     }
   } catch {
     // прогрев необязателен — пользовательская генерация сработает по запросу
@@ -146,10 +147,12 @@ async function loop(): Promise<void> {
   timer = setTimeout(() => void loop(), delaySec * 1000)
   // unref: таймер не держит процесс, если всё остальное умерло
   timer.unref?.()
-  // v5.88: прогрев НЕ на каждом тике — только после новых постов или раз в 6
-  // пустых тиков (каждый вызов warm = функция на Vercel с ИИ-работой = память-секунды)
+  // v5.91: прогрев НЕ на каждом тике — только после новых постов или раз в 12
+  // пустых тиков (в дремоте 600с это ≈ раз в 2 часа; каждый вызов warm =
+  // serverless-функция с ИИ-работой = память-секунды на Vercel Fluid).
+  // До v5.88 warm звался на каждом тике, v5.88–v5.90 — раз в 6.
   tickCounter++
-  if (lastAdded > 0 || tickCounter % 6 === 0) void prewarmTts()
+  if (lastAdded > 0 || tickCounter % 12 === 0) void prewarmWarm()
 }
 
 // HTTP-интерфейс для наблюдения и ручного запуска

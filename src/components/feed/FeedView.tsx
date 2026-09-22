@@ -1445,11 +1445,13 @@ export function FeedView() {
                 <PostCard
                   post={p}
                   appearDelay={staggerBatch ? Math.min(i, 6) * 0.04 : undefined}
-                  onLike={() => onLike(p)}
-                  onBookmark={() => onBookmark(p)}
-                  onSubscribe={() => onSubscribe(p)}
-                  onSummary={() => setSummaryPost(p)}
-                  onHide={() => hidePost(p)}
+                  /* v5.91: хендлеры передаются напрямую (useCallback, пост — аргументом):
+                     memo(PostCard) пропускает рендер карточек при чейнджах вне их пропсов */
+                  onLike={onLike}
+                  onBookmark={onBookmark}
+                  onSubscribe={onSubscribe}
+                  onSummary={setSummaryPost}
+                  onHide={hidePost}
                 />
                 {(i + 1) % 10 === 0 && ads.length > 0 && (
                   <AdCard ad={ads[Math.floor(i / 10) % ads.length]} />

@@ -80,7 +80,9 @@ export async function POST(request: Request) {
      * генерирует компактный MP3 по запросу с кэшем в памяти. */
     const tts = 0
 
-    /* ---------- Переводы: 4 нерусских свежих поста ---------- */
+    /* ---------- Переводы: до 3 нерусских свежих поста (v5.91: 4→3, скан 14→10 —
+    каждый перевод это LLM-вызов; на Fluid это память-секунды. Три поста за тик
+    спокойно покрывают поток новых — на следующий тик остаток догреется) ---------- */
     const foreignPosts = await db.post.findMany({
       where: {
         translations: null,
@@ -89,10 +91,10 @@ export async function POST(request: Request) {
       },
       select: { id: true, text: true },
       orderBy: { publishedAt: 'desc' },
-      take: 14,
+      take: 10,
     })
     for (const post of foreignPosts) {
-      if (translated >= 4) break
+      if (translated >= 3) break
       try {
         const r = await translatePostCached(post.id, 'ru')
         if (r.ok && !r.cached) translated++

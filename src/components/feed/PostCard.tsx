@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { Eye, EyeOff, Flag, Forward, Heart, MessageCircle, Rocket, Send, Sparkle, Star } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion, useAnimate } from 'framer-motion'
@@ -342,7 +342,13 @@ const REPORT_REASONS = [
   { id: 'other', labelKey: 'feed.reportReasonOther' },
 ] as const
 
-export function PostCard({
+/**
+ * v5.91: PostCard обёрнут в React.memo, а хендлеры принимают ПОСТ аргументом —
+ * FeedView передаёт стабильные useCallback-функции напрямую, и любой чейндж
+ * стейта (поллинг нотификаций, реклама, чейндж соседней карточки) больше
+ * НЕ перерисовывает все карточки ленты: пропсы не изменились — рендер пропущен.
+ */
+function PostCardImpl({
   post,
   onLike,
   onBookmark,
@@ -353,13 +359,13 @@ export function PostCard({
   appearDelay,
 }: {
   post: PostDTO
-  onLike: () => void
-  onBookmark: () => void
-  onSubscribe: () => void
-  onSummary: () => void
+  onLike: (post: PostDTO) => void
+  onBookmark: (post: PostDTO) => void
+  onSubscribe: (post: PostDTO) => void
+  onSummary: (post: PostDTO) => void
   onViewed?: (postId: string) => void
   /** «Не интересно» — скрыть пост из ленты (undefined — кнопка не показывается) */
-  onHide?: () => void
+  onHide?: (post: PostDTO) => void
   /** Задержка stagger-появления карточки (сек); undefined — появление без анимации */
   appearDelay?: number
 }) {
@@ -523,7 +529,7 @@ export function PostCard({
   // Двойной тап по медиа: ставим лайк, если его не было
   const onMediaDoubleTap = () => {
     haptic('light')
-    if (!post.liked) onLike()
+    if (!post.liked) onLike(post)
   }
 
   const body = (
@@ -604,7 +610,7 @@ export function PostCard({
           )}
           {timeAgo(post.publishedAt, lang)}
         </time>
-        <SubscribeCircle subscribed={ch.subscribed} onClick={onSubscribe} />
+        <SubscribeCircle subscribed={ch.subscribed} onClick={() => onSubscribe(post)} />
       </div>
 
       {/* Медиа + вертикальный рельс (у медиа-постов пустот нет — медиа высокое).
@@ -617,7 +623,7 @@ export function PostCard({
             <PostMedia post={post} hideCards onDoubleTap={onMediaDoubleTap} />
           </div>
           <div className="flex w-10 shrink-0 flex-col items-center gap-3.5 pt-0.5" aria-label={t('card.actions')}>
-            <LikeRailButton count={post.likesCount} active={post.liked} onClick={onLike} />
+            <LikeRailButton count={post.likesCount} active={post.liked} onClick={() => onLike(post)} />
             <RailButton
               icon={MessageCircle}
               label={t('comments.title')}
@@ -632,7 +638,7 @@ export function PostCard({
               label={t('post.save')}
               count={post.bookmarksCount}
               active={post.bookmarked}
-              onClick={onBookmark}
+              onClick={() => onBookmark(post)}
             />
             <RailButton
               icon={Forward}
@@ -649,12 +655,12 @@ export function PostCard({
                 post={post}
                 teaser={teaser}
                 teaserText={teaserText}
-                onSummary={onSummary}
+                onSummary={() => onSummary(post)}
                 onOpenMore={openFullPost}
               />
             </div>
           )}
-          <TextActionsRow post={post} onLike={onLike} onBookmark={onBookmark} />
+          <TextActionsRow post={post} onLike={() => onLike(post)} onBookmark={() => onBookmark(post)} />
         </div>
       )}
 
@@ -665,7 +671,7 @@ export function PostCard({
             post={post}
             teaser={teaser}
             teaserText={teaserText}
-            onSummary={onSummary}
+            onSummary={() => onSummary(post)}
             onOpenMore={openFullPost}
           />
         </div>
@@ -727,7 +733,7 @@ export function PostCard({
             onClick={(e) => {
               e.stopPropagation()
               haptic('light')
-              onHide()
+              onHide(post)
             }}
             aria-label={t('feed.notInterested')}
             title={t('feed.notInterested')}
@@ -810,3 +816,6 @@ export function PostCard({
     </>
   )
 }
+
+/* v5.91: memo-обёртка — см. комментарий над PostCardImpl */
+export const PostCard = memo(PostCardImpl)

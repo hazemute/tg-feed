@@ -36,7 +36,7 @@ const FILTERS: { id: Filter; label: string }[] = [
  * markdown и источниками.
  */
 export function SearchTab() {
-  const { user, categories, setCategory, setTab, openChannel, searchSeed, clearSearchSeed, openAuthGate } =
+  const { user, categories, setCategory, setTab, openChannel, searchSeed, clearSearchSeed, openAuthGate, openPost, setPostQueue } =
     useApp()
   // Внешний запрос (тап по хэштегу в ленте / «Открыть поиск» из пустой ленты)
   // приходит ВСЕГДА до монтирования экрана: хэштеги и пустая лента живут только
@@ -49,7 +49,11 @@ export function SearchTab() {
   const needle = q.trim().toLowerCase()
 
   const [channels, setChannels] = useState<ChannelDTO[] | null>(null)
-  const [posts, setPosts] = useState<{ q: string; items: PostDTO[] } | null>(null)
+  const [posts, setPosts] = useState<{ q: string; items: PostDTO[]; nextOffset: number | null } | null>(null)
+  // v5.91: каналы из БД по запросу (response.channels) — каталог клиента видит только страницу
+  const [dbChannels, setDbChannels] = useState<ChannelDTO[]>([])
+  // v5.91: «Показать ещё» — идёт ли подгрузка следующей страницы постов
+  const [loadingMore, setLoadingMore] = useState(false)
   const [searching, setSearching] = useState(false)
   // Поле в фокусе — показываем блок «Недавние запросы» при пустом запросе
   const [inputFocused, setInputFocused] = useState(false)
@@ -92,29 +96,59 @@ export function SearchTab() {
 
   /** Единая точка поиска по постам (используется дебаунсом и сабмитом) */
   const runPostsSearch = useCallback(
-    (rawQuery: string) => {
+    (rawQuery: string, offset = 0) => {
       const term = rawQuery.trim()
       if (term.length < 2) return
-      const seq = ++searchSeq.current
-      setSearching(true)
-      const qs = new URLSearchParams({ q: term })
-      if (userId) qs.set('userId', userId)
-      api<SearchResponse>(`/api/search?${qs.toString()}`)
-        .then((r) => {
-          if (searchSeq.current !== seq) return
-          setPosts({ q: term, items: r.items })
-          // Успешный поиск с непустым результатом — сохраняем запрос в историю
-          if (r.items.length > 0) setRecent(saveSearchQuery(term))
-        })
-        .catch(() => {
-          if (searchSeq.current === seq) toast.error('Поиск недоступен')
-        })
-        .finally(() => {
-          if (searchSeq.current === seq) setSearching(false)
-        })
+      if (offset === 0) {
+        const seq = ++searchSeq.current
+        setSearching(true)
+        const qs = new URLSearchParams({ q: term })
+        if (userId) qs.set('userId', userId)
+        api<SearchResponse>(`/api/search?${qs.toString()}`)
+          .then((r) => {
+            if (searchSeq.current !== seq) return
+            setPosts({ q: term, items: r.items, nextOffset: r.nextOffset ?? null })
+            setDbChannels(r.channels ?? [])
+            // Успешный поиск с непустым результатом — сохраняем запрос в историю
+            if (r.items.length > 0) setRecent(saveSearchQuery(term))
+          })
+          .catch(() => {
+            if (searchSeq.current === seq) toast.error('Поиск недоступен')
+          })
+          .finally(() => {
+            if (searchSeq.current === seq) setSearching(false)
+          })
+      } else {
+        // v5.91: «Показать ещё» — догрузка страницы в хвост (seq не трогаем:
+        // новая выдача сверху отменяет смысл догрузки, но не роняет UI)
+        setLoadingMore(true)
+        const qs = new URLSearchParams({ q: term, offset: String(offset) })
+        if (userId) qs.set('userId', userId)
+        api<SearchResponse>(`/api/search?${qs.toString()}`)
+          .then((r) => {
+            setPosts((prev) =>
+              prev && prev.q === term
+                ? { ...prev, items: [...prev.items, ...r.items], nextOffset: r.nextOffset ?? null }
+                : prev,
+            )
+          })
+          .catch(() => toast.error('Поиск недоступен'))
+          .finally(() => setLoadingMore(false))
+      }
     },
     // userId меняется один раз при авторизации — идентичность колбэка стабильна
     [userId],
+  )
+
+  /** v5.91: открыть найденный ПОСТ (а не канал — раньше читатель терял находку);
+      очередь = вся выдача, свайп ←/→ листает найденные посты */
+  const openFoundPost = useCallback(
+    (post: PostDTO, list: PostDTO[]) => {
+      haptic('light')
+      setPostQueue(list)
+      openPost(post)
+    },
+    [openPost, setPostQueue],
   )
 
   // Поиск по постам (дебаунс 350мс)
@@ -202,15 +236,23 @@ export function SearchTab() {
   }
 
   const matchedChannels = useMemo(() => {
-    if (!channels) return null
+    if (!channels) return dbChannels.length > 0 ? dbChannels : null
     if (needle.length < 2) return channels
-    return channels.filter((c) =>
-      [c.title, c.username, c.description ?? '', c.categoryTitle ?? '']
-        .join(' ')
-        .toLowerCase()
-        .includes(needle),
-    )
-  }, [channels, needle])
+    // v5.91: каталог + каналы, найденные в БД (дедуп по id — каталог первым)
+    const seen = new Set<string>()
+    const merged: ChannelDTO[] = []
+    for (const c of [
+      ...channels.filter((c) =>
+        [c.title, c.username, c.description ?? '', c.categoryTitle ?? ''].join(' ').toLowerCase().includes(needle),
+      ),
+      ...dbChannels,
+    ]) {
+      if (seen.has(c.id)) continue
+      seen.add(c.id)
+      merged.push(c)
+    }
+    return merged
+  }, [channels, dbChannels, needle])
 
   const matchedTopics = useMemo(() => {
     if (needle.length < 2) return categories
@@ -528,36 +570,55 @@ export function SearchTab() {
           ) : postResults.length === 0 ? (
             <Empty text={`По запросу «${query}» ничего не найдено`} />
           ) : (
-            postResults.map((p, i) => (
-              <button
-                key={p.id}
-                type="button"
-                onClick={() => openChannel(p.channel.username)}
-                aria-label={`Открыть канал ${p.channel.title}`}
-                className={cn(
-                  'flex w-full items-start gap-3 px-4 py-3.5 text-left active:bg-tg-surface/60',
-                  i > 0 && 'border-t border-tg-sep/60',
-                )}
-              >
-                <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={44} />
-                <span className="min-w-0 flex-1">
-                  <span className="flex items-baseline gap-2">
-                    <span className="flex min-w-0 items-center gap-1">
-                      <span className="truncate text-[15px] font-semibold text-tg-text">
-                        {p.channel.title}
+            <>
+              {postResults.map((p, i) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  /* v5.91: тап по находке открывает САМ ПОСТ (полный экран), а не канал —
+                     раньше читатель терял найденное; свайп ←/→ листает всю выдачу */
+                  onClick={() => openFoundPost(p, postResults)}
+                  aria-label={`Открыть пост ${p.channel.title}`}
+                  className={cn(
+                    'flex w-full items-start gap-3 px-4 py-3.5 text-left active:bg-tg-surface/60',
+                    i > 0 && 'border-t border-tg-sep/60',
+                  )}
+                >
+                  <Avatar name={p.channel.title} color={p.channel.avatarColor} src={p.channel.avatarUrl} size={44} />
+                  <span className="min-w-0 flex-1">
+                    <span className="flex items-baseline gap-2">
+                      <span className="flex min-w-0 items-center gap-1">
+                        <span className="truncate text-[15px] font-semibold text-tg-text">
+                          {p.channel.title}
+                        </span>
+                        {p.channel.verified && <VerifiedBadge size={13} />}
                       </span>
-                      {p.channel.verified && <VerifiedBadge size={13} />}
+                      <span className="shrink-0 text-[12px] text-tg-hint">
+                        {timeAgoRu(p.publishedAt)}
+                      </span>
                     </span>
-                    <span className="shrink-0 text-[12px] text-tg-hint">
-                      {timeAgoRu(p.publishedAt)}
+                    <span className="mt-0.5 line-clamp-2 block text-[14px] leading-snug text-tg-hint">
+                      {/* v5.91: найденный фрагмент подсвечен акцентом темы */}
+                      <Snippet text={p.text ? stripMarkdown(p.text) || 'медиа-пост' : 'медиа-пост'} query={query} />
                     </span>
                   </span>
-                  <span className="mt-0.5 line-clamp-2 text-[14px] leading-snug text-tg-hint">
-                    {p.text ? stripMarkdown(p.text) || 'медиа-пост' : 'медиа-пост'}
-                  </span>
-                </span>
-              </button>
-            ))
+                </button>
+              ))}
+              {/* v5.91: пагинация — «Показать ещё» догружает следующую страницу */}
+              {posts?.q === query && posts.nextOffset != null && (
+                <button
+                  type="button"
+                  disabled={loadingMore}
+                  onClick={() => {
+                    haptic('light')
+                    runPostsSearch(query, posts.nextOffset!)
+                  }}
+                  className="mx-4 my-3 flex h-10 w-[calc(100%-2rem)] items-center justify-center rounded-full bg-tg-surface text-[14px] font-semibold text-tg-link transition active:scale-[0.98] disabled:opacity-60"
+                >
+                  {loadingMore ? 'Загружаем…' : 'Показать ещё'}
+                </button>
+              )}
+            </>
           )}
         </section>
       )}
@@ -684,5 +745,34 @@ function ChannelRowsSkeleton() {
         </div>
       ))}
     </div>
+  )
+}
+
+/* ---------- v5.91: сниппет с подсветкой найденного ---------- */
+
+/** Разбивает текст на части (совпадение/обычные) — <mark> по акценту темы */
+function Snippet({ text, query }: { text: string; query: string }) {
+  const parts = useMemo(() => {
+    const q = query.trim()
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    if (!escaped) return [{ hit: false, s: text }]
+    const lower = q.toLowerCase()
+    return text
+      .split(new RegExp(`(${escaped})`, 'ig'))
+      .filter((s) => s !== '')
+      .map((s) => ({ hit: s.toLowerCase() === lower, s }))
+  }, [text, query])
+  return (
+    <>
+      {parts.map((p, i) =>
+        p.hit ? (
+          <mark key={i} className="rounded-[3px] bg-tg-link/15 px-0.5 font-medium text-tg-text">
+            {p.s}
+          </mark>
+        ) : (
+          <span key={i}>{p.s}</span>
+        ),
+      )}
+    </>
   )
 }

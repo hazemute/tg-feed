@@ -46,6 +46,7 @@ import { LevelBar } from '@/components/profile/LevelBar'
 import { LevelSheet } from '@/components/profile/LevelSheet'
 import { AchievementsSheet } from '@/components/profile/AchievementsSheet'
 import { LeaderboardSheet } from '@/components/profile/LeaderboardSheet'
+import { BookmarksSheet } from '@/components/profile/BookmarksSheet'
 import { GiveawayCard } from '@/components/profile/GiveawayCard'
 
 
@@ -101,6 +102,8 @@ export function ProfileTab() {
   const [lbTab, setLbTab] = useState<LbTab>('level')
   // v5.90: достижения — полный экран ачивок с наградами
   const [achOpen, setAchOpen] = useState(false)
+  // v5.91: «Сохранённые посты» — экран закладок (тап по стату «Сохранено»)
+  const [bmOpen, setBmOpen] = useState(false)
 
   const reload = () => {
     if (!user) return
@@ -275,7 +278,15 @@ export function ProfileTab() {
         <div className="w-px shrink-0 bg-tg-sep" aria-hidden />
         <StatBlock value={user.categories.length} label="Категории" />
         <div className="w-px shrink-0 bg-tg-sep" aria-hidden />
-        <StatBlock value={stats?.bookmarks} label="Сохранено" />
+        {/* v5.91: «Сохранено» теперь открывает экран сохранённых постов */}
+        <StatBlock
+          value={stats?.bookmarks}
+          label="Сохранено"
+          onClick={() => {
+            haptic('light')
+            setBmOpen(true)
+          }}
+        />
       </section>
 
       {/* Кошелёк v2 (v5.77) + Лидерборды (v5.87): кнопки-строки — полные страницы по тапу.
@@ -747,6 +758,9 @@ export function ProfileTab() {
         isGuest={!!user.isGuest}
         onLogin={() => setLoginOpen(true)}
       />
+
+      {/* v5.91: сохранённые посты (закладки) — открывается статом «Сохранено» */}
+      <BookmarksSheet open={bmOpen} onClose={() => setBmOpen(false)} onLogin={() => setLoginOpen(true)} />
 
       <Onboarding open={editOpen} mode="edit" onClose={() => setEditOpen(false)} />
       {/* Галерея тем оформления */}

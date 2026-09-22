@@ -361,6 +361,10 @@ export type FeedResponse = {
 export type SearchResponse = {
   items: PostDTO[]
   query: string
+  /** v5.91: каналы из БД по запросу (раньше вкладка «Каналы» видела только каталог) */
+  channels?: ChannelDTO[]
+  /** v5.91: offset следующей страницы постов (null — дальше ничего нет) */
+  nextOffset?: number | null
 }
 
 export type SummaryResponse = {
