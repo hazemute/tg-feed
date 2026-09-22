@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { ArrowRight, Check, ChevronDown, ListChecks, Loader2, Megaphone, Search, Sparkles, UserRound, Zap } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
+import { markOnboardedServer } from '@/lib/onboarding'
 import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
 import { SwipeIcon } from '@/components/tg/SwipeIcon'
@@ -41,6 +42,9 @@ function markWelcomeDone(): void {
   } catch {
     /* приватный режим — гайд просто покажется снова при следующем входе */
   }
+  // v5.85: дублируем отметку на сервере — localStorage в Telegram-клиентах
+  // чистится между сессиями, из-за чего гайд вылезал при каждом заходе
+  markOnboardedServer()
 }
 
 /* ---------------- Мини-макет нижней навигации (подсказки) ---------------- */
@@ -468,13 +472,20 @@ export function WelcomeGuide({ onDone }: { onDone: () => void }) {
   )
 }
 
-/** Хук монтирования гайда: показать один раз после готовности приложения */
+/** Хук монтирования гайда: показать один раз после готовности приложения.
+ * v5.85 ФИКС «ГАЙД ПРИ КАЖДОМ ЗАХОДЕ»:
+ *  • отметка «показан» пишется В МОМЕНТ показа (а не только по «Готово»/«Пропустить»);
+ *  • если сервер говорит user.onboarded — гайд не показываем вообще,
+ *    даже если localStorage был почищен клиентом Telegram. */
 export function useWelcomeGuide(ready: boolean): { open: boolean; close: () => void } {
   const [open, setOpen] = useState(false)
   useEffect(() => {
     if (!ready) return
     const t = window.setTimeout(() => {
-      if (!welcomeDone()) setOpen(true)
+      if (useApp.getState().user?.onboarded) return // серверная отметка — главная
+      if (welcomeDone()) return
+      markWelcomeDone()
+      setOpen(true)
     }, 900) // даём ленте первые кадры — гайд поверх готового приложения
     return () => window.clearTimeout(t)
   }, [ready])

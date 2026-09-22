@@ -70,6 +70,8 @@ export async function GET(request: Request) {
       // v5.75: уровень и опыт (прогресс-бар под ником в профиле)
       xp: user.xp,
       level: user.level,
+      // v5.85: онбординг уже показан (серверная отметка — переживает очистку localStorage)
+      onboarded: user.onboardedAt != null,
     }
     return NextResponse.json({
       user: dto,
@@ -190,6 +192,8 @@ export async function POST(request: Request) {
       // v5.75: уровень и опыт (прогресс-бар под ником в профиле)
       xp: user.xp,
       level: user.level,
+      // v5.85: онбординг уже показан (серверная отметка)
+      onboarded: user.onboardedAt != null,
     }
 
     return NextResponse.json({ user: dto, token, bot: botUsername ? { username: botUsername } : null, maintenance, release })

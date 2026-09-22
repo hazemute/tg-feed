@@ -7,6 +7,7 @@ import { RotateCcw, Send, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, getSessionToken, prefetchIdle, setSessionToken } from '@/lib/api'
 import { hideBootShell } from '@/lib/boot-shell'
+import { TabSkeleton } from '@/components/tg/TabSkeleton'
 import { useApp } from '@/lib/store'
 import type { Lang } from '@/lib/i18n'
 import { tr } from '@/lib/i18n'
@@ -35,16 +36,20 @@ import { FeedView } from '@/components/feed/FeedView'
  * Тяжёлые экраны и шиты — ленивые чанки (next/dynamic): первый кадр
  * (сплэш + лента) не ждёт их JS. Всё, что открывается ТОЛЬКО по тапу,
  * грузится при первом открытии; прогрев вероятных — в idle-эффекте ниже.
+ * v5.85: у ВКЛАДОК появился loading-скелетон — раньше пока чанк качался,
+ * вкладка была ПУСТЫМ ЭКРАНОМ («пол года грузится»); плюс BottomNav
+ * предзагружает чанк на самом касании (preloadTab, lib/tab-preload.ts) —
+ * до клика чанк уже в кэше, скелетон почти не виден.
  */
 const CommentsSheet = dynamic(() => import('@/components/feed/CommentsSheet').then((m) => m.CommentsSheet), { ssr: false })
 const UserProfileSheet = dynamic(() => import('@/components/profile/UserProfileSheet').then((m) => m.UserProfileSheet), { ssr: false })
 const ChannelSheet = dynamic(() => import('@/components/feed/ChannelSheet').then((m) => m.ChannelSheet), { ssr: false })
 const PostOverlay = dynamic(() => import('@/components/feed/PostOverlay').then((m) => m.PostOverlay), { ssr: false })
 const ShareSheet = dynamic(() => import('@/components/feed/ShareSheet').then((m) => m.ShareSheet), { ssr: false })
-const QuestsTab = dynamic(() => import('@/components/tabs/QuestsTab').then((m) => m.QuestsTab), { ssr: false })
-const SearchTab = dynamic(() => import('@/components/tabs/SearchTab').then((m) => m.SearchTab), { ssr: false })
-const ChannelTab = dynamic(() => import('@/components/tabs/ChannelTab').then((m) => m.ChannelTab), { ssr: false })
-const ProfileTab = dynamic(() => import('@/components/tabs/ProfileTab').then((m) => m.ProfileTab), { ssr: false })
+const QuestsTab = dynamic(() => import('@/components/tabs/QuestsTab').then((m) => m.QuestsTab), { ssr: false, loading: () => <TabSkeleton tab="quests" /> })
+const SearchTab = dynamic(() => import('@/components/tabs/SearchTab').then((m) => m.SearchTab), { ssr: false, loading: () => <TabSkeleton tab="search" /> })
+const ChannelTab = dynamic(() => import('@/components/tabs/ChannelTab').then((m) => m.ChannelTab), { ssr: false, loading: () => <TabSkeleton tab="channel" /> })
+const ProfileTab = dynamic(() => import('@/components/tabs/ProfileTab').then((m) => m.ProfileTab), { ssr: false, loading: () => <TabSkeleton tab="profile" /> })
 const AuthGateSheet = dynamic(() => import('@/components/tg/AuthGateSheet').then((m) => m.AuthGateSheet), { ssr: false })
 const LoginByTelegram = dynamic(() => import('@/components/tg/LoginByTelegram').then((m) => m.LoginByTelegram), { ssr: false })
 
@@ -422,7 +427,9 @@ export default function Home() {
       void import('@/components/tabs/QuestsTab')
       void import('@/components/tabs/ChannelTab')
       void import('@/components/tabs/ProfileTab')
-    }, 1_200)
+      // v5.85: 400мс вместо 1.2с — первый тап по вкладке почти никогда
+      // не ждёт докачку JS даже на медленной сети
+    }, 400)
     return () => window.clearTimeout(t)
   }, [authReady, user, appOpen])
 

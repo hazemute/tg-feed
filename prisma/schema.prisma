@@ -45,6 +45,7 @@ model User {
   promoteFreeMonth String @default("") // 'YYYY-MM' (UTC): месяц, в котором бесплатное продвижение уже использовано
   // === Опыт и уровни (v5.75): XP за активность, уровень монотонно растёт (не падает при штрафах) ===
   xp             Int      @default(0)
+  onboardedAt    DateTime? // v5.85: серверная отметка «гайды показаны» — переживает очистку localStorage в Telegram
   level          Int      @default(1)
   // === Кошелёк v2 (v5.77): адреса двух счетов + кто пригласил (реферальные 5% от трат) ===
   swipeAddress   String?  @unique // адрес Swipe-счёта (SWP-XXXX-XXXX)

@@ -302,6 +302,15 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "WalletTx_fromAddr_idx" ON "WalletTx" ("fromAddr")`,
     `CREATE INDEX IF NOT EXISTS "WalletTx_toAddr_idx" ON "WalletTx" ("toAddr")`,
   ],
+  // v5.85: серверная отметка «онбординг показан» — гайд/тутор больше не
+  // повторяются, даже если Telegram-клиент чистит localStorage между сессиями.
+  // Бэктест: все юзеры старше суток уже видели онбординг — помечаем сразу
+  // (иначе после релиза каждый существующий юзер получил бы гайд ещё раз);
+  // свежие аккаунты (<24ч) и будущие регистрации проходят онбординг честно.
+  'v5.85-onboarded': [
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "onboardedAt" timestamp(3)`,
+    `UPDATE "User" SET "onboardedAt" = CURRENT_TIMESTAMP WHERE "onboardedAt" IS NULL AND "createdAt" < CURRENT_TIMESTAMP - INTERVAL '1 day'`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()

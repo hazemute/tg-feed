@@ -40,6 +40,7 @@ model User {
   promoteFreeMonth String @default("") // v5.69: 'YYYY-MM' (UTC) — месяц, в котором бесплатное уже использовано
   xp             Int      @default(0) // v5.75: опыт за активность (уровни)
   level          Int      @default(1) // v5.75: уровень (монотонно растёт)
+  onboardedAt    DateTime? // v5.85: серверная отметка «гайды показаны»
   swipeAddress   String?  @unique // v5.77: адрес Swipe-счёта (SWP-XXXX-XXXX)
   rubAddress     String?  @unique // v5.77: адрес Рубль-счёта (RUB-XXXX-XXXX)
   referredById   String? // v5.77: tg_<uid> пригласившего (реферальные 5% от трат)

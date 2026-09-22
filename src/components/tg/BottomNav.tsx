@@ -6,6 +6,7 @@ import { cn } from '@/lib/utils'
 import { useApp } from '@/lib/store'
 import { useT } from '@/lib/i18n'
 import { haptic, userAvatarUrl } from '@/lib/tg'
+import { preloadTab } from '@/lib/tab-preload'
 import { Avatar } from '@/components/tg/Avatar'
 import type { Tab } from '@/lib/types'
 
@@ -55,6 +56,10 @@ export function BottomNav() {
             <button
               key={id}
               type="button"
+              /* v5.85: чанк вкладки качается УЖЕ НА КАСАНИИ (до клика) —
+               * переключение мгновенное даже на медленной сети */
+              onPointerDown={() => preloadTab(id)}
+              onTouchStart={() => preloadTab(id)}
               onClick={() => {
                 if (!active) {
                   haptic('light')

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { useApp } from '@/lib/store'
+import { markOnboardedServer } from '@/lib/onboarding'
 import { haptic } from '@/lib/tg'
 
 /**
@@ -15,8 +16,16 @@ import { haptic } from '@/lib/tg'
  *  3. «Вкладки внизу» — завершается, когда юзер переключил вкладку.
  *  4. «Готов!» — финал.
  *
- * Пропустить — всегда одной кнопкой. Показывается один раз
+ * Пропустить — всегда одной кнопкой. Показывается ОДИН РАЗ на устройстве
  * (localStorage), после закрытия WelcomeGuide. Гостям не показывается.
+ *
+ * v5.85 ФИКС «ТУТОР ПРИ КАЖДОМ ЗАХОДЕ»: раньше флаг «пройдено» ставился
+ * только при полном прохождении всех 4 шагов — тутор НЕ блокирует интерфейс,
+ * поэтому пользователь мог просто закрыть приложение (или проигнорировать
+ * карточку), флаг не записывался, и при каждом следующем входе тутор
+ * вылезал заново. Теперь отметка «показан» пишется В МОМЕНТ показа:
+ * вне зависимости от того, дошёл ли юзер до конца, повторного показа
+ * на этом устройстве не будет (внутри сессии шаги работают как раньше).
  */
 
 /**
@@ -75,14 +84,22 @@ export function TutorialCoach({ active }: { active: boolean }) {
   const advancing = useRef(false)
   const tab = useApp((s) => s.tab)
 
-  // Старт: готовый вход, закрытый WelcomeGuide, не пройден ранее
+  // Старт: готовый вход, закрытый WelcomeGuide, не показан ранее.
+  // v5.85: 1) отметку «показан» ставим ДО таймера открытия — даже если юзер
+  // закрыл приложение в первые 1.4с или проигнорировал карточку, повторного
+  // показа не будет (раньше флаг писался только по завершении всех шагов —
+  // тутор вылезал при каждом заходе). 2) серверная отметка user.onboarded
+  // главнее localStorage: Telegram-клиенты чистят хранилище между сессиями.
   useEffect(() => {
     if (!active) return
+    if (useApp.getState().user?.onboarded) return
     try {
       if (localStorage.getItem(DONE_KEY) === '1') return
+      localStorage.setItem(DONE_KEY, '1')
     } catch {
       return
     }
+    markOnboardedServer()
     const t = setTimeout(() => setOpen(true), 1400)
     return () => clearTimeout(t)
   }, [active])
