@@ -307,7 +307,7 @@ export function ProfileTab() {
           v5.79.1: обёртка px-4 + w-full — <button> не растягивается на ширину контейнера
           сам (ширина «по контенту»), из-за этого кнопка висела узкой колбаской слева
           и не совпадала краями со статистикой/секциями. Теперь края ровно по px-4. */}
-      <div className="mt-3 space-y-2 px-4">
+      <div className="mt-3 space-y-1.5 px-4">
         {!user.isGuest && (
           <button
             type="button"
@@ -315,13 +315,13 @@ export function ProfileTab() {
               haptic('light')
               setWalletOpen(true)
             }}
-            className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+            className="flex w-full items-center gap-2.5 rounded-2xl border border-tg-sep/60 bg-tg-surface px-3.5 py-2.5 text-left transition active:scale-[0.99]"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-tg-link/15 text-tg-link">
-              <Wallet className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-tg-link/15 text-tg-link">
+              <Wallet className="h-4.5 w-4.5" strokeWidth={1.9} aria-hidden />
             </span>
-            <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">Кошелёк</span>
-            <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+            <span className="min-w-0 flex-1 text-[15px] font-semibold text-tg-text">Кошелёк</span>
+            <ChevronRight className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
           </button>
         )}
         {/* v5.87: лидерборды — таблицы уровней/свайпов/активности (рубли не участвуют) */}
@@ -331,13 +331,13 @@ export function ProfileTab() {
             haptic('light')
             setLbOpen(true)
           }}
-          className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+          className="flex w-full items-center gap-2.5 rounded-2xl border border-tg-sep/60 bg-tg-surface px-3.5 py-2.5 text-left transition active:scale-[0.99]"
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
-            <Trophy className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-500/15 text-amber-500">
+            <Trophy className="h-4.5 w-4.5" strokeWidth={1.9} aria-hidden />
           </span>
-          <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('profile.lbRow')}</span>
-          <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+          <span className="min-w-0 flex-1 text-[15px] font-semibold text-tg-text">{t('profile.lbRow')}</span>
+          <ChevronRight className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
         </button>
         {/* v5.90: достижения — награды свайпами и XP за активность (только вошедшим) */}
         {!user.isGuest && (
@@ -347,17 +347,18 @@ export function ProfileTab() {
               haptic('light')
               setAchOpen(true)
             }}
-            className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+            className="flex w-full items-center gap-2.5 rounded-2xl border border-tg-sep/60 bg-tg-surface px-3.5 py-2.5 text-left transition active:scale-[0.99]"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-500">
-              <Medal className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-violet-500/15 text-violet-500">
+              <Medal className="h-4.5 w-4.5" strokeWidth={1.9} aria-hidden />
             </span>
-            <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('ach.row')}</span>
-            <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+            <span className="min-w-0 flex-1 text-[15px] font-semibold text-tg-text">{t('ach.row')}</span>
+            <ChevronRight className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
           </button>
         )}
         {/* v5.93: Активность — стрик чтения и цель недели (одна строка, экран внутри);
-            справа — текущий стрик, чтобы экран открывали чаще нуля раз */}
+            справа — текущий стрик, чтобы экран открывали чаще нуля раз.
+            v5.93.1: без стрика показываем «0» вместо прочерка */}
         {!user.isGuest && (
           <button
             type="button"
@@ -365,21 +366,21 @@ export function ProfileTab() {
               haptic('light')
               setActOpen(true)
             }}
-            className="flex w-full items-center gap-3 rounded-2xl border border-tg-sep/60 bg-tg-surface px-4 py-3.5 text-left transition active:scale-[0.99]"
+            className="flex w-full items-center gap-2.5 rounded-2xl border border-tg-sep/60 bg-tg-surface px-3.5 py-2.5 text-left transition active:scale-[0.99]"
           >
-            <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-orange-500/15 text-orange-500">
-              <Flame className="h-5 w-5" strokeWidth={1.9} aria-hidden />
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-orange-500/15 text-orange-500">
+              <Flame className="h-4.5 w-4.5" strokeWidth={1.9} aria-hidden />
             </span>
-            <span className="min-w-0 flex-1 text-[16px] font-semibold text-tg-text">{t('profile.activityRow')}</span>
+            <span className="min-w-0 flex-1 text-[15px] font-semibold text-tg-text">{t('profile.activityRow')}</span>
             <span
               className={cn(
-                'shrink-0 rounded-full px-2.5 py-1 text-[12.5px] font-bold tabular-nums',
+                'shrink-0 rounded-full px-2 py-0.5 text-[12px] font-bold tabular-nums',
                 actStreak ? 'bg-orange-500/15 text-orange-500' : 'text-tg-hint',
               )}
             >
-              {actStreak != null && actStreak > 0 ? `${actStreak} ${t('profile.activityStreak')}` : '—'}
+              {actStreak && actStreak > 0 ? `${actStreak} ${t('profile.activityStreak')}` : '0'}
             </span>
-            <ChevronRight className="h-5 w-5 shrink-0 text-tg-hint" aria-hidden />
+            <ChevronRight className="h-4.5 w-4.5 shrink-0 text-tg-hint" aria-hidden />
           </button>
         )}
       </div>
