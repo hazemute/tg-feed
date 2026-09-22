@@ -7,6 +7,7 @@ import {
   Gem,
   Gift,
   BadgeCheck,
+  Command,
   Headset,
   History,
   LayoutDashboard,
@@ -20,8 +21,10 @@ import {
   RefreshCw,
   Server,
   ShieldAlert,
+  Star,
   Sun,
   Ticket,
+  Timer,
   Tv,
   Users,
   Wallet,
@@ -32,6 +35,16 @@ import {
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import {
+  CommandDialog,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+  CommandSeparator,
+  CommandShortcut,
+} from '@/components/ui/command'
 import { cn } from '@/lib/utils'
 
 import {
@@ -90,24 +103,29 @@ const ToolsTab = dynamic(() => import('./components/tools-tab').then((m) => m.To
 const BotTab = dynamic(() => import('./components/bot-tab').then((m) => m.BotTab), { ssr: false, loading: () => <TabFallback /> })
 
 type AuthState = 'checking' | 'authed' | 'anon'
-type TabKey =
-  | 'overview'
-  | 'bot'
-  | 'finance'
-  | 'subscriptions'
-  | 'badges'
-  | 'channels'
-  | 'moderation'
-  | 'users'
-  | 'audit'
-  | 'support'
-  | 'feedback'
-  | 'ads'
-  | 'giveaways'
-  | 'quests'
-  | 'promos'
-  | 'system'
-  | 'tools'
+
+/* v5.89: единый источник ключей вкладок — и тип, и валидация закреплений */
+const NAV_KEYS = [
+  'overview',
+  'bot',
+  'finance',
+  'subscriptions',
+  'badges',
+  'channels',
+  'moderation',
+  'users',
+  'audit',
+  'support',
+  'feedback',
+  'ads',
+  'giveaways',
+  'quests',
+  'promos',
+  'system',
+  'tools',
+] as const
+type TabKey = (typeof NAV_KEYS)[number]
+const NAV_KEY_SET = new Set<string>(NAV_KEYS)
 
 /*
  * Темы админки (палитры как в миниаппе, приказ владельца v5.11):
@@ -116,6 +134,9 @@ type TabKey =
 type AdminTheme = '' | 'dark' | 'sepia' | 'rose'
 const THEME_KEY = 'tgfeed_admin_theme'
 const THEME_CYCLE: AdminTheme[] = ['', 'dark', 'sepia', 'rose']
+/* v5.89: закреплённые вкладки + автообновление — в localStorage */
+const PIN_KEY = 'tgfeed_admin_pins'
+const AUTO_REFRESH_KEY = 'tgfeed_admin_autoref'
 const THEME_LABEL: Record<AdminTheme, string> = {
   '': 'Светлая',
   dark: 'Тёмная',
@@ -161,11 +182,49 @@ export default function AdminPage() {
   const [navOpen, setNavOpen] = useState(false)
   // Тема: localStorage; undefined до монтирования — чтобы не мигнуло
   const [theme, setTheme] = useState<AdminTheme>('')
+  // v5.89: палитра команд (⌘K/Ctrl+K), закреплённые вкладки, автообновление,
+  // «обновлено Nс назад» в шапке
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [pinned, setPinned] = useState<TabKey[]>([])
+  const [autoRef, setAutoRef] = useState(false)
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null)
+  const [nowMs, setNowMs] = useState(0)
 
   useEffect(() => {
     const saved = (window.localStorage.getItem(THEME_KEY) ?? '') as AdminTheme
     setTheme(THEME_CYCLE.includes(saved) ? saved : '')
+    // v5.89: восстанавливаем закрепления и автообновление
+    try {
+      const raw = window.localStorage.getItem(PIN_KEY)
+      if (raw) {
+        const arr: unknown = JSON.parse(raw)
+        if (Array.isArray(arr)) setPinned(arr.filter((k): k is TabKey => NAV_KEY_SET.has(String(k))))
+      }
+      setAutoRef(window.localStorage.getItem(AUTO_REFRESH_KEY) === '1')
+    } catch {
+      /* приватный режим — без закреплений */
+    }
   }, [])
+
+  // v5.89: ⌘K / Ctrl+K — командная палитра (только для авторизованных)
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        if (auth === 'authed') setPaletteOpen((o) => !o)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [auth])
+
+  // v5.89: тикер «обновлено Nс назад» — 1с, только на авторизованной панели
+  useEffect(() => {
+    if (auth !== 'authed') return
+    setNowMs(Date.now())
+    const iv = setInterval(() => setNowMs(Date.now()), 1000)
+    return () => clearInterval(iv)
+  }, [auth])
 
   // Атрибут на <html>: перекрашивает и фон layout'а (вне корневого div страницы)
   useEffect(() => {
@@ -202,6 +261,32 @@ export default function AdminPage() {
     applyTheme(THEME_CYCLE[(THEME_CYCLE.indexOf(theme) + 1) % THEME_CYCLE.length])
   }, [theme, applyTheme])
 
+  /* v5.89: закрепление вкладок (звёздочка в сайдбаре / палитра) */
+  const togglePin = useCallback((key: TabKey) => {
+    setPinned((prev) => {
+      const next = prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]
+      try {
+        window.localStorage.setItem(PIN_KEY, JSON.stringify(next))
+      } catch {
+        /* приватный режим */
+      }
+      return next
+    })
+  }, [])
+
+  /* v5.89: автообновление данных раз в минуту */
+  const toggleAutoRef = useCallback(() => {
+    setAutoRef((v) => {
+      const next = !v
+      try {
+        window.localStorage.setItem(AUTO_REFRESH_KEY, next ? '1' : '0')
+      } catch {
+        /* приватный режим */
+      }
+      return next
+    })
+  }, [])
+
   const handleMaintenance = useCallback((on: boolean) => setMaintOn(on), [])
 
   // Непрочитанные обращения поддержки и предложок — бейджи на вкладках (раз в 30с)
@@ -235,7 +320,8 @@ export default function AdminPage() {
   const loadHealth = useCallback(async () => {
     setHealthLoading(true)
     try {
-      const h = await panelFetch<PanelHealth>('/api/panel/health')
+      // v5.89: таймаут 30с — зависший запрос не должен блокировать кнопку «Обновить»
+      const h = await panelFetch<PanelHealth>('/api/panel/health', { timeoutMs: 30_000 })
       setHealth(h)
       setHealthOk(h.ok === true)
       if (h.version) setApiVersion(h.version)
@@ -246,6 +332,7 @@ export default function AdminPage() {
     } finally {
       setHealthLoading(false)
       setRefreshing(false)
+      setLastRefreshAt(Date.now())
     }
   }, [])
 
@@ -261,7 +348,8 @@ export default function AdminPage() {
         return
       }
       try {
-        const h = await panelFetch<PanelHealth>('/api/panel/health')
+        // v5.89: таймаут 12с — зависший health не оставляет вечное «Проверка доступа…»
+        const h = await panelFetch<PanelHealth>('/api/panel/health', { timeoutMs: 12_000 })
         if (!alive) return
         setHealth(h)
         setHealthOk(h.ok === true)
@@ -295,6 +383,15 @@ export default function AdminPage() {
     setTick((t) => t + 1)
     void loadHealth()
   }, [loadHealth])
+
+  // v5.89: автообновление раз в 60с (переключается в шапке/палитре)
+  useEffect(() => {
+    if (auth !== 'authed' || !autoRef) return
+    const iv = setInterval(() => {
+      refresh()
+    }, 60_000)
+    return () => clearInterval(iv)
+  }, [auth, autoRef, refresh])
 
   const handleSettled = useCallback(() => setRefreshing(false), [])
 
@@ -333,9 +430,15 @@ export default function AdminPage() {
     return (
       <div
         data-adm-theme={theme || 'light'}
-        className="flex min-h-screen flex-col items-center justify-center gap-3 bg-slate-50"
+        className="flex min-h-screen flex-col items-center justify-center gap-4 bg-slate-50"
+        role="status"
+        aria-label="Проверка доступа"
       >
-        <img src="/logo.svg" alt="" className="h-10 w-10 animate-pulse" />
+        <img src="/logo.svg" alt="" className="h-10 w-10" aria-hidden />
+        <div
+          className="size-6 animate-spin rounded-full border-2 border-slate-200 border-t-emerald-500"
+          aria-hidden
+        />
         <p className="text-xs text-slate-500">Проверка доступа…</p>
       </div>
     )
@@ -412,6 +515,28 @@ export default function AdminPage() {
 
   const navByKey = new Map<TabKey, NavItem>(NAV.map((item) => [item.key, item]))
   const activeLabel = NAV.find((item) => item.key === active)?.label ?? ''
+
+  /* v5.89: «обновлено Nс назад» для шапки */
+  const agoSec =
+    lastRefreshAt && nowMs ? Math.max(0, Math.round((nowMs - lastRefreshAt) / 1000)) : null
+  const agoLabel =
+    agoSec === null
+      ? ''
+      : agoSec < 5
+        ? 'только что'
+        : agoSec < 60
+          ? `${agoSec}с назад`
+          : `${Math.floor(agoSec / 60)}м ${agoSec % 60}с назад`
+
+  /* v5.89: закреплённые вкладки — отдельной секцией сверху, из исходных групп убраны */
+  const pinnedSet = new Set<TabKey>(pinned)
+  const pinnedValid = pinned.filter((k) => navByKey.has(k))
+  const navGroups: Array<{ title?: string; keys: TabKey[] }> = []
+  if (pinnedValid.length) navGroups.push({ title: 'Закреплённые', keys: pinnedValid })
+  for (const g of NAV_GROUPS) {
+    const keys = g.keys.filter((k) => !pinnedSet.has(k))
+    if (keys.length) navGroups.push({ title: g.title, keys })
+  }
 
   const renderTab = () => {
     switch (active) {
@@ -510,10 +635,12 @@ export default function AdminPage() {
    * Сгруппированное меню: крошечные uppercase-заголовки секций, активный
    * пункт — акцентная черта слева (3px) + тонированный фон + акцентный текст.
    * Используется и в десктопном сайдбаре, и в мобильном дровере.
+   * v5.89: пункт — div[role=button] (внутри — настоящая кнопка-звёздочка
+   * закрепления; button в button — невалидный HTML), пины — секцией сверху.
    */
   const renderNavGroups = () => (
     <div>
-      {NAV_GROUPS.map((group, gi) => (
+      {navGroups.map((group, gi) => (
         <div key={group.title ?? `group-${gi}`}>
           {group.title ? (
             <p className="px-3 pb-1 pt-3 text-[10px] font-semibold uppercase tracking-[0.12em] text-slate-400">
@@ -528,14 +655,22 @@ export default function AdminPage() {
               if (!item) return null
               const { label, icon: Icon, badge, badgeTone } = item
               const isActive = active === key
+              const isPinned = pinnedSet.has(key)
               return (
-                <button
+                <div
                   key={key}
-                  type="button"
+                  role="button"
+                  tabIndex={0}
                   onClick={() => selectTab(key)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      selectTab(key)
+                    }
+                  }}
                   aria-current={isActive ? 'page' : undefined}
                   className={cn(
-                    'relative flex w-full items-center gap-2.5 rounded-lg py-2 pl-4 pr-2.5 text-sm font-medium transition-colors duration-150',
+                    'group relative flex w-full cursor-pointer items-center gap-2.5 rounded-lg py-2 pl-4 pr-2.5 text-sm font-medium outline-none transition-colors duration-150 focus-visible:ring-2 focus-visible:ring-emerald-500/40',
                     isActive
                       ? 'bg-emerald-50 text-emerald-700 shadow-[inset_0_0_0_1px_rgba(16,185,129,0.10)]'
                       : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900',
@@ -560,7 +695,26 @@ export default function AdminPage() {
                       {badge}
                     </span>
                   )}
-                </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      togglePin(key)
+                    }}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    aria-pressed={isPinned}
+                    aria-label={isPinned ? `Открепить «${label}»` : `Закрепить «${label}»`}
+                    title={isPinned ? `Открепить «${label}»` : `Закрепить «${label}»`}
+                    className={cn(
+                      'shrink-0 rounded p-1 transition-opacity duration-150',
+                      isPinned
+                        ? 'text-amber-500 opacity-100'
+                        : 'text-slate-300 opacity-0 hover:!text-slate-500 focus-visible:opacity-100 group-hover:opacity-100',
+                    )}
+                  >
+                    <Star className={cn('size-3.5', isPinned && 'fill-amber-400')} aria-hidden />
+                  </button>
+                </div>
               )
             })}
           </div>
@@ -590,6 +744,34 @@ export default function AdminPage() {
             </span>
           </h1>
           <div className="flex shrink-0 items-center gap-2">
+            {/* v5.89: командная палитра + автообновление + «обновлено Nс назад» */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setPaletteOpen(true)}
+              aria-label="Командная палитра — Ctrl+K"
+              title="Командная палитра (Ctrl+K)"
+              className={cn(btnOutlineDark, 'gap-1.5 px-2.5')}
+            >
+              <Command aria-hidden />
+              <span className="hidden text-[11px] font-normal text-slate-400 xl:inline">⌘K</span>
+            </Button>
+            {agoLabel && (
+              <span className="hidden text-[11px] tabular-nums text-slate-400 lg:inline">
+                {agoLabel}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleAutoRef}
+              aria-pressed={autoRef}
+              aria-label="Автообновление раз в минуту"
+              title={autoRef ? 'Автообновление: вкл (60с)' : 'Автообновление: выкл'}
+              className={autoRef ? 'text-emerald-600' : 'text-slate-400'}
+            >
+              <Timer aria-hidden />
+            </Button>
             {/* Тема: компактный цикл на узких экранах, свотчи — в сайдбаре/дровере */}
             <Button
               variant="ghost"
@@ -730,6 +912,103 @@ export default function AdminPage() {
           </>
         )}
       </AnimatePresence>
+
+      {/* v5.89: командная палитра (⌘K/Ctrl+K) — разделы + быстрые действия */}
+      <CommandDialog
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        title="Командная палитра"
+        description="Переход по разделам и быстрые действия"
+      >
+        <CommandInput placeholder="Раздел или действие…" />
+        <CommandList>
+          <CommandEmpty>Ничего не найдено</CommandEmpty>
+          <CommandGroup heading="Разделы">
+            {NAV.map((item) => (
+              <CommandItem
+                key={item.key}
+                value={`раздел ${item.label}`}
+                onSelect={() => {
+                  selectTab(item.key)
+                  setPaletteOpen(false)
+                }}
+              >
+                <item.icon aria-hidden />
+                <span>{item.label}</span>
+                {pinnedSet.has(item.key) && (
+                  <Star className="ml-auto size-3.5 fill-amber-400 text-amber-400" aria-hidden />
+                )}
+              </CommandItem>
+            ))}
+          </CommandGroup>
+          <CommandSeparator />
+          <CommandGroup heading="Действия">
+            <CommandItem
+              value="обновить данные"
+              onSelect={() => {
+                setPaletteOpen(false)
+                refresh()
+              }}
+            >
+              <RefreshCw aria-hidden />
+              Обновить данные
+              <CommandShortcut>F5</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              value={autoRef ? 'автообновление выключить' : 'автообновление включить'}
+              onSelect={() => {
+                const wasOn = autoRef
+                toggleAutoRef()
+                setPaletteOpen(false)
+                toast.success(wasOn ? 'Автообновление выключено' : 'Автообновление: раз в минуту')
+              }}
+            >
+              <Timer aria-hidden />
+              Автообновление (60с)
+              <CommandShortcut>{autoRef ? 'вкл' : 'выкл'}</CommandShortcut>
+            </CommandItem>
+            <CommandItem
+              value={pinnedSet.has(active) ? 'открепить вкладку' : 'закрепить вкладку'}
+              onSelect={() => {
+                togglePin(active)
+                setPaletteOpen(false)
+                toast.success(
+                  pinnedSet.has(active) ? `«${activeLabel}» откреплена` : `«${activeLabel}» закреплена`,
+                )
+              }}
+            >
+              <Star aria-hidden />
+              {pinnedSet.has(active) ? `Открепить «${activeLabel}»` : `Закрепить «${activeLabel}»`}
+            </CommandItem>
+            <CommandSeparator />
+            {THEME_CYCLE.map((t) => (
+              <CommandItem
+                key={t}
+                value={`тема ${THEME_LABEL[t]}`}
+                onSelect={() => {
+                  applyTheme(t)
+                  setPaletteOpen(false)
+                }}
+              >
+                {t === '' ? <Sun aria-hidden /> : t === 'dark' ? <Moon aria-hidden /> : <Palette aria-hidden />}
+                Тема: {THEME_LABEL[t]}
+                {theme === t && <Check className="ml-auto text-emerald-600" aria-hidden />}
+              </CommandItem>
+            ))}
+            <CommandItem
+              value="выйти из панели"
+              onSelect={() => {
+                setPaletteOpen(false)
+                logout()
+              }}
+              className="text-red-600 data-[selected=true]:bg-red-50 data-[selected=true]:text-red-700"
+            >
+              <LogOut aria-hidden />
+              Выйти
+            </CommandItem>
+          </CommandGroup>
+        </CommandList>
+      </CommandDialog>
     </div>
   )
 }
