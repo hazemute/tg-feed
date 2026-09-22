@@ -63,6 +63,8 @@ export type IndexEntry = {
   w: number
   l: PostLang
   cl: PostLang
+  /** v5.99: канал с ботом (claimedById != null) — контент владельца, придавлен в хвост */
+  b: boolean
 }
 export type RankedIndex = { entries: IndexEntry[]; total: number }
 
@@ -85,7 +87,22 @@ export function feedScopeSignature(category: string, whereChannel: unknown): str
  * первый бёрст пользователей запускал тяжёлую пересборку индекса на пуле.
  * Единая константа делает расхождение невозможным по построению.
  */
-export const FEED_INDEX_KEY_V = 'v9'
+export const FEED_INDEX_KEY_V = 'v10'
+
+/*
+ * v5.99: ПРИКАЗ ВЛАДЕЛЬЦА — «отпаршенные каналы не отображаются, только те,
+ * в которых есть бот… чтоб с ботом ВООБЩЕ не отображались либо РЕДКО чем
+ * запаршенные с интернета». Диагноз: каналы с ботом (claimedById != null)
+ * инжестятся вебхуком в реальном времени и забивают окно индекса, пока
+ * каталог запаршенных ещё мал. Грубый фикс на двух уровнях ИНДЕКСА:
+ *  1) по-канальный пул для ботовых каналов — 1 пост (запаршенным — 12);
+ *  2) демотиватор веса ×0.12 — ботовые посты стоят ниже ВСЕХ запаршенных
+ *     (в хвосте ленты), но не дают ей опустеть, если запаршенных мало.
+ * Платное промо не страдает: промо-посты пиннятся в голову роутом отдельным
+ * механизмом (getPromotedCandidates), их органический вес не важен.
+ */
+export const CLAIMED_MAX_PER_CHANNEL = 1
+export const CLAIMED_DEMOTE = 0.12
 
 /** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
 type IndexWhere = {
@@ -135,7 +152,15 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       channel: {
         // title/description — язык канала для языкового множителя ранжирования
         // v5.76: category.slug — подростковый микс (FEED_MIX)
-        select: { isPremium: true, categoryId: true, title: true, description: true, category: { select: { slug: true } } },
+        // v5.99: claimedById — канал с ботом (демотиватор хвоста ленты)
+        select: {
+          isPremium: true,
+          categoryId: true,
+          title: true,
+          description: true,
+          claimedById: true,
+          category: { select: { slug: true } },
+        },
       },
     },
     orderBy: { publishedAt: 'desc' },
@@ -153,8 +178,10 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
   const pooled = posts
     .filter((p) => !looksLikeGarbage(p.text)) // мгновенный детект каши — не ждём ИИ
     .filter((p) => {
+      // v5.99: ботовому (привязанному) каналу — 1 слот в пуле, запаршенному — 12
+      const cap = p.channel.claimedById ? CLAIMED_MAX_PER_CHANNEL : PER_CHANNEL_POOL
       const n = seenPerChannel.get(p.channelId) ?? 0
-      if (n >= PER_CHANNEL_POOL) return false
+      if (n >= cap) return false
       seenPerChannel.set(p.channelId, n + 1)
       return true
     })
@@ -191,6 +218,7 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       g: p.channel.categoryId,
       l: detectLang(p.text),
       cl: detectLang(`${p.channel.title} ${p.channel.description ?? ''}`),
+      b: p.channel.claimedById != null,
       w: (() => {
         const base = computeWeight({
           likesCount: p.likesCount,
@@ -209,7 +237,11 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
         const promoActive =
           p.promotedAt && Date.now() - new Date(p.promotedAt).getTime() < 48 * 3_600_000
         return base * (promoActive ? Math.max(1, mix) : mix)
-      })() +
+      })() *
+        // v5.99: демотиватор ботовых каналов — контент владельца стоит ниже
+        // ВСЕХ запаршенных постов (приказ «редко чем запаршенные»); платное
+        // промо ботового канала не теряет видимость — его пиннит роут отдельно
+        (p.channel.claimedById ? CLAIMED_DEMOTE : 1) +
         // v5.68 антиреклама: канал с потоком жалоб глобально понижается
         Math.min(REPORT_PENALTY_CAP, (channelReports.get(p.channelId) ?? 0) * REPORT_PENALTY_PER) +
         rankJitter(p.id),
