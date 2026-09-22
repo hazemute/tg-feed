@@ -8,9 +8,17 @@
  * подиум топ-3 → таблица строк 4+. Глобальная часть кэшируется на сервере (60с),
  * на клиенте — SWR-кэш по табам: переключение мгновенное, сеть тихо догоняет.
  * Раздел (`tab`) принадлежит ProfileTab — открытие из строки шита уровня задаёт его извне.
+ *
+ * v5.89:
+ *  - чипсы разделов переехали в слот `toolbar` BottomSheet (ВНЕ зоны прокрутки):
+ *    раньше они были position:sticky внутри скролла и на Android WebView контент
+ *    «призрачно» проступал над/под панелью, разрывая подиум (баг «верхней менюшки»);
+ *    заодно кнопка обновления больше не срезается краем экрана;
+ *  - активный чип автодокручивается в видимую зону (5 табов не влезают в 360px);
+ *  - клик по игроку (подиум/строки/живой топ недели) открывает его публичный профиль.
  */
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Eye, Heart, MessageCircle, RefreshCw, Send, Star, Trophy, Zap } from 'lucide-react'
 import { api } from '@/lib/api'
 import { useT, type I18nKey, type Lang } from '@/lib/i18n'
@@ -89,6 +97,8 @@ export function LeaderboardSheet({
 }) {
   const t = useT()
   const user = useApp((s) => s.user)
+  /** v5.89: клик по игроку — публичный профиль (глобальный шит через zustand) */
+  const openUserProfile = useApp((s) => s.openUserProfile)
   // Данные по каждому табу отдельно (показ прошлого раздела мгновенно + сеть догоняет)
   const [dataByTab, setDataByTab] = useState<Partial<Record<LbTab, LeaderboardResponse>>>(
     () => {
@@ -127,48 +137,70 @@ export function LeaderboardSheet({
   const me = data?.me ?? null
   const loading = !data && failedTab !== tab
 
-  return (
-    <BottomSheet open={open} onClose={onClose} title={t('lb.title')} subtitle={t('lb.subtitle')} variant="full">
-      {/* Разделы: чипсы + ручное обновление (липкие поверх прокрутки) */}
-      <div
-        className="sticky top-0 z-10 -mx-5 bg-tg-bg/95 px-5 pb-2 pt-1 backdrop-blur-sm"
-        role="group"
-        aria-label={t('lb.tabAria')}
-      >
-        <div className="flex items-center gap-2">
-          <div className="no-scrollbar flex flex-1 gap-2 overflow-x-auto">
-            {TAB_META.map(({ tab: tb, key, Icon }) => (
-              <button
-                key={tb}
-                type="button"
-                aria-pressed={tab === tb}
-                onClick={() => onTabChange(tb)}
-                className={cn(
-                  'flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13.5px] font-semibold transition active:scale-95',
-                  tab === tb ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text',
-                )}
-              >
-                <Icon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
-                {t(key)}
-              </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={refresh}
-            aria-label={t('lb.refresh')}
-            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint transition active:scale-90"
-          >
-            <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden />
-          </button>
-        </div>
-        {/* Окно раздела: «за всё время» / «за 30 дней» */}
-        <p className="mt-1.5 px-1 text-[12px] text-tg-hint" aria-live="polite">
-          {tab === 'level' || tab === 'swipes' ? t('lb.windowAll') : t('lb.window30d')}
-        </p>
-      </div>
+  // v5.89: держим активный чип в видимой зоне — 5 табов шире экрана телефона,
+  // без автопрокрутки выбранный справа раздел остаётся срезанным краем
+  const chipRefs = useRef<Partial<Record<LbTab, HTMLButtonElement | null>>>({})
+  useEffect(() => {
+    if (!open) return
+    // небольшая задержка: на открытии шита layout ещё сходится (spring-анимация)
+    const tm = setTimeout(() => {
+      chipRefs.current[tab]?.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' })
+    }, 120)
+    return () => clearTimeout(tm)
+  }, [tab, open])
 
-      <div className="space-y-4 pt-2">
+  return (
+    <BottomSheet open={open} onClose={onClose} title={t('lb.title')} subtitle={t('lb.subtitle')} variant="full"
+      toolbar={
+        /* Разделы: чипсы + ручное обновление. Панель живёт ВНЕ скролла (слот
+           toolbar BottomSheet) — всегда видна и не перекрывается контентом. */
+        <div className="shrink-0 border-b border-tg-sep bg-tg-bg px-4 pb-2 pt-2" role="group" aria-label={t('lb.tabAria')}>
+          <div className="flex items-center gap-2">
+            {/* v5.89: скроллер чипов в relative-обёртке с правым фейдом —
+                срезанный чип читается как «есть продолжение», а не как баг */}
+            <div className="relative min-w-0 flex-1">
+              <div className="no-scrollbar flex gap-2 overflow-x-auto">
+                {TAB_META.map(({ tab: tb, key, Icon }) => (
+                  <button
+                    key={tb}
+                    ref={(el) => {
+                      chipRefs.current[tb] = el
+                    }}
+                    type="button"
+                    aria-pressed={tab === tb}
+                    onClick={() => onTabChange(tb)}
+                    className={cn(
+                      'flex h-9 shrink-0 items-center gap-1.5 rounded-full px-3.5 text-[13.5px] font-semibold transition active:scale-95',
+                      tab === tb ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text',
+                    )}
+                  >
+                    <Icon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden />
+                    {t(key)}
+                  </button>
+                ))}
+              </div>
+              <div
+                aria-hidden
+                className="pointer-events-none absolute inset-y-0 right-0 w-7 bg-gradient-to-l from-tg-bg to-transparent"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={refresh}
+              aria-label={t('lb.refresh')}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-tg-surface text-tg-hint transition active:scale-90"
+            >
+              <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} aria-hidden />
+            </button>
+          </div>
+          {/* Окно раздела: «за всё время» / «за 30 дней» */}
+          <p className="mt-1.5 px-1 text-[12px] text-tg-hint" aria-live="polite">
+            {tab === 'level' || tab === 'swipes' ? t('lb.windowAll') : t('lb.window30d')}
+          </p>
+        </div>
+      }
+    >
+      <div className="space-y-4">
         {/* ---------- Моё место / CTA гостя ---------- */}
         {data?.guest ? (
           <div className="rounded-2xl bg-tg-surface p-4 text-center">
@@ -217,18 +249,34 @@ export function LeaderboardSheet({
         )}
 
         {/* ---------- Награды за активность (v5.88) — только «Уровни» ---------- */}
-        {tab === 'level' && data?.prizes && <PrizesCard prizes={data.prizes} />}
+        {tab === 'level' && data?.prizes && (
+          <PrizesCard prizes={data.prizes} onOpenUser={openUserProfile} />
+        )}
 
         {/* ---------- Подиум (топ-3) ---------- */}
         {data && top.length > 0 && (
-          <Podium first={top[0]} second={top[1] ?? null} third={top[2] ?? null} tab={tab} myRank={me?.rank ?? null} />
+          <Podium
+            first={top[0]}
+            second={top[1] ?? null}
+            third={top[2] ?? null}
+            tab={tab}
+            myRank={me?.rank ?? null}
+            onOpenUser={openUserProfile}
+          />
         )}
 
         {/* ---------- Таблица: строки 4+ ---------- */}
         {top.length > 3 && (
           <ul className="overflow-hidden rounded-2xl bg-tg-surface" aria-label={t('lb.title')}>
             {top.slice(3).map((e, i) => (
-              <LbRow key={e.uid} entry={e} tab={tab} isMe={me?.rank === e.rank} withTopBorder={i > 0} />
+              <LbRow
+                key={e.uid}
+                entry={e}
+                tab={tab}
+                isMe={me?.rank === e.rank}
+                withTopBorder={i > 0}
+                onOpen={() => openUserProfile(e.uid)}
+              />
             ))}
           </ul>
         )}
@@ -304,7 +352,7 @@ function swipesWord(n: number, lang: Lang, t: (k: I18nKey) => string): string {
   return t('lb.swipesValue')
 }
 
-function PrizesCard({ prizes }: { prizes: LbPrizes }) {
+function PrizesCard({ prizes, onOpenUser }: { prizes: LbPrizes; onOpenUser: (uid: string) => void }) {
   const t = useT()
   const lang = useApp((s) => s.lang)
   const eachOf = (amount: number) =>
@@ -336,15 +384,26 @@ function PrizesCard({ prizes }: { prizes: LbPrizes }) {
           </p>
           <ul>
             {prizes.liveWeek.map((e, i) => (
-              <li key={e.uid} className="flex items-center gap-2.5 rounded-xl px-2 py-1.5">
-                <span className="w-5 shrink-0 text-center text-[13px]" aria-hidden>
-                  {PRIZE_MEDALS[i] ?? `#${e.rank}`}
-                </span>
-                <Avatar name={e.name} src={userAvatarUrl(e.uid, e.photoUrl)} size={28} />
-                <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-tg-text">{e.name}</span>
-                <span className="shrink-0 text-[12px] font-bold text-amber-500 tabular-nums">
-                  +{formatCount(e.value)} XP
-                </span>
+              <li key={e.uid}>
+                {/* v5.89: клик по участнику — публичный профиль */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    onOpenUser(e.uid)
+                  }}
+                  aria-label={`${e.name} — ${t('lb.prizeLiveWeek')}`}
+                  className="flex w-full items-center gap-2.5 rounded-xl px-2 py-1.5 text-left transition active:bg-tg-link/5"
+                >
+                  <span className="w-5 shrink-0 text-center text-[13px]" aria-hidden>
+                    {PRIZE_MEDALS[i] ?? `#${e.rank}`}
+                  </span>
+                  <Avatar name={e.name} src={userAvatarUrl(e.uid, e.photoUrl)} size={28} />
+                  <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-tg-text">{e.name}</span>
+                  <span className="shrink-0 text-[12px] font-bold text-amber-500 tabular-nums">
+                    +{formatCount(e.value)} XP
+                  </span>
+                </button>
               </li>
             ))}
           </ul>
@@ -386,12 +445,14 @@ function Podium({
   third,
   tab,
   myRank,
+  onOpenUser,
 }: {
   first: LbEntry
   second: LbEntry | null
   third: LbEntry | null
   tab: LbTab
   myRank: number | null
+  onOpenUser: (uid: string) => void
 }) {
   const t = useT()
   const lang = useApp((s) => s.lang)
@@ -400,7 +461,19 @@ function Podium({
     const st = PODIUM_STYLE[order]
     const isMe = myRank === e.rank
     return (
-      <div className={cn('flex min-w-0 flex-1 flex-col items-center', order === 1 ? 'mt-0' : 'mt-4')}>
+      // v5.89: вся ячейка — кнопка: тап по игроку открывает его профиль
+      <button
+        type="button"
+        onClick={() => {
+          haptic('light')
+          onOpenUser(e.uid)
+        }}
+        aria-label={`${e.name} — ${t('user.openProfile')}`}
+        className={cn(
+          'flex min-w-0 flex-1 flex-col items-center rounded-2xl transition active:scale-95',
+          order === 1 ? 'mt-0' : 'mt-4',
+        )}
+      >
         <div className="relative">
           <Avatar
             name={e.name}
@@ -430,7 +503,7 @@ function Podium({
         {isMe && (
           <span className="mt-1 rounded-full bg-tg-link px-2 py-px text-[10.5px] font-bold text-white">{t('lb.me')}</span>
         )}
-      </div>
+      </button>
     )
   }
   return (
@@ -449,48 +522,55 @@ function LbRow({
   tab,
   isMe,
   withTopBorder,
+  onOpen,
 }: {
   entry: LbEntry
   tab: LbTab
   isMe: boolean
   withTopBorder: boolean
+  /** v5.89: тап по строке — публичный профиль игрока */
+  onOpen: () => void
 }) {
   const t = useT()
   const lang = useApp((s) => s.lang)
   const label = entry.sub ?? unitLabel(tab, entry.value, lang, t)
   return (
-    <li
-      className={cn(
-        'flex items-center gap-3 px-3.5 py-2.5',
-        withTopBorder && 'border-t border-tg-sep',
-        isMe && 'bg-tg-link/10',
-      )}
-    >
-      <span
-        className={cn(
-          'w-6 shrink-0 text-center text-[13.5px] font-bold tabular-nums',
-          entry.rank <= 10 ? 'text-tg-text' : 'text-tg-hint',
-        )}
+    <li className={cn(withTopBorder && 'border-t border-tg-sep', isMe && 'bg-tg-link/10')}>
+      <button
+        type="button"
+        onClick={() => {
+          haptic('light')
+          onOpen()
+        }}
+        aria-label={`${entry.name} — ${t('user.openProfile')}`}
+        className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition active:bg-tg-link/5"
       >
-        {entry.rank}
-      </span>
-      <Avatar name={entry.name} src={userAvatarUrl(entry.uid, entry.photoUrl)} size={38} />
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-1.5">
-          <span className="truncate text-[14.5px] font-semibold text-tg-text">{entry.name}</span>
-          {entry.premium && <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" aria-hidden />}
-          {isMe && (
-            <span className="shrink-0 rounded-full bg-tg-link px-1.5 py-px text-[10px] font-bold leading-4 text-white">
-              {t('lb.me')}
-            </span>
+        <span
+          className={cn(
+            'w-6 shrink-0 text-center text-[13.5px] font-bold tabular-nums',
+            entry.rank <= 10 ? 'text-tg-text' : 'text-tg-hint',
           )}
+        >
+          {entry.rank}
+        </span>
+        <Avatar name={entry.name} src={userAvatarUrl(entry.uid, entry.photoUrl)} size={38} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5">
+            <span className="truncate text-[14.5px] font-semibold text-tg-text">{entry.name}</span>
+            {entry.premium && <Star className="h-3 w-3 shrink-0 fill-amber-400 text-amber-400" aria-hidden />}
+            {isMe && (
+              <span className="shrink-0 rounded-full bg-tg-link px-1.5 py-px text-[10px] font-bold leading-4 text-white">
+                {t('lb.me')}
+              </span>
+            )}
+          </div>
+          {entry.username && <div className="truncate text-[12px] text-tg-hint">@{entry.username}</div>}
         </div>
-        {entry.username && <div className="truncate text-[12px] text-tg-hint">@{entry.username}</div>}
-      </div>
-      <div className="shrink-0 text-right">
-        <div className="text-[15px] font-extrabold leading-tight text-tg-text tabular-nums">{formatCount(entry.value)}</div>
-        <div className="text-[11px] text-tg-hint">{label}</div>
-      </div>
+        <div className="shrink-0 text-right">
+          <div className="text-[15px] font-extrabold leading-tight text-tg-text tabular-nums">{formatCount(entry.value)}</div>
+          <div className="text-[11px] text-tg-hint">{label}</div>
+        </div>
+      </button>
     </li>
   )
 }

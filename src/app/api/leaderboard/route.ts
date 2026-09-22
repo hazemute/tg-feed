@@ -14,6 +14,8 @@ export const dynamic = 'force-dynamic'
  * v5.88: админы (ADMIN_TG_IDS) в таблицах и рангах НЕ участвуют (приказ
  * владельца «админы — те, у кого доступ к техработам»); в ответ добавлен
  * блок prizes (награды за активность: топ-3 по XP недели/месяца).
+ * v5.89: админы = env ADMIN_TG_IDS + ВСЕ с допуском к техработам
+ * (User.bypassMaintenance) — вне таблиц, вне рангов и без блока «моё место».
  *
  * Пять таблиц (таб):
  *  - level    — топ по XP (уровень выводится из XP, сортировка по опыту);
@@ -93,11 +95,23 @@ function toEntry(u: UserRow, rank: number, value: number, sub: string | null): L
   }
 }
 
-/** Условие «валидный участник» — не гость, не бан, не админ (v5.88) */
-function validUserWhere(admins: string[]): { isGuest: false; bannedAt: null; id?: { notIn: string[] } } {
+/**
+ * Условие «валидный участник» — не гость, не бан, не админ (v5.88).
+ * v5.89: админ — НЕ только ADMIN_TG_IDS (env), а ЛЮБОЙ пользователь с допуском
+ * к техработам (User.bypassMaintenance — галка «допуск» в панели). Так решает
+ * владелец: «админы — те, у кого доступ к техработам и всё такое». Раньше
+ * фильтр видел только env-список, и допущенные к техработам оставались в топах.
+ */
+function validUserWhere(admins: string[]): {
+  isGuest: false
+  bannedAt: null
+  bypassMaintenance: false
+  id?: { notIn: string[] }
+} {
   return {
     isGuest: false,
     bannedAt: null,
+    bypassMaintenance: false,
     ...(admins.length ? { id: { notIn: admins } } : {}),
   }
 }
@@ -190,6 +204,7 @@ async function fetchActivityGlobal(
       id: { in: pairs.map(([uid]) => uid), ...(admins.length ? { notIn: admins } : {}) },
       isGuest: false,
       bannedAt: null,
+      bypassMaintenance: false, // v5.89: допуск к техработам = админ, вне таблиц
     },
     select: USER_SELECT,
   })
@@ -222,9 +237,10 @@ export async function GET(request: Request) {
     const admins = adminUids()
 
     // Глобальная часть — общий кэш на всех пользователей (60с).
-    // v5.88: ключ v2 — из таблиц удалены админы, старый кэш невалиден.
+    // v5.89: ключ v3 — из таблиц удалены ВСЕ админы (в т.ч. с допуском к
+    // техработам, bypassMaintenance), старый кэш невалиден.
     const glob = await cacheAside<CachedGlobal>({
-      key: `lb:v2:${tab}`,
+      key: `lb:v3:${tab}`,
       ttlSec: 60,
       memoryTtlMs: 10_000,
       fetcher: () => fetchGlobal(tab, admins),
@@ -233,7 +249,7 @@ export async function GET(request: Request) {
     // Блок наград (v5.88) — общий на все табы, свой кэш 60с.
     // Ошибка снапшота не роняет таблицу — prizes: null (UI просто скрывает блок).
     const prizes = await cacheAside<LbPrizes>({
-      key: 'lb:prizes:v1',
+      key: 'lb:prizes:v2',
       ttlSec: 60,
       memoryTtlMs: 10_000,
       fetcher: () => fetchLbPrizes(),
@@ -245,12 +261,21 @@ export async function GET(request: Request) {
     // Персональная часть
     const meUser = await db.user.findUnique({
       where: { id: g.uid },
-      select: { isGuest: true, bannedAt: true, xp: true, level: true, swipes: true },
+      select: {
+        isGuest: true,
+        bannedAt: true,
+        bypassMaintenance: true,
+        xp: true,
+        level: true,
+        swipes: true,
+      },
     })
     if (!meUser) return err('user not found', 404)
 
     let me: LeaderboardResponse['me'] = null
-    if (!meUser.isGuest && !meUser.bannedAt) {
+    // v5.89: админ (допуск к техработам) не участвует в бордах вообще —
+    // блок «моё место» ему тоже не показываем, как и строку в таблице
+    if (!meUser.isGuest && !meUser.bannedAt && !meUser.bypassMaintenance) {
       if (tab === 'level' || tab === 'swipes') {
         const mine = tab === 'level' ? meUser.xp : meUser.swipes
         // Точный ранг одним count — дешевле любого полного скана

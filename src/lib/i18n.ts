@@ -170,6 +170,8 @@ const DICT = {
   'lb.retry': ['Повторить', 'Retry'],
   'lb.openFromLevel': ['Лидерборд уровней', 'Level leaderboard'],
   'lb.openFromLevelHint': ['топ по XP', 'top by XP'],
+  // v5.89: клик по игроку в таблице/подиуме — открыть его публичный профиль
+  'user.openProfile': ['Открыть профиль', 'Open profile'],
   // v5.88: награды за активность (топ-3 по XP недели/месяца получают свайпы)
   'lb.prizeTitle': ['Награды за активность', 'Activity prizes'],
   'lb.prizeWeek': ['Топ-3 недели', 'Weekly top 3'],

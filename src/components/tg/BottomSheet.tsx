@@ -43,6 +43,14 @@ export function BottomSheet({
   variant = 'sheet',
   /** full: своя шапка между кнопкой «назад» и правым краем (аватар/имя и т.п.) */
   header,
+  /**
+   * full: ПАНЕЛЬ ИНСТРУМЕНТОВ между шапкой и скроллом (чипсы-табы и т.п.).
+   * v5.89: рендерится ВНЕ зоны прокрутки — раньше табы держали position:sticky
+   * внутри скролл-контейнера, и на Android WebView (backdrop-blur + sticky в
+   * композитном скролле) контент «призрачно» проступал над/под липкой панелью,
+   * разрывая подиум. Панель вне скролла — перекрытий не бывает в принципе.
+   */
+  toolbar,
   /** full: классы области прокрутки (паддинги контента) */
   contentClassName,
 }: {
@@ -55,6 +63,7 @@ export function BottomSheet({
   zClass?: string
   variant?: 'sheet' | 'full'
   header?: ReactNode
+  toolbar?: ReactNode
   contentClassName?: string
 }) {
   const isFull = variant === 'full'
@@ -192,6 +201,9 @@ export function BottomSheet({
                   {/* Правый слот-распорка: заголовок центрируется между кнопками */}
                   {header ? null : <div className="h-9 w-9 shrink-0" aria-hidden />}
                 </div>
+                {/* v5.89: панель инструментов ВНЕ скролла — табы всегда видны и
+                    никогда не перекрываются контентом (баг верхней менюшки) */}
+                {toolbar}
                 {/* Своя вертикальная прокрутка на весь контент: тач, клавиатура, низкие экраны */}
                 <div
                   className={cn(

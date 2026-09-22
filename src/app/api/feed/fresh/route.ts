@@ -100,15 +100,16 @@ export async function GET(request: Request) {
     const diversified = diversify(items, (x) => x.channel.id)
 
     /* v5.81: СВЕЖЕСТЬ ПО ЧТЕНИЮ — пока кто-то смотрит ленту (этот роут поллится
-       каждые ~20-45с), лёгкий прогон 2-3 САМЫХ горячих каналов в фоне
-       (троттлинг 90с cross-instance). Задержка появления новых постов
-       падает с ~5-15 мин до ~1-2 мин в активные часы, Bot API не трогаем
-       (t.me/s — обычные HTTPS-фечи), бюджет 12с — в лимит функции укладываемся. */
+       каждые ~45-75с), лёгкий прогон 2-3 САМЫХ горячих каналов в фоне.
+       v5.89: троттлинг 90с → 150с и бюджет 12с → 10с — Fluid Active CPU
+       выжжен до 3ч9м/4ч, а hot-parse (феч t.me/s + HTML-парс + вставка постов)
+       на каждом окне — заметная доля этого CPU. Задержка свежака вырастет
+       с ~1-2 мин до ~2-3 мин — терпимо на фоне сэкономленных часов. */
     after(async () => {
       try {
         const last = await db.botSetting.findUnique({ where: { key: 'fresh_parse_at' } })
         const lastAt = last ? Date.parse(last.value) : 0
-        if (Date.now() - lastAt < 90_000) return
+        if (Date.now() - lastAt < 150_000) return
         await db.botSetting
           .upsert({
             where: { key: 'fresh_parse_at' },
@@ -122,7 +123,7 @@ export async function GET(request: Request) {
         ])
         const batch = await hotBatch(3)
         if (batch.length > 0) {
-          const r = await runParser(4, undefined, batch.length, 12_000, 2, batch)
+          const r = await runParser(4, undefined, batch.length, 10_000, 2, batch)
           if (r.newPosts.length > 0) console.log('[feed/fresh] hot-parse: +' + r.newPosts.length, batch.join(','))
         }
       } catch (e) {

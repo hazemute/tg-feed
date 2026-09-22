@@ -883,7 +883,10 @@ export function FeedView() {
 
   useEffect(() => {
     if (!user) return
-    const iv = setInterval(checkFresh, 45000)
+    // v5.89: 45с → 75с — экономим Fluid Active CPU (был 3ч9м из 4ч лимита):
+    // каждый тик = функция (auth+SQL+парсер свежаков в after). Пилюля «новое»
+    // догадывается на ~минуту позже — для ленты с тихим аппендом это незаметно
+    const iv = setInterval(checkFresh, 75_000)
     const t = setTimeout(checkFresh, 6000)
     return () => {
       clearInterval(iv)
@@ -896,13 +899,13 @@ export function FeedView() {
   // на Vercel Fluid compute каждое открытое соединение держит ~1 GB
   // provisioned memory ВСЁ время соединения — несколько онлайн-пользователей
   // сжигали сотни GB-hrs/мес (алерт «75% Fluid Provisioned Memory»).
-  // Заменили дешёвым поллингом: свежие посты — checkFresh каждые 45с
-  // (эффект выше), бейдж уведомлений — каждые 60с здесь. Задержка живости
-  // выросла с «мгновенно» до ≤60с, а активное время функций упало на ~2 порядка
-  // (короткие запросы по ~100мс вместо постоянно висящих соединений).
+  // Заменили дешёвым поллингом: свежие посты — checkFresh каждые 75с
+  // (эффект выше), бейдж уведомлений — каждые 120с здесь (v5.89: 60с → 120с,
+  // вторая причина — Fluid Active CPU 3ч9м/4ч). Задержка живости ≤2 мин,
+  // активное время функций — на ~2 порядка ниже вечного SSE.
   useEffect(() => {
     if (!user) return
-    const iv = setInterval(() => void fetchNotifCount(), 60_000)
+    const iv = setInterval(() => void fetchNotifCount(), 120_000)
     return () => clearInterval(iv)
   }, [user, fetchNotifCount])
 

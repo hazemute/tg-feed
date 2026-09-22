@@ -11,7 +11,8 @@
  * Границы периодов — Europe/Moscow (UTC+3, перехода на летнее время нет):
  * неделя — ISO, понедельник 00:00; месяц — календарный, 1-е число 00:00.
  *
- * НЕ участвуют: админы (ADMIN_TG_IDS — «админов в лидербордах не показывать»),
+ * НЕ участвуют: админы (ADMIN_TG_IDS и ВСЕ с допуском к техработам
+ * User.bypassMaintenance — v5.89, «админы — те, у кого доступ к техработам»),
  * гости, забаненные, участники с нетто-XP ≤ 0 за период.
  *
  * Запуск — из дневного крона /api/parse/tick (Vercel cron 02:00 UTC = 05:00 MSK):
@@ -107,13 +108,15 @@ async function topByXp(info: LbPeriodInfo, take = 200): Promise<TopRow[]> {
 
   if (rows.length === 0) return []
 
-  // Валидность участников: гость/бан отсекают; админы уже отсеяны notIn'ом,
-  // но перепроверка здесь же бесплатна (id из rows, а не скан всей таблицы)
+  // Валидность участников: гость/бан/допуск-к-техработам отсекают (v5.89:
+  // bypassMaintenance = админ, в выплатах не участвует); env-админы уже отсеяны
+  // notIn'ом, но перепроверка здесь же бесплатна (id из rows, а не скан всей таблицы)
   const users = await db.user.findMany({
     where: {
       id: { in: rows.map((r) => r.userId), ...(admins.length ? { notIn: admins } : {}) },
       isGuest: false,
       bannedAt: null,
+      bypassMaintenance: false,
     },
     select: { id: true },
   })
