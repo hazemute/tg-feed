@@ -333,19 +333,15 @@ export function ProfileTab() {
 
       {/* Обратная связь — одна кнопка вместо двух, разделы внутри шита.
           v5.58: «Мой канал» и Snap Ассистент переехали во вкладку «Канал»
-          (нижняя навигация) — профиль разгружен. */}
+          (нижняя навигация) — профиль разгружен.
+          v5.84: hint «поддержка и предложения» убран — дублировал заголовок
+          секции и выдавливал label в «Обрат…» на 390px (обрезка была багом). */}
       <section className="pt-7 pb-6">
         <h2 className="px-4 text-[19px] font-bold text-tg-text">{t('profile.fbSheet')}</h2>
         <div className="mt-1">
           <SettingRow
             icon={<Headset className="h-[22px] w-[22px]" strokeWidth={1.7} />}
             label={t('profile.fbRow')}
-            right={
-              <span className="flex items-center gap-0.5 text-[15px] text-tg-hint">
-                {t('profile.fbHint')}
-                <ChevronRight className="h-4 w-4" strokeWidth={1.7} />
-              </span>
-            }
             onClick={() => setFeedbackMenuOpen(true)}
             last
           />
