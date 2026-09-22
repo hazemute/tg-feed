@@ -8,6 +8,7 @@ import { toast } from 'sonner'
 import { api, getSessionToken, prefetchIdle, setSessionToken } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import type { Lang } from '@/lib/i18n'
+import { tr } from '@/lib/i18n'
 import { applyTgFrame, haptic, initTelegram, syncTelegramThemeVars, tg } from '@/lib/tg'
 import { isInTelegram } from '@/lib/platform'
 import { THEME_BY_ID, isDarkPalette } from '@/lib/themes'
@@ -122,6 +123,27 @@ export default function Home() {
   useEffect(() => {
     const t = setTimeout(() => setSplashMinDone(true), 700)
     return () => clearTimeout(t)
+  }, [])
+
+  /*
+   * v5.82: возврат со страницы оплаты Platega (?topup=done / ?topup=failed).
+   * Провайдер приводит пользователя по return/failedUrl на главную — показываем
+   * честный тост и сразу чистим URL, чтобы перезагрузка не дублировала сообщение.
+   * Само зачисление делает вебхук/статус-поллинг — здесь только уведомление.
+   */
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search)
+      const res = q.get('topup')
+      if (!res) return
+      q.delete('topup')
+      const rest = q.toString()
+      window.history.replaceState(null, '', window.location.pathname + (rest ? `?${rest}` : ''))
+      if (res === 'done') toast.success(tr(useApp.getState().lang, 'topup.returnedDone'))
+      else if (res === 'failed') toast.error(tr(useApp.getState().lang, 'topup.returnedFail'))
+    } catch {
+      /* не критично */
+    }
   }, [])
 
   // Восстановление настроек интерфейса (тема/шрифт/язык)

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { motion } from 'framer-motion'
 import {
@@ -11,6 +11,8 @@ import {
   CreditCard,
   ExternalLink,
   Loader2,
+  QrCode,
+  RefreshCw,
   Star,
   Wallet,
   X,
@@ -19,7 +21,7 @@ import { cn } from '@/lib/utils'
 import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
-import { haptic, openInvoiceUrl, openTelegram } from '@/lib/tg'
+import { haptic, openExternal, openInvoiceUrl, openTelegram } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
 import { BottomSheet } from '@/components/tg/BottomSheet'
 import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
@@ -50,8 +52,8 @@ const STAR_PACKS = [50, 100, 250, 500, 1000, 2500]
 /** Пакеты TON — те же суммы, что и пресеты карты, в одном стиле */
 const TON_PACKS = [100, 500, 1000, 5000]
 
-type Methods = { card: boolean; stars: boolean; ton: boolean }
-type Method = 'card' | 'stars' | 'ton'
+type Methods = { card: boolean; stars: boolean; ton: boolean; sbp: boolean }
+type Method = 'card' | 'stars' | 'ton' | 'sbp'
 
 type TonInvoice = {
   paymentId: string
@@ -62,6 +64,14 @@ type TonInvoice = {
   rate: number
   url: string
   qrDataUrl: string
+}
+
+/** Активный счёт Platega (СБП/карта): ждём оплату на странице провайдера */
+type PlategaInvoice = {
+  paymentId: string
+  redirect: string
+  method: 'sbp' | 'card'
+  rub: number
 }
 
 function formatRub(kop: number): string {
@@ -128,7 +138,7 @@ export function TopUpModal({
         initial={{ opacity: 0, y: 12 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.18, ease: 'easeOut' }}
-        className="fixed inset-0 z-[62] overflow-y-auto bg-tg-bg"
+        className="fixed inset-0 z-[96] overflow-y-auto bg-tg-bg"
         role="dialog"
         aria-modal="true"
         aria-label={t('topup.title')}
@@ -155,8 +165,11 @@ export function TopUpModal({
   }
 
   // Телефон / Mini App: нижняя шторка
+  // v5.82: z-[96] — шторка открывается ПОВЕРХ страницы кошелька (z-[80]):
+  // раньше дефолт z-[60] прятал её ПОД кошельком — «Пополнить» выглядел мёртвой
+  // кнопкой (модал открывался, но оставался невидимым за непрозрачным фоном)
   return (
-    <BottomSheet open={open} onClose={onClose} title={t('topup.titleShort')}>
+    <BottomSheet open={open} onClose={onClose} title={t('topup.titleShort')} zClass="z-[96]">
       <TopUpContent onClose={onClose} onReload={onReload} />
     </BottomSheet>
   )
@@ -175,6 +188,9 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
   const [busy, setBusy] = useState(false)
   const [ton, setTon] = useState<TonInvoice | null>(null)
   const [tonStatus, setTonStatus] = useState<'waiting' | 'succeeded' | 'expired'>('waiting')
+  /** Счёт Platega (СБП/карта МИР): оплата на странице провайдера, статус — поллингом */
+  const [platega, setPlatega] = useState<PlategaInvoice | null>(null)
+  const [plategaStatus, setPlategaStatus] = useState<'waiting' | 'succeeded' | 'failed'>('waiting')
   /** confirmation_token ЮKassa для виджета (оплата картой на сайте) */
   const [ykToken, setYkToken] = useState<string | null>(null)
   /** Курс TON для превью-эквивалентов в паках (грузится при выборе вкладки) */
@@ -189,14 +205,21 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     api<{ methods: Methods }>('/api/payments/methods')
       .then((r) => {
         setMethods(r.methods)
-        setMethod((prev) => {
-          if (prev === 'card' && !r.methods.card) return r.methods.stars ? 'stars' : 'ton'
-          if (prev === 'ton' && !r.methods.ton) return r.methods.stars ? 'stars' : 'card'
-          if (prev === 'stars' && !r.methods.stars) return r.methods.card ? 'card' : 'ton'
-          return prev
-        })
+        /* Карта доступна и через ЮKassa, и через Platega (МИР) — что настроено.
+           Если текущая вкладка осталась доступной — не трогаем выбор. */
+        const cardOk = Boolean(r.methods.card || r.methods.sbp)
+        const ok = (m: Method) =>
+          m === 'card'
+            ? cardOk
+            : m === 'stars'
+              ? r.methods.stars
+              : m === 'ton'
+                ? r.methods.ton
+                : r.methods.sbp
+        const fallback: Method = cardOk ? 'card' : r.methods.stars ? 'stars' : r.methods.ton ? 'ton' : 'sbp'
+        setMethod((prev) => (ok(prev) ? prev : fallback))
       })
-      .catch(() => setMethods({ card: false, stars: true, ton: false }))
+      .catch(() => setMethods({ card: false, stars: true, ton: false, sbp: false }))
   }, [])
 
   // Курс TON подгружаем лениво — только когда открыта вкладка TON
@@ -211,16 +234,30 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     if (busy || !method) return
     setBusy(true)
     try {
-      if (method === 'card') {
+      if (method === 'card' || method === 'sbp') {
         if (!cardValid) return
-        const r = await api<{ ok: boolean; confirmationToken: string | null }>('/api/payments', {
-          method: 'POST',
-          body: JSON.stringify({ amountKop: effective * 100 }),
-        })
-        if (r.confirmationToken) {
-          // Виджет ЮKassa в шторке поверх — карта вводится НЕ ПОКИДАЯ сайт
-          setYkToken(r.confirmationToken)
+        /* Карта: ЮKassa (embedded-виджет, без переадресации — требование СБ)
+           приоритетнее. Нет ключей ЮKassa, но настроена Platega → карта МИР
+           или СБП/QR через redirect на страницу оплаты провайдера. */
+        if (method === 'card' && (methods?.card ?? false)) {
+          const r = await api<{ ok: boolean; confirmationToken: string | null }>('/api/payments', {
+            method: 'POST',
+            body: JSON.stringify({ amountKop: effective * 100 }),
+          })
+          if (r.confirmationToken) {
+            // Виджет ЮKassa в шторке поверх — карта вводится НЕ ПОКИДАЯ сайт
+            setYkToken(r.confirmationToken)
+          }
+          return
         }
+        const r = await api<{ ok: boolean; paymentId: string; redirect: string }>('/api/payments/platega', {
+          method: 'POST',
+          body: JSON.stringify({ amountKop: effective * 100, method }),
+        })
+        setPlatega({ paymentId: r.paymentId, redirect: r.redirect, method, rub: effective })
+        setPlategaStatus('waiting')
+        // Страница оплаты Platega: QR СБП или форма карты (внешний браузер/TG)
+        openExternal(r.redirect)
         return
       }
       if (method === 'stars') {
@@ -267,7 +304,9 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
       </div>
     )
   }
-  if (!methods.card && !methods.stars && !methods.ton) {
+  // v5.82: sbp (Platega) тоже способ оплаты — раньше при настроенной Platega и
+  // выключенной ЮKassa шторка вопреки фактам показывала «Пополнение скоро появится»
+  if (!methods.card && !methods.stars && !methods.ton && !methods.sbp) {
     return (
       <div className="flex flex-col items-center gap-3 py-8 text-center">
         <span className="flex h-12 w-12 items-center justify-center rounded-full bg-tg-surface">
@@ -285,6 +324,25 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
           {t('topup.emptyOk')}
         </button>
       </div>
+    )
+  }
+
+  /* ----- Platega (СБП/карта): экран ожидания оплаты на странице провайдера ----- */
+  if (platega) {
+    return (
+      <PlategaWaiting
+        info={platega}
+        status={plategaStatus}
+        onStatus={(s) => {
+          setPlategaStatus(s)
+          if (s === 'succeeded') {
+            haptic('success')
+            onReload()
+          }
+        }}
+        onCancel={() => setPlatega(null)}
+        onClose={onClose}
+      />
     )
   }
 
@@ -317,7 +375,8 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
       id: 'card',
       label: t('topup.tabCard'),
       icon: <CreditCard className="h-[19px] w-[19px]" strokeWidth={1.9} />,
-      available: methods?.card ?? false,
+      // Карта работает через ЮKassa ИЛИ карточный эквайринг Platega (МИР)
+      available: (methods?.card ?? false) || (methods?.sbp ?? false),
     },
     {
       id: 'stars',
@@ -330,6 +389,12 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
       label: t('topup.tabTon'),
       icon: <TonIcon className="h-[19px] w-[19px]" />,
       available: methods?.ton ?? false,
+    },
+    {
+      id: 'sbp',
+      label: t('topup.tabSbp'),
+      icon: <QrCode className="h-[19px] w-[19px]" strokeWidth={1.9} />,
+      available: methods?.sbp ?? false,
     },
   ]
 
@@ -472,7 +537,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
           )
         })}
       </div>
-      {!(methods?.card ?? false) && method === 'card' && (
+      {!(methods?.card ?? false) && !(methods?.sbp ?? false) && method === 'card' && (
         <p className="mt-3 text-center text-[13px] text-tg-hint">{t('topup.unavailable')}</p>
       )}
       {!(methods?.ton ?? false) && method === 'ton' && (
@@ -480,8 +545,11 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
       )}
 
       {/* ----- Вкладка КАРТА: пресеты + своя сумма ----- */}
-      {method === 'card' && (methods?.card ?? false) && (
+      {method === 'card' && ((methods?.card ?? false) || (methods?.sbp ?? false)) && (
         <div className="mt-4">
+          {(methods?.sbp ?? false) && !(methods?.card ?? false) && (
+            <p className="mb-2 px-1 text-[12px] leading-snug text-tg-hint">{t('topup.cardViaPlatega')}</p>
+          )}
           <div className="grid grid-cols-4 gap-2">
             {PRESETS.map((sw) => (
               <button
@@ -540,6 +608,37 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
         </div>
       )}
 
+      {/* ----- Вкладка СБП: QR-перевод по номеру счёта, пресеты как у карты ----- */}
+      {method === 'sbp' && (methods?.sbp ?? false) && (
+        <div className="mt-4">
+          <p className="mb-2 px-1 text-[12px] leading-snug text-tg-hint">{t('topup.sbpHint')}</p>
+          <div className="grid grid-cols-4 gap-2">
+            {PRESETS.map((sw) => (
+              <button
+                key={sw}
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  setAmount(sw)
+                  setCustom('')
+                }}
+                className={cn(
+                  'rounded-xl border py-2.5 text-[13.5px] font-bold transition active:scale-95',
+                  effective === sw
+                    ? 'border-tg-link bg-tg-link/10 text-tg-link'
+                    : 'border-tg-sep/60 bg-tg-bg text-tg-text2',
+                )}
+              >
+                {fmtFull(sw)}
+              </button>
+            ))}
+          </div>
+          {customInput}
+          {payButton}
+          {escrowHint}
+        </div>
+      )}
+
       {/* ----- Вкладка TON: паки в том же стиле, эквивалент по живому курсу ----- */}
       {method === 'ton' && (methods?.ton ?? false) && (
         <div className="mt-4">
@@ -577,6 +676,152 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
           onReload()
         }}
       />
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/* Platega (СБП/карта): ожидание оплаты на странице провайдера         */
+/* ------------------------------------------------------------------ */
+
+function PlategaWaiting({
+  info,
+  status,
+  onStatus,
+  onCancel,
+  onClose,
+}: {
+  info: PlategaInvoice
+  status: 'waiting' | 'succeeded' | 'failed'
+  onStatus: (s: 'waiting' | 'succeeded' | 'failed') => void
+  onCancel: () => void
+  onClose: () => void
+}) {
+  const t = useT()
+  const [checking, setChecking] = useState(false)
+
+  /** Ручная/автоматическая проверка: статус читаем ТОЛЬКО с нашего API */
+  const check = useCallback(async () => {
+    setChecking(true)
+    try {
+      const r = await api<{ ok: boolean; status: 'pending' | 'succeeded' | 'failed' }>(
+        `/api/payments/platega/status?paymentId=${encodeURIComponent(info.paymentId)}`,
+      )
+      onStatus(r.status === 'pending' ? 'waiting' : r.status)
+    } catch {
+      /* сеть моргнула — следующий тик повторит */
+    } finally {
+      setChecking(false)
+    }
+  }, [info.paymentId, onStatus])
+
+  // Авто-поллинг раз в 4с: пользователь вернулся со страницы оплаты —
+  // шторка сама заметит подтверждение и пополнит баланс
+  useEffect(() => {
+    if (status !== 'waiting') return
+    const timer = setInterval(check, 4000)
+    return () => clearInterval(timer)
+  }, [status, check])
+
+  if (status === 'succeeded') {
+    return (
+      <div className="py-4 text-center">
+        <motion.span
+          initial={{ scale: 0.6, opacity: 0 }}
+          animate={{ scale: 1, opacity: 1 }}
+          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-tg-green/15"
+        >
+          <Check className="h-8 w-8 text-tg-green" strokeWidth={2.5} />
+        </motion.span>
+        <div className="mt-3 text-[18px] font-bold text-tg-text">{t('topup.paid')}</div>
+        <p className="mx-auto mt-1.5 max-w-[320px] text-[13.5px] leading-relaxed text-tg-hint">
+          {t('topup.paidHint')}
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          className="press mt-4 h-12 w-full rounded-2xl bg-tg-link text-[15px] font-semibold text-white"
+        >
+          {t('topup.great')}
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-3">
+        <span
+          className={cn(
+            'flex h-10 w-10 items-center justify-center rounded-full',
+            info.method === 'sbp' ? 'bg-tg-link/10 text-tg-link' : 'bg-tg-surface text-tg-text2',
+          )}
+        >
+          {info.method === 'sbp' ? (
+            <QrCode className="h-5.5 w-5.5" strokeWidth={1.9} />
+          ) : (
+            <CreditCard className="h-5.5 w-5.5" strokeWidth={1.9} />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="text-[16px] font-bold text-tg-text">
+            {t('topup.titleShort')} · {formatRub(info.rub * 100)}
+          </div>
+          <div className="text-[12.5px] text-tg-hint">
+            {info.method === 'sbp' ? t('topup.tabSbp') : t('topup.tabCard')}
+          </div>
+        </div>
+        {status === 'waiting' && (
+          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-tg-surface px-2.5 py-1 text-[11.5px] font-semibold text-tg-hint">
+            <Loader2 className="h-3.5 w-3.5 animate-spin text-tg-link" />
+            {t('topup.plategaWaiting')}
+          </span>
+        )}
+      </div>
+
+      {status === 'failed' ? (
+        <p className="mt-4 rounded-2xl bg-tg-surface/70 px-4 py-3 text-[13.5px] leading-relaxed text-tg-hint">
+          {t('topup.plategaFailedHint')}
+        </p>
+      ) : (
+        <>
+          <p className="mt-4 rounded-2xl bg-tg-surface/70 px-4 py-3 text-[13.5px] leading-relaxed text-tg-hint">
+            {t('topup.plategaHint')}
+          </p>
+
+          <button
+            type="button"
+            onClick={() => openExternal(info.redirect)}
+            className="press mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white"
+          >
+            <ExternalLink className="h-4.5 w-4.5" />
+            {t('topup.plategaOpen')}
+          </button>
+
+          <button
+            type="button"
+            onClick={check}
+            disabled={checking}
+            className="press mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-tg-surface text-[14px] font-semibold text-tg-text2 disabled:opacity-60"
+          >
+            <RefreshCw className={cn('h-4 w-4', checking && 'animate-spin')} />
+            {t('topup.plategaCheck')}
+          </button>
+        </>
+      )}
+
+      <div className="mt-2 flex gap-2">
+        <button
+          type="button"
+          onClick={onCancel}
+          className={cn(
+            'press flex h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl text-[14px] font-semibold',
+            status === 'failed' ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text2',
+          )}
+        >
+          {status === 'failed' ? t('topup.plategaRetry') : t('topup.otherMethod')}
+        </button>
+      </div>
     </div>
   )
 }

@@ -418,6 +418,31 @@ const DICT = {
   ],
   'topup.openTonkeeper': ['Открыть в Tonkeeper', 'Open in Tonkeeper'],
   'topup.rateSuffix': ['₽/TON', '₽/TON'],
+
+  /* Пополнение · СБП/карта (Platega) и возврат со страницы оплаты */
+  'topup.tabSbp': ['СБП', 'SBP'],
+  'topup.cardViaPlatega': [
+    'Оплата картой МИР через безопасную страницу банка — без ввода данных в приложении',
+    'Pay with a MIR card on the secure bank page — no card data entered in the app',
+  ],
+  'topup.sbpHint': [
+    'Оплата по QR через СБП: приложение вашего банка откроется автоматически после создания счёта',
+    'Pay via SBP QR: your bank app opens automatically once the invoice is created',
+  ],
+  'topup.plategaWaiting': ['Ждём оплату', 'Waiting for payment'],
+  'topup.plategaHint': [
+    'Счёт открыт. Оплатите его на странице банка — баланс пополнится автоматически сразу после подтверждения.',
+    'Invoice created. Pay it on the bank page — your balance will be topped up automatically right after confirmation.',
+  ],
+  'topup.plategaOpen': ['Открыть страницу оплаты', 'Open payment page'],
+  'topup.plategaCheck': ['Проверить оплату', 'Check payment'],
+  'topup.plategaFailedHint': [
+    'Счёт не оплачен или отменён. Деньги за неисполненный счёт не списываются — попробуйте ещё раз.',
+    'The invoice was not paid or was cancelled. Nothing was charged — please try again.',
+  ],
+  'topup.plategaRetry': ['Попробовать снова', 'Try again'],
+  'topup.returnedDone': ['Баланс пополнен', 'Balance topped up'],
+  'topup.returnedFail': ['Платёж не завершён — если деньги списались, они вернутся автоматически', 'Payment not completed — if charged, money will be refunded automatically'],
 } as const
 
 export type I18nKey = keyof typeof DICT
