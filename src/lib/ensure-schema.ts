@@ -376,6 +376,52 @@ const CRITICAL: Array<[string, string | null]> = [
 export type SchemaState = { ok: boolean; missing: string[] }
 
 /*
+ * v5.86 — МАРКЕР ВЕРСИИ СХЕМЫ (лечение холодного старта Vercel):
+ * instrumentation раньше звал ensureAppSchema({force:true}) на КАЖДЫЙ cold
+ * start — ~154 DDL-стейтмента по одному ($executeRawUnsafe, roundtrip к
+ * Supabase каждый) занимали секунды до первого запроса; пользователь
+ * ловил медленный вход и экран «Не удалось загрузиться».
+ *
+ * Теперь: после успешного ПОЛНОГО прогона ALL в SystemSetting пишется
+ * маркер schema_version = <последняя версия MIGRATIONS>. На старте маркер
+ * читается ОДНИМ SELECT'ом: совпал — схема гарантированно накатена целиком
+ * (маркер ставит тот же прогон, что выполнил все стейтменты), DDL не
+ * повторяем. Правило при добавлении миграции: новая версия в MIGRATIONS
+ * автоматически становится «latest», маркер перестаёт совпадать, следующий
+ * cold start честно накатывает всё (идемпотентно) и обновляет маркер.
+ */
+const SCHEMA_VERSION_KEY = 'schema_version'
+
+/** Последняя версия миграций (ключи записаны по порядку выхода версий) */
+export function latestMigrationVersion(): string | null {
+  const keys = Object.keys(MIGRATIONS)
+  return keys.length ? keys[keys.length - 1] : null
+}
+
+/** Маркер версии из БД; null — нет записи/БД недоступна (честный прогон) */
+async function readStoredSchemaVersion(): Promise<string | null> {
+  try {
+    const row = await db.systemSetting.findUnique({ where: { key: SCHEMA_VERSION_KEY } })
+    return row?.value ?? null
+  } catch {
+    return null
+  }
+}
+
+/** Записать маркер после успешного полного прогона (сбой не критичен) */
+async function writeSchemaVersion(v: string): Promise<void> {
+  try {
+    await db.systemSetting.upsert({
+      where: { key: SCHEMA_VERSION_KEY },
+      update: { value: v },
+      create: { key: SCHEMA_VERSION_KEY, value: v },
+    })
+  } catch {
+    /* следующий cold start просто повторит прогон */
+  }
+}
+
+/*
  * Task 8-b: кэш проверки 30с. /api/health зовёт checkSchema на каждый запрос
  * (мониторы/cron долбят её и в спокойствии, и тем более под наплывом) —
  * information_schema-SELECT на каждый пинг не нужен: схема меняется только
@@ -439,7 +485,11 @@ let lastEnsureAt = 0
  * Применить все миграции (идемпотентно). Вызывается при старте сервера и
  * самолечением из /api/health. Возвращает состояние схемы после прогона.
  */
-export async function ensureAppSchema(opts?: { force?: boolean }): Promise<{ ok: boolean; applied: number; missing: string[] }> {
+export async function ensureAppSchema(opts?: {
+  force?: boolean
+  /** instrumentation: быстрый путь «маркер актуален → 1 SELECT вместо 154 DDL» */
+  verifyFirst?: boolean
+}): Promise<{ ok: boolean; applied: number; missing: string[] }> {
   if (isSqlite()) return { ok: true, applied: 0, missing: [] }
   if (ensuredOk && !opts?.force) return { ok: true, applied: 0, missing: [] }
   // повторные вызовы не чаще раза в 30с — просто ре-проверяем
@@ -447,6 +497,23 @@ export async function ensureAppSchema(opts?: { force?: boolean }): Promise<{ ok:
     const st = await checkSchema()
     return { ok: st.ok, applied: 0, missing: st.missing }
   }
+
+  // v5.86: холодный старт. Маркер версии совпал с последней миграцией →
+  // схема уже накатена (тем же прогоном, что записал маркер): один SELECT
+  // вместо ~154 roundtrip'ов DDL. Расхождение/сбой проверки — честный прогон ниже.
+  if (opts?.verifyFirst) {
+    const latest = latestMigrationVersion()
+    if (latest) {
+      const stored = await readStoredSchemaVersion()
+      if (stored === latest) {
+        ensuredOk = true
+        lastEnsureAt = Date.now()
+        const st = await checkSchema()
+        if (st.ok) return { ok: true, applied: 0, missing: [] }
+      }
+    }
+  }
+
   lastEnsureAt = Date.now()
   let applied = 0
   for (const sql of ALL) {
@@ -460,6 +527,10 @@ export async function ensureAppSchema(opts?: { force?: boolean }): Promise<{ ok:
   invalidateSchemaCheck() // ALTER'ы выполнены — кэш проверки больше не актуален
   const st = await checkSchema()
   ensuredOk = st.ok
+  if (st.ok) {
+    const latest = latestMigrationVersion()
+    if (latest) await writeSchemaVersion(latest)
+  }
   return { ok: st.ok, applied, missing: st.missing }
 }
 

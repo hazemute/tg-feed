@@ -45,23 +45,49 @@ import {
   type SupportThreadItem,
 } from './components/api'
 import { btnOutlineDark } from './components/bits'
-import { AdsTab } from './components/ads-tab'
-import { AuditTab } from './components/audit-tab'
-import { BadgesTab } from './components/badges-tab'
-import { ChannelsTab } from './components/channels-tab'
-import { FinanceTab } from './components/finance-tab'
-import { GiveawaysTab } from './components/giveaways-tab'
-import { QuestsTab } from './components/quests-tab'
 import { LoginScreen } from './components/login-screen'
-import { ModerationTab } from './components/moderation-tab'
 import { OverviewTab } from './components/overview-tab'
-import { SubscriptionsTab } from './components/subscriptions-tab'
-import { SupportTab } from './components/support-tab'
-import { SystemTab } from './components/system-tab'
-import { BotTab } from './components/bot-tab'
-import { PromosTab } from './components/promos-tab'
-import { ToolsTab } from './components/tools-tab'
-import { UsersTab } from './components/users-tab'
+
+/*
+ * v5.86 — ЛЕНИВЫЕ ВКЛАДКИ АДМИНКИ: раньше ВСЕ 17 вкладок (10 000+ строк
+ * компонентов) собирались в ОДИН чанк — открытие /admin качало мегабайты
+ * JS, из которых 15 вкладок не нужны до первого тапа. Теперь статично
+ * только «Обзор» (лендинг вкладка) и логин; остальные — next/dynamic с
+ * скелетоном: чанк вкладки качается при первом выборе, повторные переключения
+ * мгновенны (чанк в кэше браузера).
+ */
+import dynamic from 'next/dynamic'
+
+function TabFallback() {
+  return (
+    <div className="space-y-3" role="status" aria-label="Загрузка раздела">
+      <div className="h-8 w-56 animate-pulse rounded-lg bg-slate-200" />
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-24 animate-pulse rounded-xl bg-slate-200" />
+        ))}
+      </div>
+      <div className="h-64 animate-pulse rounded-xl bg-slate-200" />
+    </div>
+  )
+}
+
+/* Опции next/dynamic обязаны быть инлайн-литералом (требование Next) */
+const FinanceTab = dynamic(() => import('./components/finance-tab').then((m) => m.FinanceTab), { ssr: false, loading: () => <TabFallback /> })
+const SubscriptionsTab = dynamic(() => import('./components/subscriptions-tab').then((m) => m.SubscriptionsTab), { ssr: false, loading: () => <TabFallback /> })
+const BadgesTab = dynamic(() => import('./components/badges-tab').then((m) => m.BadgesTab), { ssr: false, loading: () => <TabFallback /> })
+const ChannelsTab = dynamic(() => import('./components/channels-tab').then((m) => m.ChannelsTab), { ssr: false, loading: () => <TabFallback /> })
+const ModerationTab = dynamic(() => import('./components/moderation-tab').then((m) => m.ModerationTab), { ssr: false, loading: () => <TabFallback /> })
+const UsersTab = dynamic(() => import('./components/users-tab').then((m) => m.UsersTab), { ssr: false, loading: () => <TabFallback /> })
+const AuditTab = dynamic(() => import('./components/audit-tab').then((m) => m.AuditTab), { ssr: false, loading: () => <TabFallback /> })
+const SupportTab = dynamic(() => import('./components/support-tab').then((m) => m.SupportTab), { ssr: false, loading: () => <TabFallback /> })
+const AdsTab = dynamic(() => import('./components/ads-tab').then((m) => m.AdsTab), { ssr: false, loading: () => <TabFallback /> })
+const GiveawaysTab = dynamic(() => import('./components/giveaways-tab').then((m) => m.GiveawaysTab), { ssr: false, loading: () => <TabFallback /> })
+const QuestsTab = dynamic(() => import('./components/quests-tab').then((m) => m.QuestsTab), { ssr: false, loading: () => <TabFallback /> })
+const PromosTab = dynamic(() => import('./components/promos-tab').then((m) => m.PromosTab), { ssr: false, loading: () => <TabFallback /> })
+const SystemTab = dynamic(() => import('./components/system-tab').then((m) => m.SystemTab), { ssr: false, loading: () => <TabFallback /> })
+const ToolsTab = dynamic(() => import('./components/tools-tab').then((m) => m.ToolsTab), { ssr: false, loading: () => <TabFallback /> })
+const BotTab = dynamic(() => import('./components/bot-tab').then((m) => m.BotTab), { ssr: false, loading: () => <TabFallback /> })
 
 type AuthState = 'checking' | 'authed' | 'anon'
 type TabKey =

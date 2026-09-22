@@ -43,6 +43,20 @@ const JOBS: { name: string; sql: string }[] = [
   { name: 'AdStat', sql: `delete from "AdStat" where day < '${cutDay(180)}'` },
   { name: 'Notification.read', sql: `delete from "Notification" where "readAt" is not null and "createdAt" < '${cutIso(30)}'` },
   { name: 'Notification.stale', sql: `delete from "Notification" where "createdAt" < '${cutIso(365)}'` },
+  /*
+   * v5.86 — хвосты, которые раньше росли бесконечно:
+   *  - XpLog: журнал начислений XP нигде не читается (уровень агрегирован в
+   *    User.level/xp) — старше полугода не нужен никому;
+   *  - QuestVerifyLog: ИИ-проверки подписок — читаются только «recent»
+   *    (антиспам-окно минут), старше 90 дней — мёртвый груз;
+   *  - AiChat*: история ИИ-ассистента — контекст берёт последние сообщения
+   *    активных сессий; сессии, молчащие 90 дней, удаляем вместе с
+   *    сообщениями (два шага: сначала дети, потом родители).
+   */
+  { name: 'XpLog', sql: `delete from "XpLog" where "createdAt" < '${cutIso(180)}'` },
+  { name: 'QuestVerifyLog', sql: `delete from "QuestVerifyLog" where "createdAt" < '${cutIso(90)}'` },
+  { name: 'AiChatMessage.old', sql: `delete from "AiChatMessage" where "sessionId" in (select "id" from "AiChatSession" where "updatedAt" < '${cutIso(90)}')` },
+  { name: 'AiChatSession.old', sql: `delete from "AiChatSession" where "updatedAt" < '${cutIso(90)}'` },
 ]
 
 async function acquireLock(): Promise<boolean> {

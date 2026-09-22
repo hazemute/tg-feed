@@ -342,39 +342,56 @@ export default function Home() {
         /* сеть моргнула — обычный вход ниже */
       }
     }
-    try {
-      const res = await api<{
-        user: UserDTO
-        token: string
-        maintenance?: { active: boolean; canBypass: boolean }
-        release?: { released: boolean; canBypass: boolean }
-      }>('/api/auth', {
-        method: 'POST',
-        body: JSON.stringify({ initData: w?.initData ?? '' }),
-      })
-      setSessionToken(res.token)
-      setUser(res.user)
-      // Техработы: без допуска — экран техработ; категории не запрашиваем
-      // (API закрыт middleware), чтобы не сыпать тостами
-      const blocked = res.maintenance?.active === true && res.maintenance.canBypass !== true
-      setMaintenance(blocked)
-      // Релиз: пока владелец не нажал «Выпустить» — экран «ещё разрабатывается»
-      const pre = !blocked && res.release?.released === false && res.release?.canBypass !== true
-      setPrerelease(pre)
-      if (blocked || pre) return true
-      void api<{ items: CategoryDTO[] }>('/api/categories')
-        .then((cats) => setCategories(cats.items))
-        .catch(() => {})
-      return true
-    } catch (e) {
-      // Не в Telegram (или бот-токен не настроен): предлагаем вход через бота
-      if ((e as Error).message === 'telegram_required' || (e as Error).message === 'telegram_invalid') {
-        setNeedLogin(true)
-        return false
+    /*
+     * v5.86 ТИХИЙ АВТО-РЕТРАЙ ВХОДА: раньше одиночный сетевой сбой (моргнул
+     * мобильный интернет, 502 на холодном контейнере, таймаут 20с) сразу
+     * рисовал экран «Не удалось загрузиться» — пользователь обязан был
+     * тыкать «Повторить». Теперь transient-сбой (сеть/таймаут/5xx)
+     * повторяется ТИХО ещё дважды с бэк-оффом 1.2с/2.4с — экран ошибки
+     * появляется только после трёх реальных неудач подряд. Ошибки
+     * «нет initData / неверная подпись» не повторяются — это не сеть.
+     */
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const res = await api<{
+          user: UserDTO
+          token: string
+          maintenance?: { active: boolean; canBypass: boolean }
+          release?: { released: boolean; canBypass: boolean }
+        }>('/api/auth', {
+          method: 'POST',
+          body: JSON.stringify({ initData: w?.initData ?? '' }),
+        })
+        setSessionToken(res.token)
+        setUser(res.user)
+        // Техработы: без допуска — экран техработ; категории не запрашиваем
+        // (API закрыт middleware), чтобы не сыпать тостами
+        const blocked = res.maintenance?.active === true && res.maintenance.canBypass !== true
+        setMaintenance(blocked)
+        // Релиз: пока владелец не нажал «Выпустить» — экран «ещё разрабатывается»
+        const pre = !blocked && res.release?.released === false && res.release?.canBypass !== true
+        setPrerelease(pre)
+        if (blocked || pre) return true
+        void api<{ items: CategoryDTO[] }>('/api/categories')
+          .then((cats) => setCategories(cats.items))
+          .catch(() => {})
+        return true
+      } catch (e) {
+        // Не в Telegram (или бот-токен не настроен): предлагаем вход через бота
+        if ((e as Error).message === 'telegram_required' || (e as Error).message === 'telegram_invalid') {
+          setNeedLogin(true)
+          return false
+        }
+        // последняя попытка — отдаём экран ошибки; иначе тихий повтор
+        if (attempt === 2) {
+          setAuthError(true)
+          return false
+        }
+        await sleep(1_200 * (attempt + 1))
       }
-      setAuthError(true)
-      return false
     }
+    return false
   }, [setUser, setCategories, setMaintenance, setPrerelease])
 
   // Любой API вернул 503 {maintenance:true} — весь app на экран техработ
@@ -667,8 +684,24 @@ function GlobalLoginSheet() {
 /**
  * Экран ошибки входа (v5.52): сеть моргнула/API упал/таймаут — понятный экран
  * с повтором вместо вечного пустого сплэша.
+ * v5.86: АВТО-ПОВТОР с обратным отсчётом — экран сам перезапускает вход через
+ * 5с, если пользователь не нажал кнопку раньше (мобильная сеть моргнула на
+ * секунду — приложение долечит себя без единого тапа).
  */
 function AuthErrorScreen({ onRetry }: { onRetry: () => void }) {
+  const [countdown, setCountdown] = useState(5)
+  const fired = useRef(false)
+  useEffect(() => {
+    if (countdown <= 0) {
+      if (!fired.current) {
+        fired.current = true
+        onRetry()
+      }
+      return
+    }
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1_000)
+    return () => clearTimeout(t)
+  }, [countdown, onRetry])
   return (
     <main className="flex min-h-dvh items-center justify-center bg-tg-bg px-6">
       <div className="w-full max-w-sm rounded-3xl border border-tg-sep bg-tg-surface p-7 text-center shadow-xl">
@@ -691,6 +724,9 @@ function AuthErrorScreen({ onRetry }: { onRetry: () => void }) {
           <RotateCcw className="size-5" aria-hidden />
           Повторить
         </button>
+        <p className="mt-3 text-xs text-tg-hint" role="status" aria-live="polite">
+          {countdown > 0 ? `Автоматическая попытка через ${countdown}…` : 'Пробуем снова…'}
+        </p>
       </div>
     </main>
   )

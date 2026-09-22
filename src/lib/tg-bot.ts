@@ -136,15 +136,30 @@ export async function botBanRemainSecAsync(): Promise<number> {
 
 let meCache: { username: string | null; expiresAt: number } | null = null
 
+const ME_REDIS_KEY = 'bot:me_username'
+const ME_TTL_SEC = 3600 // Redis: час — getMe не меняется, Telegram троттлит IP Vercel
+const ME_FAIL_TTL_SEC = 120
+
 /**
- * Username бота (кэш 10 минут; при отсутствии токена/ошибке — null).
- * v5.78: 2 попытки с короткой паузой — Telegram API троттлит датацентровые IP
- * Vercel (известная проблема с v5.58), одиночный fetch на бёрсте падал, а от
- * getMe зависит вход на сайте (ссылка на бота) и карточка «Источники».
+ * Username бота (v5.86: L0 память 10мин → L1 Redis 1ч → Bot API).
+ *
+ * Раньше: кэш только в памяти процесса — КАЖДЫЙ cold start контейнера Vercel
+ * снова дёргал getMe, а Telegram троттлит датацентровые IP (известная проблема
+ * с v5.58): до 2 попыток × 8с таймаут прямо на пути POST /api/auth → медленный
+ * вход у всех после рестарта инстанса. Теперь username раз в час читается из
+ * Redis всеми инстансами; при сбое Bot API отдаётся stale-значение из Redis.
  */
 export async function getBotUsername(): Promise<string | null> {
   if (!botEnabled()) return null
   if (meCache && meCache.expiresAt > Date.now()) return meCache.username
+
+  // Redis: свежее значение (1 команда на процесс раз в 10 минут вместо fetch)
+  const cached = await cacheGet<string>(ME_REDIS_KEY).catch(() => null)
+  if (cached !== null && cached !== undefined) {
+    meCache = { username: cached, expiresAt: Date.now() + 10 * 60_000 }
+    return cached
+  }
+
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getMe`, {
@@ -153,6 +168,9 @@ export async function getBotUsername(): Promise<string | null> {
       const data = (await res.json()) as { ok?: boolean; result?: { username?: string } }
       const username = data?.ok && data.result?.username ? data.result.username : null
       meCache = { username, expiresAt: Date.now() + (username ? 10 : 1) * 60_000 }
+      if (username) {
+        void cacheSet(ME_REDIS_KEY, username, username ? ME_TTL_SEC : ME_FAIL_TTL_SEC).catch(() => {})
+      }
       return username
     } catch {
       if (attempt === 0) {
