@@ -235,15 +235,15 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
               )}
             </div>
 
-            {/* 5 действий (v5.85: +«Промокод» — владелец не находил её в старой карточке) */}
-            <div className="grid grid-cols-5 gap-1.5 px-4">
+            {/* 4 действия (v5.97: кнопка «Промокод» из ряда убрана —
+                дублировала плашку «Промокоды» ниже; ввод кода остался там) */}
+            <div className="grid grid-cols-4 gap-1.5 px-4">
               {(
                 [
                   { id: 'transfer', label: 'Перевести', icon: Send },
                   { id: 'topup', label: 'Пополнить', icon: Plus },
                   { id: 'withdraw', label: 'Вывести', icon: ArrowUpRight },
                   { id: 'convert', label: 'Обменять', icon: ArrowDownUp },
-                  { id: 'promo', label: 'Промокод', icon: Ticket },
                 ] as const
               ).map((a) => (
                 <button
@@ -256,7 +256,7 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
                   }}
                   className="flex flex-col items-center gap-1.5 rounded-2xl bg-tg-surface py-3 transition active:scale-95"
                 >
-                  <a.icon className={cn('text-tg-text', a.id === 'promo' ? 'h-5.5 w-5.5 text-tg-link' : 'h-5.5 w-5.5')} strokeWidth={1.9} aria-hidden />
+                  <a.icon className="h-5.5 w-5.5 text-tg-text" strokeWidth={1.9} aria-hidden />
                   <span className="max-w-full truncate px-0.5 text-[11.5px] font-medium text-tg-text">{a.label}</span>
                 </button>
               ))}

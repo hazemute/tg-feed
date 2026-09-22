@@ -295,6 +295,18 @@ export const CATALOG: Array<{ slug: string; usernames: string[] }> = [
       'virtuspro_pubg',
       'virtuspro_r6',
       'virtusproapex',
+      // ── v5.97: ТРЕТЬЯ ВОЛНА — каждый username живьём проверен t.me/s
+      // (веб-превью отвечает, посты есть, канал русский; checked 2026-09-22).
+      // Цель — шире пул ленты: владелец жаловался «одни и те же каналы подряд». ──
+      'dota2ruhub', // Dota2RuHub (~640 подписчиков)
+      'dendy_ru', // Dendy — ретро-игры (~612)
+      'sea_of_thieves_ru', // Sea of Thieves | Море Воров (~288)
+      'gta5rp', // GTA5RP — крупный RU RP-проект
+      'majestic_rp', // Majestic RP — RP-проект
+      'helldivers2_ru', // HELLDIVERS 2 RU
+      'pubgru', // PUBGPRO COMMUNITY
+      'modernwarships_ru', // Modern Warships RU
+      'mlbb_ru', // Mobile Legends RU (Donatov.net)
     ],
   },
 ]

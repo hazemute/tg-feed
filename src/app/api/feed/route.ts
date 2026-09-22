@@ -768,16 +768,24 @@ async function buildFeedSnapshot(ctx: {
       местами с ближайшим следующим постом ДРУГОГО канала. Проход детерминирован
       (тот же вход → тот же порядок), пины головы (индексы < head.length)
       не сдвигаются. */
-  for (let k = Math.max(1, head.length); k < items.length; k++) {
-    if (items[k].cid !== items[k - 1].cid) continue
-    for (let j = k + 1; j < items.length; j++) {
-      if (items[j].cid !== items[k].cid) {
-        const tmp = items[k]
-        items[k] = items[j]
-        items[j] = tmp
-        break
+  /* v5.97: до 4 проходов — свап мог сам создать новую пару ниже по списку;
+     повторный проход ловит её. Вырожденный хвост (один канал на всё) —
+     выходим по отсутствию свапов. */
+  for (let pass = 0; pass < 4; pass++) {
+    let swapped = false
+    for (let k = Math.max(1, head.length); k < items.length; k++) {
+      if (items[k].cid !== items[k - 1].cid) continue
+      for (let j = k + 1; j < items.length; j++) {
+        if (items[j].cid !== items[k].cid) {
+          const tmp = items[k]
+          items[k] = items[j]
+          items[j] = tmp
+          swapped = true
+          break
+        }
       }
     }
+    if (!swapped) break
   }
 
   return { items, promotedIds, sponsoredIds, sponsorCampaigns, builtAt: 0, exp: 0 }

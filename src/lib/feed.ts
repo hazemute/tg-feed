@@ -85,7 +85,7 @@ export function feedScopeSignature(category: string, whereChannel: unknown): str
  * первый бёрст пользователей запускал тяжёлую пересборку индекса на пуле.
  * Единая константа делает расхождение невозможным по построению.
  */
-export const FEED_INDEX_KEY_V = 'v8'
+export const FEED_INDEX_KEY_V = 'v9'
 
 /** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
 type IndexWhere = {
@@ -98,11 +98,17 @@ type IndexWhere = {
 }
 
 /**
- * ТЯЖЁЛЫЙ пересчёт глобального индекса (400 постов + веса): единая реализация
+ * ТЯЖЁЛЫЙ пересчёт глобального индекса (окно 1200 → пул ≤12 свежих/канал + веса): единая реализация
  * для /api/feed и фонового прогрева (feed-warm.ts) — ключи и формула весов
  * всегда совпадают, расхождение исключено по построению.
  */
 export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex> {
+  /*
+   * v5.97: окно индекса 400 → 1200. Прежнее «400 свежайших постов ПОСТАМИ»
+   * покрывало только активно постящие каналы: каналы с редкими выпусками
+   * (раз в несколько дней) целиком выпадали из окна — лента сужалась до
+   ~2 десятков каналов и владелец видел «одни и те же каналы подряд».
+   */
   const posts = await db.post.findMany({
     where: {
       ...where,
@@ -133,22 +139,39 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       },
     },
     orderBy: { publishedAt: 'desc' },
-    take: 400,
+    take: 1200,
   })
+
+  /*
+   * v5.97: ПО-КАНАЛЬНЫЙ ПУЛ — каждый активный канал представлен своим окном
+   * свежих постов (≤12 новейших на канал), а не конкуренцией «кто чаще постит».
+   * Посты приходят отсортированными по свежести → первый проход отдаёт каждому
+   * каналу его 12 новейших; редкопостящие каналы больше не вылетают из индекса.
+   */
+  const PER_CHANNEL_POOL = 12
+  const seenPerChannel = new Map<string, number>()
+  const pooled = posts
+    .filter((p) => !looksLikeGarbage(p.text)) // мгновенный детект каши — не ждём ИИ
+    .filter((p) => {
+      const n = seenPerChannel.get(p.channelId) ?? 0
+      if (n >= PER_CHANNEL_POOL) return false
+      seenPerChannel.set(p.channelId, n + 1)
+      return true
+    })
 
   // v5.68 антиреклама: distinct-жалобы по постам окна → сумма на канал
   // Task 5-c: попутно считаем жалобы НА КАЖДЫЙ пост — 3+ жалобщиков = пост
   // исключается из рекомендаций целиком (см. REPORT_HIDE_THRESHOLD)
   const channelReports = new Map<string, number>()
   const postReports = new Map<string, number>()
-  if (posts.length > 0) {
+  if (pooled.length > 0) {
     try {
       const reps = await db.postReport.groupBy({
         by: ['postId'],
         _count: { _all: true },
-        where: { postId: { in: posts.map((p) => p.id) } },
+        where: { postId: { in: pooled.map((p) => p.id) } },
       })
-      const postChannel = new Map(posts.map((p) => [p.id, p.channelId] as const))
+      const postChannel = new Map(pooled.map((p) => [p.id, p.channelId] as const))
       for (const r of reps) {
         postReports.set(r.postId, r._count._all)
         const ch = postChannel.get(r.postId)
@@ -159,8 +182,7 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
     }
   }
 
-  const entries: IndexEntry[] = posts
-    .filter((p) => !looksLikeGarbage(p.text)) // мгновенный детект каши — не ждём ИИ
+  const entries: IndexEntry[] = pooled
     // Task 5-c: посты с потоком жалоб (≥3 разных жалобщиков) — мимо рекомендаций
     .filter((p) => (postReports.get(p.id) ?? 0) < REPORT_HIDE_THRESHOLD)
     .map((p) => ({

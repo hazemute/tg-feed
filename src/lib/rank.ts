@@ -401,15 +401,31 @@ export function diversify<T>(
         break
       }
     }
-    // 2) все на cooldown — самый забытый канал (максимум паузы; при равенстве — выше по весу)
+    // 2) все на cooldown — самый забытый канал (максимум паузы; при равенстве — выше по весу).
+    //    v5.97: из кандидатов ИСКЛЮЧАЕТСЯ канал предыдущего поста — иначе в хвосте
+    //    (мало каналов, всё на cooldown) фолбэк ставил один канал два раза подряд.
     if (picked === -1) {
+      const lastCh = out.length > 0 ? channelIdOf(out[out.length - 1]) : null
       let bestAge = -1
       for (let i = 0; i < rest.length; i++) {
         const ch = channelIdOf(rest[i])
+        if (ch === lastCh && rest.length > 1) continue
         const age = out.length - (lastAt.get(ch) ?? 0)
         if (age > bestAge) {
           bestAge = age
           picked = i
+        }
+      }
+      // единственный оставшийся канал — брать его (иначе цикл зависнет)
+      if (picked === -1) {
+        let bestAge2 = -1
+        for (let i = 0; i < rest.length; i++) {
+          const ch = channelIdOf(rest[i])
+          const age = out.length - (lastAt.get(ch) ?? 0)
+          if (age > bestAge2) {
+            bestAge2 = age
+            picked = i
+          }
         }
       }
     }
