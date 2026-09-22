@@ -346,6 +346,20 @@ export const MIGRATIONS: Record<string, string[]> = {
   'v5.94-theme': [
     `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "themeSettings" text`,
   ],
+  // v5.98: КОММЕРЦИЯ — Telegram Stars на балансе User + Sponsor (спонсоры розыгрыша,
+  // 990₽ фикс) + AdSlot (рекламный календарь 12:00/18:00 МСК, максимум 2 поста в сутки)
+  // + Blacklist (авто-модерация services/autoMod.ts).
+  'v5.98-commerce': [
+    `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "balanceStars" integer NOT NULL DEFAULT 0`,
+    `CREATE TABLE IF NOT EXISTS "Sponsor" ("id" text PRIMARY KEY, "userId" text NOT NULL, "username" text NOT NULL, "channelId" text, "title" text, "paidAmountKop" integer NOT NULL DEFAULT 99000, "currency" text NOT NULL DEFAULT 'RUB', "status" text NOT NULL DEFAULT 'PENDING', "giveawayId" text, "paymentId" text, "paidAt" timestamp(3), "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "Sponsor_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE INDEX IF NOT EXISTS "Sponsor_status_idx" ON "Sponsor"("status")`,
+    `CREATE INDEX IF NOT EXISTS "Sponsor_userId_createdAt_idx" ON "Sponsor"("userId", "createdAt")`,
+    `CREATE TABLE IF NOT EXISTS "AdSlot" ("id" text PRIMARY KEY, "userId" text NOT NULL, "text" text NOT NULL, "imageUrl" text, "link" text, "targetDate" timestamp(3) NOT NULL, "slotTime" text NOT NULL, "runAt" timestamp(3) NOT NULL, "priceKop" integer NOT NULL DEFAULT 99000, "currency" text NOT NULL DEFAULT 'RUB', "status" text NOT NULL DEFAULT 'PENDING', "paymentId" text, "publishedMessageId" integer, "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "AdSlot_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE INDEX IF NOT EXISTS "AdSlot_status_runAt_idx" ON "AdSlot"("status", "runAt")`,
+    `CREATE INDEX IF NOT EXISTS "AdSlot_userId_createdAt_idx" ON "AdSlot"("userId", "createdAt")`,
+    `CREATE TABLE IF NOT EXISTS "Blacklist" ("id" text PRIMARY KEY, "tgId" text NOT NULL, "userId" text, "reason" text NOT NULL DEFAULT '', "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "Blacklist_tgId_key" ON "Blacklist"("tgId")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -406,6 +420,10 @@ const CRITICAL: Array<[string, string | null]> = [
   ['User', 'xp'],
   ['User', 'level'],
   ['User', 'themeSettings'],
+  ['User', 'balanceStars'],
+  ['Sponsor', null],
+  ['AdSlot', null],
+  ['Blacklist', null],
   ['XpLog', null],
 ]
 

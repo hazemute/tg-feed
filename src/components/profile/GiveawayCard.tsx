@@ -19,7 +19,7 @@ import { haptic } from '@/lib/tg'
  */
 
 type GiveawayTaskDTO = {
-  kind: 'activity' | 'promo' | 'referral' | 'boost' | 'forward'
+  kind: 'activity' | 'promo' | 'referral' | 'boost' | 'forward' | 'sponsor'
   tickets: number
   title: string
   swipeGoal: number | null
@@ -53,6 +53,7 @@ const TASK_ICON: Record<GiveawayTaskDTO['kind'], string> = {
   referral: '🤝',
   boost: '🚀',
   forward: '📬',
+  sponsor: '🤝',
 }
 
 export function GiveawayCard() {
@@ -127,6 +128,26 @@ export function GiveawayCard() {
         const r = await api<{ ok: boolean; message: string }>('/api/giveaway', {
           method: 'POST',
           body: JSON.stringify({ action: 'boost', giveawayId: g.id }),
+        })
+        if (r.ok) {
+          haptic('success')
+          toast.success(r.message)
+          setReload((n) => n + 1)
+        } else {
+          toast.error(r.message)
+        }
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Не получилось')
+      }
+    })
+
+  // v5.98: «Проверить спонсоров» — подписка на всех спонсоров розыгрыша → +1 билет
+  const checkSponsors = () =>
+    withBusy(async () => {
+      try {
+        const r = await api<{ ok: boolean; message: string }>('/api/giveaway', {
+          method: 'POST',
+          body: JSON.stringify({ action: 'sponsors', giveawayId: g.id }),
         })
         if (r.ok) {
           haptic('success')
@@ -316,6 +337,16 @@ export function GiveawayCard() {
               className="flex h-8 items-center gap-1.5 rounded-full bg-white/70 px-3 text-[12.5px] font-semibold text-amber-700 transition active:scale-95 disabled:opacity-60 dark:bg-white/5 dark:text-amber-300"
             >
               🚀 Я бустнул канал — проверить
+            </button>
+          )}
+          {g.tasks.some((t) => t.kind === 'sponsor') && !g.tasks.find((t) => t.kind === 'sponsor')?.done && (
+            <button
+              type="button"
+              onClick={() => void checkSponsors()}
+              disabled={busy}
+              className="flex h-8 items-center gap-1.5 rounded-full bg-white/70 px-3 text-[12.5px] font-semibold text-amber-700 transition active:scale-95 disabled:opacity-60 dark:bg-white/5 dark:text-amber-300"
+            >
+              🤝 Проверить спонсоров
             </button>
           )}
           <span className="ml-auto text-[11.5px] text-tg-hint">шанс = кол-во билетов</span>

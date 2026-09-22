@@ -30,7 +30,7 @@ export async function creditPendingPayment(
     if (claimed.count === 0) return false // уже зачислен — повтор безопасен
     const payment = await tx.pendingPayment.findUnique({
       where: { id: paymentId },
-      select: { userId: true, amountKop: true, purpose: true, provider: true },
+      select: { id: true, userId: true, amountKop: true, purpose: true, provider: true },
     })
     if (!payment) return false
     creditedUserId = payment.userId
@@ -60,6 +60,60 @@ export async function creditPendingPayment(
       await tx.user.updateMany({
         where: { id: payment.userId },
         data: { promoteCredits: { increment: promotePackCountFromPurpose(payment.purpose) } },
+      })
+      return true
+    }
+
+    /*
+     * v5.98: СПОНСОР РОЗЫГРЫША (purpose='sponsor', фикс 990 ₽ / эквив Stars).
+     * Sponsor PENDING (найден по paymentId) → ACTIVE: канал привязывается к
+     * текущему активному розыгрышу — username дописывается в Giveaway.channels
+     * (обязательные подписки), после чего задание «спонсоры» засчитывается
+     * подписчикам всех активных спонсоров. Идемпотентность — проводка выше.
+     */
+    if (payment.purpose === 'sponsor') {
+      const sponsor = await tx.sponsor.findFirst({
+        where: { paymentId: payment.id, status: 'PENDING' },
+        select: { id: true, username: true, giveawayId: true },
+      })
+      if (sponsor) {
+        await tx.sponsor.update({
+          where: { id: sponsor.id },
+          data: { status: 'ACTIVE', paidAt: new Date() },
+        })
+        // Привязка к розыгрышу: берём записанный giveawayId или активный на момент оплаты
+        const gw =
+          (sponsor.giveawayId
+            ? await tx.giveaway.findUnique({
+                where: { id: sponsor.giveawayId },
+                select: { id: true, channels: true },
+              })
+            : null) ??
+          (await tx.giveaway.findFirst({
+            where: { status: 'active' },
+            orderBy: { endAt: 'asc' },
+            select: { id: true, channels: true },
+          }))
+        if (gw) {
+          const channels: string[] = JSON.parse(gw.channels || '[]')
+          if (!channels.includes(sponsor.username)) channels.push(sponsor.username)
+          await tx.giveaway.update({ where: { id: gw.id }, data: { channels: JSON.stringify(channels) } })
+          await tx.sponsor.update({ where: { id: sponsor.id }, data: { giveawayId: gw.id } })
+        }
+      }
+      return true
+    }
+
+    /*
+     * v5.98: СЛОТ РЕКЛАМНОГО КАЛЕНДАРЯ (purpose='adslot:<slotId>', фикс 990 ₽ /
+     * эквив Stars) → AdSlot PENDING → PAID. Публикацию в @SnapTeamDev делает
+     * крон (lib/ad-slots.ts) в момент runAt (12:00/18:00 МСК).
+     */
+    if (payment.purpose.startsWith('adslot:')) {
+      const slotId = payment.purpose.slice('adslot:'.length)
+      await tx.adSlot.updateMany({
+        where: { id: slotId, paymentId: payment.id, status: 'PENDING' },
+        data: { status: 'PAID' },
       })
       return true
     }

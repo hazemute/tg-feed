@@ -37,6 +37,7 @@ model User {
   themeSettings  String? // v5.94: серверный синк темы — JSON {mode, custom:{bg,accent}}
   balanceKop     Int      @default(0) // рубли, в копейках
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
+  balanceStars   Int      @default(0) // Telegram Stars (v5.98: зачисление с успешных XTR-платежей по нужде)
   promoteCredits Int      @default(0) // v5.69: купленные продвижения (пакет 5 шт/199 ₽)
   promoteFreeMonth String @default("") // v5.69: 'YYYY-MM' (UTC) — месяц, в котором бесплатное уже использовано
   xp             Int      @default(0) // v5.75: опыт за активность (уровни)
@@ -72,6 +73,8 @@ model User {
   commentReports CommentReport[]
   lbPayouts      LeaderboardPayout[]
   achievements   UserAchievement[]
+  sponsors       Sponsor[]
+  adSlots        AdSlot[]
 }
 
 // Достижения (v5.90): одна запись на (юзер, ачивка) — tier это достигнутый
@@ -568,6 +571,57 @@ model AdvertiserAccount {
   topupsTotalKop Int      @default(0)
   spentTotalKop  Int      @default(0)
   updatedAt      DateTime @updatedAt
+}
+
+// === СПОНСОРСТВО РОЗЫГРЫША (v5.98) — см. schema.prisma ===
+model Sponsor {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username      String
+  channelId     String?
+  title         String?
+  paidAmountKop Int       @default(99000)
+  currency      String    @default("RUB")
+  status        String    @default("PENDING")
+  giveawayId    String?
+  paymentId     String?
+  paidAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status])
+  @@index([userId, createdAt])
+}
+
+// === СЛОТ РЕКЛАМНОГО КАЛЕНДАРЯ (v5.98) — см. schema.prisma ===
+model AdSlot {
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text               String
+  imageUrl           String?
+  link               String?
+  targetDate         DateTime
+  slotTime           String
+  runAt              DateTime
+  priceKop           Int       @default(99000)
+  currency           String    @default("RUB")
+  status             String    @default("PENDING")
+  paymentId          String?
+  publishedMessageId Int?
+  createdAt          DateTime  @default(now())
+
+  @@index([status, runAt])
+  @@index([userId, createdAt])
+}
+
+// === ЧЁРНЫЙ СПИСОК АВТО-МОДЕРЦИИ (v5.98) — см. schema.prisma ===
+model Blacklist {
+  id        String   @id @default(cuid())
+  tgId      String   @unique
+  userId    String?
+  reason    String   @default("")
+  createdAt DateTime @default(now())
 }
 
 model CampaignClick {

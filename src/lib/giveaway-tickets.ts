@@ -26,7 +26,7 @@ import { getBotUsername } from '@/lib/tg-bot'
  * двойной клик/гонка воркеров не даст второй билет за то же задание.
  */
 
-export type GiveawayTaskKind = 'activity' | 'promo' | 'referral' | 'boost' | 'forward'
+export type GiveawayTaskKind = 'activity' | 'promo' | 'referral' | 'boost' | 'forward' | 'sponsor'
 export type AwardTask = GiveawayTaskKind | 'manual'
 
 export type GiveawayTask = {
@@ -60,7 +60,7 @@ export function parseTasks(json: string | null | undefined): GiveawayTask[] {
       (t): t is GiveawayTask =>
         !!t && typeof t === 'object' &&
         typeof (t as GiveawayTask).kind === 'string' &&
-        ['activity', 'promo', 'referral', 'boost', 'forward'].includes((t as GiveawayTask).kind),
+        ['activity', 'promo', 'referral', 'boost', 'forward', 'sponsor'].includes((t as GiveawayTask).kind),
     )
   } catch {
     return []
@@ -113,6 +113,8 @@ export function taskTitle(t: GiveawayTask): string {
       return `Отдай буст каналу @${t.boostChannel || DEFAULT_BOOST_CHANNEL}`
     case 'forward':
       return `Перешли боту по одному посту из ${FORWARD_SOURCES_GOAL} любимых каналов`
+    case 'sponsor':
+      return 'Подпишись на всех спонсоров розыгрыша'
   }
 }
 
@@ -133,6 +135,7 @@ const TASK_ICON: Record<GiveawayTaskKind, string> = {
   referral: '🤝',
   boost: '🚀',
   forward: '📬',
+  sponsor: '🤝',
 }
 
 /* ------------------------------ активные ------------------------------ */
@@ -216,12 +219,14 @@ export async function awardTicket(opts: {
   // улучшает рекомендации всему сервису — награда не зависит от настроек),
   // но если в конфиге задано — берём оттуда.
   let tickets = Math.max(1, Math.round(opts.tickets ?? 1))
-  if (opts.task !== 'manual' && opts.task !== 'forward') {
+  if (opts.task !== 'manual' && opts.task !== 'forward' && opts.task !== 'sponsor') {
     const cfg = parseTasks(g.tasks).find((t) => t.kind === opts.task && t.enabled)
     if (!cfg) return { ok: false, awarded: false, reason: 'task_disabled' }
     tickets = Math.max(1, Math.round(cfg.tickets || 1))
-  } else if (opts.task === 'forward') {
-    const cfg = parseTasks(g.tasks).find((t) => t.kind === 'forward' && t.enabled)
+  } else if (opts.task === 'forward' || opts.task === 'sponsor') {
+    // 'forward' (v5.50) и 'sponsor' (v5.98) — СИСТЕМНЫЕ задания: работают, даже
+    // если организатор не добавил их в конфиг розыгрыша. Если заданы — берём оттуда.
+    const cfg = parseTasks(g.tasks).find((t) => t.kind === opts.task && t.enabled)
     if (cfg) tickets = Math.max(1, Math.round(cfg.tickets || 1))
   }
 
@@ -444,6 +449,86 @@ export async function checkAndAwardAuto(user: UserCtx): Promise<void> {
  * Проверить буст пользователя каналу и выдать билет за задание boost.
  * Возвращает человекочитаемый результат для бота/миниаппа.
  */
+/**
+ * v5.98: задание «спонсоры» — подписка на ВСЕХ активных спонсоров розыгрыша.
+ * Кнопка «Проверить спонсоров» в Mini App → Promise.all getChatMember по всем
+ * Sponsor.ACTIVE этого розыгрыша. Все подписки → awardTicket('sponsor') (+1 билет).
+ * Позитивный вердикт кэшируется в Redis на 1 час (не дёргаем Bot API зря);
+ * негативный НЕ кэшируется — подписался и сразу проверил → зачёт.
+ */
+export async function checkSponsorsTask(
+  giveawayId: string,
+  user: UserCtx & { tgId: number },
+  request?: Request,
+): Promise<{ ok: boolean; message: string; sponsors?: Array<{ username: string; ok: boolean | null }> }> {
+  const g = await db.giveaway.findUnique({
+    where: { id: giveawayId },
+    select: { id: true, status: true, endAt: true, title: true },
+  })
+  if (!g || g.status !== 'active' || g.endAt.getTime() <= Date.now()) {
+    return { ok: false, message: 'Розыгрыш не активен' }
+  }
+  const sponsors = await db.sponsor
+    .findMany({ where: { giveawayId: g.id, status: 'ACTIVE' }, select: { username: true }, orderBy: { createdAt: 'asc' } })
+    .catch(() => [])
+  if (sponsors.length === 0) {
+    return { ok: false, message: '🤝 У этого розыгрыша пока нет спонсоров — проверь позже' }
+  }
+  const { isTelegramMember } = await import('@/lib/tg-bot')
+  const { cacheGet, cacheSet } = await import('@/lib/redis')
+
+  const cacheKey = `gwsponsor:${user.id}:${g.id}`
+  const cached = await cacheGet(cacheKey).catch(() => null)
+  if (cached === 'all') {
+    const r = await awardTicket({
+      giveawayId: g.id,
+      userId: user.id,
+      task: 'sponsor',
+      tgId: user.tgId,
+      username: user.username,
+      firstName: user.firstName,
+      note: 'sponsors all (cache)',
+    })
+    return {
+      ok: true,
+      message: r.awarded
+        ? '✅ Все спонсоры засчитаны — билет начислен!'
+        : '✅ Все спонсоры уже были засчитаны — билет твой!',
+      sponsors: sponsors.map((s) => ({ username: s.username, ok: true })),
+    }
+  }
+
+  const checks = await Promise.all(sponsors.map((s) => isTelegramMember(s.username, user.tgId).catch(() => null)))
+  const detailed = sponsors.map((s, i) => ({ username: s.username, ok: checks[i] }))
+  const allSubscribed = checks.every((c) => c === true)
+  if (allSubscribed) {
+    await cacheSet(cacheKey, 'all', 3600).catch(() => {})
+    const r = await awardTicket({
+      giveawayId: g.id,
+      userId: user.id,
+      task: 'sponsor',
+      tgId: user.tgId,
+      username: user.username,
+      firstName: user.firstName,
+      note: `sponsors all (${sponsors.length})`,
+    })
+    if (!r.ok) {
+      return { ok: true, message: '✅ Подписки засчитаны — билет уже был или начислится автоматически', sponsors: detailed }
+    }
+    return { ok: true, message: '✅ Все спонсоры засчитаны — билет начислен!', sponsors: detailed }
+  }
+  const missing = detailed.filter((d) => d.ok !== true)
+  const list = missing.map((m) => `@${m.username}`).join(', ')
+  const unknown = missing.some((m) => m.ok === null)
+  return {
+    ok: false,
+    message: unknown
+      ? `⏳ Не получилось проверить подписки (${list}) — попробуй через минуту`
+      : `🤝 Подпишись ещё на: ${list} — и жми «Проверить спонсоров» снова!`,
+    sponsors: detailed,
+  }
+}
+
 export async function checkBoostTask(
   giveawayId: string,
   user: UserCtx & { tgId: number },

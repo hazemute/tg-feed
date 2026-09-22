@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { db } from '@/lib/db'
 import { err } from '@/lib/server'
 import { plategaEnabled, plategaStatusInfo } from '@/lib/platega'
@@ -62,7 +62,19 @@ export async function POST(request: Request) {
         )
         return NextResponse.json({ ok: false, reason: 'amount-mismatch' })
       }
+      const purpose = payment.purpose
       const credited = await creditPendingPayment(payment.id, transactionId)
+      // v5.98: коммерческие цели — автору мгновенное подтверждение в бота
+      if (credited && (purpose === 'sponsor' || purpose.startsWith('adslot:'))) {
+        after(async () => {
+          try {
+            const { notifyCommercePaid } = await import('@/lib/commerce-wizard')
+            await notifyCommercePaid(payment.userId, purpose === 'sponsor' ? 'sponsor' : 'adslot')
+          } catch (e) {
+            console.error('[payments:platega:webhook] notify', e)
+          }
+        })
+      }
       return NextResponse.json({ ok: true, credited })
     }
 

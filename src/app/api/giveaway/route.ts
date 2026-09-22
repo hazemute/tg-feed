@@ -15,6 +15,7 @@ import {
   referralLinkFor,
   redeemPromoCode,
   taskTitle,
+  checkSponsorsTask,
 } from '@/lib/giveaway-tickets'
 import { parsePrizes } from '@/lib/giveaways'
 import { userSourcesSummary } from '@/lib/source-profile'
@@ -53,6 +54,10 @@ const bodySchema = z.discriminatedUnion('action', [
   }),
   z.object({
     action: z.literal('check'),
+    giveawayId: z.string().min(1).max(64),
+  }),
+  z.object({
+    action: z.literal('sponsors'),
     giveawayId: z.string().min(1).max(64),
   }),
 ])
@@ -183,6 +188,13 @@ export async function POST(request: Request) {
     if (d.action === 'boost') {
       if (!Number.isInteger(tgId) || tgId <= 0) return err('bad user', 400)
       const r = await checkBoostTask(d.giveawayId, { ...ctx, tgId })
+      return NextResponse.json(r, { status: r.ok ? 200 : 400 })
+    }
+
+    // v5.98: «Проверить спонсоров» — подписка на всех активных спонсоров розыгрыша
+    if (d.action === 'sponsors') {
+      if (!Number.isInteger(tgId) || tgId <= 0) return err('bad user', 400)
+      const r = await checkSponsorsTask(d.giveawayId, { ...ctx, tgId }, request)
       return NextResponse.json(r, { status: r.ok ? 200 : 400 })
     }
 

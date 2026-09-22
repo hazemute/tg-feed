@@ -42,6 +42,7 @@ model User {
   // === Кошелёк (v5.38): единый баланс — рубли + свайпы (курс v5.40: 500 свайпов = 1 ₽) ===
   balanceKop     Int      @default(0) // рубли, в копейках
   swipes         Int      @default(0) // свайпы (валюта ИИ, конвертируется в рубли)
+  balanceStars   Int      @default(0) // Telegram Stars (v5.98: зачисление с успешных XTR-платежей по нужде)
   // === Продвижение (v5.69): купленные кредиты пакета + ключ месяца бесплатного продвижения ===
   promoteCredits Int      @default(0) // купленные продвижения (пакет 5 шт/199 ₽), тратятся после месячного бесплатного
   promoteFreeMonth String @default("") // 'YYYY-MM' (UTC): месяц, в котором бесплатное продвижение уже использовано
@@ -82,6 +83,8 @@ model User {
   achievements   UserAchievement[]
   readingDays    ReadingDay[]      @relation("readingDays")
   readingStreak  ReadingStreak?    @relation("readingStreak")
+  sponsors       Sponsor[]
+  adSlots        AdSlot[]
 }
 
 // Достижения (v5.90): одна запись на (юзер, ачивка) — tier это достигнутый
@@ -406,6 +409,61 @@ model AdvertiserAccount {
   topupsTotalKop Int      @default(0)
   spentTotalKop  Int      @default(0)
   updatedAt      DateTime @updatedAt
+}
+
+// === СПОНСОРСТВО РОЗЫГРЫША (v5.98): сторонний админ платит фикс 990 ₽ (Platega)
+// или эквив в Stars → канал привязывается к активному розыгрышу как обязательная
+// подписка (задание «спонсоры» в билетах). Проверка подписки — задание sponsor.
+model Sponsor {
+  id            String    @id @default(cuid())
+  userId        String // заказчик (tg_<uid>)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  username      String // @username канала (без @)
+  channelId     String? // id канала в нашей базе, если он уже импортирован
+  title         String? // название канала (снимок на момент оплаты)
+  paidAmountKop Int       @default(99000) // фикс 990 ₽ (XTR — эквив по курсу, учёт в копейках)
+  currency      String    @default("RUB") // RUB (Platega) | XTR (Stars)
+  status        String    @default("PENDING") // PENDING | ACTIVE | CANCELED
+  giveawayId    String? // активный розыгрыш на момент оплаты
+  paymentId     String? // PendingPayment.id
+  paidAt        DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([status])
+  @@index([userId, createdAt])
+}
+
+// === СЛОТ РЕКЛАМНОГО КАЛЕНДАРЯ (v5.98): максимум 2 поста в сутки (12:00/18:00 МСК)
+// в канале @SnapTeamDev. Оплата вперёд (Platega/Stars), публикация — кроном по runAt.
+model AdSlot {
+  id                 String    @id @default(cuid())
+  userId             String
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  text               String // текст поста (HTML запрещён — plain, escape на публикации)
+  imageUrl           String? // ссылка на картинку (публичный URL)
+  link               String? // необязательная кнопка-ссылка под постом
+  targetDate         DateTime // дата слота (00:00 UTC выбранного дня)
+  slotTime           String // '12:00' | '18:00' (МСК)
+  runAt              DateTime // точный UTC-инстант публикации (дата + МСК-время)
+  priceKop           Int       @default(99000)
+  currency           String    @default("RUB") // RUB | XTR
+  status             String    @default("PENDING") // PENDING | PAID | PUBLISHED | CANCELED
+  paymentId          String?
+  publishedMessageId Int?
+  createdAt          DateTime  @default(now())
+
+  @@index([status, runAt])
+  @@index([userId, createdAt])
+}
+
+// === ЧЁРНЫЙ СПИСОК АВТО-МОДЕРЦИИ (v5.98): Telegram ID блокируются наглухо —
+// бот молча игнорирует, инвойсы рекламы/спонсорства не создаются (services/autoMod.ts)
+model Blacklist {
+  id        String   @id @default(cuid())
+  tgId      String   @unique
+  userId    String?
+  reason    String   @default("")
+  createdAt DateTime @default(now())
 }
 
 // Журнал операций кошелька (v5.38): пополнения, конвертации, списания ИИ,

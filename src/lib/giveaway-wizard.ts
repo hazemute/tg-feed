@@ -405,6 +405,10 @@ function taskOf(st: WizardState, kind: GiveawayTaskKind): GiveawayTask {
       // v5.50: системное задание «источники рекомендаций» — порог фиксирован (5
       // каналов), организатор настраивает только количество билетов
       return { kind, enabled: true, tickets: 1 }
+    case 'sponsor':
+      // v5.98: системное задание «спонсоры» — список спонсоров живёт в Sponsor,
+      // организатор настраивает только количество билетов
+      return { kind, enabled: true, tickets: 1 }
   }
 }
 

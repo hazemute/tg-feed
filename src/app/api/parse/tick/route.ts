@@ -8,6 +8,7 @@ import { pruneAll } from '@/lib/retention'
 import { checkDueGiveaways } from '@/lib/giveaways'
 import { reverifyQuestCompletions } from '@/lib/quests'
 import { publishDueScheduledPosts } from '@/lib/scheduled-posts'
+import { publishDueAdSlots } from '@/lib/ad-slots'
 import { runLbPayouts } from '@/lib/lb-payouts'
 import { runRetentionCron } from '@/lib/retention-cron'
 import { ensureContentCatalog, stepContentCatalog } from '@/lib/content-catalog'
@@ -146,6 +147,13 @@ async function handle(request: Request) {
     // v5.64: ОТЛОЖЕННЫЕ ПОСТЫ (Snap Ассистент) — у кого время наступило,
     // публикуем через бота и добавляем в ленту (до 5 за тик — не мешаем парсингу)
     const scheduled = await publishDueScheduledPosts(5).catch(() => null)
+
+    // v5.98: РЕКЛАМНЫЙ КАЛЕНДАРЬ — оплаченные слоты с наступившим runAt
+    // (12:00/18:00 МСК) публикуются в @SnapTeamDev. Идемпотентно (PAID→PUBLISHED).
+    const adSlots = await publishDueAdSlots().catch((e) => {
+      console.error('[tick] ad-slots', e)
+      return null
+    })
 
     // v5.88: НАГРАДЫ ЛИДЕРБОРДОВ — итоги завершившейся недели/месяца (топ-3 по
     // набранному XP получают свайпы, см. lib/lb-payouts.ts). Идемпотентно

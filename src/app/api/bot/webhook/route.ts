@@ -16,7 +16,7 @@ import {
   type BotButton,
 } from '@/lib/tg-buttons'
 import { externalOrigin, timingSafeEqualStr } from '@/lib/server'
-import { botBanned, markBotBan, TELEGRAM_REQUIRED_UPDATES } from '@/lib/tg-bot'
+import { botBanned, botEnabled, markBotBan, TELEGRAM_REQUIRED_UPDATES } from '@/lib/tg-bot'
 import { joinGiveaway, kickDueGiveaways, refreshGiveawayButton } from '@/lib/giveaways'
 import {
   handleBoostCheck,
@@ -40,6 +40,19 @@ import { ingestChannelPost, type TgChannelMessage } from '@/lib/channel-ingest'
 import { backfillChannelHistory } from '@/lib/channel-backfill'
 import { getChatInfo } from '@/lib/tg-bot'
 import { setMailOptout } from '@/lib/retention-cron'
+import {
+  sendHelpMenu,
+  sendPromoHint,
+  sendTicketsStatus,
+  startSponsorFlow,
+  startAdFlow,
+  startSendFlow,
+  handleFsmText,
+  handleFsmPhoto,
+  handleFsmForward,
+  handleCommerceCallback,
+} from '@/lib/commerce-wizard'
+import { isBlacklisted } from '@/services/autoMod'
 import { after } from 'next/server'
 
 export const dynamic = 'force-dynamic'
@@ -77,6 +90,55 @@ export const maxDuration = 55
 const BOT_TOKEN = () => process.env.TELEGRAM_BOT_TOKEN?.trim() ?? ''
 /** Владелец бота (премиум-аккаунт-посредник): только его business-подключения принимаются */
 const BOT_OWNER_TG_ID = 7851246214
+
+// ===== v5.98: OWNER-идентификаторы (ADMIN_TG_IDS env) — /send и админ-блок /help =====
+const adminTgIdSet = new Set(
+  (process.env.ADMIN_TG_IDS ?? '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => (s.startsWith('tg_') ? s.slice(3) : s)),
+)
+
+/**
+ * v5.98: меню команд бота (setMyCommands) — раз в сутки (троттлинг через
+ * BotSetting). Fire-and-forget из вебхука: серверless сам поднимет меню,
+ * отдельный скрипт не нужен.
+ */
+let botMenuBusy = false
+async function ensureBotMenu(): Promise<void> {
+  if (!botEnabled() || botMenuBusy) return
+  botMenuBusy = true
+  try {
+    const marker = await db.botSetting
+      .findUnique({ where: { key: 'botmenu_set_at' }, select: { value: true } })
+      .catch(() => null)
+    if (marker && Date.now() - (Number(marker.value) || 0) < 24 * 3600_000) return
+    const ok = await botCall('setMyCommands', {
+      commands: [
+        { command: 'start', description: 'Открыть Tg Swipe' },
+        { command: 'tickets', description: 'Розыгрыш и фарм билетов' },
+        { command: 'promo', description: 'Секретный промокод' },
+        { command: 'sponsor', description: 'Спонсорство розыгрыша — 990 ₽' },
+        { command: 'ad', description: 'Рекламный слот 12:00/18:00 — 990 ₽' },
+        { command: 'help', description: 'Все команды' },
+      ],
+    })
+    if (ok) {
+      await db.botSetting
+        .upsert({
+          where: { key: 'botmenu_set_at' },
+          create: { key: 'botmenu_set_at', value: String(Date.now()) },
+          update: { value: String(Date.now()) },
+        })
+        .catch(() => {})
+    }
+  } catch {
+    // меню не критично
+  } finally {
+    botMenuBusy = false
+  }
+}
 
 /** Реальные апдейты Telegram максимум ~256KB — всё, что больше, мусор */
 const WEBHOOK_MAX_BYTES = 512 * 1024
@@ -971,6 +1033,32 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
     return
   }
 
+  // v5.98: sponsor:<uid>:<paymentId> — оплата спонсорства Stars
+  if (parts.length === 3 && parts[0] === 'sponsor') {
+    const [, uid, paymentId] = parts
+    const payment = await db.pendingPayment.findUnique({ where: { id: paymentId } }).catch(() => null)
+    if (!payment || payment.userId !== uid || payment.provider !== 'stars') return
+    const credited = await creditPendingPayment(payment.id, sp.telegram_payment_charge_id ?? null)
+    if (credited && chatId) {
+      const { notifyCommercePaid } = await import('@/lib/commerce-wizard')
+      await notifyCommercePaid(uid, 'sponsor')
+    }
+    return
+  }
+
+  // v5.98: adslot:<uid>:<slotId>:<paymentId> — оплата рекламного слота Stars
+  if (parts.length === 4 && parts[0] === 'adslot') {
+    const [, uid, , paymentId] = parts
+    const payment = await db.pendingPayment.findUnique({ where: { id: paymentId } }).catch(() => null)
+    if (!payment || payment.userId !== uid || payment.provider !== 'stars') return
+    const credited = await creditPendingPayment(payment.id, sp.telegram_payment_charge_id ?? null)
+    if (credited && chatId) {
+      const { notifyCommercePaid } = await import('@/lib/commerce-wizard')
+      await notifyCommercePaid(uid, 'adslot')
+    }
+    return
+  }
+
   // topup:<uid>:<swipes>:<paymentId>
   if (parts.length !== 4 || parts[0] !== 'topup') return
   const [, uid, swipesStr, paymentId] = parts
@@ -1054,6 +1142,16 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ ok: true }) // мусор не роняет вебхук
   }
+
+  // v5.98: ЧЁРНЫЙ СПИСОК — апдейты забаненных молча игнорируются (наглухо, 200 ok:
+  // Telegram не ретраит). Проверка ДО любой ветки — ни ответы, ни инвойсы.
+  const blacklistedFromId = update.message?.from?.id ?? update.callback_query?.from?.id ?? 0
+  if (blacklistedFromId > 0 && (await isBlacklisted(blacklistedFromId))) {
+    return NextResponse.json({ ok: true })
+  }
+
+  // v5.98: меню команд бота (setMyCommands) — раз в сутки, fire-and-forget
+  void ensureBotMenu()
 
   try {
     // v5.80: ПОСТ КАНАЛА ВЛАДЕЛЬЦА — мгновенный инжест в ленту (channel_post /
@@ -1246,6 +1344,24 @@ export async function POST(request: Request) {
       await handleStarsPayment(msg.successful_payment, msg.chat?.id)
       return NextResponse.json({ ok: true })
     }
+    // v5.98: КОММЕРЧЕСКИЕ КОЛБЭКИ (спонсорство/реклама/рассылка) — до остальных,
+    // префиксы уникальны (spay:/adpay:/adcal:/adslot:/spchk:/adchk:/sendgo:)
+    const cqC = update.callback_query
+    if (cqC?.data && /\b(spay|adpay|adcal|adslot|spchk|adchk|sendgo):/.test(cqC.data)) {
+      const cdata: string = cqC.data
+      const chatC = cqC.message?.chat?.id
+      if (chatC && cqC.from?.id) {
+        await handleCommerceCallback(
+          cqC.id,
+          cdata,
+          chatC,
+          { id: cqC.from.id, username: cqC.from.username, first_name: cqC.from.first_name },
+        ).catch((e) => console.error('[bot/webhook] commerce cb', e))
+      } else {
+        await botCall('answerCallbackQuery', { callback_query_id: cqC.id })
+      }
+      return NextResponse.json({ ok: true })
+    }
     if (msg?.text?.startsWith('/emojis')) {
       await handleEmojisCommand(msg.from, msg.chat?.id)
       return NextResponse.json({ ok: true })
@@ -1326,6 +1442,54 @@ export async function POST(request: Request) {
     const chatId = msg?.chat?.id
     const fromId = msg?.from?.id ?? 0
     const isBotAdmin = fromId === BOT_OWNER_TG_ID
+
+    // ===== v5.98: КОММАНДЫ МЕНЮ И КОММЕРЦИИ =====
+    if (msg?.text && chatId && fromId > 0) {
+      const t = msg.text
+      const userLite = { id: fromId, username: msg.from?.username, first_name: msg.from?.first_name }
+      if (/^\/help(@\w+)?$/i.test(t)) {
+        await sendHelpMenu(chatId, isBotAdmin || adminTgIdSet.has(String(fromId)))
+        return NextResponse.json({ ok: true })
+      }
+      if (/^\/promo(@\w+)?$/i.test(t)) {
+        await sendPromoHint(chatId)
+        return NextResponse.json({ ok: true })
+      }
+      if (/^\/tickets(@\w+)?$/i.test(t)) {
+        await sendTicketsStatus(chatId, `tg_${fromId}`)
+        return NextResponse.json({ ok: true })
+      }
+      if (/^\/sponsor(@\w+)?$/i.test(t)) {
+        await startSponsorFlow(chatId, userLite)
+        return NextResponse.json({ ok: true })
+      }
+      if (/^\/ad(@\w+)?$/i.test(t)) {
+        await startAdFlow(chatId)
+        return NextResponse.json({ ok: true })
+      }
+      if (/^\/send(@\w+)?$/i.test(t)) {
+        if (isBotAdmin || adminTgIdSet.has(String(fromId))) {
+          await startSendFlow(chatId)
+        } else {
+          await botSendRich(chatId, '🚫 Рассылка доступна только создателям Snap Team.')
+        }
+        return NextResponse.json({ ok: true })
+      }
+    }
+
+    // ===== v5.98: FSM ДИАЛОГИ — форвард канала (спонсорство) ДО общих пересылок =====
+    if (msg && chatId && fromId > 0 && (msg.forward_origin || msg.forward_from_chat || msg.forward_from)) {
+      const fsmAbsorbed = await handleFsmForward(
+        msg as { forward_from_chat?: { username?: string; title?: string; type?: string } },
+        chatId,
+        { id: fromId, username: msg.from?.username, first_name: msg.from?.first_name },
+      ).catch((e) => {
+        console.error('[bot/webhook] fsm forward', e)
+        return false
+      })
+      if (fsmAbsorbed) return NextResponse.json({ ok: true })
+    }
+
     // ===== v5.50: ИСТОЧНИКИ РЕКОМЕНДАЦИЙ («В один клик») =====
     // ЛОВИМ ДО мастера/промокода: текст пересланного поста — это контент,
     // а не команда или промокод. Пересылки юзера (не канала) проходят дальше.
@@ -1354,10 +1518,39 @@ export async function POST(request: Request) {
       if (fromId > 0) await sendMyGiveawayCard(chatId, `tg_${fromId}`)
       return NextResponse.json({ ok: true })
     }
+    // v5.98: FSM — фото в диалоге рекламы (контент слота)
+    if (msg?.photo?.length && chatId && fromId > 0) {
+      const fsmAbsorbed = await handleFsmPhoto(msg, chatId, {
+        id: fromId,
+        username: msg.from?.username,
+        first_name: msg.from?.first_name,
+      }).catch((e) => {
+        console.error('[bot/webhook] fsm photo', e)
+        return false
+      })
+      if (fsmAbsorbed) return NextResponse.json({ ok: true })
+    }
     // Мастер: фото (шаг «картинка поста»)
     if (msg?.photo?.length && chatId) {
       const absorbed = await handleWizardPhoto(chatId, msg.photo).catch(() => false)
       if (absorbed) return NextResponse.json({ ok: true })
+    }
+    // v5.98: FSM — текстовые шаги диалогов (реклама/спонсорство/рассылка)
+    if (msg && chatId && fromId > 0 && (msg.text != null || msg.caption != null || msg.photo?.length)) {
+      const fsmAbsorbed = await handleFsmText(
+        msg as { text?: string; caption?: string; photo?: unknown[] },
+        chatId,
+        { id: fromId, username: msg.from?.username, first_name: msg.from?.first_name },
+      ).catch((e) => {
+        console.error('[bot/webhook] fsm text', e)
+        return false
+      })
+      if (fsmAbsorbed && msg) {
+        if (msg.entities?.length || msg.caption_entities?.length) {
+          void handleCustomEmojiCapture(msg).catch(() => {})
+        }
+        return NextResponse.json({ ok: true })
+      }
     }
     // Мастер: текстовые ответы (только владелец-админ в диалоге)
     if (msg?.text && chatId && isBotAdmin) {
