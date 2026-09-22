@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { RotateCcw, Send, WifiOff } from 'lucide-react'
 import { toast } from 'sonner'
 import { api, getSessionToken, prefetchIdle, setSessionToken } from '@/lib/api'
+import { hideBootShell } from '@/lib/boot-shell'
 import { useApp } from '@/lib/store'
 import type { Lang } from '@/lib/i18n'
 import { tr } from '@/lib/i18n'
@@ -121,6 +122,10 @@ export default function Home() {
   const welcome = useWelcomeGuide(authReady && Boolean(user) && appOpen)
 
   useEffect(() => {
+    // v5.84: React смонтировался — шторка boot-guard (layout.tsx) больше не
+    // нужна: гасим и снимаем её ватчдоги (если JS чанков так и не доехали,
+    // шторка сама покажет «Перезагрузить» — сюда мы бы не попали).
+    hideBootShell()
     const t = setTimeout(() => setSplashMinDone(true), 700)
     return () => clearTimeout(t)
   }, [])

@@ -176,6 +176,140 @@ h.classList.toggle('dark',dk);}catch(e){document.documentElement.dataset.theme='
  * Раскладка ПК (полная ширина) вешается на html[data-platform='web'] в CSS.
  */
 const platformInit = `try{var w=window.Telegram&&window.Telegram.WebApp;var p=(w&&(w.initData&&w.initData.length>0||w.platform&&w.platform!=='unknown'))?'telegram':'web';document.documentElement.dataset.platform=p;}catch(e){document.documentElement.dataset.platform='web';}`
++ `;try{window.__bootShell&&window.__bootShell.tint()}catch(e){}`
+
+/*
+ * v5.84 BOOT GUARD — страховка от «пустого экрана» (баг: серая пустота в
+ * Telegram Desktop вместо приложения). Причина: WebView держит устаревший
+ * HTML → ссылки на чанки прошлого деплоя дают 404 → ни один скрипт не
+ * запускается → React никогда не монтируется, а существующие экраны ошибок
+ * (page.tsx, error.tsx) сами живут в React и не могут показаться.
+ *
+ * Этот инлайн-скрипт исполняется ИЗ HTML (сеть не нужна, до гидрации):
+ *  1) мгновенно рисует брендированную шторку (лого + спиннер) вместо пустоты;
+ *  2) ловит ошибки загрузки script/link (404 чанков после деплоя) и один раз
+ *     за 45с автоматически перезагружает страницу — свежий HTML тянет свежие
+ *     чанки, приложение самолечится без участия пользователя;
+ *  3) ватчдог: 8с — «Медленное соединение…», 14с — кнопка «Перезагрузить»
+ *     (мин. 44px, тач-стандарт). Если React всё же поднялся — page.tsx
+ *     вызывает hideBootShell() в первом эффекте: шторка гаснет и таймеры
+ *     отменяются, пользователь кнопку не видит.
+ *
+ * Шторка создаётся скриптом (НЕ статичным HTML), поэтому React ею не
+ * управляет и hydration-mismatch невозможен. ВАЖНО: это РАСШИРЕННЫЙ <script>
+ * в JSX, а НЕ next/script — beforeInteractive-скрипты Next исполняет из
+ * __next_s (flight-данных) КОДОМ ВНУТРИ ЧАНКОВ, которого при 404 чанков нет.
+ * Сырой <script> исполняется браузером прямо из HTML — работает всегда.
+ * Цвета: CSS-переменные themeInit (здоровый бут) → фолбэк на localStorage
+ * (битый бут: __next_s не исполнился) → светлая/тёмная константа.
+ */
+const bootGuard = `try{
+(function(){
+  if(document.getElementById('tgfeed-boot-shell'))return;
+  var h=document.documentElement;
+  var st=document.createElement('style');
+  st.id='tgfeed-boot-style';
+  st.textContent='@keyframes tgfeed-boot-spin{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){#tgfeed-boot-shell *{animation:none!important}}';
+  (document.head||h).appendChild(st);
+  var s=document.createElement('div');
+  s.id='tgfeed-boot-shell';
+  s.setAttribute('role','status');
+  s.style.cssText='position:fixed;inset:0;z-index:2147483000;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;transition:opacity .3s ease;user-select:none;-webkit-user-select:none';
+  var icon=document.createElement('div');
+  icon.style.cssText='width:80px;height:80px;border-radius:24px;display:flex;align-items:center;justify-content:center;box-shadow:0 14px 36px rgba(41,169,235,.32)';
+  icon.innerHTML='<svg width="42" height="42" viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M21.9 3.1 2.9 10.6c-.95.37-.9 1.72.08 2l4.86 1.44 1.7 5.5c.28.9 1.45 1.05 1.95.25l2.5-4.1 4.9 3.6c.75.55 1.82.14 2-.78l3.1-14.1c.2-.94-.72-1.72-1.6-1.38Z" fill="#fff"/></svg>';
+  var spin=document.createElement('div');
+  spin.style.cssText='width:26px;height:26px;border-radius:50%;border:3px solid rgba(125,135,150,.22)';
+  var msg=document.createElement('div');
+  msg.style.cssText='font-size:13px;line-height:1.5;text-align:center;max-width:280px;min-height:20px;padding:0 16px';
+  s.appendChild(icon);s.appendChild(spin);s.appendChild(msg);
+  (document.body||h).appendChild(s);
+  var accentVal='#29a9eb';
+  var DARKS=${DARK_PRESET_IDS};
+  var tint=function(){
+    try{
+      var dark=h.classList.contains('dark');
+      var acc='';var bg='';
+      try{acc=getComputedStyle(h).getPropertyValue('--tg-theme-button-color').trim()}catch(e){}
+      try{bg=getComputedStyle(h).getPropertyValue('--tg-theme-bg-color').trim()}catch(e){}
+      if(!bg||!acc){
+        var t='';try{t=localStorage.getItem('tgfeed_theme')||''}catch(e){}
+        if(!bg&&t==='custom'){
+          var ct=null;try{ct=JSON.parse(localStorage.getItem('${CUSTOM_THEME_KEY}')||'null')}catch(e){}
+          if(ct&&/^#[0-9a-fA-F]{6}$/.test(ct.bg||'')){
+            bg=ct.bg;
+            var c=[parseInt(ct.bg.slice(1,3),16),parseInt(ct.bg.slice(3,5),16),parseInt(ct.bg.slice(5,7),16)];
+            dark=(0.2126*c[0]+0.7152*c[1]+0.0722*c[2])/255<${CUSTOM_LUM_THRESHOLD};
+          }
+        }
+        if(!bg)bg=DARKS.indexOf(t)>=0||dark?'#0e141c':'#ffffff';
+      }
+      if(!acc)acc=dark?'#3ba3d6':'#29a9eb';
+      accentVal=acc;
+      s.style.background=bg;
+      icon.style.background=acc;
+      icon.style.boxShadow='0 14px 36px '+(dark?'rgba(0,0,0,.45)':'rgba(41,169,235,.32)');
+      spin.style.borderTopColor=acc;
+      msg.style.color=dark?'#98a2b3':'#6b7280';
+    }catch(e){}
+  };
+  tint();
+  var T=[];var w=window;w.__bootShellTimers=T;
+  var hidden=false;
+  var hide=function(){
+    if(hidden)return;hidden=true;
+    try{
+      s.style.opacity='0';s.style.pointerEvents='none';
+      setTimeout(function(){if(s.parentNode)s.parentNode.removeChild(s)},350);
+    }catch(e){}
+  };
+  w.__bootShell={hide:hide,tint:tint};
+  var guardReload=function(){
+    try{
+      var last=Number(sessionStorage.getItem('tgfeed_boot_reload_at')||0);
+      if(Date.now()-last<45000)return;
+      sessionStorage.setItem('tgfeed_boot_reload_at',String(Date.now()));
+      location.reload();
+    }catch(e){}
+  };
+  /* 404 чанков прошлого деплоя: ошибка ресурса в capture-фазе */
+  window.addEventListener('error',function(ev){
+    try{
+      var t=ev.target;if(!t||!t.tagName)return;
+      var tag=t.tagName.toUpperCase();
+      if(tag!=='SCRIPT'&&tag!=='LINK')return;
+      guardReload();
+    }catch(e){}
+  },true);
+  /* Часть браузеров кидает ошибку чанка как unhandledrejection */
+  var chunkRe=/Loading chunk \\d+ failed|ChunkLoadError|dynamically imported module|Importing a module script failed/i;
+  window.addEventListener('unhandledrejection',function(ev){
+    try{
+      var r=ev&&ev.reason;var m=r&&(r.message||String(r));
+      if(m&&chunkRe.test(m))guardReload();
+    }catch(e){}
+  });
+  /* Ватчдог: не мешаем нормальной загрузке — просто честный статус */
+  T.push(setTimeout(function(){try{if(!hidden)msg.textContent='Медленное соединение…'}catch(e){}},8000));
+  T.push(setTimeout(function(){
+    try{
+      if(hidden)return;
+      msg.textContent='';
+      var b=document.createElement('button');
+      b.type='button';
+      b.textContent='Перезагрузить';
+      b.setAttribute('aria-label','Перезагрузить приложение');
+      b.style.cssText='min-height:44px;padding:0 26px;border:none;border-radius:999px;font-size:15px;font-weight:600;color:#fff;cursor:pointer;background:'+accentVal;
+      b.onclick=function(){try{sessionStorage.setItem('tgfeed_boot_reload_at',String(Date.now()))}catch(e){}location.reload()};
+      msg.appendChild(b);
+      var hint=document.createElement('div');
+      hint.style.cssText='font-size:12px;margin-top:2px';
+      hint.textContent='Страница загрузилась не полностью';
+      msg.appendChild(hint);
+    }catch(e){}
+  },14000));
+})();
+}catch(e){}`
 
 export default function RootLayout({
   children,
@@ -200,6 +334,14 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased bg-background text-foreground`}
       >
+        {/*
+          v5.84 BOOT GUARD — ПЕРВЫМ делом, РАСШИРЕННЫЙ <script> (не next/script!):
+          beforeInteractive-инлайны Next исполняет кодом из чанков (__next_s),
+          которого при 404 чанков нет — а этот тег браузер исполняет прямо из
+          HTML. Рисует шторку загрузки и чинит авто-перезагрузку при 404 чанков
+          (см. комментарий у bootGuard выше).
+        */}
+        <script dangerouslySetInnerHTML={{ __html: bootGuard }} />
         <Script id="tgfeed-theme-init" strategy="beforeInteractive">
           {themeInit}
         </Script>
