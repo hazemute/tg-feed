@@ -70,3 +70,4 @@ scripts/tmp/
 scripts/probe-*.ts
 scripts/run-migration.ts
 scripts/*.result.json
+shots/
