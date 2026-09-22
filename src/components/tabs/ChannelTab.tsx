@@ -27,7 +27,6 @@ import {
   Trash2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { copyText } from '@/lib/clipboard'
 import { toast } from 'sonner'
 import { api, apiCached, invalidateApiCache } from '@/lib/api'
 import { useApp } from '@/lib/store'
@@ -171,6 +170,23 @@ export function ChannelTab() {
   useEffect(() => {
     if (user) void load()
   }, [user, load])
+
+  /* v5.80: ЖИВАЯ СТАТИСТИКА — тихий опрос каждые 20с, пока вкладка открыта и
+     видима (просмотры/лайки/живые подписчики приезжают без перезагрузки экрана;
+     спиннеры/скелетоны не трогаем — цифры просто меняются на глазах). */
+  useEffect(() => {
+    if (!user) return
+    const iv = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      void api<MyChannelResponse>('/api/mychannel')
+        .then((r) => {
+          setData(r)
+          setActiveId((prev) => prev ?? r.channels[0]?.id ?? null)
+        })
+        .catch(() => {}) // фоновый тик: сбои молча ждём следующего
+    }, 20_000)
+    return () => clearInterval(iv)
+  }, [user])
 
   const channel = useMemo(
     () => data?.channels.find((c) => c.id === activeId) ?? data?.channels[0] ?? null,
@@ -505,23 +521,42 @@ function LiveSection({ channel, onOpen }: { channel: MyChannelDTO; onOpen: () =>
 function ClaimCard({ onDone }: { onDone: () => void }) {
   const [username, setUsername] = useState('')
   const [busy, setBusy] = useState(false)
-  const [stage, setStage] = useState<'input' | 'code'>('input')
-  const [code, setCode] = useState('')
+  // input → добавление бота (ожидание прав) → готово
+  const [stage, setStage] = useState<'input' | 'bot' | 'done'>('input')
   const [title, setTitle] = useState('')
-  const [copied, setCopied] = useState(false)
+  const [deepLink, setDeepLink] = useState('')
+  const [botUser, setBotUser] = useState('')
+  const [claimError, setClaimError] = useState<string | null>(null)
+
+  const cleanName = username.trim().replace(/^@/, '')
 
   const start = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!username.trim() || busy) return
+    if (!cleanName || busy) return
     setBusy(true)
+    setClaimError(null)
     try {
-      const r = await api<{ ok: boolean; code: string; title: string }>('/api/mychannel', {
+      const r = await api<{
+        ok: boolean
+        claimed?: boolean
+        title: string
+        botUsername?: string
+        deepLink?: string
+      }>('/api/mychannel', {
         method: 'POST',
-        body: JSON.stringify({ action: 'claimStart', username: username.trim() }),
+        body: JSON.stringify({ action: 'claimStart', username: cleanName }),
       })
-      setCode(r.code)
       setTitle(r.title)
-      setStage('code')
+      setBotUser(r.botUsername ?? '')
+      if (r.claimed) {
+        // Канал уже ваш (повторный вход) или бот уже админ — привязка завершена
+        setStage('done')
+        haptic('success')
+        window.setTimeout(onDone, 900)
+        return
+      }
+      setDeepLink(r.deepLink ?? `https://t.me/${r.botUsername ?? ''}?startchannel&admin`)
+      setStage('bot')
       haptic('success')
     } catch (err) {
       toast.error((err as Error).message || 'Не удалось найти канал')
@@ -531,30 +566,80 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
     }
   }
 
-  const verify = async () => {
-    if (busy) return
+  /* Опрос статуса: вебхук завершает привязку мгновенно после добавления бота,
+     здесь мы лишь замечаем это. Параллельно сервер сам проверяет права бота —
+     покрывает случай «бот был админом ещё до заявки». Останавливаемся через 5
+     минут (не крутим вечный цикл, если юзер ушёл думать). */
+  useEffect(() => {
+    if (stage !== 'bot' || !cleanName) return
+    let stopped = false
+    let ticks = 0
+    const tick = async () => {
+      if (stopped) return
+      ticks += 1
+      if (ticks > 60) return // 5 мин опроса — дальше только вручную
+      try {
+        const r = await api<{ claimed?: boolean; taken?: boolean; botAdmin?: boolean }>(
+          `/api/mychannel/claim-status?username=${encodeURIComponent(cleanName)}`,
+        )
+        if (stopped) return
+        if (r.claimed) {
+          setStage('done')
+          haptic('success')
+          window.setTimeout(onDone, 900)
+          return
+        }
+        if (r.taken) {
+          setClaimError('Канал привязан к другому аккаунту')
+          return
+        }
+        if (r.botAdmin) {
+          // Бот админ, но заявка не нашлась — завершаем повторным claimStart
+          const s = await api<{ claimed?: boolean }>('/api/mychannel', {
+            method: 'POST',
+            body: JSON.stringify({ action: 'claimStart', username: cleanName }),
+          })
+          if (s.claimed && !stopped) {
+            setStage('done')
+            haptic('success')
+            window.setTimeout(onDone, 900)
+            return
+          }
+        }
+      } catch {
+        /* сеть моргнула — следующий тик повторит */
+      }
+      if (!stopped) timer = window.setTimeout(tick, 5000)
+    }
+    let timer = window.setTimeout(tick, 4000)
+    return () => {
+      stopped = true
+      clearTimeout(timer)
+    }
+  }, [stage, cleanName, onDone])
+
+  const manualCheck = async () => {
+    if (busy || !cleanName) return
     setBusy(true)
+    setClaimError(null)
     try {
-      await api('/api/mychannel', {
-        method: 'POST',
-        body: JSON.stringify({ action: 'claimVerify', username: username.trim(), code }),
-      })
-      haptic('success')
-      onDone()
+      const r = await api<{ claimed?: boolean; taken?: boolean; botAdmin?: boolean }>(
+        `/api/mychannel/claim-status?username=${encodeURIComponent(cleanName)}`,
+      )
+      if (r.claimed) {
+        setStage('done')
+        haptic('success')
+        window.setTimeout(onDone, 900)
+      } else if (r.taken) {
+        setClaimError('Канал привязан к другому аккаунту')
+      } else if (r.botAdmin === false) {
+        toast.info('Бот пока не админ канала — добавьте его и нажмите проверить')
+        haptic('light')
+      }
     } catch (err) {
-      toast.error((err as Error).message || 'Код пока не найден в канале')
-      haptic('error')
+      toast.error((err as Error).message || 'Проверка не удалась')
     } finally {
       setBusy(false)
-    }
-  }
-
-  const copy = async () => {
-    // фолбэк execCommand — iframe Telegram Web может запрещать clipboard-write
-    if (await copyText(code)) {
-      setCopied(true)
-      haptic('light')
-      setTimeout(() => setCopied(false), 1600)
     }
   }
 
@@ -562,7 +647,7 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
     <motion.div
       initial={{ opacity: 0, y: 10 }}
       animate={{ opacity: 1, y: 0 }}
-      className="mt-6 overflow-hidden rounded-2xl border border-tg-sep/60 bg-tg-surface/50"
+      className="mt-2 overflow-hidden rounded-2xl border border-tg-sep/60 bg-tg-surface/50"
     >
       <div className="flex items-center gap-3 px-5 pt-5">
         <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-tg-link/15">
@@ -570,7 +655,7 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
         </span>
         <div>
           <div className="text-[17px] font-bold text-tg-text">Привяжите канал</div>
-          <div className="text-[13px] text-tg-hint">Без модерации и ожидания — за 2 минуты</div>
+          <div className="text-[13px] text-tg-hint">Добавьте бота — без кодов и постов</div>
         </div>
       </div>
 
@@ -579,8 +664,8 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
           <div className="mt-4 space-y-2.5 px-5">
             {[
               'Укажите @юзернейм публичного канала',
-              'Опубликуйте код-слово постом в канале',
-              'Подтвердите — статистика и реклама откроются',
+              'Добавьте бота администратором канала',
+              'Готово — посты и статистика появятся мгновенно',
             ].map((t, i) => (
               <div key={i} className="flex items-center gap-2.5 text-[13.5px] text-tg-text2">
                 <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-tg-link/12 text-[11px] font-bold text-tg-link">
@@ -601,10 +686,10 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
             />
             <button
               type="submit"
-              disabled={busy || !username.trim()}
+              disabled={busy || !cleanName}
               className={cn(
                 'flex h-12 shrink-0 items-center gap-1.5 rounded-2xl px-5 text-[14.5px] font-semibold transition active:scale-95',
-                busy || !username.trim()
+                busy || !cleanName
                   ? 'cursor-not-allowed bg-tg-surface text-tg-hint'
                   : 'bg-tg-link text-white',
               )}
@@ -614,47 +699,63 @@ function ClaimCard({ onDone }: { onDone: () => void }) {
             </button>
           </form>
         </>
-      ) : (
+      ) : stage === 'bot' ? (
         <>
           <div className="mt-4 px-5">
             <p className="text-[13.5px] leading-relaxed text-tg-text2">
-              Опубликуйте этот код постом в канале{' '}
-              <span className="font-semibold text-tg-text">{title}</span> — это подтверждает, что
-              канал ваш:
+              Добавьте бота <span className="font-semibold text-tg-link">@{botUser}</span> администратором
+              в канал <span className="font-semibold text-tg-text">{title}</span> — достаточно права
+              «Публикация сообщений». Привязка завершится автоматически.
             </p>
-            <button
-              type="button"
-              onClick={copy}
-              className="mt-3 flex w-full items-center justify-between gap-3 rounded-2xl border border-dashed border-tg-link/50 bg-tg-link/[0.06] px-4 py-3.5 text-left transition active:scale-[0.99]"
-            >
-              <span className="truncate font-mono text-[15px] font-bold tracking-wide text-tg-link">
-                {code}
+            <div className="mt-3 flex items-start gap-2.5 rounded-2xl bg-tg-link/[0.07] px-4 py-3 text-[13px] text-tg-text2">
+              <Bot className="mt-0.5 h-4.5 w-4.5 shrink-0 text-tg-link" />
+              <span>
+                Бот в канале = моментальная доставка постов в миниапп и живые счётчики — без парсера
+                и задержек.
               </span>
-              <span className="flex shrink-0 items-center gap-1 text-[12px] font-semibold text-tg-hint">
-                {copied ? <Check className="h-4 w-4 text-tg-link" /> : <Copy className="h-4 w-4" />}
-                {copied ? 'Скопировано' : 'Копировать'}
-              </span>
-            </button>
+            </div>
+            {claimError && (
+              <div className="mt-3 rounded-2xl bg-tg-like/10 px-4 py-3 text-[13px] font-medium text-tg-like">
+                {claimError}
+              </div>
+            )}
           </div>
           <div className="mt-4 flex gap-2 px-5 pb-5">
             <button
               type="button"
-              onClick={verify}
-              disabled={busy}
+              onClick={() => openTelegram(deepLink)}
               className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl bg-tg-link text-[14.5px] font-semibold text-white transition active:scale-[0.98]"
             >
-              {busy ? <Loader2 className="h-4.5 w-4.5 animate-spin" /> : <Check className="h-4.5 w-4.5" />}
-              Я опубликовал код
+              <Send className="h-4.5 w-4.5" />
+              Добавить бота в канал
             </button>
+          </div>
+          <div className="flex items-center justify-between gap-2 px-5 pb-5">
+            <span className="flex items-center gap-1.5 text-[12.5px] text-tg-hint">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              Жду добавления бота…
+            </span>
             <button
               type="button"
-              onClick={() => setStage('input')}
-              className="h-12 rounded-2xl bg-tg-surface px-4 text-[14px] font-semibold text-tg-text2 active:scale-95"
+              onClick={manualCheck}
+              disabled={busy}
+              className="flex items-center gap-1.5 rounded-full bg-tg-surface px-3.5 py-2 text-[12.5px] font-semibold text-tg-text2 active:scale-95"
             >
-              Назад
+              {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+              Я добавил — проверить
             </button>
           </div>
         </>
+      ) : (
+        <div className="flex flex-col items-center gap-2 px-5 py-10 text-center">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-green-500/15">
+            <Check className="h-7 w-7 text-green-500" />
+          </span>
+          <div className="text-[17px] font-bold text-tg-text">Канал привязан!</div>
+          <div className="text-[13.5px] text-tg-hint">
+            Новые посты будут появляться в миниаппе мгновенно
+          </div>
+        </div>
       )}
     </motion.div>
   )
@@ -700,6 +801,15 @@ function ChannelHero({ channel, onReload }: { channel: MyChannelDTO; onReload: (
             </div>
             <div className="mt-0.5 truncate text-[13px] text-tg-hint">
               @{channel.username} · {channel.categoryTitle}
+            </div>
+            {/* v5.80: бот подключён — посты летят мгновенно, статистика живая.
+                Пульсирующая точка = соединение с Telegram активно. */}
+            <div className="mt-1 flex items-center gap-1.5 text-[11.5px] font-medium text-green-600 dark:text-green-500">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-500 opacity-60" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500" />
+              </span>
+              Бот подключён · обновляется в реальном времени
             </div>
           </div>
         </div>

@@ -277,6 +277,10 @@ export default function Home() {
         const res = await fetch('/api/auth', {
           headers: { Authorization: `Bearer ${existing}` },
           cache: 'no-store',
+          // v5.80: у этого fetch НЕ БЫЛО таймаута — зависший TCP (мобильная сеть,
+          // чёрная дыра прокси) оставлял сплэш навсегда: authenticate никогда
+          // не возвращался, authReady не выставлялся. 20с — как в api().
+          signal: AbortSignal.timeout(20_000),
         })
         if (res.ok) {
           const me = (await res.json()) as {
@@ -393,7 +397,15 @@ export default function Home() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      await authenticate()
+      // v5.80: authenticate больше не может уронить этот эффект неожиданным
+      // исключением — раньше любое необработанное исключение (глюк webview,
+      // отсутствие AbortSignal.timeout в старых клиентах) оставлял authReady=false
+      // НАВСЕГДА = бесконечный сплэш. Теперь готовность ставится всегда.
+      try {
+        await authenticate()
+      } catch {
+        setAuthError(true)
+      }
       if (!cancelled) setAuthReady(true)
     })()
     return () => {
@@ -414,6 +426,25 @@ export default function Home() {
     window.addEventListener('tgfeed:unauthorized', onUnauthorized)
     return () => window.removeEventListener('tgfeed:unauthorized', onUnauthorized)
   }, [authenticate])
+
+  /*
+   * v5.80 ВАТЧДОГ СПЛЭША — гарантия против «бесконечного загрузочного экрана».
+   * Какой бы ни была причина зависания (чёрная дыра мобильной сети, глухой
+   * прокси, необработанное исключение в старом webview, зависший запрос без
+   * таймаута): если за 12с приложение так и не вышло из сплэша — принудительно
+   * открываем экран «Повторить». Нормальный вход занимает 1-3с, поэтому ватчдог
+   * вживую не срабатывает никогда; если поздний ответ всё же придёт — он
+   * молча доведёт приложение до ленты поверх экрана ошибки (самоизлечение).
+   */
+  useEffect(() => {
+    const stuckOnSplash = !needLogin && !authError && (!authReady || !user || !splashMinDone)
+    if (!stuckOnSplash) return
+    const t = setTimeout(() => {
+      setAuthError(true)
+      setAuthReady(true)
+    }, 12_000)
+    return () => clearTimeout(t)
+  }, [needLogin, authError, authReady, user, splashMinDone])
 
   /*
    * v5.45 DEEP-LINK ИЗ УВЕДОМЛЕНИЯ БОТА: кнопка «Перейти к уведомлению»
@@ -503,7 +534,7 @@ export default function Home() {
       )
     }
     if (authReady && !user && authError) {
-      return <AuthErrorScreen onRetry={() => { setAuthError(false); setAuthReady(false); void authenticate().finally(() => setAuthReady(true)) }} />
+      return <AuthErrorScreen onRetry={() => { setAuthError(false); setAuthReady(false); void authenticate().catch(() => setAuthError(true)).finally(() => setAuthReady(true)) }} />
     }
     return <Splash />
   }

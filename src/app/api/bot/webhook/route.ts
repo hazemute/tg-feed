@@ -36,6 +36,8 @@ import {
   FORWARD_SOURCE_CAP,
 } from '@/lib/source-profile'
 import { FORWARD_SOURCES_GOAL } from '@/lib/giveaway-tickets'
+import { ingestChannelPost, type TgChannelMessage } from '@/lib/channel-ingest'
+import { getChatInfo } from '@/lib/tg-bot'
 
 export const dynamic = 'force-dynamic'
 /**
@@ -122,13 +124,34 @@ async function healWebhook(request: Request): Promise<void> {
     })
     const info = (await infoRes.json().catch(() => null)) as {
       ok?: boolean
-      result?: { url?: string; last_error_message?: string; pending_update_count?: number }
+      result?: {
+        url?: string
+        last_error_message?: string
+        pending_update_count?: number
+        allowed_updates?: string[]
+      }
     } | null
     const currentUrl = info?.result?.url ?? ''
-    if (currentUrl === expectedUrl) return // уже здоров
+    /* v5.80: перерегистрируем не только при расхождении URL, но и когда в
+       allowed_updates нет новых типов апдейтов (channel_post для мгновенных
+       постов привязанных каналов) — иначе фича молча не работает до смены URL. */
+    const REQUIRED_UPDATES = [
+      'message',
+      'callback_query',
+      'business_connection',
+      'my_chat_member',
+      'channel_post',
+      'edited_channel_post',
+    ]
+    const allowed = info?.result?.allowed_updates ?? []
+    const updatesOk =
+      allowed.length === 0 // пусто = дефолт Telegram (все кроме selected) — считаем нормой
+        ? true
+        : REQUIRED_UPDATES.every((u) => allowed.includes(u))
+    if (currentUrl === expectedUrl && updatesOk) return // уже здоров
 
     console.warn(
-      `[bot/webhook] webhook URL расходится: "${currentUrl || '<пусто>'}" → "${expectedUrl}" (last_error: ${info?.result?.last_error_message ?? '—'}) — перерегистрирую`,
+      `[bot/webhook] вебхук требует перерегистрации: URL "${currentUrl || '<пусто>'}" (updates: ${allowed.join(',') || 'дефолт'}) → "${expectedUrl}" (last_error: ${info?.result?.last_error_message ?? '—'})`,
     )
 
     // 2) Перерегистрация на канонический домен (drop_pending=false — очередь доезжает)
@@ -139,7 +162,14 @@ async function healWebhook(request: Request): Promise<void> {
       body: JSON.stringify({
         url: expectedUrl,
         ...(secret ? { secret_token: secret } : {}),
-        allowed_updates: ['message', 'callback_query', 'business_connection', 'my_chat_member'],
+        allowed_updates: [
+          'message',
+          'callback_query',
+          'business_connection',
+          'my_chat_member',
+          'channel_post',
+          'edited_channel_post',
+        ],
         max_connections: 40,
         drop_pending_updates: false,
       }),
@@ -218,7 +248,9 @@ type TgUpdate = {
   }
   /** v5.70: статус самого бота в чате/канале — копим реестр BotChat
    *  (для заданий «вступай в чат» с приватным инвайтом: бот не может зайти
-   *  по ссылке сам — владелец добавляет его админом, чат приезжает сюда) */
+   *  по ссылке сам — владелец добавляет его админом, чат приезжает сюда).
+   *  v5.80: тот же апдейт ЗАВЕРШАЕТ привязку канала в «Мой канал» — юзер
+   *  добавил бота админом в свой канал (см. claim-заявку из миниаппа). */
   my_chat_member?: {
     chat?: { id?: number; title?: string; username?: string; type?: string }
     new_chat_member?: {
@@ -226,9 +258,92 @@ type TgUpdate = {
       user?: { id?: number; is_bot?: boolean }
     }
   }
+  /** v5.80: посты привязанных каналов — мгновенный инжест в ленту
+   *  (раньше пост ждал обхода t.me/s парсером — минуты задержки) */
+  channel_post?: TgChannelMessage & { chat?: { id?: number; title?: string; username?: string; type?: string } }
+  edited_channel_post?: TgChannelMessage & { chat?: { id?: number; title?: string; username?: string; type?: string } }
 }
 
 /* --------------------------- Вызовы Bot API --------------------------- */
+
+/**
+ * v5.80 — ЗАВЕРШЕНИЕ ПРИВЯЗКИ КАНАЛА через добавление бота.
+ *
+ * Юзер в «Мой канал» вводит @юзернейм канала → в БД пишется заявка
+ * claim_pending:<uname> → { userId } (см. POST /api/mychannel claimStart).
+ * Как только юзер добавляет бота администратором канала, Telegram шлёт
+ * my_chat_member — здесь находим заявку, отдаём канал заявителю и чишим заявку.
+ * Дублирующий путь самопроверки (getBotChatRights fresh) живёт в
+ * /api/mychannel/claim-status — покрывает случай «бот был админом ещё ДО
+ * заявки» (тогда my_chat_member не приходит вовсе).
+ */
+async function completePendingClaim(
+  chat: { id?: number; title?: string; username?: string },
+): Promise<{ userId: string; title: string } | null> {
+  try {
+    const uname = (chat.username ?? '').replace(/^@/, '').toLowerCase()
+    if (!uname) return null // приватный канал — привязка по юзернейму недоступна
+
+    const pendingKey = `claim_pending:${uname}`
+    const raw = await db.botSetting.findUnique({ where: { key: pendingKey } })
+    if (!raw) return null
+    let pending: { userId?: string; at?: string } | null = null
+    try {
+      pending = JSON.parse(raw.value) as { userId?: string; at?: string }
+    } catch {
+      pending = null
+    }
+    const userId = typeof pending?.userId === 'string' ? pending.userId : ''
+    const at = Date.parse(pending?.at ?? '')
+    if (!userId.startsWith('tg_') || !Number.isFinite(at) || Date.now() - at > 48 * 3600_000) {
+      await db.botSetting.delete({ where: { key: pendingKey } }).catch(() => {})
+      return null
+    }
+
+    const channel = await db.channel.findUnique({ where: { username: uname }, select: { id: true, title: true, claimedById: true } })
+    if (!channel) return null
+    if (channel.claimedById && channel.claimedById !== userId) {
+      // Уже привязан другому — заявку снимаем
+      await db.botSetting.delete({ where: { key: pendingKey } }).catch(() => {})
+      return null
+    }
+
+    await db.channel.update({
+      where: { id: channel.id },
+      data: {
+        claimedById: userId,
+        claimedAt: new Date(),
+        status: 'active',
+        // настоящий chat id вместо чернового claim_<uname> — единый формат с парсером
+        ...(chat.id != null ? { tgId: String(chat.id) } : {}),
+        ...(chat.title ? { title: chat.title.slice(0, 120) } : {}),
+      },
+    })
+    await db.botSetting.delete({ where: { key: pendingKey } }).catch(() => {})
+
+    // Вечная аватарка + подписчики из Bot API (фоном, не задерживаем апдейт)
+    void getChatInfo(uname)
+      .then((info) => {
+        if (!info) return
+        return db.channel
+          .update({
+            where: { id: channel.id },
+            data: {
+              ...(info.photoFileId ? { photoFileId: info.photoFileId, avatarFetchedAt: new Date() } : {}),
+              ...(info.members ? { membersCount: info.members } : {}),
+              ...(info.description ? { description: info.description.slice(0, 500) } : {}),
+            },
+          })
+          .catch(() => {})
+      })
+      .catch(() => {})
+
+    return { userId, title: channel.title }
+  } catch (e) {
+    console.error('[bot/webhook] completePendingClaim', e instanceof Error ? e.message.slice(0, 200) : e)
+    return null
+  }
+}
 
 type InlineButton = { text: string; callback_data?: string; url?: string }
 
@@ -950,9 +1065,31 @@ export async function POST(request: Request) {
   }
 
   try {
+    // v5.80: ПОСТ КАНАЛА ВЛАДЕЛЬЦА — мгновенный инжест в ленту (channel_post /
+    // edited_channel_post). Обрабатываем ПЕРВЫМ: это самый частый апдейт
+    // привязанных каналов, и он не должен ждать за тяжёлыми ветками.
+    const rawPost = update.channel_post ?? update.edited_channel_post
+    if (rawPost?.chat) {
+      const { chat, ...msg } = rawPost
+      const edited = update.edited_channel_post != null
+      const res = await ingestChannelPost(chat, msg as TgChannelMessage, { edited })
+      if (res.ok) {
+        console.log(
+          `[bot/webhook] channel_post @${chat.username ?? chat.id} #${msg.message_id}: ${
+            res.created ? 'created' : res.updated ? 'updated' : 'gallery+'
+          }`,
+        )
+      } else if (res.reason && res.reason !== 'канал не привязан' && res.reason !== 'канала нет в базе') {
+        console.warn(`[bot/webhook] channel_post skip: ${res.reason}`)
+      }
+      return NextResponse.json({ ok: true })
+    }
+
     // v5.70: статус бота в чате/канале (my_chat_member) — реестр BotChat для
     // заданий «вступай в чат» с приватным инвайтом. Обрабатываем ДО остального:
     // апдейт самодостаточен и не касается юзеров миниаппа.
+    // v5.80: если бот стал админом КАНАЛА — завершаем pending-привязку
+    // из «Мой канал» (юзер только что добавил бота в свой канал).
     const mcm = update.my_chat_member
     if (mcm?.chat?.id != null) {
       const status = mcm.new_chat_member?.status ?? ''
@@ -967,6 +1104,20 @@ export async function POST(request: Request) {
         })
         .catch(() => {})
       console.log(`[bot/webhook] my_chat_member: chat=${mcm.chat.id} "${title}" (${type}) → ${status}`)
+
+      if (isAdmin && type === 'channel') {
+        const claimed = await completePendingClaim(mcm.chat)
+        if (claimed) {
+          // Владелец узнаёт об успехе сразу — даже если миниапп закрыт
+          await botCall(
+            'sendMessage',
+            {
+              chat_id: claimed.userId.replace(/^tg_/, ''),
+              text: `✅ Канал «${claimed.title}» привязан к Tg Swipe!\n\nТеперь он в твоём «Моем канале»: статистика живая, а новые посты появляются в миниаппе мгновенно.`,
+            },
+          ).catch(() => {})
+        }
+      }
       return NextResponse.json({ ok: true })
     }
 

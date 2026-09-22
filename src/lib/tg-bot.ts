@@ -954,12 +954,24 @@ const rightsCache = new Map<string, { v: BotChatRights; exp: number }>()
  * Права НАШЕГО бота в канале: getMe → bot id, затем getChatMember(chat, bot_id).
  * Из статуса и флагов собирается матрица прав — ядро живого аудита:
  * ассистент ЗНАЕТ, что бот реально может (публикация/удаление/правка/закрепление).
+ *
+ * v5.80: opts.fresh — прочитать статус МИНОЯ 15-минутного кэша (нужно флоу
+ * привязки канала: юзер только что добавил бота админом, закэшированное
+ * «бот НЕ админ» блокировал бы завершение привязки на четверть часа).
+ * Свежий результат всё равно обновляет кэш — последующие вызовы быстры.
  */
-export async function getBotChatRights(username: string): Promise<BotChatRights | null> {
+export async function getBotChatRights(
+  username: string,
+  opts?: { fresh?: boolean },
+): Promise<BotChatRights | null> {
   if (!botEnabled()) return null
   const clean = username.replace(/^@/, '')
-  const cached = rightsCache.get(clean)
-  if (cached && cached.exp > Date.now()) return cached.v
+  if (!opts?.fresh) {
+    const cached = rightsCache.get(clean)
+    if (cached && cached.exp > Date.now()) return cached.v
+  } else {
+    rightsCache.delete(clean)
+  }
 
   // id бота (getMe кэшируется выше в getBotUsername только юзернеймом — тут нужен id)
   let botId: number | null = null

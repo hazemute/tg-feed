@@ -46,9 +46,17 @@ export function isTrustedMediaUrl(raw: string): boolean {
 }
 
 /** Заворачивает доверенный Telegram-CDN URL в наш прокси; остальное — как есть.
- *  Уже проксированные /api/media-ссылки не трогаем (идемпотентность). */
+ *  Уже проксированные /api/media-ссылки не трогаем (идемпотентность).
+ *  v5.80: `tgfile:<file_id>` (медиа из channel_post бота — вечный file_id) →
+ *  /api/media?fid=... — байты отдаёт наш прокси через Bot API getFile,
+ *  токен бота наружу не утекает. */
 export function proxiedMediaUrl(url: string | null | undefined): string | null | undefined {
   if (!url) return url
+  if (url.startsWith('tgfile:')) {
+    const fid = url.slice('tgfile:'.length).trim()
+    if (!fid) return url
+    return `/api/media?fid=${encodeURIComponent(fid)}`
+  }
   if (url.startsWith('/api/media?u=') || url.includes('/api/media?u=')) return url // уже проксирован
   if (!url.startsWith('https://')) return url
   if (!isTrustedMediaUrl(url)) return url

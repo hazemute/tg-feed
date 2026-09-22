@@ -7,7 +7,8 @@ import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { isValidChannelUsername } from '@/lib/server'
 import { ogAvatarOf, syncChannelAvatar } from '@/lib/avatar-store'
-import { getChatPhotoFileId } from '@/lib/tg-bot'
+import { getChatPhotoFileId, getChatInfo, getBotChatRights, getBotUsername, botEnabled, fetchLiveMembers } from '@/lib/tg-bot'
+import { setPendingClaim, popPendingClaim, completeChannelClaim, claimDeepLink, normalizeChannelUsername } from '@/lib/channel-claim'
 import {
   PRO_PROMOTE_HOT_BOOST,
   PRO_PROMOTE_MONTHLY_LIMIT,
@@ -102,6 +103,8 @@ const UA_HEADERS = {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
 } as const
 const avatarHealAt = new Map<string, number>()
+/** v5.80: троттлинг живых подписчиков (fetchLiveMembers) — 60с на канал */
+const membersRefreshAt = new Map<string, number>()
 
 async function healChannelAvatar(channelId: string, username: string): Promise<void> {
   const now = Date.now()
@@ -203,6 +206,25 @@ export async function GET(request: Request) {
       }
     }
 
+    /* v5.80: ЖИВЫЕ ПОДПИСЧИКИ. Бот — админ привязанных каналов, getChatMemberCount
+       отдаёт актуальное число прямо сейчас. Троттлинг 60с/канал: открытие
+       кабинета и 20-секундное авто-обновление UI не долбят Bot API — в окне
+       троттлинга отдаём значение, записанное в БД последним живым запросом. */
+    const liveMembers = new Map<string, number | null>()
+    const nowMs = Date.now()
+    for (const c of channels) {
+      if (!c.username) continue
+      if (nowMs - (membersRefreshAt.get(c.id) ?? 0) < 60_000) continue
+      membersRefreshAt.set(c.id, nowMs)
+      const { members } = await fetchLiveMembers(c.username).catch(() => ({ members: null, rateLimited: false }))
+      if (members != null) {
+        void db.channel
+          .update({ where: { id: c.id }, data: { membersCount: members } })
+          .catch(() => {})
+      }
+      liveMembers.set(c.id, members)
+    }
+
     const result = await Promise.all(
       channels.map(async (c) => {
         const [posts, views24h, likes, bookmarks, lastPost, campaigns] = await Promise.all([
@@ -242,7 +264,7 @@ export async function GET(request: Request) {
           // v5.33: Storage-аватарка через /api/media (CDN-кэш, экономия egress Supabase)
           // v5.69: единый хелпер — вечный photoFileId (Bot API) приоритетнее сырой ссылки
           avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
-          subscribersCount: c.membersCount ?? c.subscribersCount,
+          subscribersCount: liveMembers.get(c.id) ?? c.membersCount ?? c.subscribersCount,
           status: c.status,
           categorySlug: c.category.slug,
           categoryTitle: c.category.title,
@@ -362,6 +384,8 @@ export async function GET(request: Request) {
 
     return NextResponse.json({
       channels: result,
+      // v5.80: юзернейм бота — UI строит deep link «Добавить бота в канал»
+      botUsername: await getBotUsername(),
       advertiser: {
         balanceKop: account?.balanceKop ?? 0,
         topupsTotalKop: account?.topupsTotalKop ?? 0,
@@ -408,44 +432,54 @@ export async function POST(request: Request) {
     const d = parsed.data
 
     if (d.action === 'claimStart') {
-      const uname = normalizeUsername(d.username)
+      const uname = normalizeChannelUsername(d.username)
       if (!isValidChannelUsername(uname)) return err('Недопустимый username канала')
 
-      // Канал должен существовать в базе: создаём черновик при первом claim
+      // Бот — обязательный участник нового флоу: без него ни права не проверить,
+      // ни посты мгновенно не доставить
+      const botUsername = await getBotUsername()
+      if (!botEnabled() || !botUsername) {
+        return err('Бот временно недоступен — попробуйте чуть позже')
+      }
+
+      // Канал должен существовать в базе: создаём черновик при первом claim.
+      // v5.80: сначала Bot API getChat (реальный chat id, название, аватар,
+      // подписчики) — надёжнее веб-превью; t.me/s — фолбэк.
       let channel = await db.channel.findUnique({ where: { username: uname } })
       if (!channel) {
-        // проверяем публичность через t.me/s (заодно получаем название)
-        const res = await fetch(`https://t.me/s/${uname}`, {
-          headers: {
-            'User-Agent':
-              'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-          },
-          signal: AbortSignal.timeout(12_000),
-        }).catch(() => null)
-        if (!res || !res.ok) {
-          return err('Канал не найден или недоступен — проверьте ссылку')
+        const info = await getChatInfo(uname)
+        let title = info?.title ?? uname
+        let ogAvatar: string | null = null
+        if (!info) {
+          // фолбэк: публичность через t.me/s (заодно название и og:image)
+          const res = await fetch(`https://t.me/s/${uname}`, {
+            headers: UA_HEADERS,
+            signal: AbortSignal.timeout(12_000),
+          }).catch(() => null)
+          if (!res || !res.ok) {
+            return err('Канал не найден или недоступен — проверьте ссылку')
+          }
+          const html = await res.text()
+          title = html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] ?? uname
+          ogAvatar = ogAvatarOf(html)
         }
-        const html = await res.text()
-        const title =
-          html.match(/<meta property="og:title" content="([^"]+)"/)?.[1] ??
-          uname
-        // v5.71: аватарка СРАЗУ из og:image этого же HTML — до фикса канал
-        // создавался без аватара и навсегда оставался с серыми инициалами
-        const ogAvatar = ogAvatarOf(html)
         const fallback =
           (await db.category.findFirst({ orderBy: { order: 'asc' } })) ??
           (await db.category.create({ data: { slug: 'other', title: 'Другое', emoji: '', order: 99 } }))
         channel = await db.channel.create({
           data: {
-            tgId: `claim_${uname}`,
+            // v5.80: настоящий chat id (вместо легаси claim_<uname>) — вебхук
+            // channel_post и парсер совпадают по нему без сюрпризов
+            tgId: info?.id ?? `claim_${uname}`,
             title,
             username: uname,
             avatarColor: '#3390ec',
-            ...(ogAvatar ? { avatarUrl: ogAvatar, avatarFetchedAt: new Date() } : {}),
+            ...(info?.photoFileId ? { photoFileId: info.photoFileId, avatarFetchedAt: new Date() } : {}),
+            ...(!info?.photoFileId && ogAvatar ? { avatarUrl: ogAvatar, avatarFetchedAt: new Date() } : {}),
+            ...(info?.members ? { membersCount: info.members } : {}),
             categoryId: fallback.id,
-            // v5.48: НЕ active — иначе новый канал попадает в каталог/ленту
-            // до проверки владения (обход модерации). Активируем в claimVerify,
-            // когда владелец докажет владение кодом-словом.
+            // НЕ active — иначе канал попадает в каталог/ленту до подтверждения
+            // владения. Активируем в момент, когда бот станет админом канала.
             status: 'moderation',
           },
         })
@@ -455,12 +489,31 @@ export async function POST(request: Request) {
         return err('Этот канал уже привязан к другому аккаунту')
       }
 
+      // Уже ваш — сразу успех (повторный claimStart после привязки не ломает UI)
+      if (channel.claimedById === g.uid) {
+        return NextResponse.json({ ok: true, claimed: true, title: channel.title, botUsername })
+      }
+
+      // Бот УЖЕ админ канала (добавляли раньше) — my_chat_member не придёт,
+      // завершаем привязку немедленно
+      const rights = await getBotChatRights(uname, { fresh: true })
+      if (rights?.isAdmin) {
+        const done = await completeChannelClaim(uname, g.uid, { title: channel.title })
+        if (done.ok) {
+          return NextResponse.json({ ok: true, claimed: true, title: done.title ?? channel.title, botUsername })
+        }
+        if (done.takenByOther) return err('Этот канал уже привязан к другому аккаунту')
+      }
+
+      // Обычный путь: заявка + инструкция «добавьте бота админом»
+      await setPendingClaim(uname, g.uid)
       return NextResponse.json({
         ok: true,
-        code: claimCodeFor(channel.id),
+        claimed: false,
         title: channel.title,
-        instructions:
-          'Опубликуйте этот код отдельным постом в канале (можно сразу удалить после проверки). Код виден только администраторам канала.',
+        botUsername,
+        deepLink: claimDeepLink(botUsername),
+        instructions: 'Добавьте бота администратором в канал — привязка завершится автоматически.',
       })
     }
 

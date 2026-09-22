@@ -44,6 +44,58 @@ const BROWSER_UA =
 
 /** Порог параллельной докачки: файлы меньше качаются одним соединением */
 const PARALLEL_MIN_BYTES = 96 * 1024
+
+/* ------------------------------------------------------------------ */
+/* v5.80 — РЕЖИМ fid: раздача медиа по file_id (channel_post бота).     */
+/* Бот получает вечный file_id из поста канала; клиенту отдаём          */
+/* /api/media?fid=... — здесь резолвим через Bot API getFile в file_path */
+/* (живёт ≥1ч, кэш 40 мин) и качаем байты с api.telegram.org. Токен     */
+/* бота наружу не утекает — клиент видит только наш прокси.             */
+/* ------------------------------------------------------------------ */
+
+const FID_CACHE_TTL_MS = 40 * 60_000
+const fidPaths = new Map<string, { url: string; exp: number; type: string }>()
+const FID_TYPE_BY_EXT: Record<string, string> = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  gif: 'image/gif', mp4: 'video/mp4', webm: 'video/webm', mov: 'video/quicktime',
+  mp3: 'audio/mpeg', ogg: 'audio/ogg', oga: 'audio/ogg', opus: 'audio/ogg',
+  pdf: 'application/pdf', zip: 'application/zip',
+}
+
+async function resolveFileIdUrl(fidRaw: string): Promise<{ url: string; type: string } | null> {
+  const fid = fidRaw.trim()
+  if (!fid || fid.length > 400 || /[\s\r\n]/.test(fid)) return null // file_id — однoстрочный base64url
+  const token = process.env.TELEGRAM_BOT_TOKEN?.trim()
+  if (!token) return null
+  const hit = fidPaths.get(fid)
+  if (hit && hit.exp > Date.now()) return { url: hit.url, type: hit.type }
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/getFile`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ file_id: fid }),
+      signal: AbortSignal.timeout(8000),
+    })
+    const data = (await res.json().catch(() => null)) as {
+      ok?: boolean
+      result?: { file_path?: string }
+    } | null
+    const path = data?.ok ? data.result?.file_path : null
+    if (!path) return null
+    const ext = (path.split('.').pop() ?? '').toLowerCase().slice(0, 5)
+    const entry = {
+      url: `https://api.telegram.org/file/bot${token}/${path}`,
+      type: FID_TYPE_BY_EXT[ext] ?? 'application/octet-stream',
+      exp: Date.now() + FID_CACHE_TTL_MS,
+    }
+    // LRU-гигиена: карта маленькая, но ограничим на всякий случай
+    if (fidPaths.size > 2000) fidPaths.clear()
+    fidPaths.set(fid, entry)
+    return { url: entry.url, type: entry.type }
+  } catch {
+    return null
+  }
+}
 /** Целевой размер одного диапазона (больше диапазонов — быстрее, но дороже) */
 const RANGE_TARGET_BYTES = 768 * 1024
 const RANGE_MIN_CONNECTIONS = 3
@@ -185,7 +237,7 @@ export async function GET(request: Request) {
   if (!ip.ok) return ip.res
 
   const { searchParams } = new URL(request.url)
-  const raw = searchParams.get('u')
+  let raw = searchParams.get('u')
   const asDownload = searchParams.get('dl') === '1'
   /* v5.60: параметры сжатия — w в [64..2048], q в [30..90]; без w — оригинал.
      ВАЖНО: clamp применяем только когда w реально передан (иначе фолбэк в 64
@@ -194,6 +246,16 @@ export async function GET(request: Request) {
   const wantW = wRaw > 0 ? Math.max(64, Math.min(2048, wRaw)) : 0
   const wantQ = Math.max(30, Math.min(90, Number(searchParams.get('q')) || 70))
   const resizeKey = wantW ? `w${wantW}q${wantQ}` : ''
+  /* v5.80: режим fid — медиа поста канала по file_id (см. блок выше).
+     Резолвим file_path заранее: дальше файл идёт по обычному конвейеру
+     (L0 → параллельная докачка → стрим), как будто это обычный URL. */
+  if (!raw && searchParams.get('fid')) {
+    const resolved = await resolveFileIdUrl(searchParams.get('fid') ?? '')
+    if (!resolved) {
+      return new NextResponse('file not found', { status: 404, headers: MEDIA_ERR_HEADERS })
+    }
+    raw = resolved.url
+  }
   if (!raw || !isTrustedMediaUrl(raw)) {
     return new NextResponse('bad url', {
       status: 400,

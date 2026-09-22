@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   Area,
   AreaChart,
@@ -184,20 +184,34 @@ function TopList({
 export function ChannelCabinet({ username, title }: { username: string; title: string }) {
   const [stats, setStats] = useState<ChannelStatsDTO | null>(null)
   const [failed, setFailed] = useState(false)
+  const statsRef = useRef<ChannelStatsDTO | null>(null)
 
   useEffect(() => {
     let alive = true
     // состояние сбрасывается ремонтом по key={username} (см. ChannelSheet) —
     // здесь только загрузка; setState — асинхронные колбэки
-    api<ChannelStatsDTO>(`/api/channel/stats?username=${encodeURIComponent(username)}`)
-      .then((d) => {
-        if (alive) setStats(d)
-      })
-      .catch(() => {
-        if (alive) setFailed(true)
-      })
+    const fetchStats = () =>
+      api<ChannelStatsDTO>(`/api/channel/stats?username=${encodeURIComponent(username)}`)
+        .then((d) => {
+          if (alive) {
+            statsRef.current = d
+            setStats(d)
+            setFailed(false)
+          }
+        })
+        .catch(() => {
+          if (alive && !statsRef.current) setFailed(true) // фоновые сбои не убивают экран
+        })
+    void fetchStats()
+    /* v5.80: живой дашборд — тихий опрос 30с, пока вкладка видима.
+       Просмотры/ER/динамика обновляются на глазах, без перезагрузки. */
+    const iv = setInterval(() => {
+      if (document.visibilityState !== 'visible') return
+      void fetchStats()
+    }, 30_000)
     return () => {
       alive = false
+      clearInterval(iv)
     }
   }, [username])
 

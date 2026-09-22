@@ -219,6 +219,8 @@ export type MyChannelDTO = {
 export type MyChannelResponse = {
   channels: MyChannelDTO[]
   advertiser: AdvertiserDTO
+  /** v5.80: юзернейм бота — для deep link «Добавить бота в канал» (привязка) */
+  botUsername?: string | null
   /** Тариф владельца канала (учитывает срок подписки) */
   tier: 'free' | 'plus' | 'pro'
   /** Продвижение в ленте (Snap Pro): использовано бесплатных за текущий месяц + кредиты пакета */
