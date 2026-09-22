@@ -475,7 +475,7 @@ export function SubscriptionsTab({ tick, onSettled }: TabProps) {
               <ScrollText className="size-4 text-slate-500" aria-hidden /> Последние оплаченные тарифы
             </CardTitle>
             <CardDescription className="text-xs text-slate-500">
-              Успешные платежи ЮKassa / Stars / TON по подпискам
+              Успешные платежи Platega / Stars / TON по подпискам
             </CardDescription>
           </CardHeader>
           <CardContent>

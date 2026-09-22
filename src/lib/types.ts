@@ -324,10 +324,10 @@ export type TiersResponse = {
     'plus' | 'pro',
     { monthKop: number; yearKop: number; monthStars: number; yearStars: number }
   >
-  methods: { card: boolean; stars: boolean; ton: boolean }
+  methods: { card: boolean; stars: boolean; ton: boolean; sbp: boolean }
   /** Кошелёк сессии (v5.39): когда рублей хватает на тариф — показываем «С баланса» */
   wallet?: { balanceKop: number; swipes: number } | null
-  /** Реквизиты исполнителя для документов и требований СБ ЮKassa (env) */
+  /** Реквизиты исполнителя для документов и оферты Platega (env) */
   legal: { name: string; inn: string; email: string }
 }
 

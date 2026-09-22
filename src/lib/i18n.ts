@@ -363,7 +363,7 @@ const DICT = {
   'topup.tabCard': ['Карта', 'Card'],
   'topup.tabStars': ['Stars', 'Stars'],
   'topup.tabTon': ['TON', 'TON'],
-  'topup.cardSub': ['Оплата в один экран · ЮKassa', 'One-screen checkout · YooKassa'],
+  'topup.cardSub': ['Оплата картой/СБП · Platega', 'Card/SBP checkout · Platega'],
   'topup.starsSub': ['Оплата в самом Telegram', 'Pay right in Telegram'],
   'topup.tonSub': ['Tonkeeper и любые TON-кошельки', 'Tonkeeper and any TON wallet'],
   'topup.soon': ['Скоро', 'Soon'],

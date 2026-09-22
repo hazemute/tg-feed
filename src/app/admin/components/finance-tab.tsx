@@ -98,7 +98,8 @@ function StatCard({
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
-  yookassa: 'ЮKassa (карта)',
+  yookassa: 'ЮKassa (архив до 09.2026)',
+  platega: 'Platega (СБП/карта)',
   stars: 'Telegram Stars',
   ton: 'TON',
 }

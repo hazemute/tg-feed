@@ -26,7 +26,7 @@ export async function POST(request: Request) {
   if (!g.ok) return g.res
 
   if (!plategaEnabled()) {
-    return err('Оплата через СБП/карту скоро появится. Сейчас доступны карта (ЮKassa), Stars и TON.', 503)
+    return err('Оплата через СБП/карту скоро появится. Сейчас доступны Stars и TON.', 503)
   }
 
   try {

@@ -1,22 +1,29 @@
 /**
- * QA: тестовый юзер с балансом + JWT для браузерных проверок кошелька.
- * Запуск: bun scripts/tmp-qa-wallet-token.ts
+ * QA: тестовый юзер (не гость, обход техработ) + JWT для браузерных проверок.
+ * Запуск: bun scripts/tmp-qa-token-583.ts
  */
 import crypto from 'crypto'
 import { PrismaClient } from '@prisma/client'
 
 const p = new PrismaClient()
-let uid: string = 'qa_wallet_tester'
+const uid = 'qa_wallet_tester'
 
 try {
   const existing = await p.user.findUnique({ where: { id: uid } })
+  const data = {
+    isGuest: false,
+    bypassMaintenance: true,
+    swipes: 25_000,
+    balanceKop: 150_000,
+    tier: 'pro' as const,
+    tierUntil: new Date(Date.now() + 86_400_000 * 30),
+  }
   if (existing) {
-    await p.user.update({ where: { id: uid }, data: { swipes: 25_000, balanceKop: 150_000 } })
+    await p.user.update({ where: { id: uid }, data })
   } else {
-    const any = await p.user.findFirst({ select: { id: true }, orderBy: { id: 'asc' } })
-    if (!any) throw new Error('no users in db')
-    uid = any.id
-    await p.user.update({ where: { id: uid }, data: { swipes: 25_000, balanceKop: 150_000 } })
+    await p.user.create({
+      data: { id: uid, username: 'qa_wallet_tester', firstName: 'QA Wallet', ...data },
+    })
   }
   const env = await Bun.file('.env').text()
   const m = env.match(/AUTH_SECRET=(\S+)/)
@@ -26,7 +33,7 @@ try {
     Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   const now = Math.floor(Date.now() / 1000)
   const h = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))
-  const pl = b64url(JSON.stringify({ uid, guest: true, iat: now, exp: now + 86_400 * 7 }))
+  const pl = b64url(JSON.stringify({ uid, guest: false, iat: now, exp: now + 86_400 * 7 }))
   const sig = b64url(crypto.createHmac('sha256', SECRET).update(`${h}.${pl}`).digest())
   console.log('TOKEN=' + `${h}.${pl}.${sig}`)
 } catch (e) {

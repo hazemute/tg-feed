@@ -5,15 +5,15 @@ import { err, readJson } from '@/lib/server'
 import { guardAuth } from '@/lib/guard'
 import { PROMOTE_PACKS, promotePackById, tierAtLeast, tierOfUser } from '@/lib/tiers'
 import { paymentMethods } from '@/lib/payments'
-import { yookassaCreatePayment, yookassaEnabled } from '@/lib/yookassa'
+import { plategaCreatePayment, plategaEnabled, PLATEGA_METHOD } from '@/lib/platega'
 import { buyPromotePackWithBalance, payWithBalance, refundToBalance } from '@/lib/wallet'
 
 export const dynamic = 'force-dynamic'
 
 const buySchema = z.object({
   // balance — вся сумма с рублёвого кошелька (мгновенно);
-  // half — 50/50: половина с баланса сейчас + счёт на половину картой;
-  // card — счёт на всю сумму картой (ЮKassa embedded).
+  // half — 50/50: половина с баланса сейчас + счёт на половину картой (Platega);
+  // card — счёт на всю сумму картой (Platega, redirect).
   method: z.enum(['balance', 'half', 'card']),
   // v5.74: тир пакета (starter=1 · growth=3 · max=10). Пропуск → growth.
   pack: z.enum(['starter', 'growth', 'max']).optional(),
@@ -32,8 +32,10 @@ const buySchema = z.object({
  *    (buyPromotePackWithBalance), без карт и счетов;
  *  - half: половина списывается с баланса (атомарно, журнал 'purchase'),
  *    на вторую половину создаётся PendingPayment purpose='promote_pack_half'
- *    и счёт ЮKassa; при отмене счёта вебхук возвращает списанную половину;
- *  - card: PendingPayment purpose='promote_pack' на всю сумму + счёт ЮKassa.
+ *    и счёт Platega (v5.83, ЮKassa отключена); при отмене счёта вебхук
+ *    возвращает списанную половину;
+ *  - card: PendingPayment purpose='promote_pack' на всю сумму + счёт Platega
+ *    (redirect на страницу оплаты провайдера).
  * Зачисление кредитов по счёту — идемпотентно (creditPendingPayment:
  * pending → succeeded атомарно, ретраи вебхука не задвоят кредиты).
  */
@@ -109,9 +111,9 @@ export async function POST(request: Request) {
       })
     }
 
-    /* 50/50: половина с баланса сейчас + счёт на половину картой */
+    /* 50/50: половина с баланса сейчас + счёт на половину картой (Platega) */
     if (method === 'half') {
-      if (!yookassaEnabled()) {
+      if (!plategaEnabled()) {
         return err('Оплата картой скоро появится. Сейчас доступна оплата с баланса.', 503)
       }
       const halfKop = Math.ceil(priceKop / 2)
@@ -126,34 +128,35 @@ export async function POST(request: Request) {
           data: {
             userId: g.uid,
             amountKop: halfKop,
-            provider: 'yookassa',
+            provider: 'platega',
             purpose: purposeHalf,
           },
           select: { id: true },
         })
-        const yk = await yookassaCreatePayment({
+        const created = await plategaCreatePayment({
           amountKop: halfKop,
-          description: `Tg Swipe: пакет продвижений ×${count} · вторая половина (50/50)`,
           paymentId: payment.id,
+          description: `Tg Swipe: пакет продвижений ×${count} · вторая половина (50/50)`,
+          method: PLATEGA_METHOD.CARD_RU,
         })
-        if (!yk || !yk.confirmationToken) {
-          console.error('[promote-pack:half] yookassa create failed')
+        if (!created) {
+          console.error('[promote-pack:half] platega create failed')
           await db.pendingPayment.updateMany({
             where: { id: payment.id, status: 'pending' },
             data: { status: 'canceled' },
           })
           await refundToBalance(g.uid, halfKop, 'возврат: счёт не создан (пакет 50/50)')
-          return err('Эквайринг не ответил — попробуйте ещё раз', 502)
+          return err('Платёжная система не ответила — попробуйте ещё раз', 502)
         }
         await db.pendingPayment.update({
           where: { id: payment.id },
-          data: { providerPaymentId: yk.id, confirmationUrl: yk.confirmationUrl },
+          data: { providerPaymentId: created.transactionId, confirmationUrl: created.redirect },
         })
         return NextResponse.json({
           ok: true,
           method: 'half',
           paymentId: payment.id,
-          confirmationToken: yk.confirmationToken,
+          redirect: created.redirect,
         })
       } catch (e) {
         await refundToBalance(g.uid, halfKop, 'возврат: сбой счёта (пакет 50/50)').catch(() => {})
@@ -161,47 +164,44 @@ export async function POST(request: Request) {
       }
     }
 
-    /* КАРТОЙ: счёт на всю сумму (ЮKassa embedded — виджет на сайте) */
+    /* КАРТОЙ: счёт на всю сумму (Platega — redirect на страницу оплаты) */
+    if (!plategaEnabled()) {
+      return err('Оплата картой скоро появится. Сейчас доступна оплата с баланса.', 503)
+    }
+
     const payment = await db.pendingPayment.create({
       data: {
         userId: g.uid,
         amountKop: priceKop,
-        provider: 'yookassa',
+        provider: 'platega',
         purpose: purposeFull,
       },
       select: { id: true },
     })
 
-    if (!yookassaEnabled()) {
-      await db.pendingPayment.updateMany({
-        where: { id: payment.id, status: 'pending' },
-        data: { status: 'canceled' },
-      })
-      return err('Оплата картой скоро появится. Сейчас доступна оплата с баланса.', 503)
-    }
-
-    const yk = await yookassaCreatePayment({
+    const created = await plategaCreatePayment({
       amountKop: priceKop,
-      description: `Tg Swipe: пакет продвижений ×${count}`,
       paymentId: payment.id,
+      description: `Tg Swipe: пакет продвижений ×${count}`,
+      method: PLATEGA_METHOD.CARD_RU,
     })
-    if (!yk || !yk.confirmationToken) {
-      console.error('[promote-pack:card] yookassa create failed')
+    if (!created) {
+      console.error('[promote-pack:card] platega create failed')
       await db.pendingPayment.updateMany({
         where: { id: payment.id, status: 'pending' },
         data: { status: 'canceled' },
       })
-      return err('Эквайринг не ответил — попробуйте ещё раз', 502)
+      return err('Платёжная система не ответила — попробуйте ещё раз', 502)
     }
     await db.pendingPayment.update({
       where: { id: payment.id },
-      data: { providerPaymentId: yk.id, confirmationUrl: yk.confirmationUrl },
+      data: { providerPaymentId: created.transactionId, confirmationUrl: created.redirect },
     })
     return NextResponse.json({
       ok: true,
       method: 'card',
       paymentId: payment.id,
-      confirmationToken: yk.confirmationToken,
+      redirect: created.redirect,
     })
   } catch (e) {
     console.error('[promote-pack:post]', e)

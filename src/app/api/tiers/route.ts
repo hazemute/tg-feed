@@ -5,7 +5,8 @@ import { err, readJson } from '@/lib/server'
 import { guardPublic } from '@/lib/guard'
 import { aiSearchAllowance, AI_SEARCH_DAILY_LIMIT, TIER_PRICES, tierExpiryFor, tierOfUser } from '@/lib/tiers'
 import { paymentMethods } from '@/lib/payments'
-import { legalInfo, yookassaCreatePayment, yookassaEnabled } from '@/lib/yookassa'
+import { legalInfo } from '@/lib/legal'
+import { plategaCreatePayment, plategaEnabled, PLATEGA_METHOD } from '@/lib/platega'
 import { payWithBalance, refundToBalance } from '@/lib/wallet'
 
 export const dynamic = 'force-dynamic'
@@ -20,9 +21,9 @@ export const dynamic = 'force-dynamic'
  *  - method='balance' (v5.39): МГНОВЕННАЯ покупка с рублёвого кошелька, если
  *    денег хватает — без карты и Stars («за баланс покупается всё в сервисе»);
  *  - method='stars' (по умолчанию): Telegram Stars XTR-инвойс → invoiceUrl;
- *  - method='card': ЮKassa embedded → confirmation_token для виджета НА САЙТЕ
- *    (без переадресаций — требование СБ ЮKassa).
- * После оплаты (webhook ЮKassa / successful_payment бота) тир активируется
+ *  - method='card' (v5.83): Platega (карта МИР) — redirect на страницу оплаты
+ *    провайдера, статус ведут вебхук/поллинг (ЮKassa отключена полностью).
+ * После оплаты (вебхук Platega / successful_payment бота) тир активируется
  * идемпотентно (lib/payments creditPendingPayment).
  */
 
@@ -71,7 +72,7 @@ export async function GET(request: Request) {
     methods: paymentMethods(),
     // Кошелёк (v5.39): UI показывает «С баланса», когда денег хватает
     wallet,
-    // Реквизиты исполнителя: документ «Реквизиты и контакты», оферта (СБ ЮKassa)
+    // Реквизиты исполнителя: документ «Реквизиты и контакты», оферта (Platega)
     legal: legalInfo(),
   })
 }
@@ -123,7 +124,7 @@ export async function POST(request: Request) {
       data: {
         userId: g.uid,
         amountKop,
-        provider: method === 'card' ? 'yookassa' : 'stars',
+        provider: method === 'card' ? 'platega' : 'stars',
         purpose,
       },
       select: { id: true },
@@ -136,37 +137,38 @@ export async function POST(request: Request) {
         ? 'Безлимитный Snap Search, Snap Ассистент для канала, продвижение 1/мес + пакеты, CTA-кнопка, бейдж автора.'
         : 'Безлимитный Snap Search, инкогнито, приоритетная скорость, анимированные премиум-эмодзи.'
 
-    /* Карта: ЮKassa embedded (виджет на сайте, без переадресаций) */
+    /* Карта: Platega (v5.83, ЮKassa отключена) — redirect на страницу оплаты */
     if (method === 'card') {
-      if (!yookassaEnabled()) {
+      if (!plategaEnabled()) {
         await db.pendingPayment.updateMany({
           where: { id: payment.id, status: 'pending' },
           data: { status: 'canceled' },
         })
         return err('Оплата картой скоро появится. Сейчас доступна оплата в Telegram Stars.', 503)
       }
-      const yk = await yookassaCreatePayment({
+      const created = await plategaCreatePayment({
         amountKop,
-        description: `Tg Swipe: ${title}. ${description}`,
         paymentId: payment.id,
+        description: `Tg Swipe: ${title}. ${description}`,
+        method: PLATEGA_METHOD.CARD_RU,
       })
-      if (!yk || !yk.confirmationToken) {
-        console.error('[tiers] yookassa create failed')
+      if (!created) {
+        console.error('[tiers] platega create failed')
         await db.pendingPayment.updateMany({
           where: { id: payment.id, status: 'pending' },
           data: { status: 'canceled' },
         })
-        return err('Эквайринг не ответил — попробуйте ещё раз', 502)
+        return err('Платёжная система не ответила — попробуйте ещё раз', 502)
       }
       await db.pendingPayment.update({
         where: { id: payment.id },
-        data: { providerPaymentId: yk.id, confirmationUrl: yk.confirmationUrl },
+        data: { providerPaymentId: created.transactionId, confirmationUrl: created.redirect },
       })
       return NextResponse.json({
         ok: true,
         paymentId: payment.id,
         method: 'card',
-        confirmationToken: yk.confirmationToken,
+        redirect: created.redirect,
       })
     }
 

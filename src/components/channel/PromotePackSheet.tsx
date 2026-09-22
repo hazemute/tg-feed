@@ -5,16 +5,18 @@ import { Check, CreditCard, Loader2, Rocket, Wallet } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
-import { haptic } from '@/lib/tg'
+import { haptic, openExternal } from '@/lib/tg'
 import { useApp } from '@/lib/store'
 import { BottomSheet } from '@/components/tg/BottomSheet'
-import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
+import { PlategaWaiting, type PlategaInfo, type PlategaStatusState } from '@/components/payments/PlategaWaiting'
 
 /**
  * Шит покупки пакета продвижений (v5.69 → v5.74) — докупка к бесплатному
  * месячному продвижению Snap Pro. ВЫБОР ТИРА (v5.74):
  *   starter — 1 за 149 ₽ · growth — 3 за 349 ₽ (−22%) · max — 10 за 899 ₽ (−40%)
- * Затем способ оплаты: «С баланса» / «50/50» / «Картой» (ЮKassa).
+ * Затем способ оплаты: «С баланса» / «50/50» / «Картой» — карта МИР и вторая
+ * половина 50/50 через Platega (v5.83, ЮKassa отключена): redirect на страницу
+ * оплаты + экран ожидания с авто-поллингом статуса.
  */
 
 type PackInfo = {
@@ -52,7 +54,12 @@ export function PromotePackSheet({
   const [packId, setPackId] = useState<'starter' | 'growth' | 'max'>('growth')
   const [method, setMethod] = useState<BuyMethod>('balance')
   const [busy, setBusy] = useState(false)
-  const [yk, setYk] = useState<{ token: string; title: string; half: boolean } | null>(null)
+  /** Счёт Platega (карта/вторая половина 50/50): ждём оплату на странице провайдера */
+  const [platega, setPlatega] = useState<{
+    info: PlategaInfo
+    half: boolean
+    status: PlategaStatusState
+  } | null>(null)
 
   // Открытие шита → свежие тиры/баланс/способы (кэш не нужен — шит открывают редко)
   useEffect(() => {
@@ -98,7 +105,8 @@ export function PromotePackSheet({
       const r = await api<{
         ok: boolean
         method: BuyMethod
-        confirmationToken?: string
+        paymentId?: string
+        redirect?: string
         credits?: number
         balanceKop?: number
       }>('/api/promote-pack', {
@@ -113,18 +121,24 @@ export function PromotePackSheet({
         onClose()
         return
       }
-      if (r.confirmationToken) {
-        // Виджет ЮKassa: после оплаты вебхук зачислит кредиты — onBought подтянет
+      if (r.redirect && r.paymentId) {
+        // Platega: оплата на странице провайдера, зачисление по вебхуку/поллингу
         toast.success(
           r.method === 'half'
             ? `Списано ${fmtPrice(halfKop)} с баланса — оплатите вторую половину`
             : 'Счёт создан — оплатите картой',
         )
-        setYk({
-          token: r.confirmationToken,
-          title: `${fmtPrice(r.method === 'half' ? halfKop : priceKop)} · пакет продвижений`,
+        setPlatega({
+          info: {
+            paymentId: r.paymentId,
+            redirect: r.redirect,
+            method: 'card',
+            rub: (r.method === 'half' ? halfKop : priceKop) / 100,
+          },
           half: r.method === 'half',
+          status: 'waiting',
         })
+        openExternal(r.redirect)
       }
     } catch (e) {
       toast.error((e as Error).message || 'Не удалось оформить покупку')
@@ -170,13 +184,44 @@ export function PromotePackSheet({
         : `Оплатить ${fmtPrice(priceKop)} картой`
 
   return (
-    <>
-      <BottomSheet
-        open={open}
-        onClose={onClose}
-        title="Продвижения"
-        subtitle="Докупка к бесплатному продвижению месяца"
-      >
+    <BottomSheet
+      open={open}
+      onClose={onClose}
+      title="Продвижения"
+      subtitle="Докупка к бесплатному продвижению месяца"
+    >
+      {platega ? (
+        /* Platega: экран ожидания оплаты (карта или вторая половина 50/50) */
+        <PlategaWaiting
+          info={platega.info}
+          status={platega.status}
+          onStatus={(s) => {
+            setPlatega((p) => (p ? { ...p, status: s } : p))
+            if (s === 'succeeded') {
+              haptic('success')
+              toast.success('Пакет продвижений зачислен')
+              setPlatega(null)
+              onBought()
+              onClose()
+            }
+          }}
+          onCancel={() => {
+            const wasHalf = platega.half
+            setPlatega(null)
+            if (wasHalf) {
+              // Половина уже списана: либо оплатит позже (вебхук зачислит),
+              // либо отменит счёт — вебхук вернёт половину на баланс
+              toast('Счёт сохранён — оплатите позже или отмените, половина вернётся на баланс')
+            }
+          }}
+          onClose={() => {
+            setPlatega(null)
+            onBought()
+            onClose()
+          }}
+        />
+      ) : (
+        <>
         {/* v5.74: выбор тира пакета */}
         <div className="card-soft rounded-2xl bg-tg-surface p-4">
           <p className="text-[15px] font-bold text-tg-text">Сколько продвижений нужно?</p>
@@ -322,30 +367,8 @@ export function PromotePackSheet({
         <p className="mt-2.5 text-center text-[12px] leading-snug text-tg-hint">
           С баланса — мгновенно. Картой — кредиты зачислятся автоматически после оплаты.
         </p>
-      </BottomSheet>
-
-      {/* ЮKassa: виджет для «Картой» и второй половины «50/50» */}
-      <YooKassaWidget
-        open={yk !== null}
-        token={yk?.token ?? null}
-        title={yk?.title ?? 'Оплата пакета'}
-        onClose={() => {
-          const wasHalf = yk?.half ?? false
-          setYk(null)
-          if (wasHalf) {
-            // Половина уже списана: либо оплатит позже (вебхук зачислит),
-            // либо отменит счёт — вебхук вернёт половину на баланс
-            toast('Счёт сохранён — оплатите позже или отмените, половина вернётся на баланс')
-          }
-        }}
-        onSuccess={() => {
-          haptic('success')
-          toast.success('Пакет продвижений зачислен')
-          setYk(null)
-          onBought()
-          onClose()
-        }}
-      />
-    </>
+        </>
+      )}
+    </BottomSheet>
   )
 }

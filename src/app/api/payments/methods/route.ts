@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic'
 /**
  * GET /api/payments/methods — какие способы пополнения доступны сейчас.
  * UI честно показывает только рабочие: Stars (бот), TON (адрес кошелька),
- * карта (ключи ЮKassa). Пользователь не видит «мёртвых» кнопок.
+ * карта/СБП (ключи Platega). Пользователь не видит «мёртвых» кнопок.
  */
 export async function GET(request: Request) {
   const g = guardAuth(request, { limit: 60, windowMs: 60_000, bucket: 'pay-methods' })

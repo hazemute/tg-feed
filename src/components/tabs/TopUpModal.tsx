@@ -24,7 +24,7 @@ import { api } from '@/lib/api'
 import { haptic, openExternal, openInvoiceUrl, openTelegram } from '@/lib/tg'
 import { useT } from '@/lib/i18n'
 import { BottomSheet } from '@/components/tg/BottomSheet'
-import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
+import { PlategaWaiting, type PlategaInfo, type PlategaStatusState } from '@/components/payments/PlategaWaiting'
 import { useIsDesktop } from '@/lib/use-desktop'
 
 /**
@@ -32,12 +32,12 @@ import { useIsDesktop } from '@/lib/use-desktop'
  * свайпы для нейросетей, тарифы Snap, продвижение каналов.
  *
  * СТРАНИЦА ОПЛАТЫ (как в Telegram):
- *  • сверху ТРИ ВКЛАДКИ — Карта / Stars / TON: иконки БЕЗ подложек и рамок
- *    (просто иконка + подпись, активная вкладка подчёркнута);
+ *  • сверху ЧЕТЫРЕ ВКЛАДКИ — Карта / Stars / TON / СБП: иконки БЕЗ подложек
+ *    и рамок (просто иконка + подпись, активная вкладка подчёркнута);
  *  • ниже — ПАКИ в стиле покупки Stars в Telegram: ряд с радиокружком,
  *    иконкой пакета, ценой и эквивалентом (₽ / TON);
- *  • Карта — виджет ЮKassa ПРЯМО ЗДЕСЬ (embedded, без переадресаций —
- *    требование СБ), включается ключами env;
+ *  • Карта и СБП — только Platega (v5.83, ЮKassa отключена): redirect на
+ *    страницу оплаты провайдера + экран ожидания с авто-поллингом статуса;
  *  • Stars — XTR-инвойс нашего бота, открывается НАТИВНЫМ окном оплаты
  *    через WebApp.openInvoice (openTelegramLink инвойсы не открывает —
  *    именно из-за этого Stars казались «недоступными»);
@@ -190,9 +190,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
   const [tonStatus, setTonStatus] = useState<'waiting' | 'succeeded' | 'expired'>('waiting')
   /** Счёт Platega (СБП/карта МИР): оплата на странице провайдера, статус — поллингом */
   const [platega, setPlatega] = useState<PlategaInvoice | null>(null)
-  const [plategaStatus, setPlategaStatus] = useState<'waiting' | 'succeeded' | 'failed'>('waiting')
-  /** confirmation_token ЮKassa для виджета (оплата картой на сайте) */
-  const [ykToken, setYkToken] = useState<string | null>(null)
+  const [plategaStatus, setPlategaStatus] = useState<PlategaStatusState>('waiting')
   /** Курс TON для превью-эквивалентов в паках (грузится при выборе вкладки) */
   const [tonRate, setTonRate] = useState<number | null>(null)
 
@@ -205,7 +203,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     api<{ methods: Methods }>('/api/payments/methods')
       .then((r) => {
         setMethods(r.methods)
-        /* Карта доступна и через ЮKassa, и через Platega (МИР) — что настроено.
+        /* Карта доступна только через Platega (МИР) — card/sbp это один провайдер.
            Если текущая вкладка осталась доступной — не трогаем выбор. */
         const cardOk = Boolean(r.methods.card || r.methods.sbp)
         const ok = (m: Method) =>
@@ -236,20 +234,8 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
     try {
       if (method === 'card' || method === 'sbp') {
         if (!cardValid) return
-        /* Карта: ЮKassa (embedded-виджет, без переадресации — требование СБ)
-           приоритетнее. Нет ключей ЮKassa, но настроена Platega → карта МИР
-           или СБП/QR через redirect на страницу оплаты провайдера. */
-        if (method === 'card' && (methods?.card ?? false)) {
-          const r = await api<{ ok: boolean; confirmationToken: string | null }>('/api/payments', {
-            method: 'POST',
-            body: JSON.stringify({ amountKop: effective * 100 }),
-          })
-          if (r.confirmationToken) {
-            // Виджет ЮKassa в шторке поверх — карта вводится НЕ ПОКИДАЯ сайт
-            setYkToken(r.confirmationToken)
-          }
-          return
-        }
+        /* v5.83: ЮKassa отключена — карта МИР и СБП/QR идут ТОЛЬКО через
+           Platega: redirect на страницу оплаты провайдера + экран ожидания. */
         const r = await api<{ ok: boolean; paymentId: string; redirect: string }>('/api/payments/platega', {
           method: 'POST',
           body: JSON.stringify({ amountKop: effective * 100, method }),
@@ -294,7 +280,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
   /*
    * v5.78: пока методы грузятся — компактный спиннер вместо «мёртвых» табов
    * (мигание disabled-вкладок выглядело как сломанные кнопки). Когда ни один
-   * способ не настроен (нет ключей ЮKassa/бота/TON-кошелька) — честное
+   * способ не настроен (нет ключей Platega/бота/TON-кошелька) — честное
    * объяснение и подсказка, где взять свайпы уже сейчас.
    */
   if (methods === null) {
@@ -375,7 +361,7 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
       id: 'card',
       label: t('topup.tabCard'),
       icon: <CreditCard className="h-[19px] w-[19px]" strokeWidth={1.9} />,
-      // Карта работает через ЮKassa ИЛИ карточный эквайринг Platega (МИР)
+      // Карта работает через карточный эквайринг Platega (МИР)
       available: (methods?.card ?? false) || (methods?.sbp ?? false),
     },
     {
@@ -664,164 +650,6 @@ function TopUpContent({ onClose, onReload }: { onClose: () => void; onReload: ()
         </div>
       )}
 
-      {/* ЮKassa: платёжная форма картой ПРЯМО В ПРИЛОЖЕНИИ (без переадресации) */}
-      <YooKassaWidget
-        open={ykToken !== null}
-        token={ykToken}
-        title={`${formatRub(effective * 100)} · ${t('topup.tabCard')}`}
-        onClose={() => setYkToken(null)}
-        onSuccess={() => {
-          toast.success(t('topup.paid'))
-          haptic('success')
-          onReload()
-        }}
-      />
-    </div>
-  )
-}
-
-/* ------------------------------------------------------------------ */
-/* Platega (СБП/карта): ожидание оплаты на странице провайдера         */
-/* ------------------------------------------------------------------ */
-
-function PlategaWaiting({
-  info,
-  status,
-  onStatus,
-  onCancel,
-  onClose,
-}: {
-  info: PlategaInvoice
-  status: 'waiting' | 'succeeded' | 'failed'
-  onStatus: (s: 'waiting' | 'succeeded' | 'failed') => void
-  onCancel: () => void
-  onClose: () => void
-}) {
-  const t = useT()
-  const [checking, setChecking] = useState(false)
-
-  /** Ручная/автоматическая проверка: статус читаем ТОЛЬКО с нашего API */
-  const check = useCallback(async () => {
-    setChecking(true)
-    try {
-      const r = await api<{ ok: boolean; status: 'pending' | 'succeeded' | 'failed' }>(
-        `/api/payments/platega/status?paymentId=${encodeURIComponent(info.paymentId)}`,
-      )
-      onStatus(r.status === 'pending' ? 'waiting' : r.status)
-    } catch {
-      /* сеть моргнула — следующий тик повторит */
-    } finally {
-      setChecking(false)
-    }
-  }, [info.paymentId, onStatus])
-
-  // Авто-поллинг раз в 4с: пользователь вернулся со страницы оплаты —
-  // шторка сама заметит подтверждение и пополнит баланс
-  useEffect(() => {
-    if (status !== 'waiting') return
-    const timer = setInterval(check, 4000)
-    return () => clearInterval(timer)
-  }, [status, check])
-
-  if (status === 'succeeded') {
-    return (
-      <div className="py-4 text-center">
-        <motion.span
-          initial={{ scale: 0.6, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          className="mx-auto flex h-16 w-16 items-center justify-center rounded-full bg-tg-green/15"
-        >
-          <Check className="h-8 w-8 text-tg-green" strokeWidth={2.5} />
-        </motion.span>
-        <div className="mt-3 text-[18px] font-bold text-tg-text">{t('topup.paid')}</div>
-        <p className="mx-auto mt-1.5 max-w-[320px] text-[13.5px] leading-relaxed text-tg-hint">
-          {t('topup.paidHint')}
-        </p>
-        <button
-          type="button"
-          onClick={onClose}
-          className="press mt-4 h-12 w-full rounded-2xl bg-tg-link text-[15px] font-semibold text-white"
-        >
-          {t('topup.great')}
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div>
-      <div className="flex items-center gap-3">
-        <span
-          className={cn(
-            'flex h-10 w-10 items-center justify-center rounded-full',
-            info.method === 'sbp' ? 'bg-tg-link/10 text-tg-link' : 'bg-tg-surface text-tg-text2',
-          )}
-        >
-          {info.method === 'sbp' ? (
-            <QrCode className="h-5.5 w-5.5" strokeWidth={1.9} />
-          ) : (
-            <CreditCard className="h-5.5 w-5.5" strokeWidth={1.9} />
-          )}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="text-[16px] font-bold text-tg-text">
-            {t('topup.titleShort')} · {formatRub(info.rub * 100)}
-          </div>
-          <div className="text-[12.5px] text-tg-hint">
-            {info.method === 'sbp' ? t('topup.tabSbp') : t('topup.tabCard')}
-          </div>
-        </div>
-        {status === 'waiting' && (
-          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-tg-surface px-2.5 py-1 text-[11.5px] font-semibold text-tg-hint">
-            <Loader2 className="h-3.5 w-3.5 animate-spin text-tg-link" />
-            {t('topup.plategaWaiting')}
-          </span>
-        )}
-      </div>
-
-      {status === 'failed' ? (
-        <p className="mt-4 rounded-2xl bg-tg-surface/70 px-4 py-3 text-[13.5px] leading-relaxed text-tg-hint">
-          {t('topup.plategaFailedHint')}
-        </p>
-      ) : (
-        <>
-          <p className="mt-4 rounded-2xl bg-tg-surface/70 px-4 py-3 text-[13.5px] leading-relaxed text-tg-hint">
-            {t('topup.plategaHint')}
-          </p>
-
-          <button
-            type="button"
-            onClick={() => openExternal(info.redirect)}
-            className="press mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-tg-link text-[15px] font-semibold text-white"
-          >
-            <ExternalLink className="h-4.5 w-4.5" />
-            {t('topup.plategaOpen')}
-          </button>
-
-          <button
-            type="button"
-            onClick={check}
-            disabled={checking}
-            className="press mt-2 flex h-11 w-full items-center justify-center gap-2 rounded-2xl bg-tg-surface text-[14px] font-semibold text-tg-text2 disabled:opacity-60"
-          >
-            <RefreshCw className={cn('h-4 w-4', checking && 'animate-spin')} />
-            {t('topup.plategaCheck')}
-          </button>
-        </>
-      )}
-
-      <div className="mt-2 flex gap-2">
-        <button
-          type="button"
-          onClick={onCancel}
-          className={cn(
-            'press flex h-11 flex-1 items-center justify-center gap-1.5 rounded-2xl text-[14px] font-semibold',
-            status === 'failed' ? 'bg-tg-link text-white' : 'bg-tg-surface text-tg-text2',
-          )}
-        >
-          {status === 'failed' ? t('topup.plategaRetry') : t('topup.otherMethod')}
-        </button>
-      </div>
     </div>
   )
 }

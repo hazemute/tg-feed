@@ -93,18 +93,20 @@ export async function creditPendingPayment(
 
 /** Доступность способов пополнения по env (UI скрывает недоступные честно) */
 export function paymentMethods(): { card: boolean; stars: boolean; ton: boolean; sbp: boolean } {
+  // v5.83: ЮKassa отключена полностью — ВСЕ рублёвые платежи только через
+  // Platega (СБП/QR 8%, карта МИР 9%). «Карта» и «СБП» — один провайдер:
+  // card = sbp = plategaEnabled() (без ключей оба метода честно скрыты).
+  const platega = Boolean(
+    process.env.PLATEGA_MERCHANT_ID?.trim() && process.env.PLATEGA_SECRET?.trim(),
+  )
   return {
-    // ЮKassa: нужны ключи магазина — до подключения метода не показываем
-    card: Boolean(
-      process.env.YOOKASSA_SHOP_ID?.trim() && process.env.YOOKASSA_SECRET_KEY?.trim(),
-    ),
+    // Карта МИР через карточный эквайринг Platega (redirect на страницу оплаты)
+    card: platega,
     // Telegram Stars: работает через нашего бота всегда (XTR-инвойсы)
     stars: Boolean(process.env.TELEGRAM_BOT_TOKEN?.trim()),
     // TON: нужен адрес кошелька владельца для приёма переводов
     ton: Boolean(process.env.TON_WALLET_ADDRESS?.trim()),
-    // v5.43 Platega: СБП/QR и карты МИР — нужны MerchantId (UUID) + Secret (vcp_…)
-    sbp: Boolean(
-      process.env.PLATEGA_MERCHANT_ID?.trim() && process.env.PLATEGA_SECRET?.trim(),
-    ),
+    // СБП/QR через Platega
+    sbp: platega,
   }
 }

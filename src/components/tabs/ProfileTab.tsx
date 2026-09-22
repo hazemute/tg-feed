@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { formatCount } from '@/lib/format'
-import { haptic, openInvoiceUrl, userAvatarUrl } from '@/lib/tg'
+import { haptic, openExternal, openInvoiceUrl, userAvatarUrl } from '@/lib/tg'
 import type { SubscriptionDTO, TiersResponse } from '@/lib/types'
 import { Avatar } from '@/components/tg/Avatar'
 import { BottomSheet } from '@/components/tg/BottomSheet'
@@ -36,7 +36,7 @@ import { LoginByTelegram } from '@/components/tg/LoginByTelegram'
 import { THEMES, themeName } from '@/lib/themes'
 import { SupportChat } from '@/components/support/SupportChat'
 import { UserBadges } from '@/components/badges/UserBadges'
-import { YooKassaWidget } from '@/components/payments/YooKassaWidget'
+import { PlategaWaiting, type PlategaInfo, type PlategaStatusState } from '@/components/payments/PlategaWaiting'
 import { WalletPage } from '@/components/tabs/WalletPage'
 import { ProfileCustomizer } from '@/components/profile/ProfileCustomizer'
 import { ProfileHeaderCover, ProfileTierChips } from '@/components/profile/ProfileHeaderCover'
@@ -521,9 +521,9 @@ export function ProfileTab() {
               Баланс пополняется в рублях (банковская карта или СБП), Telegram Stars или криптовалютой
               TON — от 100 рублей за операцию. Курс TON фиксируется в момент выставления счёта.
               Деньги зачисляются на рублёвый баланс автоматически после подтверждения оплаты.
-              Оплата картой
-              проходит через платёжную форму ЮKassa, открываемую непосредственно на сайте — без
-              переадресации на сторонние ресурсы. Подписка Snap действует до конца оплаченного
+              Оплата картой и СБП проходит через эквайринг Platega: открывается страница оплаты
+              провайдера, после подтверждения — автоматический возврат в приложение. Подписка Snap
+              действует до конца оплаченного
               периода; возврат средств за неиспользованный период — в порядке, предусмотренном
               законодательством РФ.
             </p>
@@ -557,7 +557,7 @@ export function ProfileTab() {
         </div>
       </BottomSheet>
 
-      {/* Реквизиты и контакты (требования СБ ЮKassa) */}
+      {/* Реквизиты и контакты (требования платёжного провайдера Platega) */}
       <RequisitesSheet open={requisitesOpen} onClose={() => setRequisitesOpen(false)} />
 
       {/* Кошелёк v2 (v5.77): полная страница (баланс, счета с адресами, переводы, рефералка, история) */}
@@ -768,8 +768,8 @@ function TiersSheet({
     pro: 'month',
   })
   const [buying, setBuying] = useState<'plus' | 'pro' | null>(null)
-  /** ЮKassa: confirmation_token открытого виджета оплаты картой (на сайте) */
-  const [yk, setYk] = useState<{ token: string; title: string } | null>(null)
+  /** Счёт Platega (карта): оплата на странице провайдера, статус — авто-поллингом */
+  const [platega, setPlatega] = useState<{ info: PlategaInfo; status: PlategaStatusState } | null>(null)
 
   // Загружаем состояние тарифов при каждом открытии шита (и по кнопке «Повторить»)
   useEffect(() => {
@@ -822,20 +822,26 @@ function TiersSheet({
     }
   }
 
-  /** Оплата картой через ЮKassa — виджет открывается прямо в приложении, без переадресаций (требование СБ) */
+  /** Оплата картой через Platega (v5.83, ЮKassa отключена): redirect на страницу
+   * провайдера + экран ожидания с авто-поллингом статуса — тир активируется
+   * вебхуком/поллингом идемпотентно (creditPendingPayment) */
   const buyCard = async (plan: 'plus' | 'pro') => {
     if (buying) return
     setBuying(plan)
     haptic('light')
     try {
-      const r = await api<{ ok: boolean; confirmationToken: string | null }>('/api/tiers', {
+      const r = await api<{ ok: boolean; paymentId?: string; redirect?: string }>('/api/tiers', {
         method: 'POST',
         body: JSON.stringify({ plan, period: period[plan], method: 'card' }),
       })
-      if (r.confirmationToken) {
+      if (r.redirect && r.paymentId) {
         const p = data?.prices[plan]
-        const rub = p ? kopToRub(period[plan] === 'month' ? p.monthKop : p.yearKop) : ''
-        setYk({ token: r.confirmationToken, title: `${rub} · Snap ${plan === 'pro' ? 'Pro' : 'Plus'}` })
+        const rubKop = p ? (period[plan] === 'month' ? p.monthKop : p.yearKop) : 0
+        setPlatega({
+          info: { paymentId: r.paymentId, redirect: r.redirect, method: 'card', rub: rubKop / 100 },
+          status: 'waiting',
+        })
+        openExternal(r.redirect)
       }
     } catch (e) {
       toast.error((e as Error).message || 'Не удалось создать счёт')
@@ -897,7 +903,7 @@ function TiersSheet({
         </div>
       )}
 
-      {!loading && !failed && data && (
+      {!loading && !failed && data && !platega && (
         <>
           {/* Текущий статус */}
           <div className="card-soft rounded-2xl bg-tg-surface p-4">
@@ -1016,7 +1022,7 @@ function TiersSheet({
                       С баланса · активируется сразу
                     </button>
                   )}
-                  {/* Карта: виджет ЮKassa на сайте — показываем, когда эквайринг подключён (methods.card) */}
+                  {/* Карта: Platega — redirect на страницу оплаты + экран ожидания */}
                   {data.methods.card && (
                     <button
                       type="button"
@@ -1034,27 +1040,43 @@ function TiersSheet({
           </div>
 
           <p className="mt-3 text-center text-[12px] leading-snug text-tg-hint">
-            Оплата: с баланса кошелька (мгновенно), Telegram Stars или банковская карта
-            (ЮKassa, форма открывается на сайте). Подписка действует до конца оплаченного периода.
+            Оплата: с баланса кошелька (мгновенно), Telegram Stars или банковской картой
+            (СБП/карта через Platega — страница оплаты открывается в браузере). Подписка
+            действует до конца оплаченного периода.
           </p>
         </>
       )}
 
-      {/* ЮKassa: форма оплаты картой ПРЯМО ЗДЕСЬ (без переадресаций — требование СБ) */}
-      <YooKassaWidget
-        open={yk !== null}
-        token={yk?.token ?? null}
-        title={yk?.title ?? 'Оплата подписки'}
-        onClose={() => setYk(null)}
-        onSuccess={refresh}
-      />
+      {/* Platega: экран ожидания оплаты карты — тир активируется автоматически */}
+      {platega && (
+        <PlategaWaiting
+          info={platega.info}
+          status={platega.status}
+          onStatus={(s) => {
+            setPlatega((p) => (p ? { ...p, status: s } : p))
+            if (s === 'succeeded') {
+              haptic('success')
+              toast.success('Тариф активирован — спасибо!')
+            }
+          }}
+          onCancel={() => {
+            setPlatega(null)
+            refresh()
+          }}
+          onClose={() => {
+            setPlatega(null)
+            refresh()
+            onWalletChanged?.()
+          }}
+        />
+      )}
     </BottomSheet>
   )
 }
 
 /**
- * «Реквизиты и контакты» — обязательный документ для эквайринга (требования
- * СБ ЮKassa): данные исполнителя, способы оплаты и каналы связи.
+ * «Реквизиты и контакты» — документ для платёжного провайдера (Platega):
+ * данные исполнителя, способы оплаты и каналы связи.
  * Значения приходят из env (LEGAL_NAME / LEGAL_INN / SUPPORT_EMAIL) через
  * GET /api/tiers — источник истины у владельца, без пересборки интерфейса.
  */

@@ -12,7 +12,7 @@ type CountRow = { d: string; n: number }
  * GET /api/panel/finance — «Финансы» + вовлечённость (v5.11, приказ владельца:
  * «статистика сколько проект заработал и тд… DAU и так далее»).
  *
- * Выручка: платежи PendingPayment(status='succeeded') — ЮKassa/Stars/TON,
+ * Выручка: платежи PendingPayment(status='succeeded') — Platega/Stars/TON,
  * рекламная выручка — AdCampaign.spentKop (списано с рекламодателей за клики).
  * Обязательства: суммарный баланс пользователей AdvertiserAccount.balanceKop
  * (нераспределённые свайпы). Активность: DAU/WAU/MAU по PostView, новые юзеры,
