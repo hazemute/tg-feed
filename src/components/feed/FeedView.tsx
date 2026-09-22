@@ -6,7 +6,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { useT } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-import { api, getSessionToken } from '@/lib/api'
+import { api } from '@/lib/api'
 import { useApp } from '@/lib/store'
 import { haptic } from '@/lib/tg'
 import { loadFeedCache, saveFeedCache } from '@/lib/offline'
@@ -891,89 +891,19 @@ export function FeedView() {
     }
   }, [user, initial, checkFresh])
 
-  // ---------- SSE: живые обновления без ожидания ближайшего поллинга ----------
-  // Парсер публикует «posts:new» в событийную шину — SSE-роут толкает её
-  // подписчикам. Соединение через fetch-стрим (EventSource не умеет заголовки
-  // Authorization). При событии: сбрасываем guard бейджа и обновляем
-  // счётчики уведомлений и пилюли «N новых» немедленно. Обрыв → retry 5с.
-  const checkFreshRef = useRef(checkFresh)
-  checkFreshRef.current = checkFresh
-
+  // ---------- v5.88: ПОЛЛИНГ вместо SSE (срочная экономия Vercel Fluid) ----------
+  // Раньше здесь открывался ВЕЧНЫЙ SSE-поток (/api/events, heartbeat 25с):
+  // на Vercel Fluid compute каждое открытое соединение держит ~1 GB
+  // provisioned memory ВСЁ время соединения — несколько онлайн-пользователей
+  // сжигали сотни GB-hrs/мес (алерт «75% Fluid Provisioned Memory»).
+  // Заменили дешёвым поллингом: свежие посты — checkFresh каждые 45с
+  // (эффект выше), бейдж уведомлений — каждые 60с здесь. Задержка живости
+  // выросла с «мгновенно» до ≤60с, а активное время функций упало на ~2 порядка
+  // (короткие запросы по ~100мс вместо постоянно висящих соединений).
   useEffect(() => {
     if (!user) return
-    const ac = new AbortController()
-    let stopped = false
-    let retry: ReturnType<typeof setTimeout> | null = null
-
-    const handleFrame = (frame: string) => {
-      if (frame.startsWith('event: notif:new')) {
-        // Адресный толчок: у этого пользователя появилось уведомление —
-        // бейдж колокольчика +1 мгновенно (без 30-секундного поллинга)
-        notifFetchedAtRef.current = 0
-        void fetchNotifCount()
-        return
-      }
-      if (!frame.startsWith('event: posts:new')) return
-      notifFetchedAtRef.current = 0 // guard «не чаще 30с» не должен гасить push-событие
-      void fetchNotifCount()
-      void checkFreshRef.current?.()
-    }
-
-    const connect = async () => {
-      // v5.54: экспоненциальный бэкофф вместо слепых 5с. Раньше при 401/429
-      // (протухшая сессия) клиент долбил сервер 12 раз/мин в вечном цикле,
-      // ловя лимит 10/мин/IP и никогда не запуская re-auth
-      let delay = 5000
-      while (!stopped) {
-        let unauthorized = false
-        try {
-          const res = await fetch('/api/events', {
-            signal: ac.signal,
-            headers: {
-              Accept: 'text/event-stream',
-              // Bearer-сессия: роут /api/events требует авторизацию
-              Authorization: `Bearer ${getSessionToken() ?? ''}`,
-            },
-          })
-          if (res.status === 401 || res.status === 403) unauthorized = true
-          if (!res.ok || !res.body) throw new Error(`sse ${res.status}`)
-          delay = 5000 // успешное соединение — бэкофф сброшен
-          const reader = res.body.getReader()
-          const decoder = new TextDecoder()
-          let buf = ''
-          for (;;) {
-            const { done, value } = await reader.read()
-            if (done) break
-            buf += decoder.decode(value, { stream: true })
-            let sep: number
-            while ((sep = buf.indexOf('\n\n')) >= 0) {
-              const frame = buf.slice(0, sep)
-              buf = buf.slice(sep + 2)
-              handleFrame(frame)
-            }
-          }
-        } catch {
-          // обрыв сети или abort — тихо уходим в retry
-        }
-        if (stopped) return
-        if (unauthorized) {
-          // Сессия невалидна — глобальное событие запускает re-auth, SSE останавливаем
-          window.dispatchEvent(new Event('tgfeed:unauthorized'))
-          return
-        }
-        await new Promise<void>((r) => {
-          retry = setTimeout(r, delay)
-        })
-        delay = Math.min(delay * 2, 60_000)
-      }
-    }
-
-    void connect()
-    return () => {
-      stopped = true
-      if (retry) clearTimeout(retry)
-      ac.abort()
-    }
+    const iv = setInterval(() => void fetchNotifCount(), 60_000)
+    return () => clearInterval(iv)
   }, [user, fetchNotifCount])
 
   // Pull-to-refresh: полная перезагрузка ленты с новым сидом перемешивания
