@@ -493,8 +493,9 @@ export async function POST(request: Request) {
         // списываем по факту после ответа — как в Snap Search
         const collector = usageCollector()
         const settle = async () => {
-          await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент', 12)
-          if (collector.acc.usage) send('paid', { swipes: swipesForUsage(collector.acc.usage) })
+          // v5.85: показываем РЕАЛЬНО списанную сумму (с множителем тира)
+          const charged = await chargeAiUsage(g.uid, collector.acc.usage, 'Snap Ассистент', 12)
+          if (collector.acc.usage) send('paid', { swipes: charged || swipesForUsage(collector.acc.usage) })
         }
         try {
           for (let i = 0; i < MAX_LOOP; i++) {

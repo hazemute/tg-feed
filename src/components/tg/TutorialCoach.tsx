@@ -95,10 +95,13 @@ export function TutorialCoach({ active }: { active: boolean }) {
     if (useApp.getState().user?.onboarded) return
     try {
       if (localStorage.getItem(DONE_KEY) === '1') return
-      localStorage.setItem(DONE_KEY, '1')
+      // ждём закрытия welcome-гайда: помечаем «показан» только когда тутор
+      // реально показывается (гайд закрывается — active снова true)
+      if (localStorage.getItem('tgfeed_welcome_v1') !== '1') return
     } catch {
       return
     }
+    localStorage.setItem(DONE_KEY, '1')
     markOnboardedServer()
     const t = setTimeout(() => setOpen(true), 1400)
     return () => clearTimeout(t)

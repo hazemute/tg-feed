@@ -7,7 +7,7 @@
  *   ← Кошелёк
  *   [Swipe-счёт | Рубль-счёт]  ← бабл-вкладки
  *   Баланс (крупно) + адрес счёта (копирование)
- *   Перевести · Пополнить · Вывести · Обменять   ← 4 кнопки, без описаний
+ *   Перевести · Пополнить · Вывести · Обменять · Промокод   ← 5 кнопок (v5.85: +промокод)
  *   Счета (две строки с адресами и балансами)
  *   Рефералка: ссылка · друзья · заработано (5% от трат друзей)
  *   История: «адрес → адрес, сколько, когда» — как в крипте
@@ -27,6 +27,7 @@ import {
   Loader2,
   Plus,
   Send,
+  Ticket,
   Users,
   X,
 } from 'lucide-react'
@@ -108,7 +109,7 @@ const LOG_LABEL: Record<string, string> = {
   level_up: 'Новый уровень',
 }
 
-type SheetKind = 'transfer' | 'convert' | 'withdraw' | null
+type SheetKind = 'transfer' | 'convert' | 'withdraw' | 'promo' | null
 
 export function WalletPage({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [data, setData] = useState<WalletData | null>(null)
@@ -234,14 +235,15 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
               )}
             </div>
 
-            {/* 4 действия */}
-            <div className="grid grid-cols-4 gap-2 px-4">
+            {/* 5 действий (v5.85: +«Промокод» — владелец не находил её в старой карточке) */}
+            <div className="grid grid-cols-5 gap-1.5 px-4">
               {(
                 [
                   { id: 'transfer', label: 'Перевести', icon: Send },
                   { id: 'topup', label: 'Пополнить', icon: Plus },
                   { id: 'withdraw', label: 'Вывести', icon: ArrowUpRight },
                   { id: 'convert', label: 'Обменять', icon: ArrowDownUp },
+                  { id: 'promo', label: 'Промокод', icon: Ticket },
                 ] as const
               ).map((a) => (
                 <button
@@ -254,8 +256,8 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
                   }}
                   className="flex flex-col items-center gap-1.5 rounded-2xl bg-tg-surface py-3 transition active:scale-95"
                 >
-                  <a.icon className="h-5.5 w-5.5 text-tg-text" strokeWidth={1.9} aria-hidden />
-                  <span className="text-[12px] font-medium text-tg-text">{a.label}</span>
+                  <a.icon className={cn('text-tg-text', a.id === 'promo' ? 'h-5.5 w-5.5 text-tg-link' : 'h-5.5 w-5.5')} strokeWidth={1.9} aria-hidden />
+                  <span className="max-w-full truncate px-0.5 text-[11.5px] font-medium text-tg-text">{a.label}</span>
                 </button>
               ))}
             </div>
@@ -373,6 +375,15 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
             open={sheet === 'withdraw'}
             onClose={() => setSheet(null)}
             onExchange={() => setSheet('convert')}
+          />
+          {/* v5.85: активация промокода — отдельная кнопка в ряду действий */}
+          <PromoSheet
+            open={sheet === 'promo'}
+            onClose={() => setSheet(null)}
+            onDone={() => {
+              setSheet(null)
+              load()
+            }}
           />
 
           {/* Пополнение (существующий модал) */}
@@ -762,6 +773,88 @@ function WithdrawSheet({
 }
 
 /* --------------------------- Оболочка шита --------------------------- */
+
+/**
+ * v5.85: шит «Промокод» — владелец не находил кнопку активации (жила
+ * свёрнутой в старой карточке кошелька, которой больше нет). Теперь это
+ * полноценное действие кошелька: тап «Промокод» → ввод кода → мгновенное
+ * зачисление награды (POST /api/promo/redeem).
+ */
+function PromoSheet({
+  open,
+  onClose,
+  onDone,
+}: {
+  open: boolean
+  onClose: () => void
+  onDone: () => void
+}) {
+  const [code, setCode] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (open) setCode('')
+  }, [open])
+
+  const redeem = async () => {
+    const c = code.trim()
+    if (!c || busy) return
+    setBusy(true)
+    try {
+      const r = await api<{ ok: boolean; reward: string }>('/api/promo/redeem', {
+        method: 'POST',
+        body: JSON.stringify({ code: c }),
+      })
+      haptic('success')
+      toast.success(`Промокод активирован: ${r.reward}`)
+      onDone()
+    } catch (e) {
+      haptic('error')
+      toast.error((e as Error).message || 'Не удалось активировать промокод')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <SheetShell title="Промокод" onClose={onClose}>
+          <label className="block">
+            <span className="mb-1.5 block text-[13px] font-medium text-tg-hint">
+              Введите код — награда придёт на счёт мгновенно
+            </span>
+            <input
+              value={code}
+              onChange={(e) => setCode(e.target.value.toUpperCase())}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') void redeem()
+              }}
+              placeholder="XXX-XXX-XXX"
+              autoCapitalize="characters"
+              autoComplete="off"
+              spellCheck={false}
+              autoFocus
+              className="h-12 w-full rounded-xl border border-tg-sep bg-tg-bg px-4 text-center font-mono text-[16px] tracking-[0.12em] text-tg-text outline-none focus:border-tg-link placeholder:font-sans placeholder:tracking-normal placeholder:text-tg-hint"
+            />
+          </label>
+          <button
+            type="button"
+            disabled={busy || !code.trim()}
+            onClick={() => void redeem()}
+            className="mt-4 flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-tg-link text-[15px] font-semibold text-white transition active:scale-[0.98] disabled:opacity-40"
+          >
+            {busy ? <Loader2 className="h-5 w-5 animate-spin" aria-hidden /> : <Ticket className="h-4.5 w-4.5" aria-hidden />}
+            {busy ? 'Активируем…' : 'Активировать'}
+          </button>
+          <p className="mt-3 text-center text-[12px] leading-snug text-tg-hint">
+            Промокоды приходят в подарок и в розыгрышах — следите за новостями
+          </p>
+        </SheetShell>
+      )}
+    </AnimatePresence>
+  )
+}
 
 function SheetShell({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (

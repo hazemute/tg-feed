@@ -9,10 +9,12 @@ import {
   AI_MTOK_OUT_SWP,
   SWP_PER_RUB,
   SWP_CONVERT_MIN,
+  aiMultiplier,
   convertRubToSwp,
   convertSwpToRub,
   walletHistory,
 } from '@/lib/wallet'
+import { effectiveTier } from '@/lib/tiers'
 import { cacheBalance } from '@/lib/balance-cache'
 import {
   ensureWalletAddresses,
@@ -54,11 +56,13 @@ export async function GET(request: Request) {
     const [user, history] = await Promise.all([
       db.user.findUnique({
         where: { id: g.uid },
-        select: { balanceKop: true, swipes: true },
+        select: { balanceKop: true, swipes: true, tier: true, tierUntil: true },
       }),
       walletHistory(g.uid, 20),
     ])
     if (!user) return err('Пользователь не найден', 404)
+    // v5.85: цены ИИ в UI кошелька — с множителем тира (free ×3 · plus ×1 · pro ×0.5)
+    const aiMult = aiMultiplier(effectiveTier(user))
     // Write-through: свежий баланс → Redis (горячий путь edge-роута /api/wallet/balance)
     void cacheBalance(g.uid, { balanceKop: user.balanceKop, swipes: user.swipes })
 
@@ -83,7 +87,11 @@ export async function GET(request: Request) {
       swipes: user.swipes,
       swpPerRub: SWP_PER_RUB,
       // Тариф нейросетей (v5.39): списание по токенам OpenRouter за 1 млн in/out
-      aiPricing: { inSwpPerMtok: AI_MTOK_IN_SWP, outSwpPerMtok: AI_MTOK_OUT_SWP },
+      aiPricing: {
+        inSwpPerMtok: Math.ceil(AI_MTOK_IN_SWP * aiMult),
+        outSwpPerMtok: Math.ceil(AI_MTOK_OUT_SWP * aiMult),
+        mult: aiMult,
+      },
       swpConvertMin: SWP_CONVERT_MIN,
       history,
       // — v2 —

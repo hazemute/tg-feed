@@ -417,9 +417,10 @@ export async function POST(request: Request) {
         // Списать по факту после цепочки (best-effort: ответ уже отдан)
         const settle = async () => {
           if (!paid) return
-          await chargeAiUsage(uid, collector.acc.usage, 'Snap Search (чат)', est)
+          // v5.85: показываем РЕАЛЬНО списанную сумму (с множителем тира)
+          const charged = await chargeAiUsage(uid, collector.acc.usage, 'Snap Search (чат)', est)
           if (collector.acc.usage) {
-            send('paid', { swipes: swipesForUsage(collector.acc.usage) })
+            send('paid', { swipes: charged || swipesForUsage(collector.acc.usage) })
           }
         }
         try {

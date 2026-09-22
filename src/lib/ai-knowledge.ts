@@ -2,7 +2,7 @@ import { createHash } from 'crypto'
 import { db } from '@/lib/db'
 import { APP_VERSION } from '@/lib/version'
 import { TIER_PRICES, AI_SEARCH_DAILY_LIMIT, PRO_PROMOTE_MONTHLY_LIMIT, PROMOTE_PACK } from '@/lib/tiers'
-import { SWP_PER_RUB, AI_MTOK_IN_SWP, AI_MTOK_OUT_SWP } from '@/lib/wallet'
+import { SWP_PER_RUB, AI_MTOK_IN_SWP, AI_MTOK_OUT_SWP, AI_FREE_MULT, AI_PRO_MULT } from '@/lib/wallet'
 import { parsePrizes, prizesLabel } from '@/lib/giveaways'
 import { parseTasks, taskTitle } from '@/lib/giveaway-tickets'
 
@@ -57,7 +57,7 @@ function staticFacts(): string[] {
   return [
     `Версия приложения: ${APP_VERSION}.`,
     `Валюта: свайпы. Курс: ${SWP_PER_RUB} свайпов = 1 ₽ (1 свайп = 0,2 копейки). Кошелёк в профиле: рубли и свайпы, конвертация в обе стороны (свайпы → рубли от ${SWP_PER_RUB}), журнал операций. Пополнение: карта / Telegram Stars / TON.`,
-    `За что тратятся свайпы: только нейросети — Snap Search сверх бесплатной нормы и Snap Ассистент. Тарификация по токенам OpenRouter: ${AI_MTOK_IN_SWP} свайпов за 1 млн входных + ${AI_MTOK_OUT_SWP} за 1 млн выходных; лёгкий запрос ≈ 2–10 свайпов. Лайки, подписки, закладки, комментарии, лента, перевод, саммари, озвучка — бесплатны.`,
+    `За что тратятся свайпы: только нейросети — Snap Search сверх бесплатной нормы и Snap Ассистент. Тарификация по токенам OpenRouter: ${AI_MTOK_IN_SWP} свайпов за 1 млн входных + ${AI_MTOK_OUT_SWP} за 1 млн выходных — ЭТО БАЗОВЫЕ ЦЕНЫ ПЛЮСА. Множитель тира: Free — ×${AI_FREE_MULT} (в 3 раза дороже: нейросети дороги, но подписка Plus/Pro их резко дешевит), Plus — ×1, Pro — ×${AI_PRO_MULT}. Генерация картинки — ${Math.ceil(250 * AI_FREE_MULT)} свайпов на Free, 250 на Plus, ${Math.ceil(250 * AI_PRO_MULT)} на Pro. Лайки, подписки, закладки, комментарии, лента, перевод, саммари, озвучка — бесплатны.`,
     `Тариф Free (бесплатно): ${AI_SEARCH_DAILY_LIMIT} ИИ-поиска (Snap Search) в сутки; лайк/комментарий/закладка — после входа в Telegram (ленивая регистрация).`,
     `Snap Plus: ${rub(plus.monthKop)} ₽/мес или ${rub(plus.yearKop)} ₽/год (${plus.monthStars} / ${plus.yearStars} Stars) — безлимитный ИИ-поиск, инкогнито (просмотры не видны в детальной статистике), приоритетная скорость медиа, анимированные премиум-эмодзи.`,
     `Snap Pro: ${rub(pro.monthKop)} ₽/мес или ${rub(pro.yearKop)} ₽/год (${pro.monthStars} / ${pro.yearStars} Stars) — всё из Plus + ИИ-контентщик для своего канала (анализ стиля → пост → картинка → публикация в TG), ${PRO_PROMOTE_MONTHLY_LIMIT} бесплатное продвижение постов в ленту в месяц, премиум-бейдж автора, CTA-кнопка. Дополнительные продвижения — пакетами: ${PROMOTE_PACK.count} за ${rub(PROMOTE_PACK.priceKop)} ₽ (не сгорают).`,

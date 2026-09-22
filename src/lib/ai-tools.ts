@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import { spendSwipes, AI_IMAGE_SWP } from '@/lib/wallet'
+import { spendSwipes, aiImageCost } from '@/lib/wallet'
 import { stripMarkdown } from '@/lib/markdown'
 import { looksLikeGarbage } from '@/lib/text-clean'
 import { getNsfwChannelIds } from '@/lib/moderation'
@@ -387,15 +387,17 @@ const generateImage: ToolDef = {
     // URL /api/upload/<id> (фолбэк — сырая ссылка pollinations, если не вышло)
     const img = await generatePublicImage(prompt, { ownerId: ctx.uid })
     if (!img.url) return { ok: false, data: 'Картинка не сгенерировалась — сервис недоступен. Продолжай без неё.' }
-    // v5.74: картинка — платная (AI_IMAGE_SWP), но ЧЕСТНО: списываем только
-    // при успешной генерации. Не вышло у сервиса — пользователь не платит.
-    await spendSwipes(ctx.uid, AI_IMAGE_SWP, `Генерация картинки (ИИ): ${prompt.slice(0, 80)}`).catch(() => {})
+    // v5.74: картинка — платная, но ЧЕСТНО: списываем только при успешной
+    // генерации. Не вышло у сервиса — пользователь не платит.
+    // v5.85: цена зависит от тира (free ×3 · plus ×1 · pro ×0.5).
+    const imgCost = await aiImageCost(ctx.uid)
+    await spendSwipes(ctx.uid, imgCost, `Генерация картинки (ИИ): ${prompt.slice(0, 80)}`).catch(() => {})
     return {
       ok: true,
       data:
         `Картинка готова и УЖЕ ПОКАЗАНА автору картинкой под сообщением. Ссылку в текст ответа НЕ вставляй — ` +
         `автор видит картинку автоматически. Если будешь публиковать пост или менять аватар — передай этот URL без изменений: ${img.url}` +
-        ` (списано ${AI_IMAGE_SWP} свайпов за генерацию).`,
+        ` (списано ${imgCost} свайпов за генерацию).`,
       meta: { imageUrl: img.url, imagePending: img.pending },
     }
   },

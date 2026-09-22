@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { invalidateBalance } from '@/lib/balance-cache'
 import { payReferralKickback } from '@/lib/wallet-accounts'
+import { effectiveTier, tierOfUser } from '@/lib/tiers'
 
 /**
  * КОШЕЛЁК (v5.38–v5.39) — единая двухвалютная система.
@@ -55,12 +56,32 @@ export const AI_MTOK_OUT_SWP = envNum(process.env.AI_MTOK_OUT_SWP, 16000)
 /** Свайпов за одну успешную генерацию картинки (pollinations + скачивание + WebP) */
 export const AI_IMAGE_SWP = envNum(process.env.AI_IMAGE_SWP, 250)
 
+/* v5.85 РЕШЕНИЕ ВЛАДЕЛЬЦА: цены ИИ зависят от ТИРА.
+ *  • free — НАМНОГО дороже базовых (×3 по умолчанию): нейросети — заметная
+ *    статья расходов, бесплатный тариф не должен жечь их как воду;
+ *  • plus — базовые цены (×1);
+ *  • pro — ДЕШЕВЛЕ базовых (×0.5): половина цены за тот же запрос.
+ * Настраивается env-ами AI_FREE_MULT / AI_PRO_MULT. */
+export const AI_FREE_MULT = envNum(process.env.AI_FREE_MULT, 3)
+export const AI_PRO_MULT = envNum(process.env.AI_PRO_MULT, 0.5)
+
+/** Множитель цены ИИ для тира: free ×3 · plus ×1 · pro ×0.5 */
+export function aiMultiplier(tier: 'free' | 'plus' | 'pro'): number {
+  if (tier === 'pro') return AI_PRO_MULT
+  if (tier === 'plus') return 1
+  return AI_FREE_MULT
+}
+
 export type AiUsage = { promptTokens: number; completionTokens: number; model?: string }
 
-/** Свайпы за реальный usage OpenRouter. Минимум 1 свайп за запрос к ИИ. */
-export function swipesForUsage(u: AiUsage): number {
+/**
+ * Свайпы за реальный usage OpenRouter с учётом тира (v5.85).
+ * mult — множитель тира (aiMultiplier): free ×3, plus ×1, pro ×0.5.
+ * Минимум 1 свайп за запрос к ИИ.
+ */
+export function swipesForUsage(u: AiUsage, mult = 1): number {
   const raw = ((u.promptTokens || 0) * AI_MTOK_IN_SWP + (u.completionTokens || 0) * AI_MTOK_OUT_SWP) / 1_000_000
-  return Math.max(1, Math.ceil(raw))
+  return Math.max(1, Math.ceil(raw * mult))
 }
 
 /** Оценка числа токенов по символам промпта (кириллица ≈ 3.2 символа на токен) */
@@ -380,31 +401,53 @@ export function usageCollector() {
  * Если модель не отдала usage (редко) — списываем fallback-оценку.
  */
 
-/** Хватает ли на кошельке на платный вызов ИИ (свайпы + авто-покупка с рублей 1:1) */
+/** Хватает ли на кошельке на платный вызов ИИ (свайпы + авто-покупка с рублей 1:1).
+ *  v5.85: проверка УЖЕ с множителем тира — free-аккаунт не пройдёт пре-чек
+ *  на сумму, которую потом не сможет оплатить. */
 export async function aiCanAfford(userId: string, estSwipes: number): Promise<boolean> {
   if (estSwipes <= 0) return true
   const u = await db.user.findUnique({
     where: { id: userId },
-    select: { swipes: true, balanceKop: true },
+    select: { swipes: true, balanceKop: true, tier: true, tierUntil: true },
   })
   if (!u) return false
+  const need = Math.ceil(estSwipes * aiMultiplier(effectiveTier(u)))
   // 1 копейка = 5 свайпов (SWP_PER_KOP); раньше множили на 500 — переоценка в 100 раз
-  return u.swipes + u.balanceKop * SWP_PER_KOP >= estSwipes
+  return u.swipes + u.balanceKop * SWP_PER_KOP >= need
 }
 
 /**
  * Списать свайпы по фактическому token-usage OpenRouter.
- * best-effort: false (баланса нет) вызывающий код игнорирует — ответ уже отдан.
+ * v5.85: цена УМНОЖАЕТСЯ на множитель тира (free ×3, plus ×1, pro ×0.5).
+ * Возвращает списанную стоимость в свайпах (0 — списать не удалось):
+ * вызывающий код показывает её пользователю в событии 'paid'.
+ * best-effort: 0 (баланса нет) вызывающий код игнорирует — ответ уже отдан.
  */
 export async function chargeAiUsage(
   userId: string,
   usage: AiUsage | null,
   feature: string,
   fallbackSwipes = 1,
-): Promise<boolean> {
-  const cost = usage ? swipesForUsage(usage) : Math.max(1, fallbackSwipes)
+): Promise<number> {
+  let mult = 1
+  try {
+    mult = aiMultiplier(await tierOfUser(userId))
+  } catch {
+    /* не смогли определить тир — берём базовую цену */
+  }
+  const cost = usage ? swipesForUsage(usage, mult) : Math.max(1, Math.ceil(fallbackSwipes * mult))
   const note = usage
-    ? `${feature}: ${usage.promptTokens} вх. + ${usage.completionTokens} вых. токенов${usage.model ? ` · ${usage.model}` : ''}`
-    : `${feature}: расчёт по оценке (usage не получен)`
-  return spendSwipes(userId, cost, note)
+    ? `${feature}: ${usage.promptTokens} вх. + ${usage.completionTokens} вых. токенов${usage.model ? ` · ${usage.model}` : ''}${mult !== 1 ? ` · тир ×${mult}` : ''}`
+    : `${feature}: расчёт по оценке (usage не получен)${mult !== 1 ? ` · тир ×${mult}` : ''}`
+  const ok = await spendSwipes(userId, cost, note)
+  return ok ? cost : 0
+}
+
+/** v5.85: цена генерации картинки для тира пользователя (free ×3 · pro ×0.5) */
+export async function aiImageCost(userId: string): Promise<number> {
+  try {
+    return Math.ceil(AI_IMAGE_SWP * aiMultiplier(await tierOfUser(userId)))
+  } catch {
+    return AI_IMAGE_SWP
+  }
 }
