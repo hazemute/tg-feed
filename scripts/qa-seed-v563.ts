@@ -69,8 +69,10 @@ async function main() {
     }
   }
 
-  // JWT как в scripts/test-quests.ts (секрет = sha256('tgfeed-session|') при пустой сессии)
-  const secret = crypto.createHash('sha256').update('tgfeed-session|').digest('hex')
+  // JWT как в scripts/test-quests.ts; v5.78: секрет должен совпадать с
+  // session.ts: AUTH_SECRET берётся КАК ЕСТЬ, без AUTH_SECRET — фолбэк
+  // sha256('tgfeed-session|') (песочница/dev)
+  const secret = process.env.AUTH_SECRET?.trim() || crypto.createHash('sha256').update('tgfeed-session|').digest('hex')
   const b64url = (i: string) => Buffer.from(i).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
   const nowS = Math.floor(Date.now() / 1000)
   const h = b64url(JSON.stringify({ alg: 'HS256', typ: 'JWT' }))

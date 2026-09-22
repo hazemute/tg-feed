@@ -19,7 +19,15 @@ import { haptic } from '@/lib/tg'
  * (localStorage), после закрытия WelcomeGuide. Гостям не показывается.
  */
 
-const DONE_KEY = 'tg_tutorial_v1'
+/**
+ * v5.78: СБРОС ТУТОРИАЛА ДЛЯ ВСЕХ (приказ владельца) — ключ завершения
+ * версионирован. Было: 'tg_tutorial_v1' → '1' ставился навсегда, повторный
+ * показ был невозможен. Теперь: ключ содержит TUTORIAL_VERSION, при бампе
+ * версии (v2 → v3 → …) у всех пользователей — включая уже заходивших —
+ * туториал показывается заново. Следующий сброс = TUTORIAL_VERSION 'v3'.
+ */
+const TUTORIAL_VERSION = 'v2'
+const DONE_KEY = `tg_tutorial_done_${TUTORIAL_VERSION}`
 
 type Step = {
   emoji: string

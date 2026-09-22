@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { parseJsonArray } from '@/lib/server'
 import { getNsfwChannelIds, nsfwPostNotIn } from '@/lib/moderation'
@@ -280,6 +281,19 @@ export async function buildFeedScope(userId: string, category: string): Promise<
   return built
 }
 
+/**
+ * v5.78: есть ли в скоупе хоть один пост (для фолбэка пустых интересов).
+ * Дешёвый count по индексу; вызывается только когда категорийный фильтр
+ * установлен (до 1 раза на построение скоупа — сам скоуп кэшируется на 60с).
+ */
+async function scopeHasPosts(where: Prisma.PostWhereInput): Promise<boolean> {
+  try {
+    return (await db.post.count({ where })) > 0
+  } catch {
+    return true // ошибка count — не в коем случае не опустошаем ленту
+  }
+}
+
 async function buildFeedScopeUncached(userId: string, category: string) {
   // Пользователь + скрытые каналы + NSFW-каналы — один batch (дальний регион:
   // каждая последовательная «(п)роверка» стоит ~1 RTT до Supabase)
@@ -370,6 +384,12 @@ async function buildFeedScopeUncached(userId: string, category: string) {
     // Пустая база категорий или новорождённый пользователь — вся лента
     if (picked.length > 0) {
       where.channel.category = { slug: { in: picked } }
+      // v5.78 ФОЛБЭК: у выбранных категорий может не быть контента (перезагрузка
+      // контента 5.77 снесла все каналы, новые — только в 'games'). Пустой
+      // результат → снимаем категорийный фильтр, лента показывает всё.
+      if (!(await scopeHasPosts(where))) {
+        delete where.channel.category
+      }
     }
   } else if (category !== 'all') {
     where.channel.category = { slug: category }
@@ -377,6 +397,14 @@ async function buildFeedScopeUncached(userId: string, category: string) {
     interests = parseJsonArray(user.categories)
     if (interests.length > 0) {
       where.channel.category = { slug: { in: interests } }
+      // v5.78 ФОЛБЭК: интересы юзера не совпадают с фактическим контентом
+      // (после перезагрузки контент остался только в 'games') → пустая лента
+      // «вообще без постов». Лучше показать всё, чем пустой экран: проверяем
+      // count (дешёвый, индекс по categoryId) и снимаем фильтр при нуле.
+      if (!(await scopeHasPosts(where))) {
+        delete where.channel.category
+        interests = []
+      }
     }
   }
 

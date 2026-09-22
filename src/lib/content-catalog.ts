@@ -36,7 +36,8 @@ import { bumpCache } from '@/lib/redis'
 const FLAG_KEY = 'content-catalog:v2'
 const STATE_KEY = 'content-catalog:state'
 const THROTTLE_KEY = 'content-catalog:laststep'
-const MIN_STEP_INTERVAL_MS = 90_000
+/** v5.78: 60с (было 90с) — очередь верифицированных каналов надо прожить быстро */
+const MIN_STEP_INTERVAL_MS = 60_000
 
 /** Новые категории v5.76 (сохраняем: слаги/эмодзи уже могут быть в БД) */
 const NEW_CATEGORIES = [
@@ -52,6 +53,12 @@ const CURATED: Array<{ username: string; slug: string }> = CATALOG.flatMap((g) =
 )
 
 type CatalogState = {
+  /**
+   * v5.78: версия схемы состояния. Старое состояние (без version) содержит
+   * очередь из непроверенных username — при деплое 5.78 она пересобирается
+   * из верифицированного каталога (только рабочие веб-превью, checked 09-22).
+   */
+  version?: number
   phase: 'purge_user' | 'purge_posts' | 'purge_channels' | 'purge_meta' | 'discover' | 'done'
   /** очередь кураторских username */
   queue: string[]
@@ -61,6 +68,9 @@ type CatalogState = {
   failed: Array<{ username: string; reason: string }>
   log: string[]
 }
+
+/** v5.78: номер версии схемы состояния (см. CatalogState.version) */
+const STATE_VERSION = 2
 
 function log(s: CatalogState, msg: string) {
   s.log.push(`${new Date().toISOString().slice(5, 16).replace('T', ' ')} ${msg}`)
@@ -116,6 +126,7 @@ export async function ensureContentCatalog(): Promise<{ started: boolean }> {
     if (!existing || existing.phase === 'done' || existing.phase?.startsWith('purge') === false) {
       // существующий state v1 (news/cleanup/discover/done) несовместим — перезапускаем с purge
       const fresh: CatalogState = {
+        version: STATE_VERSION,
         phase: 'purge_user',
         queue: CURATED.map((c) => c.username),
         attempts: {},
@@ -130,10 +141,15 @@ export async function ensureContentCatalog(): Promise<{ started: boolean }> {
   }
 
   // v5.77.4: каталог пополняется между релизами — домёрдживаем новые кураторские
-  // username в ЖИВУЮ очередь discover (без сброса прогресса purge/done)
+  // username в ЖИВУЮ очередь discover (без сброса прогресса purge/done).
+  // v5.78: пересборка очереди из верифицированного каталога — старое состояние
+  // (version < STATE_VERSION) сидит на мёртвых username (нет веб-превью), из-за
+  // чего discover добавил 5 каналов из 47 и лента осталась пустой. Свежие
+  // имена ставим ВПЕРЕДИ очереди: контент появляется с первых шагов после
+  // деплоя, а не после получасового прожёвания мусора.
   try {
     const s = await loadState()
-    if (s && s.phase === 'discover') {
+    if (s && (s.phase === 'discover' || s.phase === 'done')) {
       const processed = new Set<string>([
         ...s.done.map((d) => d.username),
         ...s.failed.map((f) => f.username),
@@ -141,9 +157,28 @@ export async function ensureContentCatalog(): Promise<{ started: boolean }> {
         ...s.queue,
       ])
       const missing = CURATED.map((c) => c.username).filter((u) => !processed.has(u))
-      if (missing.length > 0) {
-        s.queue.push(...missing)
+      const stale = (s.version ?? 1) < STATE_VERSION
+      if (s.version !== STATE_VERSION) s.version = STATE_VERSION
+      if (stale) {
+        // пересборка: в очереди остаются ТОЛЬКО непроверенные каталогом имена
+        // (старый мусор выбрасывается — на проде он уже доказал свою пустоту)
+        const keep = s.queue.filter((u) => CURATED.some((c) => c.username === u))
+        const dropN = s.queue.length - keep.length
+        s.queue = [...missing, ...keep]
+        log(
+          s,
+          `v5.78: очередь пересобрана из верифицированного каталога: +${missing.length} новых, −${dropN} мёртвых`,
+        )
+      } else if (missing.length > 0) {
+        s.queue = [...missing, ...s.queue]
         log(s, `очередь дополнена каталогом: +${missing.length}`)
+      }
+      if (stale || missing.length > 0) {
+        // если фаза уже была 'done' — есть что добавлять, перезапускаем discover
+        if (s.phase === 'done' && s.queue.length > 0) {
+          s.phase = 'discover'
+          log(s, `discover перезапущен: в очереди ${s.queue.length}`)
+        }
         await saveState(s)
       }
     }
@@ -234,8 +269,9 @@ export async function stepContentCatalog(): Promise<string> {
 
     /* ---------- 5. наполнение: только игровые русские каналы ---------- */
     if (s.phase === 'discover') {
-      // 4 канала за шаг (каждый: t.me/s fetch + Bot API + ~60 постов в БД)
-      const batch = s.queue.slice(0, 4)
+      // v5.78: 6 каналов за шаг (было 4) — очередь теперь из верифицированных
+      // username, почти каждый успешен (~60 постов в БД за ~3-4с)
+      const batch = s.queue.slice(0, 6)
       if (batch.length === 0) {
         s.phase = 'done'
         log(s, `каталог готов: добавлено ${s.done.length}, отклонено ${s.failed.length}`)
@@ -268,6 +304,10 @@ export async function stepContentCatalog(): Promise<string> {
           log(s, `− ${username}: исключение`)
         }
         s.queue = s.queue.filter((u) => u !== username)
+        // v5.78: сохраняем состояние ПОСЛЕ КАЖДОГО кандидата (раньше — после
+        // батча): если шаг убьют по таймауту Vercel, прогресс не потеряется,
+        // а повтор канала безопасен (unique constraint на username)
+        await saveState(s)
       }
       await saveState(s)
       await bumpCache(['feed', 'ch', 'tr', 'ct', 'sr']).catch(() => undefined)

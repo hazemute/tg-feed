@@ -136,22 +136,34 @@ export async function botBanRemainSecAsync(): Promise<number> {
 
 let meCache: { username: string | null; expiresAt: number } | null = null
 
-/** Username бота (кэш 10 минут; при отсутствии токена/ошибке — null) */
+/**
+ * Username бота (кэш 10 минут; при отсутствии токена/ошибке — null).
+ * v5.78: 2 попытки с короткой паузой — Telegram API троттлит датацентровые IP
+ * Vercel (известная проблема с v5.58), одиночный fetch на бёрсте падал, а от
+ * getMe зависит вход на сайте (ссылка на бота) и карточка «Источники».
+ */
 export async function getBotUsername(): Promise<string | null> {
   if (!botEnabled()) return null
   if (meCache && meCache.expiresAt > Date.now()) return meCache.username
-  try {
-    const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getMe`, {
-      signal: AbortSignal.timeout(8000),
-    })
-    const data = (await res.json()) as { ok?: boolean; result?: { username?: string } }
-    const username = data?.ok && data.result?.username ? data.result.username : null
-    meCache = { username, expiresAt: Date.now() + (username ? 10 : 1) * 60_000 }
-    return username
-  } catch {
-    meCache = { username: null, expiresAt: Date.now() + 60_000 }
-    return null
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN()}/getMe`, {
+        signal: AbortSignal.timeout(8000),
+      })
+      const data = (await res.json()) as { ok?: boolean; result?: { username?: string } }
+      const username = data?.ok && data.result?.username ? data.result.username : null
+      meCache = { username, expiresAt: Date.now() + (username ? 10 : 1) * 60_000 }
+      return username
+    } catch {
+      if (attempt === 0) {
+        await new Promise((r) => setTimeout(r, 400))
+        continue
+      }
+      meCache = { username: null, expiresAt: Date.now() + 60_000 }
+      return null
+    }
   }
+  return null
 }
 
 type TgPhotoSize = { file_id?: string; width?: number; height?: number }

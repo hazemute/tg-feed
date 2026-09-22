@@ -130,7 +130,6 @@ export function WalletPage({ open, onClose }: { open: boolean; onClose: () => vo
 
   useEffect(() => {
     if (open) load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open])
 
   const copy = useCallback((text: string, label: string) => {

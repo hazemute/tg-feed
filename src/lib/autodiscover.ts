@@ -191,141 +191,76 @@ function extractFromJson(text: string): string[] {
 export const CATALOG: Array<{ slug: string; usernames: string[] }> = [
   {
     slug: 'games',
+    // v5.78: ВЕРИФИЦИРОВАННЫЙ каталог — каждый username проверен live-тестом
+    // t.me/s (веб-превью отвечает и содержит посты; checked 2025-09-22).
+    // Старый список (v5.77) содержал 61/77 мёртвых имён — Telegram отдаёт на
+    // них карточку канала без постов, discover добавил 5 каналов и лента
+    // осталась пустой. У мёртвых имён здесь больше нет места.
     usernames: [
-      // крупнейшие игровые медиа
-      'stopgame_ru',
-      'igromania',
-      'dtfru',
+      // ── крупные игровые медиа (RU) ──
+      'igromania', // ~160 постов в превью
+      'dtfru', // DTF
+      'stopgameru', // StopGame.ru (рабочий username, 'stopgame_ru' мёртв)
+      'playground_ru', // PlayGround.ru ('playgrounderu' мёртв)
+      'vgtimes', // VGTimes
       'kanobu',
-      'gameguru',
-      'vgtimes',
-      'cybersportru',
-      'playgrounderu',
-      'shazoo',
-      'gamemag_ru',
-      'games_mailru',
-      'vesti_games',
-      'ignrussia',
-      // игровые сообщества и дилы
+      'kanobu_ru',
+      'gamebomb',
+      'kg_portal',
+      'gamemag_ru', // og-мета латиницей — спасает проверка текстов постов
+      // ── платформы и магазины ──
+      'epicgamesru',
+      'playstationru',
+      'playstation_igry',
+      'sonyplaystation',
+      'nintendo_ru',
+      'nintendoswitchru',
       'steam_deals_ru',
-      'steam_market_ru',
-      'gamedeals_ru',
-      'freegamesru',
-      'gamewayschannel',
-      'playstateru',
-      'mmotyr',
-      'mmohunt',
-      'playnpost',
-      'zarium',
-      'gamedev_ru',
-      'indiegameru',
-      // игры-сообщества
+      'steamru',
+      'mobilegames_ru', // «Мобильный Геймер»
+      // ── киберспорт и шутеры ──
+      'virtuspro',
+      'cybersport_ru_news',
       'dota2ru',
+      'dota2',
+      'dota2news',
       'cs2_ru',
-      'counterstrike2',
-      'minecraft_ru',
-      'roblox_ru',
-      'fortnite_ru',
-      'gta5online_ru',
-      'tarkovru',
-      'warframe_ru',
-      'genshinimpact_ru',
+      'cs_ru',
+      'cs2news',
+      'csgo_ru',
+      'standoff2',
+      // ── MMO и онлайн ──
+      'aion_ru',
+      'blackdesert_ru', // посты русские — og-мета латиница
+      'wowcircle_official',
+      'lostarkru',
+      'blizzard_ru',
+      'hearthstone',
+      'rustbase', // «Ржавая База» (Rust)
+      // ── сообщества отдельных игр ──
+      'genshin_ru',
       'honkaistarrail_ru',
       'zenlesszonezero_ru',
       'wutheringwaves_ru',
-      'brawlstars_ru',
-      'clashroyale_ru',
-      'standoff2_ru',
-      'pubgmobile_ru',
-      'apexlegendsru',
-      'valorantru',
-      'leagueoflegendsru',
-      'hearthstone_ru',
-      'worldoftanksru',
-      'warthunder_ru',
       'eldenringru',
-      'dark_souls_ru',
-      'pokemongo_ru',
-      'diablo_ru',
-      'lostarkru',
-      'rustyoru',
-      'dayzru',
-      'callofdutyru',
-      'warzonemobile',
-      'pathofexileru',
-      'wowcircle',
-      // v5.77.4: расширение каталога (цель — 100+ каналов в категории;
-      // несуществующие юзернеймы безвредны — валидация t.me/s отсеет)
-      'kanobu_ru',
-      'kanobu_org',
-      'stopgame',
-      'igromania_films',
-      'dtf_games',
-      'gamedeals',
-      'steamdeals',
-      'keyforshop',
-      'gamersmarket',
-      'gabestus',
-      'gamesreview',
-      'gamesgrub',
-      'grubbygamer',
-      'hardcore_gaming',
-      'psblog_ru',
-      'playstationru',
-      'xboxru',
-      'nintendoswitchru',
-      'switchru',
-      'gacharu',
-      'genshinenigma',
-      'hoYoFestRU',
-      'animegamesru',
-      'visualnovelsru',
-      'gamedevincome',
-      'unrealengine_ru',
-      'unitydevru',
-      'godotru',
-      'itchio_ru',
-      'demosceneru',
-      'speedrunru',
-      'esportsru',
-      'dota2news',
-      'csgo_ru',
-      'faceitru',
-      'tft_ru',
-      'autobattler_ru',
-      'mtga_ru',
-      'hsdecks',
-      'gwent',
-      'starcraft2ru',
-      'warcraft3ru',
-      'agempiresru',
-      'factorio_ru',
-      'stardew_ru',
+      'gta6_ru',
       'terraria_ru',
-      'hollowknight_ru',
-      'celeste_ru',
-      'undertale_ru',
-      'deltarune_ru',
-      'portal_ru',
-      'halflife_ru',
-      'left4dead2',
-      'steamkeysgive',
-      'freegamesfinder',
-      'gamedistribution',
-      'mobilegameru',
-      'androidgameru',
-      'iosgamesru',
-      'hypercasualru',
-      'idle_games_ru',
-      'gacha_news_ru',
-      'wargamingru',
-      'worldofwarshipsru',
-      'warplanesru',
-      'crossout_ru',
-      'conquerorsblade_ru',
-      'skyforge_ru',
-      'alfarj_ru',
-      'perfectworldru',
+      'cities_skylines_ru',
+      'civilization_ru',
+      'starcitizen_ru',
+      'project_zomboid_ru',
+      'hunt_showdown_ru',
+      'dbd_ru',
+      'dead_by_daylight_ru',
+      'thefirstdescendant_ru',
+      'content_warning_ru',
+      'tf2_ru',
+      'rimworld_ru',
+      'phasmophobia_ru',
+      // ── геймдев и инди ──
+      'indiegameru',
+      'gamedevru',
+      'unreal_engine_ru',
     ],
   },
 ]
@@ -765,10 +700,20 @@ async function processCandidate(
   const description = chat?.description ? decodeEnt(chat.description) : decodeEnt(ogDesc) || null
   const hint = `${title} ${description ?? ''}`
 
-  // v5.77: только русские каналы — в названии/описании должна быть кириллица
-  // (нет ни одной русской буквы → иностранный канал, отклоняем)
+  // v5.77: только русские каналы — в названии/описании должна быть кириллица.
+  // v5.78: og-мета часто на латинице даже у русских каналов («Gamebomb», «CS2»,
+  // «hearthstone») — тогда решает проверка ТЕКСТОВ постов: ≥ половина из первых
+  // содержательных постов русские (isRussianText: ≥30% кириллицы) → канал русский.
   if (!/[\p{Script=Cyrillic}]{3,}/u.test(hint)) {
-    return { ok: false, reason: 'не русский канал' }
+    const texts = posts
+      .slice(0, 8)
+      .map((p) => p.text.trim())
+      .filter((t) => t.length >= 10)
+      .slice(0, 6)
+    const ruPosts = texts.filter((t) => isRussianText(t)).length
+    if (texts.length === 0 || ruPosts < Math.ceil(texts.length / 2)) {
+      return { ok: false, reason: 'не русский канал' }
+    }
   }
 
   const slug = forcedSlug ?? classifyCategory(hint)
