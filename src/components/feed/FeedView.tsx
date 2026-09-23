@@ -117,7 +117,14 @@ function prefetchOtherLangs(current: LangFilter, userId: string, category: strin
           const now = Date.now()
           for (const [k, e] of langPrefetch) if (e.exp <= now) langPrefetch.delete(k)
         }
-        langPrefetch.set(key, { data: d, exp: Date.now() + LANG_PREFETCH_TTL_MS })
+        /* v6.1.3: пустой ответ НЕ кэшируем. Прогрев уходит с тем же сидом, что
+         * и основной запрос — если он поймал деградацию/блэк-дыру L0, раньше
+         * пустота подменяла ленту МГНОВЕННО при тапе на чип языка (0 мс путь).
+         * Теперь пустой прогрев просто не попадёт в карту — смена языка
+         * пойдёт обычным путём и увидит живые данные. */
+        if ((d.items?.length ?? 0) > 0) {
+          langPrefetch.set(key, { data: d, exp: Date.now() + LANG_PREFETCH_TTL_MS })
+        }
       })
       .catch(() => {
         /* тихо — переключение языка просто пойдёт обычным путём */
@@ -158,7 +165,11 @@ function prefetchNextPage(next: number, userId: string, category: string, lang: 
         const now = Date.now()
         for (const [k, e] of pagePrefetch) if (e.exp <= now) pagePrefetch.delete(k)
       }
-      pagePrefetch.set(key, { data: d, exp: Date.now() + PAGE_PREFETCH_TTL_MS })
+      // v6.1.3: пустая страница не кэшируется в префетче (та же логика, что
+      // и у языкового прогрева — пустота не должна подменяться мгновенно)
+      if ((d.items?.length ?? 0) > 0) {
+        pagePrefetch.set(key, { data: d, exp: Date.now() + PAGE_PREFETCH_TTL_MS })
+      }
       // v5.60: медиа первых постов следующей страницы в idle — при свайпе
       // картинка уже в кэше браузера/edge, shimmer не появится
       prewarmUpcoming(d.items ?? [], false, 2, 4)
@@ -589,6 +600,18 @@ export function FeedView() {
           incoming.push(p)
         }
         const freshCount = incoming.length
+        /* v6.1.3: авто-самолечение — страница 0 пришла ПУСТОЙ при активном
+         * языковом фильтре. Один тихий ретрай с НОВЫМ сидом (replace без
+         * keepSeed перегенерирует его сам) обходит застрявшую пустоту L0-
+         * кэша/снапшота прошлого запроса. Если постов реально нет — после
+         * ретрая честно покажется пустое состояние с кнопкой «Показать
+         * все языки». */
+        if (replace && p === 0 && incoming.length === 0 && !isRetry && langRef.current !== 'any') {
+          busyRef.current = false
+          clearTimeout(slowTimer)
+          await load(0, true, true)
+          return
+        }
         if (replace) {
           setItems(stitchNoRepeat(incoming, (p) => p.channel.id))
         } else if (freshCount > 0) {
@@ -1404,16 +1427,45 @@ export function FeedView() {
                 ? `Для фильтра языка «${langLabel}» постов не нашлось. Нажмите «Язык» в тулбаре, чтобы показать все языки`
                 : 'Подпишитесь на каналы или посмотрите популярные'}
             </p>
-            <button
-              type="button"
-              onClick={() => {
-                haptic('light')
-                openSearchWith('')
-              }}
-              className="press mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white"
-            >
-              Открыть поиск
-            </button>
+            {/* v6.1.3: честный выход одним тапом. Раньше пустота с языковым
+                фильтром предлагала только «Открыть поиск» — а владелец с
+                включённым «Русский» видел «0 из 0» без очевидного выхода. */}
+            {lang !== 'any' ? (
+              <div className="mt-1 flex flex-col items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    saveLangPref('any')
+                    setLang('any') // [lang]-эффект сам перезагрузит ленту (silent, без скелетона)
+                  }}
+                  className="press h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white"
+                >
+                  Показать все языки
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    bumpFeed()
+                  }}
+                  className="press h-10 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link"
+                >
+                  Обновить ленту
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => {
+                  haptic('light')
+                  openSearchWith('')
+                }}
+                className="press mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white"
+              >
+                Открыть поиск
+              </button>
+            )}
           </div>
         ) : visibleItems.length === 0 ? (
           /* Фильтры/поиск отсекли всё — предлагаем сброс */

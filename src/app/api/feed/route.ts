@@ -383,12 +383,27 @@ async function fetchPageRows(ids: string[], userId: string): Promise<PageRow[]> 
      * «feed failed». Пользователь видит ленту; L0 page-cache дальше отдаёт её
      * 90с без БД; флаги лайков/закладок догорят следующим запросом.
      */
+    /* v6.1.3: один мгновенный ретрай — транзиентный сбой пула (P2024/сетевой
+     * рывок) лечится за миллисекунды, а раньше первая попытка сразу
+     * деградировала в «пустую страницу» и кэшировала её. */
+    const fetchMissing = () =>
+      IS_SQLITE ? fetchBaseRowsSqlite(missing) : fetchBaseRowsPostgres(missing)
+    let fetched: BaseRow[] | null = null
     try {
-      const fetched = IS_SQLITE ? await fetchBaseRowsSqlite(missing) : await fetchBaseRowsPostgres(missing)
+      fetched = await fetchMissing()
+    } catch (e) {
+      console.error(`[feed] base-rows first attempt failed (missing=${missing.length})`, e)
+      try {
+        fetched = await fetchMissing()
+      } catch (e2) {
+        console.error(`[feed] base-rows retry failed too (missing=${missing.length})`, e2)
+        /* v6.1.3: если L1 тоже пуст — наверх уйдёт ЧЕСТНАЯ ошибка (503),
+         * а не ложная «пустая страница» (см. проверку в GET-хендлере). */
+      }
+    }
+    if (fetched && fetched.length > 0) {
       baseRowPut(fetched)
       base.push(...fetched)
-    } catch (e) {
-      console.error(`[feed] base-rows degraded to cache-only (missing=${missing.length})`, e)
     }
   }
   const byId = new Map(base.map((r) => [r.id, r]))
@@ -560,6 +575,18 @@ export async function GET(request: Request) {
     const pageRows: PageRow[] = await fetchPageRows(sliceIds, userId)
     mark('page-batch')
 
+    /* ---------- v6.1.3: «Показано 0 из 0» больше не врёт ----------
+     * Снапшот непустой, а строки страницы не добылись (БД подтормаживала,
+     * оба ретрая упали) — раньше такой ответ уходил как 200 с items:[],
+     * клиент рисовал «Здесь пока пусто», и пустота кэшировалась L0.
+     * Теперь — честный 503: клиент покажет «Не удалось загрузить ленту»
+     * с кнопкой «Обновить» вместо ложного «постов нет». Легитимная пустота
+     * (постов действительно нет — снапшот пустой) сюда не попадает:
+     * у неё sliceIds пуст. */
+    if (sliceIds.length > 0 && pageRows.length === 0) {
+      return err('feed temporarily unavailable', 503)
+    }
+
     // Показ кампании: инкремент ТОЛЬКО кампаниям, чей спонсорский пост реально
     // попал на текущую страницу снапшота (fire-and-forget)
     if (snapshot.sponsoredIds.size > 0) {
@@ -621,7 +648,12 @@ export async function GET(request: Request) {
 
     // Честный hasMore: по ДЛИНЕ персонального порядка (после всех фильтров)
     const hasMore = (page + 1) * limit < visible.length
-    putCachedPage(userId, category, page, limit, seedForCache, lang, items, hasMore)
+    /* v6.1.3: пустые страницы НЕ кэшируем. Раньше деградировавший ответ
+     * (items:[]) кэшировался на 90с — юзер с «0 из 0» не мог выбраться
+     * даже pull-to-refresh'ом (тот же сид → тот же кэш). */
+    if (items.length > 0) {
+      putCachedPage(userId, category, page, limit, seedForCache, lang, items, hasMore)
+    }
 
     return jsonWithEtag({
       items,
