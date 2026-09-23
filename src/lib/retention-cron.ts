@@ -1,10 +1,15 @@
 import { db } from '@/lib/db'
-import { botSendRich } from '@/lib/tg-emoji'
+import { botSendPhotoRich, botSendRich } from '@/lib/tg-emoji'
 import { escapeHtml } from '@/lib/tg-bot'
 import { dayKeyUtc } from '@/lib/reading'
+import { postQuoteHtml, sendablePhotoOf } from '@/lib/post-dm'
 
 /**
  * v5.93 — КРОН УДЕРЖАНИЯ: реактивационный пуш + недельный дайджест.
+ * v6.1.2 — КРАСИВЫЕ КАРТОЧКИ: обложка — картинка самого поста (sendPhoto),
+ * содержимое — в <blockquote> (как пересланный кусок канала), medals/чистая
+ * типографика, премиум-эмодзи и иконки кнопок (подставляет отправка),
+ * общий модуль дизайна — src/lib/post-dm.ts (sendPostCard/mailKeyboard).
  *
  * Вызывается из /api/parse/tick (крутит каждую минуту) — обе задачи
  * спроектированы порциями, чтобы тик не тяжелел:
@@ -58,18 +63,28 @@ async function setSetting(key: string, value: string): Promise<void> {
     .catch(() => {})
 }
 
-/** Стриппер markdown-lite (жирный/курсив/код/ссылки) — для сниппетов в HTML-письме */
-function snippetOf(text: string, max = 90): string {
-  const plain = text
-    .replace(/\*\*(.+?)\*\*/g, '$1')
-    .replace(/__(.+?)__/g, '$1')
-    .replace(/`(.+?)`/g, '$1')
-    .replace(/\|\|(.+?)\|\|/g, '$1')
-    .replace(/\[(.+?)\]\((.+?)\)/g, '$1')
-    .replace(/^>\s?/gm, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-  return plain.length > max ? `${plain.slice(0, max).trimEnd()}…` : plain
+/** Общие кнопки почтовых карточек: действие + мягкий отказ (v6.1.2) */
+function mailKeyboard(primary: { label: string; emoji: string; url: string }) {
+  return [
+    [primary, { label: 'Наш канал', emoji: '✨', url: 'https://t.me/SnapTeamDev', style: 'success' as const }],
+    [{ label: 'Не писать мне', emoji: '🔕', callback_data: 'mail:off' }],
+  ]
+}
+
+/** Отправка карточки: есть фото поста → sendPhoto с обложкой, нет → тот же
+ *  дизайн текстом. Премиум-эмодзи/иконки кнопок подставляет отправка сама. */
+async function sendPostCard(
+  chatId: number,
+  html: string,
+  photoUrl: string | null,
+  keyboard: ReturnType<typeof mailKeyboard>,
+): Promise<boolean> {
+  if (photoUrl) {
+    const r = await botSendPhotoRich(chatId, html, { keyboard, photoUrl }).catch(() => ({ ok: false }) as const)
+    if (r.ok) return true
+  }
+  const t = await botSendRich(chatId, html, { keyboard }).catch(() => ({ ok: false }) as const)
+  return Boolean(t.ok)
 }
 
 /* ------------------------------ Реактивация ------------------------------ */
@@ -129,7 +144,14 @@ async function runReactivation(now: Date): Promise<ReactivationResult> {
           aiFlag: { notIn: ['junk', 'nsfw'] },
         },
         orderBy: [{ likesCount: 'desc' }, { viewsCount: 'desc' }],
-        select: { id: true, text: true, channel: { select: { title: true } } },
+        select: {
+          id: true,
+          text: true,
+          mediaUrl: true,
+          mediaType: true,
+          gallery: true,
+          channel: { select: { title: true } },
+        },
       })
       .catch(() => null)
     if (!post) continue
@@ -140,23 +162,22 @@ async function runReactivation(now: Date): Promise<ReactivationResult> {
     const deepLink = `${TME_APP_URL}?startapp=${encodeURIComponent(`n_${post.id}`)}`
     const streakLine =
       c.streak > 0
-        ? `\n\n🔥 Ваш стрик чтения: ${c.streak} дн.${c.freezes > 0 ? ` · ❄️ заморозок: ${c.freezes}` : ''}`
+        ? `\n\n🔥 <b>Стрик чтения: ${c.streak} дн.</b>${c.freezes > 0 ? ` · ❄️ заморозок: ${c.freezes}` : ''} — не разрывай серию!`
         : ''
     const html =
-      `🔥 <b>Ваши каналы скучают</b>\n\n` +
-      `Пока вас не было, в ваших подписках появился пост, который читателям особенно зашёл:\n\n` +
-      `<b>${escapeHtml(post.channel.title)}</b>\n${escapeHtml(snippetOf(post.text))}\n` +
-      `${streakLine}\n\n🔗 <a href="${deepLink}">Открыть и прочитать</a>`
+      `🔥 <b>Твои каналы скучают</b>\n\n` +
+      `📖 Из твоих подписок — пост, который читателям особенно зашёл:\n\n` +
+      postQuoteHtml(post.channel.title, post.text, { max: 160, href: deepLink }) +
+      streakLine +
+      `\n\n<a href="${deepLink}">Читать в приложении →</a>`
 
-    const r = await botSendRich(chatId, html, {
-      skipPremiumWrap: true,
-      keyboard: [
-        [{ label: 'Читать пост 📖', url: deepLink, style: 'primary' as const }],
-        [{ label: '🔕 Не писать мне', callback_data: 'mail:off' }],
-      ],
-    }).catch(() => ({ ok: false } as const))
-
-    if (r.ok) {
+    const ok = await sendPostCard(
+      chatId,
+      html,
+      sendablePhotoOf(post),
+      mailKeyboard({ label: 'Читать пост', emoji: '📖', url: deepLink }),
+    )
+    if (ok) {
       await setSetting(`retention_push:${c.userId}`, now.toISOString())
       sent += 1
     }
@@ -217,7 +238,15 @@ async function runDigest(now: Date): Promise<DigestResult> {
         },
         orderBy: [{ likesCount: 'desc' }, { viewsCount: 'desc' }],
         take: 5,
-        select: { id: true, text: true, link: true, channel: { select: { title: true } } },
+        select: {
+          id: true,
+          text: true,
+          link: true,
+          mediaUrl: true,
+          mediaType: true,
+          gallery: true,
+          channel: { select: { title: true } },
+        },
       })
       .catch(() => [])
     if (posts.length === 0) {
@@ -248,29 +277,32 @@ async function runDigest(now: Date): Promise<DigestResult> {
           .catch(() => null)
       : null
 
+    const medal = ['🥇', '🥈', '🥉', '4️⃣', '5️⃣']
     const lines = posts
-      .map((p) => {
+      .map((p, i) => {
         const href = p.link || deepLinkOfPost(p.id)
-        return `• <a href="${href}"><b>${escapeHtml(p.channel.title)}</b>: ${escapeHtml(snippetOf(p.text, 70))}</a>`
+        return `${medal[i] ?? '•'} ${postQuoteHtml(p.channel.title, p.text, { max: 70, href })}`
       })
       .join('\n')
     const recLine = rec
       ? `\n\n🧲 <b>Канал недели: ${escapeHtml(rec.title)}</b> — ${rec.subscribersCount.toLocaleString('ru-RU')} подписчиков\n@${escapeHtml(rec.username)}`
       : ''
     const html =
-      `📬 <b>Лучшее для вас за неделю</b>\n\n${lines}${recLine}\n\n🔗 <a href="${TME_APP_URL}">Открыть Tg Swipe</a>`
+      `📬 <b>Лучшее для тебя за неделю</b>\n\n${lines}${recLine}\n\n` +
+      `<a href="${TME_APP_URL}">Смотреть всё в приложении →</a>`
 
     const chatId = Number(uid.slice('tg_'.length))
     if (!Number.isInteger(chatId) || chatId <= 0) continue
-    const r = await botSendRich(chatId, html, {
-      skipPremiumWrap: true,
-      keyboard: [
-        [{ label: 'Открыть Tg Swipe 🚀', url: TME_APP_URL, style: 'primary' as const }],
-        [{ label: '🔕 Не писать мне', callback_data: 'mail:off' }],
-      ],
-    }).catch(() => ({ ok: false } as const))
+    // Обложка — картинка самого топового поста; нет её → тот же дизайн текстом
+    const cover = posts.map((p) => sendablePhotoOf(p)).find(Boolean) ?? null
+    const ok = await sendPostCard(
+      chatId,
+      html,
+      cover,
+      mailKeyboard({ label: 'Открыть Tg Swipe', emoji: '🚀', url: TME_APP_URL }),
+    )
 
-    if (r.ok) {
+    if (ok) {
       await setSetting(`digest:${uid}:${weekKey}`, now.toISOString())
       sent += 1
     }

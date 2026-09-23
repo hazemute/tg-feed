@@ -313,6 +313,9 @@ type SendOpts = {
   keyboard?: BotButton[][]
   /** Не оборачивать эмодзи (текст уже готов) */
   skipPremiumWrap?: boolean
+  /** v6.1.2: СВОЁ фото (карточка поста): https-URL или file_id — уходит первым;
+   *  не прошло → текстовый фолбэк того же дизайна (без брендовой заставки) */
+  photoUrl?: string
 }
 
 async function tgCall(
@@ -539,6 +542,24 @@ export async function botSendPhotoRich(
         })
         .catch(() => {})
     }
+  }
+
+  // 0) v6.1.2: СВОЁ фото (карточка поста). Без кэша file_id (у каждого поста
+  //    свой) и без брендовой заставки — не получилось → сразу красивый текст.
+  if (opts.photoUrl) {
+    const p = opts.photoUrl
+    const p1 = await sendPhoto(p, caption, iconMarkup)
+    if (p1.ok) return { ok: true, via: 'photo' }
+    const p2 = await sendPhoto(p, plainCaption, iconMarkup)
+    if (p2.ok) return { ok: true, via: 'photo' }
+    if (hasIcons && plainMarkup) {
+      const p3 = await sendPhoto(p, plainCaption, plainMarkup)
+      if (p3.ok) return { ok: true, via: 'photo' }
+    }
+    const t0 = await botSendRich(chatId, captionHtml, { ...opts, skipPremiumWrap: true })
+    return t0.ok
+      ? { ok: true, via: 'text' }
+      : { ok: false, via: 'text', error: t0.error ?? p2.description ?? p1.description }
   }
 
   // 1) Закэшированный file_id — самый быстрый путь

@@ -34,6 +34,8 @@ import { escapeHtml } from '@/lib/tg-bot'
  *    5 за 6ч на пользователя (горячий пост с 50 комментами = ≤5 ЛС), и
  *    рубильник dm_notify_off (BotSetting) — мгновенно заглушить ВСЕ ЛС
  *    уведомления без деплоя (panel/bot action:'dm_notify').
+ *  • v6.1.2: КРАСИВЫЕ КАРТОЧКИ. Цитата (<blockquote>) вместо голого текста,
+ *    кнопки с премиум-иконками, премиум-эмодзи в тексте, «ты»-обращение.
  *  • ошибки только в лог — уведомление в инбоксе уже создано, ЛС не критично.
  */
 
@@ -220,18 +222,37 @@ function deepLinkOf(startParam: string): string {
 
 function htmlOf(data: BotNotifyData, link: string): string {
   const title = escapeHtml(data.title.slice(0, 64))
-  const text = escapeHtml(data.body.slice(0, 180)) + (data.body.length > 180 ? '…' : '')
+  const snippet = (s: string) => escapeHtml(s.slice(0, 180)) + (s.length > 180 ? '…' : '')
   switch (data.type) {
     case 'comment':
-      return `💬 <b>Новый комментарий на канале «${title}»</b>\n\n${text}\n\n🔗 <a href="${link}">Открыть в приложении</a>`
+      return (
+        `💬 <b>Новый комментарий</b> · «${title}»\n\n` +
+        `<blockquote>${snippet(data.body)}</blockquote>\n\n` +
+        `<a href="${link}">Ответить в приложении →</a>`
+      )
     case 'reply':
-      return `↩️ <b>${title} ответил(а) на ваш комментарий</b>\n\n${text}\n\n🔗 <a href="${link}">Открыть в приложении</a>`
+      return (
+        `↩️ <b>${title} ответил(а) тебе</b>\n\n` +
+        `<blockquote>${snippet(data.body)}</blockquote>\n\n` +
+        `<a href="${link}">Открыть диалог →</a>`
+      )
     case 'comment_like':
       // title приходит уже готовым: «X оценил(а) ваш комментарий» или
-      // агрегированное «У вашего комментария уже N лайков»
-      return `❤️ <b>${title}</b>\n\n${text}\n\n🔗 <a href="${link}">Открыть в приложении</a>`
+      // агрегированное «У вашего комментария уже N лайков»;
+      // body = «❤️ {текст комментария}» — ведущее сердечко убираем,
+      // текст уходит в цитату (v6.1.2)
+      return (
+        `<b>${title}</b>\n\n` +
+        `<blockquote>${snippet(data.body.replace(/^❤️\s*/, ''))}</blockquote>\n\n` +
+        `<a href="${link}">Открыть в приложении →</a>`
+      )
     case 'system':
-      return `🔔 <b>${title}</b>\n\n${text}\n\n🔗 <a href="${link}">Открыть в приложении</a>`
+      // Заголовок обычно уже с эмодзи («✅ Задание выполнено…») — 🔔 добавляем
+      // только к «голому» тексту
+      return (
+        `<b>${title}</b>\n\n${snippet(data.body)}\n\n` +
+        `<a href="${link}">Открыть в приложении →</a>`
+      )
   }
 }
 
@@ -271,14 +292,15 @@ export async function sendBotNotification(data: BotNotifyData): Promise<void> {
     const startParam = startParamOf(data.postId, data.commentId)
     const link = deepLinkOf(startParam)
     // Глубокая ссылка на конкретное уведомление, либо просто кнопка запуска приложения
+    // v6.1.2: иконки кнопок через слоты (премиум) + стили; эмоциональная иконка в plain-фолбэке
     const keyboard = startParam
-      ? [[{ label: 'Перейти к уведомлению 🚀', url: link, style: 'primary' as const }]]
-      : [[{ label: 'Открыть Tg Swipe', url: TME_APP_URL, style: 'primary' as const }]]
+      ? [[{ label: 'Перейти к уведомлению', emoji: '🚀', url: link, style: 'primary' as const }]]
+      : [[{ label: 'Открыть Tg Swipe', emoji: '🚀', url: TME_APP_URL, style: 'primary' as const }]]
 
     enqueueSend(async () => {
       // Агрегация: к моменту отправки лайков может быть уже много — если ≥5,
       // шлём «У вашего комментария уже N лайков» вместо «X оценил(а)»
-      let title = data.type === 'comment_like' ? `${data.title} оценил(а) ваш комментарий` : data.title
+      let title = data.type === 'comment_like' ? `${data.title} оценил(а) твой комментарий` : data.title
       if (data.type === 'comment_like' && data.commentId) {
         try {
           const c = await db.comment.findUnique({
@@ -286,7 +308,7 @@ export async function sendBotNotification(data: BotNotifyData): Promise<void> {
             select: { likesCount: true },
           })
           const n = c?.likesCount ?? 0
-          if (n >= 5) title = `У вашего комментария уже ${n} ${likesWord(n)}`
+          if (n >= 5) title = `🔥 У твоего комментария уже ${n} ${likesWord(n)}`
         } catch {
           /* не получили счётчик — шлём обычный текст */
         }
@@ -294,8 +316,8 @@ export async function sendBotNotification(data: BotNotifyData): Promise<void> {
       const html = htmlOf({ ...data, title }, link)
       const r = await botSendRich(chatId, html, {
         keyboard,
-        // Текст уже с эмодзи и экранированием — premiumText не нужен
-        skipPremiumWrap: true,
+        // premiumText сам обернёт эмодзи в премиум (v6.1.2 — красивые карточки);
+        // при недоступности премиума отправка сама уйдёт обычным текстом
       })
       if (!r.ok) {
         console.warn('[bot-notify] DM failed', data.type, data.userId, r.error ?? r.via)
