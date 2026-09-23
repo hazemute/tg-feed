@@ -24,6 +24,7 @@ type BotConfig = {
   captured: CapturedEmoji[]
   ownerChatId: number
   premiumCount: number
+  dmNotifyOff: boolean
 }
 
 const VIA_LABEL: Record<string, string> = {
@@ -105,6 +106,22 @@ export function BotTab({ tick, onSettled }: TabProps) {
       load()
     } catch (e) {
       toast.error((e as Error).message || 'Не удалось удалить')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  /** v6.1.1: рубильник ВСЕХ ЛС-уведомлений (глобальный антиспам) */
+  const toggleDmNotify = async () => {
+    if (!data) return
+    const off = !data.dmNotifyOff
+    setSaving('dm_notify')
+    try {
+      await panelFetch('/api/panel/bot', { json: { action: 'dm_notify', off } })
+      setData({ ...data, dmNotifyOff: off })
+      toast.success(off ? 'ЛС-уведомления заглушены — бот молчит во всех личках' : 'ЛС-уведомления включены')
+    } catch (e) {
+      toast.error((e as Error).message || 'Не удалось изменить')
     } finally {
       setSaving(null)
     }
@@ -306,6 +323,46 @@ export function BotTab({ tick, onSettled }: TabProps) {
                 </button>
               )}
             </div>
+          </div>
+
+          {/* v6.1.1: рубильник ЛС-уведомлений (глобальный антиспам) */}
+          <div
+            className={cn(
+              'flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3',
+              data.dmNotifyOff ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50/60',
+            )}
+          >
+            <div className="min-w-56">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Inbox className="size-4" />
+                ЛС-уведомления от бота
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                    data.dmNotifyOff ? 'bg-red-100 text-red-700' : 'bg-emerald-100 text-emerald-700',
+                  )}
+                >
+                  {data.dmNotifyOff ? 'ЗАГЛУШЕНЫ' : 'включены'}
+                </span>
+              </h3>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
+                {data.dmNotifyOff
+                  ? 'Бот молчит во всех личках: лайки/ответы/награды/достижения — только в инбоксе миниаппа. Реактивация и еженедельный дайджест продолжат приходить.'
+                  : 'Лайки/ответы/награды дублируются в личку. Глобальный антиспам: 1 ЛС на комментарий в 6ч, ≤5 лайк-ЛС за 6ч, кап 4/мин — единый лимит на все инстансы.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void toggleDmNotify()}
+              disabled={saving === 'dm_notify'}
+              className={cn(
+                'flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium text-white transition disabled:opacity-50',
+                data.dmNotifyOff ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-red-600 hover:bg-red-700',
+              )}
+            >
+              {saving === 'dm_notify' ? <Loader2 className="size-4 animate-spin" /> : <Inbox className="size-4" />}
+              {data.dmNotifyOff ? 'Включить ЛС' : 'Заглушить ЛС'}
+            </button>
           </div>
 
           {/* Слоты эмодзи */}
