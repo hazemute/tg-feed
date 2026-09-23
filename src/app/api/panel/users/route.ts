@@ -80,7 +80,13 @@ export async function GET(request: Request) {
     }
     // v6.3.1: поисковый OR комбинируем через AND — не затирая фильтровые OR
     if (searchOR) {
-      where.AND = [...(where.AND ?? []), { OR: searchOR }]
+      const ands: Prisma.UserWhereInput[] = Array.isArray(where.AND)
+        ? where.AND
+        : where.AND
+          ? [where.AND]
+          : []
+      ands.push({ OR: searchOR })
+      where.AND = ands
     }
 
     const [total, users] = await Promise.all([
