@@ -661,8 +661,10 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
   let sources: Array<{ channelId: string | null; username: string | null; tgId: string }>
   // Task 5-c: посты, пожалованные самим юзером («то, что я дизлайкнул — не показывать»)
   let ownReports: Array<{ postId: string }>
+  // v6.4.0: полное покрытие «виденного» за окно исключения (см. комментарий к запросу)
+  let recentViews: Array<{ postId: string; createdAt: Date }>
   try {
-    ;[views, likes, bookmarks, subs, mutes, hides, sources, ownReports] = await db.$transaction([
+    ;[views, likes, bookmarks, subs, mutes, hides, sources, ownReports, recentViews] = await db.$transaction([
       db.postView.findMany({
         where: { userId },
         select: {
@@ -723,6 +725,19 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
         select: { postId: true },
         orderBy: { createdAt: 'desc' },
         take: 200,
+      }),
+      /* v6.4.0: ПОЛНОЕ ПОКРЫТИЕ «ВИДЕННОГО» — лёгкий запрос без joins.
+       * views-выборка выше капится 500 строками (для аффинити достаточно),
+       * но активный юзер с тысячами просмотров вылетал за этот кап: его
+       * старое виденное считалось «непросмотренным» и ВОЗВРАЩАЛОСЬ в ленту
+       * (в т.ч. в unseen-голову) — корень жалобы «опять те же посты».
+       * Несём все просмотры за окно viewedPenalty (7 дней, cap 2500):
+       * их использует жёсткое исключение просмотренного в buildFeedSnapshot. */
+      db.postView.findMany({
+        where: { userId, createdAt: { gt: new Date(Date.now() - 7 * 86_400_000) } },
+        select: { postId: true, createdAt: true },
+        orderBy: { createdAt: 'desc' },
+        take: 2500,
       }),
     ])
   } catch {
@@ -858,9 +873,18 @@ export async function loadPersonalSignals(userId: string): Promise<PersonalSigna
     if (cat) dislikeCats.set(cat, (dislikeCats.get(cat) ?? 0) + 1)
   }
 
+  /* v6.4.0: viewedAt = union(views, recentViews). unique(userId, postId) — одна
+   * строка на пост, но выборки пересекаются; берём максимум createdAt.
+   * viewedIds строится из ключей viewedAt — полное покрытие окна исключения. */
+  for (const rv of recentViews) {
+    const at = rv.createdAt.getTime()
+    const prev = viewedAt.get(rv.postId)
+    if (prev === undefined || at > prev) viewedAt.set(rv.postId, at)
+  }
+
   const data: PersonalSignals = {
     affinity,
-    viewedIds: new Set(views.map((v) => v.postId)),
+    viewedIds: new Set(viewedAt.keys()),
     viewedAt,
     subscribedIds: new Set(subs.map((s) => s.channelId)),
     mutedIds: new Set(mutes.map((m) => m.channelId)),

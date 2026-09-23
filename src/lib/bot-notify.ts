@@ -47,19 +47,25 @@ const TME_APP_URL =
 /** Интервал между отправками в очереди (20 msg/s — ниже лимита Bot API) */
 const SEND_INTERVAL_MS = 60
 
-/* — Антиспам v6.1.1 (глобальный, в БД) — */
+/* — Антиспам v6.4.0 (глобальный, в БД; ужесточение после повторной жалобы
+ *  владельца «бот спамит в ЛС постами») — */
 /** Лайки: 1 ЛС на (пользователь × комментарий) в 6 часов — «залетевший»
  *  комментарий с сотней лайков даёт ОДНО ЛС, а не сотню */
 const LIKE_DM_PER_COMMENT_MS = 6 * 60 * 60_000
-/** Лайки: бюджет на пользователя — не более 5 лайк-ЛС за скользящие 6ч
- *  (горячий пост с десятками комментов больше не «пулемётит» юзера) */
-const LIKE_DM_BUDGET_WINDOW_MS = 6 * 60 * 60_000
-const LIKE_DM_BUDGET_MAX = 5
-/** Ответы/комменты: 1 ЛС на (пользователь × пост × тип) в 2 минуты —
- *  горячая ветка/пост не долбят ЛС на каждое событие */
-const THREAD_DM_PER_POST_MS = 2 * 60_000
+/** Лайки: бюджет на пользователя — не более 3 лайк-ЛС за СУТКИ (было 5/6ч:
+ *  горячий пост с десятками комментов пулил юзера весь день) */
+const LIKE_DM_BUDGET_WINDOW_MS = 24 * 3_600_000
+const LIKE_DM_BUDGET_MAX = 3
+/** Ответы/комменты: 1 ЛС на (пользователь × пост × тип) в 3 ЧАСА (было 2 мин —
+ *  горячая ветка долбила ЛС каждые 2 минуты; теперь максимум 8 в сутки
+ *  на тип на пост, а дневной кап ниже режет сильнее) */
+const THREAD_DM_PER_POST_MS = 3 * 60 * 60_000
+/** Дневной кап ЛС АКТИВНОСТИ на пользователя (комменты+ответы+лайки, любые
+ *  посты): ≤6 за скользящие 24ч. Дальше — только инбокс миниаппа. */
+const USER_DM_DAILY_WINDOW_MS = 24 * 3_600_000
+const USER_DM_DAILY_MAX = 6
 /** Жёсткий кап ЛС на пользователя в минуту (любые типы, последний рубеж) */
-const USER_DM_CAP_PER_MIN = 4
+const USER_DM_CAP_PER_MIN = 2
 /** Рубильник: задан в BotSetting — ВСЕ ЛС-уведомления молча пропускаются */
 const DM_KILL_KEY = 'dm_notify_off'
 
@@ -87,9 +93,10 @@ function enqueueSend(task: () => Promise<void>): void {
  *  Все маркеры — в BotSetting: serverless-инстансов много, память каждого
  *  своя, а BotSetting один на весь мир. Ключи:
  *    dm:like:<userId>:<commentId>   → ISO ts последнего лайк-ЛС (окно 6ч)
- *    dm:thread:<userId>:<postId>:<type> → ISO ts последнего ЛС ветки (2мин)
- *    dm:likecap:<userId>            → JSON ts[] (бюджет 5 лайк-ЛС/6ч)
- *    dm:cap:<userId>                → JSON ts[] (кап 4 ЛС/мин)
+ *    dm:thread:<userId>:<postId>:<type> → ISO ts последнего ЛС ветки (3ч)
+ *    dm:likecap:<userId>            → JSON ts[] (бюджет 3 лайк-ЛС/24ч)
+ *    dm:daycap:<userId>             → JSON ts[] (дневной кап 6 ЛС/24ч)
+ *    dm:cap:<userId>                → JSON ts[] (кап 2 ЛС/мин)
  *    dm_notify_off                  → любое значение = заглушить все ЛС
  */
 
@@ -333,10 +340,10 @@ export async function sendBotNotification(data: BotNotifyData): Promise<void> {
     // Рубильник: ЛС полностью заглушены владельцем — инбокс миниаппа живёт
     if (await dmKilled()) return
 
-    // Антиспам v6.1.1 (глобально): коммент залетел → ЛС не чаще 1 на
-    // комментарий в 6ч И не более 5 лайк-ЛС за 6ч на юзера; горячий пост →
-    // ответы/комменты не чаще 1 в 2мин; кап 4 ЛС/мин на юзера.
-    // Прошедшие фильтр события живут в инбоксе миниаппа в любом случае.
+    // Антиспам v6.4.0 (глобально): коммент залетел → ЛС не чаще 1 на
+    // комментарий в 6ч И не более 3 лайк-ЛС за сутки на юзера; горячий пост →
+    // ответы/комменты не чаще 1 в 3ч; дневной кап 6 ЛС/24ч на юзера;
+    // кап 2 ЛС/мин. Прошедшие фильтр события живут в инбоксе миниаппа в любом случае.
     if (data.type === 'comment_like') {
       if (!(await claimWindow(`dm:like:${data.userId}:${data.commentId ?? '_'}`, LIKE_DM_PER_COMMENT_MS))) return
       if (!(await claimRolling(`dm:likecap:${data.userId}`, LIKE_DM_BUDGET_WINDOW_MS, LIKE_DM_BUDGET_MAX))) return
@@ -344,6 +351,10 @@ export async function sendBotNotification(data: BotNotifyData): Promise<void> {
     if ((data.type === 'reply' || data.type === 'comment')) {
       if (!(await claimWindow(`dm:thread:${data.userId}:${data.postId ?? '_'}:${data.type}`, THREAD_DM_PER_POST_MS))) return
     }
+    // Дневной кап ДО минутного (иначе минутный пропустит 2 шт и дневной
+    // увидит их в окне — порядок фильтров не влияет на корректность,
+    // но так дорогой 24ч-маркер дёргается только для прошедших фильтры)
+    if (!(await claimRolling(`dm:daycap:${data.userId}`, USER_DM_DAILY_WINDOW_MS, USER_DM_DAILY_MAX))) return
     if (!(await claimRolling(`dm:cap:${data.userId}`, 60_000, USER_DM_CAP_PER_MIN))) return
 
     const startParam = startParamOf(data.postId, data.commentId)

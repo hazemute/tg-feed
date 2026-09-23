@@ -95,6 +95,15 @@ export async function POST(request: Request) {
       void evaluateViewsAchievement(userId)
     }
 
+    /* v6.4.0: новые просмотры должны УЧИТЫВАТЬСЯ сразу: кэш персональных
+     * сигналов (15с) иначе отдавал устаревший viewedIds, и pull-to-refresh
+     * сразу после скролла возвращал только что виденное. Инвалидация дешёвая
+     * (удаление из map), следующий запрос пересоберёт сигналы из БД. */
+    if (added > 0) {
+      const { invalidatePersonalSignals } = await import('@/lib/feed')
+      invalidatePersonalSignals(userId)
+    }
+
     return NextResponse.json({ ok: true, added })
   } catch (e) {
     console.error('[view]', e)
