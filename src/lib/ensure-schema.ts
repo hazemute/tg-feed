@@ -360,6 +360,24 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE TABLE IF NOT EXISTS "Blacklist" ("id" text PRIMARY KEY, "tgId" text NOT NULL, "userId" text, "reason" text NOT NULL DEFAULT '', "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
     `CREATE UNIQUE INDEX IF NOT EXISTS "Blacklist_tgId_key" ON "Blacklist"("tgId")`,
   ],
+  // v6.1: МОНЕТИЗАЦИЯ ВЛАДЕЛЬЦА — платная верификация (Channel.verifiedUntil), буст каталога
+  // (Channel.boostUntil), платная подписка на автора 70/30 (Channel.membershipPriceKop /
+  // Post.memberOnly / ChannelMembership), биржа взаимопиара (CrossPromo)
+  'v6.1-monetize': [
+    `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "verifiedUntil" timestamp(3)`,
+    `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "boostUntil" timestamp(3)`,
+    `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "membershipPriceKop" integer`,
+    `ALTER TABLE "Channel" ADD COLUMN IF NOT EXISTS "memberBenefits" text`,
+    `ALTER TABLE "Post" ADD COLUMN IF NOT EXISTS "memberOnly" boolean NOT NULL DEFAULT false`,
+    `CREATE TABLE IF NOT EXISTS "ChannelMembership" ("id" text PRIMARY KEY, "userId" text NOT NULL, "channelId" text NOT NULL, "priceKop" integer NOT NULL, "since" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, "until" timestamp(3) NOT NULL, "incomeKop" integer NOT NULL DEFAULT 0, CONSTRAINT "ChannelMembership_userId_fkey" FOREIGN KEY ("userId") REFERENCES "User" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "ChannelMembership_channelId_fkey" FOREIGN KEY ("channelId") REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE UNIQUE INDEX IF NOT EXISTS "ChannelMembership_userId_channelId_key" ON "ChannelMembership"("userId", "channelId")`,
+    `CREATE INDEX IF NOT EXISTS "ChannelMembership_channelId_idx" ON "ChannelMembership"("channelId")`,
+    `CREATE INDEX IF NOT EXISTS "ChannelMembership_until_idx" ON "ChannelMembership"("until")`,
+    `CREATE TABLE IF NOT EXISTS "CrossPromo" ("id" text PRIMARY KEY, "fromChannelId" text NOT NULL, "toChannelId" text NOT NULL, "status" text NOT NULL DEFAULT 'PENDING', "message" text, "respondedAt" timestamp(3), "createdAt" timestamp(3) NOT NULL DEFAULT CURRENT_TIMESTAMP, CONSTRAINT "CrossPromo_fromChannelId_fkey" FOREIGN KEY ("fromChannelId") REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE, CONSTRAINT "CrossPromo_toChannelId_fkey" FOREIGN KEY ("toChannelId") REFERENCES "Channel" ("id") ON DELETE CASCADE ON UPDATE CASCADE)`,
+    `CREATE INDEX IF NOT EXISTS "CrossPromo_toChannelId_status_idx" ON "CrossPromo"("toChannelId", "status")`,
+    `CREATE INDEX IF NOT EXISTS "CrossPromo_fromChannelId_status_idx" ON "CrossPromo"("fromChannelId", "status")`,
+    `CREATE INDEX IF NOT EXISTS "Channel_boostUntil_idx" ON "Channel"("boostUntil")`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -425,6 +443,12 @@ const CRITICAL: Array<[string, string | null]> = [
   ['AdSlot', null],
   ['Blacklist', null],
   ['XpLog', null],
+  ['Channel', 'boostUntil'],
+  ['Channel', 'verifiedUntil'],
+  ['Channel', 'membershipPriceKop'],
+  ['Post', 'memberOnly'],
+  ['ChannelMembership', null],
+  ['CrossPromo', null],
 ]
 
 export type SchemaState = { ok: boolean; missing: string[] }

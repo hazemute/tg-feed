@@ -65,6 +65,7 @@ model User {
   channelMutes  ChannelMute[]
   channels      Channel[]      @relation("addedChannels")
   claimed       Channel[]      @relation("claimedChannels")
+  channelMemberships ChannelMembership[] @relation("channelMemberships") // v6.1: платные подписки на авторов
   bookmarks     Bookmark[]
   advertiser    AdvertiserAccount?
   balanceLogs   BalanceLog[]
@@ -151,6 +152,11 @@ model Channel {
   teaserLimit      Int       @default(160) // сколько символов показывать в режиме cut
   // v5.70: кому применять тизер: all | long (лонгриды 600+ симв.) | text (текстовые без медиа)
   teaserApplyTo    String    @default("all")
+  // === v6.1: МОНЕТИЗАЦИЯ ВЛАДЕЛЬЦА ===
+  verifiedUntil      DateTime? // платная верификация до (verified от админа — бессрочно)
+  boostUntil         DateTime? // буст каталога до (канал пиннится в топ каталога)
+  membershipPriceKop Int?      // цена платной подписки на канал за месяц (null — выключена)
+  memberBenefits     String?   // что получает платный подписчик (plain text)
   addedById        String?
   addedBy          User?     @relation("addedChannels", fields: [addedById], references: [id])
   createdAt        DateTime  @default(now())
@@ -159,9 +165,13 @@ model Channel {
   scheduledPosts   ScheduledPost[] // v5.64: отложенные посты (Snap Ассистент)
   subscriptions    Subscription[]
   campaigns        AdCampaign[]
+  memberships      ChannelMembership[] @relation("memberships") // v6.1: платные подписчики канала
+  crossPromoFrom   CrossPromo[] @relation("crossPromoFrom") // v6.1: биржа взаимопиара — исходящие
+  crossPromoTo     CrossPromo[] @relation("crossPromoTo")   // v6.1: биржа взаимопиара — входящие
 
   @@index([status])
   @@index([categoryId]) // v5.48: join категории в ленте/каталоге/трендах
+  @@index([boostUntil]) // v6.1: буст каталога
   @@index([addedById]) // v5.48: «каналы, добавленные модератором» в админке
   @@index([claimedById]) // v5.69: GET /api/mychannel (каналы владельца) + promotedUsed-джойны
   mutedBy     ChannelMute[]
@@ -196,6 +206,7 @@ model Post {
   notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API); null — не рассылался
   promotedAt  DateTime? // когда автор протолкнул пост в ленту (Snap Pro: ≤7 раз в неделю)
   promoteSpent String? // v5.74: источник продвижения 'free'|'credit' (null — не продвинут/уже снят или рефанд выдан)
+  memberOnly  Boolean  @default(false) // v6.1: пост виден только активным платным подписчикам канала
 
   embedTried  Boolean  @default(false) // бэкфилл медиа через t.me/<u>/<id>?embed=1 уже пробовали
   likedBy     Like[]
@@ -454,6 +465,40 @@ model AdSlot {
 
   @@index([status, runAt])
   @@index([userId, createdAt])
+}
+
+// === v6.1: ПЛАТНАЯ ПОДПИСКА НА АВТОРА (ревшар 70/30: автор получает 70% на рублёвый
+// баланс платформы, платформа 30%). Подписчик видит memberOnly-посты канала ===
+model ChannelMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("channelMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  channelId String
+  channel   Channel  @relation("memberships", fields: [channelId], references: [id], onDelete: Cascade)
+  priceKop  Int      // цена на момент покупки (за 30 дней)
+  since     DateTime @default(now())
+  until     DateTime // оплачен до
+  incomeKop Int      @default(0) // сколько автор получил с этой подписки (70%)
+
+  @@unique([userId, channelId])
+  @@index([channelId])
+  @@index([until])
+}
+
+// === v6.1: БИРЖА ВЗАИМОПИАРА — владельцы каналов договариваются о перекрёстных постах ===
+model CrossPromo {
+  id            String    @id @default(cuid())
+  fromChannelId String
+  fromChannel   Channel   @relation("crossPromoFrom", fields: [fromChannelId], references: [id], onDelete: Cascade)
+  toChannelId   String
+  toChannel     Channel   @relation("crossPromoTo", fields: [toChannelId], references: [id], onDelete: Cascade)
+  status        String    @default("PENDING") // PENDING | ACCEPTED | DECLINED
+  message       String?   // сопроводительное сообщение инициатора
+  respondedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([toChannelId, status])
+  @@index([fromChannelId, status])
 }
 
 // === ЧЁРНЫЙ СПИСОК АВТО-МОДЕРЦИИ (v5.98): Telegram ID блокируются наглухо —

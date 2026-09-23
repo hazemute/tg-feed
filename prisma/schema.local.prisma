@@ -58,6 +58,7 @@ model User {
   channelMutes  ChannelMute[]
   channels      Channel[]
   claimedChannels Channel[] @relation("claimedChannels")
+  channelMemberships ChannelMembership[] @relation("channelMemberships") // v6.1: платные подписки на авторов
   bookmarks     Bookmark[]
   comments      Comment[]
   notifications Notification[]
@@ -137,6 +138,11 @@ model Channel {
   teaserLimit      Int       @default(160)
   // v5.70: кому применять тизер: all | long (лонгриды 600+ симв.) | text (текстовые без медиа)
   teaserApplyTo    String    @default("all")
+  // === v6.1: МОНЕТИЗАЦИЯ ВЛАДЕЛЬЦА (зеркально с schema.prisma) ===
+  verifiedUntil      DateTime? // платная верификация до
+  boostUntil         DateTime? // буст каталога до
+  membershipPriceKop Int?      // цена платной подписки за месяц (null — выключена)
+  memberBenefits     String?   // что получает платный подписчик
   addedById        String?
   addedBy          User?     @relation(fields: [addedById], references: [id])
   createdAt        DateTime  @default(now())
@@ -146,9 +152,13 @@ model Channel {
   subscriptions    Subscription[]
   mutedBy     ChannelMute[]
   campaigns   AdCampaign[]
+  memberships      ChannelMembership[] @relation("memberships") // v6.1: платные подписчики канала
+  crossPromoFrom   CrossPromo[] @relation("crossPromoFrom") // v6.1: взаимопиар — исходящие
+  crossPromoTo     CrossPromo[] @relation("crossPromoTo")   // v6.1: взаимопиар — входящие
 
   // v5.48: индексы каналов — зеркально с schema.prisma (локальная песочница)
   @@index([status])
+  @@index([boostUntil]) // v6.1: буст каталога
   @@index([categoryId])
   @@index([addedById])
   @@index([claimedById]) // v5.69: GET /api/mychannel (каналы владельца)
@@ -182,6 +192,7 @@ model Post {
   notifiedAt  DateTime? // момент рассылки уведомления подписчикам (Bot API)
   promotedAt  DateTime? // когда автор протолкнул пост в ленту (Snap Pro ≤7/нед)
   promoteSpent String? // v5.74: источник продвижения 'free'|'credit' (null — не продвинут/уже снят или рефанд выдан)
+  memberOnly  Boolean  @default(false) // v6.1: пост только для активных платных подписчиков канала
   embedTried  Boolean  @default(false) // бэкфилл медиа через t.me embed уже пробовали
 
   likedBy     Like[]
@@ -613,6 +624,39 @@ model AdSlot {
 
   @@index([status, runAt])
   @@index([userId, createdAt])
+}
+
+// === v6.1: ПЛАТНАЯ ПОДПИСКА НА АВТОРА (ревшар 70/30) — зеркально с schema.prisma ===
+model ChannelMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation("channelMemberships", fields: [userId], references: [id], onDelete: Cascade)
+  channelId String
+  channel   Channel  @relation("memberships", fields: [channelId], references: [id], onDelete: Cascade)
+  priceKop  Int
+  since     DateTime @default(now())
+  until     DateTime
+  incomeKop Int      @default(0)
+
+  @@unique([userId, channelId])
+  @@index([channelId])
+  @@index([until])
+}
+
+// === v6.1: БИРЖА ВЗАИМОПИАРА — зеркально с schema.prisma ===
+model CrossPromo {
+  id            String    @id @default(cuid())
+  fromChannelId String
+  fromChannel   Channel   @relation("crossPromoFrom", fields: [fromChannelId], references: [id], onDelete: Cascade)
+  toChannelId   String
+  toChannel     Channel   @relation("crossPromoTo", fields: [toChannelId], references: [id], onDelete: Cascade)
+  status        String    @default("PENDING") // PENDING | ACCEPTED | DECLINED
+  message       String?
+  respondedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([toChannelId, status])
+  @@index([fromChannelId, status])
 }
 
 // === ЧЁРНЫЙ СПИСОК АВТО-МОДЕРЦИИ (v5.98) — см. schema.prisma ===
