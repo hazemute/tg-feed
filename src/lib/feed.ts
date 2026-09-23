@@ -88,7 +88,7 @@ export function feedScopeSignature(category: string, whereChannel: unknown): str
  * первый бёрст пользователей запускал тяжёлую пересборку индекса на пуле.
  * Единая константа делает расхождение невозможным по построению.
  */
-export const FEED_INDEX_KEY_V = 'v11'
+export const FEED_INDEX_KEY_V = 'v12'
 
 /*
  * v6.0.0: ПРИКАЗ ВЛАДЕЛЬЦА — «отпаршенные каналы не отображаются, только те,
@@ -109,8 +109,11 @@ export const FEED_INDEX_KEY_V = 'v11'
  */
 export const CLAIMED_MAX_PER_CHANNEL = 1
 export const CLAIMED_DEMOTE = 0.12
-/** v6.0.0: максимум ботовых постов в хвосте индекса (после всех запаршенных) */
-export const CLAIMED_TAIL_CAP = 24
+/** v6.0.1: максимум ботовых постов в хвосте индекса. Приказ владельца ДОИСПОЛНЕН
+ *  ДО КОНЦА: ботовые каналы ВООБЩЕ не отображаются в ленте (было 24 в хвосте).
+ *  Контент владельцев живёт в «Мой канал», уведомлениях бота, живом канале,
+ *  «Подписках» и платном промо — органический поток ленты только запаршенный. */
+export const CLAIMED_TAIL_CAP = 0
 
 /** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
 type IndexWhere = {
@@ -140,10 +143,11 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       // NSFW-спам (эскорт/18+) не попадает даже в индекс ленты
       AND: [
         ...nsfwPostNotIn(),
-        // ИИ-модерация (v5.15): junk/nsfw/spam скрыты из ленты.
-        // Посты без флага (не успели модерироваться) показываются —
-        // фильтр консервативен, лента не пустеет.
-        { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+        // ИИ-модерация (v5.15): nsfw/spam скрыты из ленты. v6.0.1: 'junk' больше
+        // НЕ скрывает, а лишь придаливает (×0.5) — бесплатные модели модерации
+        // массово вешали junk на обычные игровые посты, лента пустела
+        // («в ленте 2 канала»). Посты без флага показываются как раньше.
+        { OR: [{ aiFlag: null }, { aiFlag: 'ok' }, { aiFlag: 'junk' }] },
       ],
     },
     select: {
@@ -157,6 +161,7 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
       hotScore: true,
       publishedAt: true,
       promotedAt: true,
+      aiFlag: true,
       channel: {
         // title/description — язык канала для языкового множителя ранжирования
         // v5.76: category.slug — подростковый микс (FEED_MIX)
@@ -244,7 +249,9 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
         const mix = FEED_MIX[slug] ?? FEED_MIX_DEFAULT
         const promoActive =
           p.promotedAt && Date.now() - new Date(p.promotedAt).getTime() < 48 * 3_600_000
-        return base * (promoActive ? Math.max(1, mix) : mix)
+        // v6.0.1: ИИ-«junk» (ненадёжные бесплатные модели) — виден, но придален вдвое
+        const aiDemote = p.aiFlag === 'junk' ? 0.5 : 1
+        return base * (promoActive ? Math.max(1, mix) : mix) * aiDemote
       })() *
         // v5.99: демотиватор ботовых каналов — контент владельца стоит ниже
         // ВСЕХ запаршенных постов (приказ «редко чем запаршенные»); платное
@@ -285,9 +292,15 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
   const claimedTail = capped.filter((e) => e.b).slice(0, CLAIMED_TAIL_CAP)
   const finalEntries = [...organic, ...claimedTail]
 
-  /* v6.0.0: статистика последнего индекса — видна в /api/health (поле feed):
-   * владелец проверяет одним взглядом, что ботовые в топе отсутствуют. */
-  recordIndexStats(finalEntries)
+  /* v6.0.1: диагностика последней пересборки индекса — видна в /api/health (поле feed):
+   * владелец видит одним взглядом, сколько съели мусор-фильтр/ИИ/ботовые и сколько
+   * живой органики осталось («в ленте 2 канала» ловится здесь же). */
+  recordIndexStats(finalEntries, {
+    window: posts.length,
+    garbageRemoved: posts.length - posts.filter((p) => !looksLikeGarbage(p.text)).length,
+    junkVisible: pooled.filter((p) => p.aiFlag === 'junk').length,
+    claimedExcluded: capped.length - organic.length,
+  })
 
   return { entries: finalEntries, total: finalEntries.length }
 }
@@ -301,11 +314,16 @@ export type FeedIndexStats = {
   claimed: number
   /** позиция первого ботового поста (-1 — ботовых нет вообще) */
   claimedFirstPos: number
+  /** v6.0.1 диагностика сужения ленты: окно выборки / съедено мусором / junk виден / ботовых выброшено */
+  diag?: { window: number; garbageRemoved: number; junkVisible: number; claimedExcluded: number }
 }
 
 const GIDX = globalThis as unknown as { __tgFeedIndexStats?: FeedIndexStats }
 
-function recordIndexStats(entries: IndexEntry[]): void {
+function recordIndexStats(
+  entries: IndexEntry[],
+  diag?: { window: number; garbageRemoved: number; junkVisible: number; claimedExcluded: number },
+): void {
   try {
     const claimedFirstPos = entries.findIndex((e) => e.b)
     GIDX.__tgFeedIndexStats = {
@@ -314,6 +332,7 @@ function recordIndexStats(entries: IndexEntry[]): void {
       channels: new Set(entries.map((e) => e.c)).size,
       claimed: entries.reduce((n, e) => (e.b ? n + 1 : n), 0),
       claimedFirstPos,
+      diag,
     }
   } catch {
     /* статистика не должна ронять индекс */
@@ -392,15 +411,18 @@ export async function buildFeedScope(userId: string, category: string): Promise<
 }
 
 /**
- * v5.78: есть ли в скоупе хоть один пост (для фолбэка пустых интересов).
- * Дешёвый count по индексу; вызывается только когда категорийный фильтр
- * установлен (до 1 раза на построение скоупа — сам скоуп кэшируется на 60с).
+ * v5.78: сколько постов в скоупе (для фолбэка пустых/УЗКИХ интересов).
+ * v6.0.1: порог ПОДНЯТ с «>0» до 40: скоуз, в котором меньше 40 постов
+ * (2-3 канала), — это НЕ лента, а её огрызок (жалоба владельца «только
+ * 2 канала»). Дешёвый count по индексу; вызывается только когда категорийный
+ * фильтр установлен (до 1 раза на построение скоупа — сам скоуп кэшируется 60с).
  */
-async function scopeHasPosts(where: Prisma.PostWhereInput): Promise<boolean> {
+const SCOPE_MIN_POSTS = 40
+async function scopePostCount(where: Prisma.PostWhereInput): Promise<number> {
   try {
-    return (await db.post.count({ where })) > 0
+    return await db.post.count({ where })
   } catch {
-    return true // ошибка count — не в коем случае не опустошаем ленту
+    return SCOPE_MIN_POSTS // ошибка count — не в коем случае не опустошаем ленту
   }
 }
 
@@ -494,10 +516,9 @@ async function buildFeedScopeUncached(userId: string, category: string) {
     // Пустая база категорий или новорождённый пользователь — вся лента
     if (picked.length > 0) {
       where.channel.category = { slug: { in: picked } }
-      // v5.78 ФОЛБЭК: у выбранных категорий может не быть контента (перезагрузка
-      // контента 5.77 снесла все каналы, новые — только в 'games'). Пустой
-      // результат → снимаем категорийный фильтр, лента показывает всё.
-      if (!(await scopeHasPosts(where))) {
+      // v5.78 ФОЛБЭК → v6.0.1: узкий результат (< 40 постов) — снимаем
+      // категорийный фильтр, лента показывает всё (лучше шире, чем огрызок)
+      if ((await scopePostCount(where)) < SCOPE_MIN_POSTS) {
         delete where.channel.category
       }
     }
@@ -507,11 +528,10 @@ async function buildFeedScopeUncached(userId: string, category: string) {
     interests = parseJsonArray(user.categories)
     if (interests.length > 0) {
       where.channel.category = { slug: { in: interests } }
-      // v5.78 ФОЛБЭК: интересы юзера не совпадают с фактическим контентом
-      // (после перезагрузки контент остался только в 'games') → пустая лента
-      // «вообще без постов». Лучше показать всё, чем пустой экран: проверяем
-      // count (дешёвый, индекс по categoryId) и снимаем фильтр при нуле.
-      if (!(await scopeHasPosts(where))) {
+      // v5.78 ФОЛБЭК → v6.0.1: интересы юзера не совпадают с фактическим
+      // контентом ИЛИ совпадают слишком узко (< 40 постов) → снимаем фильтр:
+      // лучше показать всё, чем 2 канала (жалоба владельца).
+      if ((await scopePostCount(where)) < SCOPE_MIN_POSTS) {
         delete where.channel.category
         interests = []
       }
