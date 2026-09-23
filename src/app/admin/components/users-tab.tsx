@@ -325,7 +325,12 @@ export function UsersTab({ tick, onSettled }: TabProps) {
     }
   }
 
-  /** Действие v5.11/v5.18 с оптимистичным апдейтом */
+  /**
+   * Действие v5.11/v5.18/v6.3.1 с оптимистичным апдейтом.
+   * v6.3.1: модалка больше НЕ закрывается после успеха — админ может выдать
+   * несколько вещей подряд (подписка + свайпы + бейдж), состояние внутри
+   * модалки и в таблице обновляется синхронно; при ошибке — откат.
+   */
   const runUserAction = async (
     u: PanelUser,
     payload: Parameters<typeof userAction>[0],
@@ -334,17 +339,20 @@ export function UsersTab({ tick, onSettled }: TabProps) {
   ) => {
     setActionBusy(true)
     const prev = data
+    const prevUser = actionUser
+    const nextUser = { ...u, ...patch }
     if (data) {
       setData({ ...data, items: data.items.map((x) => (x.id === u.id ? { ...x, ...patch } : x)) })
     }
+    setActionUser(nextUser)
     try {
       await userAction(payload)
       toast.success(okText)
-      setActionUser(null)
       setBanReason('')
       setTierReason('')
     } catch (e) {
       if (prev) setData(prev)
+      setActionUser(prevUser && prevUser.id === u.id ? prevUser : u)
       if (!isAuthOrNetworkError(e)) {
         toast.error(e instanceof PanelError ? e.message : 'Не получилось')
       }
@@ -391,7 +399,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                   setQ(e.target.value)
                   setPage(1)
                 }}
-                placeholder="ID или @username"
+                placeholder="ID, @username или имя"
                 aria-label="Поиск пользователей"
                 className={cn('h-8 w-64 pl-8 text-sm', inputDark)}
               />
@@ -979,7 +987,7 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                     icon={Wallet}
                     tone="slate"
                     title="Баланс свайпов"
-                    hint="Абсолютное значение, не дельта"
+                    hint="Итоговое значение или быстрая дельта ниже"
                     right={
                       <div>
                         <div className="text-sm font-semibold tabular-nums text-slate-900">
@@ -989,6 +997,23 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                       </div>
                     }
                   >
+                    {/* v6.3.1: быстрые дельты — клик добавляет к текущему балансу */}
+                    <div className="mb-2 flex flex-wrap gap-1.5">
+                      {[100, 500, 1000, 5000].map((d) => (
+                        <button
+                          key={d}
+                          type="button"
+                          disabled={actionBusy}
+                          onClick={() => setSwipesInput(String((actionUser.swipes ?? 0) + d))}
+                          className={cn(
+                            'rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700',
+                            actionBusy && 'opacity-50',
+                          )}
+                        >
+                          +{d >= 1000 ? `${d / 1000}К` : d}
+                        </button>
+                      ))}
+                    </div>
                     <div className="flex gap-2">
                       <Input
                         id="swipes-input"
@@ -1042,6 +1067,25 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                       </p>
                     }
                   >
+                    {/* v6.3.1: быстрые дельты в рублях */}
+                    <div className="mb-2 flex flex-wrap gap-1.5">
+                      {[10, 50, 100, 500].map((r) => (
+                        <button
+                          key={r}
+                          type="button"
+                          disabled={actionBusy}
+                          onClick={() =>
+                            setBalanceInput(((actionUser.balanceKop ?? 0) / 100 + r).toFixed(2))
+                          }
+                          className={cn(
+                            'rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600 transition hover:border-emerald-300 hover:bg-emerald-50 hover:text-emerald-700',
+                            actionBusy && 'opacity-50',
+                          )}
+                        >
+                          +{r}₽
+                        </button>
+                      ))}
+                    </div>
                     <div className="flex gap-2">
                       <Input
                         id="balance-input"
@@ -1091,6 +1135,23 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                     }
                   >
                     <div className="space-y-2">
+                      {/* v6.3.1: быстрые пресеты XP */}
+                      <div className="flex flex-wrap gap-1.5">
+                        {[50, 100, 250, -100].map((d) => (
+                          <button
+                            key={d}
+                            type="button"
+                            disabled={actionBusy}
+                            onClick={() => setXpInput(String(d))}
+                            className={cn(
+                              'rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold tabular-nums text-slate-600 transition hover:border-amber-300 hover:bg-amber-50 hover:text-amber-700',
+                              actionBusy && 'opacity-50',
+                            )}
+                          >
+                            {d > 0 ? `+${d}` : d}
+                          </button>
+                        ))}
+                      </div>
                       <Input
                         id="xp-input"
                         type="number"
@@ -1243,6 +1304,23 @@ export function UsersTab({ tick, onSettled }: TabProps) {
                 </div>
               </div>
             </div>
+
+            {/* ===== v6.3.1: Sticky-футер: напоминание об аудите + «Готово».
+                Модалка остаётся открытой после действий — закрываем явно ===== */}
+            <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-slate-200 bg-white px-4 py-3 md:px-5">
+              <p className="hidden text-[11px] text-slate-400 sm:block">
+                Все действия фиксируются в журнале (вкладка «Журнал»)
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={actionBusy}
+                onClick={() => setActionUser(null)}
+                className={cn('ml-auto h-8', btnOutlineDark)}
+              >
+                Готово
+              </Button>
+            </footer>
           </motion.div>
         </div>
       )}

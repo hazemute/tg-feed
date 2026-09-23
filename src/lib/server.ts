@@ -22,6 +22,17 @@ export function timingSafeEqualStr(a: string, b: string): boolean {
  */
 export const IS_SQLITE = (process.env.DATABASE_URL ?? '').startsWith('file:')
 
+/**
+ * Регистронезависимый contains для поиска по панели (v6.3.1).
+ * Прод (Postgres): mode:'insensitive' — иначе «Durov» не находится по «durov»,
+ * и владелец не может выдать ничего юзеру («пользователь не найден»).
+ * Песочница (SQLite): plain contains — LIKE в SQLite и так нечувствителен к
+ * регистру ASCII, а mode:'insensitive' SQLite-коннектором не поддерживается.
+ */
+export function ciContains(value: string): { contains: string; mode?: 'insensitive' } {
+  return IS_SQLITE ? { contains: value } : { contains: value, mode: 'insensitive' }
+}
+
 export function err(message: string, status = 400) {
   return NextResponse.json({ error: message }, { status })
 }

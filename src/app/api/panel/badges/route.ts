@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { err, readJson } from '@/lib/server'
+import { ciContains, err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { logAdmin } from '@/lib/admin-log'
 import { BADGES, BADGE_LIST, parseBadges, serializeBadges, type BadgeSlug } from '@/lib/badges'
@@ -36,10 +36,16 @@ export async function GET(request: Request) {
       ? { badges: { contains: `"${badge}"` } }
       : { NOT: { badges: { in: ['[]', ''] } } }
     if (q) {
-      where.OR = [
-        { id: { contains: q.toLowerCase() } },
-        { username: { contains: q.toLowerCase() } },
-        { firstName: { contains: q } },
+      // v6.3.1: AND-комбинация + регистронезависимость (Postgres)
+      where.AND = [
+        {
+          OR: [
+            { id: ciContains(q) },
+            { username: ciContains(q) },
+            { firstName: ciContains(q) },
+            { lastName: ciContains(q) },
+          ],
+        },
       ]
     }
 
@@ -158,8 +164,9 @@ export async function POST(request: Request) {
         if (!byId) return err(`пользователь ${handle.slice(0, 24)}… не найден`, 404)
         userId = byId.id
       } else {
+        // v6.3.1: регистронезависимый поиск username (Postgres)
         const found = await db.user.findFirst({
-          where: { username: handle },
+          where: { username: ciContains(handle) },
           select: { id: true },
         })
         if (!found) return err(`пользователь @${handle} не найден`, 404)
