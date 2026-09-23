@@ -47,6 +47,11 @@ export const CHANNEL_LIST_SELECT = {
   subscribersCount: true,
   isPremium: true,
   verified: true,
+  // v6.1: платная верификация/буст/подписка — дешёвые колонки, читаются на выдаче
+  verifiedUntil: true,
+  boostUntil: true,
+  membershipPriceKop: true,
+  claimedById: true,
   status: true,
   teaserMode: true,
   teaserLimit: true,
@@ -71,6 +76,7 @@ export const POST_LIST_SELECT = {
   reactionsTg: true,
   likesCount: true,
   commentsCount: true,
+  memberOnly: true, // v6.1: замок «только для платных подписчиков»
   publishedAt: true,
   channel: { select: CHANNEL_LIST_SELECT },
 } satisfies Prisma.PostSelect
@@ -91,7 +97,7 @@ export type PrunedChannelRow = Prisma.ChannelGetPayload<{ select: typeof CHANNEL
  */
 export function postDTOFromRow(
   p: PrunedPostRow,
-  flags: { liked: boolean; bookmarked: boolean; subscribed: boolean },
+  flags: { liked: boolean; bookmarked: boolean; subscribed: boolean; memberUnlocked?: boolean },
   bookmarksCount = 0,
 ): PostDTO {
   return toPostDTO(p as unknown as Parameters<typeof toPostDTO>[0], flags, bookmarksCount)
@@ -118,6 +124,10 @@ export function toChannelDTO(
   // Snap Pro (v5.17): владелец с активным тиром Pro → бейдж Premium-автора
   // и его CTA-кнопка в раскрытом посте
   const proOwner = tierAtLeast(effectiveTier(c.claimedBy ?? null), 'pro')
+  // v6.1: эффективная галочка — админская (бессрочная) ИЛИ платная (до verifiedUntil)
+  const now = Date.now()
+  const verifiedEffective =
+    c.verified || Boolean(c.verifiedUntil && new Date(c.verifiedUntil).getTime() > now)
   return {
     id: c.id,
     title: c.title,
@@ -133,7 +143,7 @@ export function toChannelDTO(
     // для каналов, где Bot API недоступен, — оценка из каталога
     subscribersCount: c.membersCount ?? c.subscribersCount,
     isPremium: c.isPremium,
-    verified: c.verified,
+    verified: verifiedEffective,
     status: c.status,
     categorySlug: c.category?.slug ?? null,
     categoryTitle: c.category?.title ?? null,
@@ -146,6 +156,10 @@ export function toChannelDTO(
     proOwner,
     ctaLabel: proOwner ? (c.ctaLabel ?? null) : null, // CTA виден только у Pro-авторов
     ctaUrl: proOwner ? (c.ctaUrl ?? null) : null,
+    // v6.1: платная подписка (для замка memberOnly и кнопки «Стать подписчиком»)
+    membershipPriceKop: c.membershipPriceKop ?? null,
+    // v6.1: буст каталога активен
+    boosted: Boolean(c.boostUntil && new Date(c.boostUntil).getTime() > now),
   }
 }
 
@@ -194,7 +208,7 @@ function parseGallery(json: string | null): MediaItemDTO[] {
 
 export function toPostDTO(
   p: PostWithChannel,
-  flags: { liked: boolean; bookmarked: boolean; subscribed: boolean },
+  flags: { liked: boolean; bookmarked: boolean; subscribed: boolean; memberUnlocked?: boolean },
   bookmarksCount = 0,
 ): PostDTO {
   const kind = normalizeKind(p.mediaType)
@@ -263,6 +277,10 @@ export function toPostDTO(
     publishedAt: p.publishedAt.toISOString(),
     liked: flags.liked,
     bookmarked: flags.bookmarked,
+    // v6.1: замок «только для платных подписчиков» — виден не-подписчикам,
+    // подписчикам пост отдаётся полностью (memberUnlocked)
+    memberOnly: Boolean(p.memberOnly),
+    memberUnlocked: Boolean(flags.memberUnlocked),
     channel: toChannelDTO(p.channel, flags.subscribed),
   }
 }

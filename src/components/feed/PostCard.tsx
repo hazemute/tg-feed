@@ -1,7 +1,7 @@
 'use client'
 
 import { memo, useEffect, useRef, useState } from 'react'
-import { Eye, EyeOff, Flag, Forward, Heart, MessageCircle, Rocket, Send, Sparkle, Star } from 'lucide-react'
+import { Crown, Eye, EyeOff, Flag, Forward, Heart, Loader2, Lock, MessageCircle, Rocket, Send, Sparkle, Star } from 'lucide-react'
 import { toast } from 'sonner'
 import { motion, useAnimate } from 'framer-motion'
 import { cn } from '@/lib/utils'
@@ -194,6 +194,75 @@ function PostBody({
         onOpenMore={teaser ? undefined : onOpenMore}
       />
       {teaser && <TeaserCta post={post} />}
+    </div>
+  )
+}
+
+/** v6.1: деньги из копеек для замка memberOnly: 9900 → «99 ₽» */
+function fmtRubShort(kop: number): string {
+  const v = kop / 100
+  return `${Number.isInteger(v) ? v : v.toFixed(2).replace('.', ',')} ₽`
+}
+
+/**
+ * v6.1: ЗАМОК memberOnly — пост закрыт для не-подписчиков (сервер уже отдал
+ * пустой текст/без медиа). Поверх тела карточки — оверлей с кнопкой
+ * «Стать подписчиком» (POST /api/channel/membership). Все клики —
+ * со stopPropagation: замок не должен ломать жесты свайп-ленты.
+ */
+function MemberLockOverlay({
+  post,
+  busy,
+  onBuy,
+}: {
+  post: PostDTO
+  busy: boolean
+  onBuy: () => void
+}) {
+  const price = post.channel.membershipPriceKop ?? null
+  return (
+    <div
+      data-noswipe
+      onClick={(e) => e.stopPropagation()}
+      onTouchStart={(e) => e.stopPropagation()}
+      className="relative mx-4 mt-3.5 overflow-hidden rounded-2xl border border-tg-link/25 bg-gradient-to-br from-tg-link/[0.12] via-tg-link/[0.05] to-transparent"
+    >
+      <div className="flex flex-col items-center gap-1.5 px-6 py-7 text-center">
+        <span
+          className="flex h-12 w-12 items-center justify-center rounded-full bg-tg-link/15 text-tg-link"
+          aria-hidden
+        >
+          <Lock className="h-6 w-6" />
+        </span>
+        <p className="mt-1 text-[15px] font-bold text-tg-text">Пост для платных подписчиков</p>
+        {price != null && (
+          <p className="text-[13px] text-tg-hint">за {fmtRubShort(price)}/мес</p>
+        )}
+        <button
+          type="button"
+          data-noswipe
+          disabled={busy}
+          onClick={(e) => {
+            e.stopPropagation()
+            e.preventDefault()
+            haptic('light')
+            onBuy()
+          }}
+          className="press mt-2 flex h-11 w-full max-w-[280px] items-center justify-center gap-1.5 rounded-full bg-tg-link px-5 text-[14.5px] font-bold text-white transition active:scale-[0.98] disabled:opacity-60"
+        >
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Crown className="h-4 w-4" aria-hidden />
+          )}
+          Стать подписчиком
+        </button>
+        {price == null && post.channel.username && (
+          <p className="mt-1 text-[11.5px] leading-snug text-tg-hint">
+            Цена подписки — в канале @{post.channel.username}
+          </p>
+        )}
+      </div>
     </div>
   )
 }
@@ -415,6 +484,35 @@ function PostCardImpl({
   /** «...еще» → полный экран поста */
   const openFullPost = () => openPost(post)
 
+  // v6.1: замок memberOnly — покупка платной подписки прямо из карточки.
+  // PostCard не имеет пропа onRefresh — после покупки снимаем замок локально;
+  // контент поста уже в DTO (или приедет с поллингом ленты).
+  const [memberBusy, setMemberBusy] = useState(false)
+  const [memberUnlockedLocal, setMemberUnlockedLocal] = useState(false)
+  const buyMembership = async () => {
+    if (memberBusy) return
+    if (!user || user.isGuest) {
+      openAuthGate('subscribe')
+      return
+    }
+    setMemberBusy(true)
+    try {
+      await api('/api/channel/membership', {
+        method: 'POST',
+        body: JSON.stringify({ channelId: post.channel.id }),
+      })
+      haptic('success')
+      toast.success('Подписка активна')
+      setMemberUnlockedLocal(true)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось оформить подписку')
+    } finally {
+      setMemberBusy(false)
+    }
+  }
+  /** v6.1: пост только для платных подписчиков и замок не снят */
+  const locked = Boolean(post.memberOnly) && !post.memberUnlocked && !memberUnlockedLocal
+
   // Тизер-режим канала: для неподписанных текст ограничивается.
   // v5.70: учитывается teaserApplyTo — сервер уже отрезал текст подходящим
   // постам (длина тизера = лимит+1 → условие ниже остаётся истинным), а узкие
@@ -609,6 +707,13 @@ function PostCardImpl({
         <SubscribeCircle subscribed={ch.subscribed} onClick={() => onSubscribe(post)} />
       </div>
 
+      {/* v6.1: ПОСТ ТОЛЬКО ДЛЯ ПЛАТНЫХ ПОДПИСЧИКОВ — вместо тела (медиа/текст)
+          оверлей-замок с кнопкой «Стать подписчиком» (клики не всплывают —
+          свайп-лента и тапы по карточке не задеваются) */}
+      {locked ? (
+        <MemberLockOverlay post={post} busy={memberBusy} onBuy={() => void buyMembership()} />
+      ) : (
+        <>
       {/* Медиа + вертикальный рельс (у медиа-постов пустот нет — медиа высокое).
           ТЕКСТОВЫЕ посты (без медиа) — другая раскладка: текст на всю ширину и
           ГОРИЗОНТАЛЬНЫЙ ряд действий под ним (вертикальный рельс оставлял
@@ -679,6 +784,16 @@ function PostCardImpl({
         <div className="px-4">
           <PostMediaCards post={post} />
         </div>
+      )}
+        </>
+      )}
+
+      {/* v6.1: подписка куплена прямо в карточке, но сервер отдал заглушку
+          (пустой текст без медиа) — подсказка до обновления ленты поллингом */}
+      {!locked && memberUnlockedLocal && !post.text && !hasVisuals && !hasCards && (
+        <p className="mx-4 mt-3 rounded-xl bg-tg-surface2 px-3.5 py-2.5 text-[13px] leading-snug text-tg-hint">
+          Подписка активна — содержимое поста откроется при обновлении ленты
+        </p>
       )}
 
       {/* Мета-строка (ненавязчивая): v5.77 — пересобрана: все текстовые элементы

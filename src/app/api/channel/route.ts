@@ -76,21 +76,52 @@ export async function GET(request: Request) {
     ])
 
     const postIds = posts.map((p) => p.id)
-    const [likes, bookmarks] = await Promise.all([
+    const [likes, bookmarks, membershipRow] = await Promise.all([
       userId && postIds.length
         ? db.like.findMany({ where: { userId, postId: { in: postIds } }, select: { postId: true } })
         : Promise.resolve([]),
       userId && postIds.length
         ? db.bookmark.findMany({ where: { userId, postId: { in: postIds } }, select: { postId: true } })
         : Promise.resolve([]),
+      // v6.1: активная платная подписка юзера на этот канал (замок memberOnly)
+      userId
+        ? db.channelMembership.findUnique({
+            where: { userId_channelId: { userId, channelId: channel.id } },
+            select: { until: true },
+          })
+        : Promise.resolve(null),
     ])
     const likeSet = new Set(likes.map((l) => l.postId))
     const bookmarkSet = new Set(bookmarks.map((b) => b.postId))
     const subscribed = !!subRow
+    // v6.1: контент memberOnly-постов виден подписчику и владельцу;
+    // остальные получают заглушку (текст/медиа не покидают сервер)
+    const memberUnlocked =
+      Boolean(membershipRow && membershipRow.until > new Date()) || channel.claimedById === userId
 
-    const items: PostDTO[] = posts.map((p) =>
-      postDTOFromRow(p, { liked: likeSet.has(p.id), bookmarked: bookmarkSet.has(p.id), subscribed }, p._count.bookmarkedBy),
-    )
+    const items: PostDTO[] = posts.map((p) => {
+      const locked = Boolean(p.memberOnly) && !memberUnlocked
+      const row = locked
+        ? {
+            ...p,
+            text: '',
+            mediaUrl: null,
+            mediaMeta: null,
+            gallery: null,
+            link: null,
+          }
+        : p
+      return postDTOFromRow(
+        row,
+        {
+          liked: likeSet.has(p.id),
+          bookmarked: bookmarkSet.has(p.id),
+          subscribed,
+          memberUnlocked: memberUnlocked || !p.memberOnly,
+        },
+        p._count.bookmarkedBy,
+      )
+    })
 
     return NextResponse.json({
       channel: channelDTOFromRow(channel, subscribed, channel._count.posts),

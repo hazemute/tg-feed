@@ -69,6 +69,18 @@ export async function GET(request: Request) {
       items = rotateChannels(items, rot)
     }
 
+    // v6.1: БУСТ КАТАЛОГА — оплаченные каналы пиннятся в самый топ (после
+    // ротации), сортировка по свежести буста. Монетизация видна сразу.
+    const boosted = items
+      .filter((c) => c.boosted)
+      .sort(
+        (a, b) =>
+          (b.boostUntil ? Date.parse(b.boostUntil) : 0) - (a.boostUntil ? Date.parse(a.boostUntil) : 0),
+      )
+    if (boosted.length > 0) {
+      items = [...boosted, ...items.filter((c) => !c.boosted)]
+    }
+
     // Персонализация поверх кэша
     if (userId && items.length > 0) {
       const subs = await db.subscription.findMany({
@@ -131,6 +143,10 @@ async function loadChannels(category: string, q: string) {
       membersCount: true,
       subscribersCount: true,
       isPremium: true,
+      verified: true,
+      verifiedUntil: true,
+      boostUntil: true,
+      membershipPriceKop: true,
       status: true,
       category: { select: { slug: true, title: true } },
       _count: { select: { posts: true } },
@@ -155,6 +171,12 @@ async function loadChannels(category: string, q: string) {
     avatarUrl: channelAvatarUrl(c.avatarUrl, c.photoFileId, c.id),
     subscribersCount: c.membersCount ?? c.subscribersCount,
     isPremium: c.isPremium,
+    // v6.1: эффективная галочка (админская ИЛИ платная до verifiedUntil)
+    verified: c.verified || Boolean(c.verifiedUntil && c.verifiedUntil > new Date()),
+    // v6.1: буст каталога активен (boostUntil — ISO-строка: данные идут через JSON-кэш)
+    boosted: Boolean(c.boostUntil && c.boostUntil > new Date()),
+    boostUntil: c.boostUntil ? c.boostUntil.toISOString() : null,
+    membershipPriceKop: c.membershipPriceKop,
     status: c.status,
     categorySlug: c.category?.slug ?? null,
     categoryTitle: c.category?.title ?? null,

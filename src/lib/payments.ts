@@ -1,5 +1,12 @@
 import { db } from '@/lib/db'
 import { parseTierPurpose, tierExpiryFor, isPromotePackPurpose, promotePackCountFromPurpose } from '@/lib/tiers'
+import {
+  isVerifyPurpose,
+  VERIFY_DAYS,
+  isBoostPurpose,
+  parseBoostPurpose,
+  extendFrom,
+} from '@/lib/monetize'
 import { invalidateBalance } from '@/lib/balance-cache'
 
 /**
@@ -115,6 +122,47 @@ export async function creditPendingPayment(
         where: { id: slotId, paymentId: payment.id, status: 'PENDING' },
         data: { status: 'PAID' },
       })
+      return true
+    }
+
+    /*
+     * v6.1: ПЛАТНАЯ ВЕРИФИКАЦИЯ (purpose='verify:<channelId>', 490 ₽/30 дней)
+     * → Channel.verifiedUntil продлевается от max(now, текущий срок).
+     * Админская verified (бессрочная) не затрагивается.
+     */
+    if (isVerifyPurpose(payment.purpose)) {
+      const channelId = payment.purpose.slice('verify:'.length)
+      const ch = await tx.channel.findUnique({
+        where: { id: channelId },
+        select: { verifiedUntil: true },
+      })
+      if (ch) {
+        await tx.channel.update({
+          where: { id: channelId },
+          data: { verifiedUntil: extendFrom(ch.verifiedUntil, VERIFY_DAYS) },
+        })
+      }
+      return true
+    }
+
+    /*
+     * v6.1: БУСТ КАТАЛОГА (purpose='boost:<channelId>:<days>') → Channel.boostUntil
+     * продлевается от max(now, текущий срок). Канал пиннится в топ каталога.
+     */
+    if (isBoostPurpose(payment.purpose)) {
+      const bp = parseBoostPurpose(payment.purpose)
+      if (bp) {
+        const ch = await tx.channel.findUnique({
+          where: { id: bp.channelId },
+          select: { boostUntil: true },
+        })
+        if (ch) {
+          await tx.channel.update({
+            where: { id: bp.channelId },
+            data: { boostUntil: extendFrom(ch.boostUntil, bp.days) },
+          })
+        }
+      }
       return true
     }
 

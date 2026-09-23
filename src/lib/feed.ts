@@ -148,6 +148,9 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
         // массово вешали junk на обычные игровые посты, лента пустела
         // («в ленте 2 канала»). Посты без флага показываются как раньше.
         { OR: [{ aiFlag: null }, { aiFlag: 'ok' }, { aiFlag: 'junk' }] },
+        // v6.1: платные посты (memberOnly) не входят в глобальный индекс —
+        // доступ персонален, они добираются в снапшоте только подписчикам
+        { memberOnly: false },
       ],
     },
     select: {

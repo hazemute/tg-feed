@@ -95,6 +95,7 @@ type PageRow = {
   reactionsTg: number
   likesCount: number
   commentsCount: number
+  memberOnly: boolean
   publishedAt: Date
   c_id: string
   c_title: string
@@ -107,6 +108,9 @@ type PageRow = {
   c_subscribersCount: number
   c_isPremium: boolean
   c_verified: boolean
+  c_verifiedUntil: Date | null
+  c_boostUntil: Date | null
+  c_membershipPriceKop: number | null
   c_status: string
   c_teaserMode: string
   c_teaserLimit: number
@@ -146,6 +150,7 @@ function postFromRow(r: PageRow): PostWithChannel {
     reactionsTg: r.reactionsTg,
     likesCount: r.likesCount,
     commentsCount: r.commentsCount,
+    memberOnly: r.memberOnly,
     publishedAt: r.publishedAt,
     channel: {
       id: r.c_id,
@@ -159,6 +164,9 @@ function postFromRow(r: PageRow): PostWithChannel {
       subscribersCount: r.c_subscribersCount,
       isPremium: r.c_isPremium,
       verified: r.c_verified,
+      verifiedUntil: r.c_verifiedUntil,
+      boostUntil: r.c_boostUntil,
+      membershipPriceKop: r.c_membershipPriceKop,
       status: r.c_status,
       teaserMode: r.c_teaserMode,
       teaserLimit: r.c_teaserLimit,
@@ -216,13 +224,15 @@ async function fetchBaseRowsPostgres(ids: string[]): Promise<BaseRow[]> {
   return db.$queryRaw<BaseRow[]>`
             SELECT p."id", p."channelId", p."text", p."mediaUrl", p."mediaType", p."mediaMeta",
                    p."gallery", p."link", p."viewsCount", p."viewsTg", p."reactionsTg",
-                   p."likesCount", p."commentsCount", p."publishedAt",
+                   p."likesCount", p."commentsCount", p."memberOnly", p."publishedAt",
                    c."id"           AS "c_id",   c."title"       AS "c_title",
                    c."username"     AS "c_username", c."description" AS "c_description",
                    c."avatarColor"  AS "c_avatarColor", c."photoFileId" AS "c_photoFileId",
                    c."avatarUrl"    AS "c_avatarUrl",
                    c."membersCount" AS "c_membersCount", c."subscribersCount" AS "c_subscribersCount",
                    c."isPremium"    AS "c_isPremium", c."verified"    AS "c_verified",
+                   c."verifiedUntil" AS "c_verifiedUntil", c."boostUntil" AS "c_boostUntil",
+                   c."membershipPriceKop" AS "c_membershipPriceKop",
                    c."status"     AS "c_status",
                    c."teaserMode"   AS "c_teaserMode", c."teaserLimit" AS "c_teaserLimit",
                    c."teaserApplyTo" AS "c_teaserApplyTo",
@@ -258,6 +268,7 @@ async function fetchBaseRowsSqlite(ids: string[]): Promise<BaseRow[]> {
         reactionsTg: true,
         likesCount: true,
         commentsCount: true,
+        memberOnly: true,
         publishedAt: true,
         channel: {
           select: {
@@ -272,6 +283,9 @@ async function fetchBaseRowsSqlite(ids: string[]): Promise<BaseRow[]> {
             subscribersCount: true,
             isPremium: true,
             verified: true,
+            verifiedUntil: true,
+            boostUntil: true,
+            membershipPriceKop: true,
             status: true,
             teaserMode: true,
             teaserLimit: true,
@@ -303,6 +317,7 @@ async function fetchBaseRowsSqlite(ids: string[]): Promise<BaseRow[]> {
       reactionsTg: p.reactionsTg,
       likesCount: p.likesCount,
       commentsCount: p.commentsCount,
+      memberOnly: p.memberOnly,
       publishedAt: p.publishedAt,
       c_id: c.id,
       c_title: c.title,
@@ -315,6 +330,9 @@ async function fetchBaseRowsSqlite(ids: string[]): Promise<BaseRow[]> {
       c_subscribersCount: c.subscribersCount,
       c_isPremium: c.isPremium,
       c_verified: c.verified,
+      c_verifiedUntil: c.verifiedUntil,
+      c_boostUntil: c.boostUntil,
+      c_membershipPriceKop: c.membershipPriceKop,
       c_status: c.status,
       c_teaserMode: c.teaserMode,
       c_teaserLimit: c.teaserLimit,
@@ -566,6 +584,22 @@ export async function GET(request: Request) {
     const byId = new Map(pageRows.map((r) => [r.id, r]))
     const rows = sliceIds.map((id) => byId.get(id)).filter((r): r is PageRow => Boolean(r))
 
+    // v6.1: активные платные подписки юзера на каналы этой страницы —
+    // memberOnly-посты этих каналов отдаются без замка (memberUnlocked)
+    const memberOnlyChannels = [...new Set(rows.filter((r) => r.memberOnly).map((r) => r.channelId))]
+    const unlockedChannels = new Set<string>()
+    if (memberOnlyChannels.length > 0) {
+      try {
+        const ms = await db.channelMembership.findMany({
+          where: { userId, channelId: { in: memberOnlyChannels }, until: { gt: new Date() } },
+          select: { channelId: true },
+        })
+        for (const m of ms) unlockedChannels.add(m.channelId)
+      } catch {
+        /* при ошибке считаем всё закрытым — консервативно */
+      }
+    }
+
     const items: PostDTO[] = rows.map((r) => {
       const post = postFromRow(r)
       const dto = toPostDTO(
@@ -574,6 +608,7 @@ export async function GET(request: Request) {
           liked: Boolean(r.liked),
           bookmarked: Boolean(r.bookmarked),
           subscribed: signals.subscribedIds.has(r.channelId),
+          memberUnlocked: unlockedChannels.has(r.channelId),
         },
         Number(r.bookmarksCount),
       )
@@ -812,6 +847,43 @@ async function buildFeedSnapshot(ctx: {
   const pinIds = new Set<string>([...promotedIds, ...sponsoredIds])
   for (const p of popularHead) pinIds.add(p.id)
 
+  /* ---------- 6.7 v6.1: ПЛАТНЫЕ ПОСТЫ (memberOnly) ДЛЯ ПОДПИСЧИКОВ ----------
+   * memberOnly-посты не входят в глобальный индекс (он общий для всех юзеров,
+   * а доступ персонален). Для каналов с АКТИВНОЙ подпиской юзера добираем
+   * их свежие посты отдельным батчем и вставляем сразу после головы —
+   * подписчик купил этот контент, он должен быть на виду. */
+  const memberHead: Array<{ id: string; cid: string }> = []
+  try {
+    const memberships = await db.channelMembership.findMany({
+      where: { userId, until: { gt: new Date() } },
+      select: { channelId: true },
+    })
+    if (memberships.length > 0) {
+      const known = new Set<string>([
+        ...scored.map((s) => s.id),
+        ...head.map((h) => h.id),
+        ...popularHead.map((h) => h.id),
+      ])
+      const mposts = await db.post.findMany({
+        where: {
+          channelId: { in: memberships.map((m) => m.channelId) },
+          memberOnly: true,
+          id: { notIn: [...known] },
+        },
+        select: { id: true, channelId: true, text: true },
+        orderBy: { publishedAt: 'desc' },
+        take: 20,
+      })
+      for (const p of mposts) {
+        if (muted.has(p.channelId) || hidden.has(p.id) || reported.has(p.id)) continue
+        if (!langPasses(detectLang(p.text), lang)) continue
+        memberHead.push({ id: p.id, cid: p.channelId })
+      }
+    }
+  } catch {
+    /* платный контент не критичен для работы ленты */
+  }
+
   /* ---------- 7. Разнообразие: round-robin по каналам ----------
       Cooldown между постами одного канала (см. diversify) + кап 5 постов/канал
       в индексе → ≤2 постов одного канала на страницу из 6. Каналы пинов
@@ -821,6 +893,7 @@ async function buildFeedSnapshot(ctx: {
   const items = [
     ...head,
     ...popularHead,
+    ...memberHead,
     ...ordered.filter((x) => !pinIds.has(x.id)),
   ]
 

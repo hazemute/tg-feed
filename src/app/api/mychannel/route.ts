@@ -191,6 +191,12 @@ export async function GET(request: Request) {
           ctaLabel: true,
           ctaUrl: true,
           styleAt: true,
+          // v6.1: монетизация владельца — платная верификация/буст/подписка
+          verified: true,
+          verifiedUntil: true,
+          boostUntil: true,
+          membershipPriceKop: true,
+          memberBenefits: true,
           category: { select: { slug: true, title: true } },
         },
         orderBy: { createdAt: 'asc' },
@@ -284,6 +290,14 @@ export async function GET(request: Request) {
           ctaLabel: c.ctaLabel,
           ctaUrl: c.ctaUrl,
           styleAt: c.styleAt?.toISOString() ?? null,
+          // v6.1: монетизация (эффективная галочка = админская ИЛИ платная до verifiedUntil)
+          verifiedAdmin: c.verified,
+          verified: c.verified || Boolean(c.verifiedUntil && c.verifiedUntil > new Date()),
+          verifiedUntil: c.verifiedUntil?.toISOString() ?? null,
+          boostActive: Boolean(c.boostUntil && c.boostUntil > new Date()),
+          boostUntil: c.boostUntil?.toISOString() ?? null,
+          membershipPriceKop: c.membershipPriceKop ?? null,
+          memberBenefits: c.memberBenefits ?? null,
           stats: {
             posts,
             views24h,

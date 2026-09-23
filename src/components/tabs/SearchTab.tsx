@@ -663,6 +663,15 @@ function ChannelRow({
             {channel.title}
           </span>
           {channel.verified && <VerifiedBadge size={15} />}
+          {/* v6.1: активный буст каталога — маленькая пилюля рядом с названием */}
+          {channel.boosted && (
+            <span
+              className="inline-flex shrink-0 items-center rounded-full bg-tg-star/15 px-1.5 py-0.5 text-[10.5px] font-bold leading-none text-tg-star"
+              title="Канал с активным бустом каталога"
+            >
+              🚀 Буст
+            </span>
+          )}
         </span>
         {channel.description && (
           <span className="mt-0.5 line-clamp-2 text-[14px] leading-snug text-tg-hint">

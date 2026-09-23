@@ -37,6 +37,10 @@ export type ChannelDTO = {
   /** CTA-кнопка Pro-автора в раскрытом посте (текст + https-ссылка) */
   ctaLabel?: string | null
   ctaUrl?: string | null
+  /** v6.1: цена платной подписки на канал за месяц (null/undefined — выключена) */
+  membershipPriceKop?: number | null
+  /** v6.1: буст каталога активен (канал пиннится в топ каталога) */
+  boosted?: boolean
 }
 
 export type SubscriptionDTO = {
@@ -108,6 +112,10 @@ export type PostDTO = {
   sponsored?: boolean
   /** Промо-пост (Snap Pro «Продвинуть в ленте») — в первых рядах с подсветкой */
   promoted?: boolean
+  /** v6.1: пост только для платных подписчиков канала */
+  memberOnly?: boolean
+  /** v6.1: у текущего юзера активная платная подписка на канал (замок снят) */
+  memberUnlocked?: boolean
   channel: ChannelDTO
 }
 
@@ -205,6 +213,14 @@ export type MyChannelDTO = {
   ctaUrl: string | null
   /** Когда ИИ-ассистент анализировал стиль канала (ISO, null — ещё не анализировал) */
   styleAt: string | null
+  /** v6.1: монетизация владельца — верификация (админская/платная), буст, платная подписка */
+  verifiedAdmin?: boolean
+  verified?: boolean
+  verifiedUntil?: string | null
+  boostActive?: boolean
+  boostUntil?: string | null
+  membershipPriceKop?: number | null
+  memberBenefits?: string | null
   stats: {
     posts: number
     views24h: number

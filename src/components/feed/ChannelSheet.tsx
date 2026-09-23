@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { AlertCircle, ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Forward, Heart, ImageOff, Loader2, Plus, Sparkle } from 'lucide-react'
+import { AlertCircle, ArrowLeft, ArrowUpRight, Bell, BellOff, Check, Crown, Forward, Heart, ImageOff, Loader2, Lock, Plus, Sparkle } from 'lucide-react'
 import { AnimatePresence, motion } from 'framer-motion'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
@@ -18,6 +18,21 @@ import { PostMedia } from '@/components/feed/PostMedia'
 import { ExpandableText } from '@/components/feed/actions'
 
 const PAGE_SIZE = 10
+
+/** Деньги из копеек: 9900 → «99 ₽» (баннер платной подписки) */
+function fmtRubShort(kop: number): string {
+  const v = kop / 100
+  return `${Number.isInteger(v) ? v : v.toFixed(2).replace('.', ',')} ₽`
+}
+
+/** Ответ GET /api/channel/membership — состояние платной подписки читателя (v6.1) */
+type MembershipResp = {
+  ok: boolean
+  priceKop: number | null
+  benefits?: string | null
+  isMember?: boolean
+  until?: string | null
+}
 
 /** Вкладки экрана канала (как в Telegram) — фильтр на сервере (/api/channel?tab=) */
 const CHANNEL_TABS = [
@@ -102,6 +117,29 @@ function ChannelScreen({
   // переворачивается дважды и «действие отменяет само себя»
   const inflightRef = useRef<Set<string>>(new Set())
 
+  /* v6.1: ПЛАТНАЯ ПОДПИСКА (сторона читателя) — активна ли она у меня на этот канал.
+   * GET /api/channel/membership?channelId=… — при открытии листа и после покупки. */
+  const [isMember, setIsMember] = useState(false)
+  const [memberBenefits, setMemberBenefits] = useState<string | null>(null)
+  const [memberBusy, setMemberBusy] = useState(false)
+  useEffect(() => {
+    const uid = userRef.current
+    if (!channel?.id || !uid) return
+    let alive = true
+    api<MembershipResp>(`/api/channel/membership?channelId=${encodeURIComponent(channel.id)}`)
+      .then((r) => {
+        if (!alive) return
+        setIsMember(Boolean(r.isMember))
+        setMemberBenefits(r.benefits ?? null)
+      })
+      .catch(() => {
+        /* баннер просто не покажется — не критично */
+      })
+    return () => {
+      alive = false
+    }
+  }, [channel?.id, initial])
+
   const load = useCallback(
     async (p: number, replace: boolean) => {
       if (busyRef.current) return
@@ -153,6 +191,36 @@ function ChannelScreen({
     busyRef.current = false
     load(0, true)
   }, [load])
+
+  /** Покупка/продление платной подписки с рублёвого кошелька (v6.1).
+   *  После успеха: баннер «Вы платный подписчик» + перезагрузка постов тем же
+   *  механизмом, что и смена вкладки (сброс busyRef + load(0, true)) —
+   *  memberOnly-посты приедут уже открытыми. */
+  const buyMembership = async () => {
+    const uid = userRef.current
+    if (!uid || !channel || memberBusy) return
+    if (isGuest) {
+      openAuthGate('subscribe')
+      haptic('light')
+      return
+    }
+    setMemberBusy(true)
+    try {
+      await api<{ ok: true; until: string; priceKop: number }>('/api/channel/membership', {
+        method: 'POST',
+        body: JSON.stringify({ channelId: channel.id }),
+      })
+      haptic('success')
+      toast.success('Подписка активна — закрытые посты открыты')
+      setIsMember(true)
+      busyRef.current = false
+      load(0, true)
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Не удалось оформить подписку')
+    } finally {
+      setMemberBusy(false)
+    }
+  }
 
   // Догрузка: ручная проверка видимости сентинела (как в ленте)
   const checkLoadMore = useCallback(() => {
@@ -420,6 +488,53 @@ function ChannelScreen({
                 )}
               </div>
 
+              {/* v6.1: БАННЕР ПЛАТНОЙ ПОДПИСКИ — под шапкой канала, если автор
+                  включил платных подписчиков, а читатель ещё не подписчик */}
+              {channel.membershipPriceKop != null && !isMember && (
+                <div className="mt-3 rounded-2xl border border-tg-star/30 bg-tg-star/[0.07] p-4">
+                  <div className="flex items-start gap-3">
+                    <span
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl bg-tg-star/15 text-tg-star"
+                      aria-hidden
+                    >
+                      <Crown className="h-5 w-5" />
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[14.5px] font-bold text-tg-text">
+                        Платная подписка · {fmtRubShort(channel.membershipPriceKop)}/мес
+                      </div>
+                      {memberBenefits && (
+                        <div className="mt-0.5 text-[12.5px] leading-snug text-tg-hint">
+                          {memberBenefits}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    data-noswipe
+                    disabled={memberBusy}
+                    onClick={() => void buyMembership()}
+                    className="press mt-3 flex h-11 w-full items-center justify-center gap-1.5 rounded-2xl bg-tg-star text-[14.5px] font-bold text-white transition active:scale-[0.98] disabled:opacity-60"
+                  >
+                    {memberBusy ? (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Crown className="h-4 w-4" aria-hidden />
+                    )}
+                    Стать подписчиком
+                  </button>
+                </div>
+              )}
+              {isMember && (
+                <div className="mt-3 flex items-center gap-2.5 rounded-2xl bg-emerald-500/10 px-4 py-3">
+                  <Check className="h-5 w-5 shrink-0 text-emerald-500" strokeWidth={2.4} aria-hidden />
+                  <p className="text-[13.5px] font-semibold text-tg-text">
+                    Вы платный подписчик — закрытые посты открыты
+                  </p>
+                </div>
+              )}
+
               {/* Посты — единственный раздел чужого канала: большая статистика только у владельца (вкладка «Мой канал») */}
             </div>
 
@@ -464,7 +579,13 @@ function ChannelScreen({
 
             <div className="mt-1 divide-y divide-tg-sep/50">
               {items.map((p) => (
-                <ChannelPost key={p.id} post={p} onLike={() => onLike(p)} onBookmark={() => onBookmark(p)} />
+                <ChannelPost
+                  key={p.id}
+                  post={p}
+                  priceKop={channel.membershipPriceKop ?? null}
+                  onLike={() => onLike(p)}
+                  onBookmark={() => onBookmark(p)}
+                />
               ))}
             </div>
 
@@ -503,10 +624,13 @@ function ChannelScreen({
 
 function ChannelPost({
   post,
+  priceKop,
   onLike,
   onBookmark,
 }: {
   post: PostDTO
+  /** Цена платной подписки канала (для заглушки замка, v6.1) */
+  priceKop?: number | null
   onLike: () => void
   onBookmark: () => void
 }) {
@@ -514,6 +638,9 @@ function ChannelPost({
   // со своего канала и в профиле любого канала». Кнопка «Поделиться» открывает
   // глобальный шит, внутри него «В историю» (картинка /api/story + виджет).
   const openShareSheet = useApp((s) => s.openShareSheet)
+  /** v6.1: пост закрыт для не-подписчиков — рендерим замок-заглушку вместо
+   *  тела (сервер отдал пустой текст/без медиа — null-safe и так, и так) */
+  const locked = Boolean(post.memberOnly) && !post.memberUnlocked
   return (
     <article className="px-4 py-4">
       <div className="flex items-center gap-1.5 text-[12.5px] text-tg-hint">
@@ -527,11 +654,30 @@ function ChannelPost({
 
       <div className="mt-2.5 flex items-start gap-1.5">
         <div className="min-w-0 flex-1">
-          <PostMedia post={post} />
-          {post.text && (
-            <div className="mt-0.5">
-              <ExpandableText text={post.text} />
+          {locked ? (
+            <div className="flex flex-col items-center gap-1.5 rounded-2xl border border-tg-sep/60 bg-tg-surface/60 px-4 py-6 text-center">
+              <span
+                className="flex h-10 w-10 items-center justify-center rounded-full bg-tg-link/15 text-tg-link"
+                aria-hidden
+              >
+                <Lock className="h-5 w-5" />
+              </span>
+              <p className="text-[13.5px] font-semibold text-tg-text">
+                Только для платных подписчиков
+              </p>
+              {priceKop != null && (
+                <p className="text-[12px] leading-none text-tg-hint">за {fmtRubShort(priceKop)}/мес</p>
+              )}
             </div>
+          ) : (
+            <>
+              <PostMedia post={post} />
+              {post.text && (
+                <div className="mt-0.5">
+                  <ExpandableText text={post.text} />
+                </div>
+              )}
+            </>
           )}
         </div>
 

@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertTriangle,
   ArrowUpRight,
+  BadgeCheck,
   Bot,
   CalendarClock,
   Check,
@@ -39,6 +40,8 @@ import { AiChat } from '@/components/ai/AiChat'
 import { ChannelLiveView } from '@/components/channel/ChannelLiveView'
 import { PromoSection } from '@/components/channel/PromoSection'
 import { SubscriptionsSection } from '@/components/tabs/SubscriptionsSection'
+import { MonetizeSection } from '@/components/tabs/MonetizeSection'
+import { ProAnalyticsCard } from '@/components/tabs/ProAnalyticsCard'
 import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
 
 /**
@@ -57,13 +60,15 @@ import type { MyChannelDTO, MyChannelResponse } from '@/lib/types'
 
 /**
  * Разделы рабочего стола (v5.65: + «Живой канал»; v5.72: + «Промо» — вернулся
- * из отдельной вкладки навбара в кабинет). Активная — пилюлей с layoutId.
+ * из отдельной вкладки навбара в кабинет; v6.1: + «Доход» — монетизация).
+ * Активная — пилюлей с layoutId.
  */
 const CHANNEL_SECTIONS = [
   { key: 'manage', label: 'Мой канал' },
   { key: 'live', label: 'Живой канал' },
   { key: 'stats', label: 'Статистика' },
   { key: 'promo', label: 'Промо' },
+  { key: 'monetize', label: 'Доход' },
   { key: 'ai', label: 'ИИ-ассистент' },
 ] as const
 
@@ -326,6 +331,9 @@ export function ChannelTab() {
                       )}
                       <span className="relative z-10">
                         {s.key === 'ai' && <Bot className="mr-1 inline h-4 w-4 -translate-y-px" aria-hidden />}
+                        {s.key === 'monetize' && (
+                          <BadgeCheck className="mr-1 inline h-4 w-4 -translate-y-px" aria-hidden />
+                        )}
                         {s.label}
                       </span>
                     </button>
@@ -383,13 +391,17 @@ export function ChannelTab() {
               {section === 'stats' && (
                 /* Большой дашборд именно этого канала (просмотры, ER, динамика,
                     лучшее время, ритм, топ постов) — плоский, без карточек.
-                    v5.96: channelId — для кнопки импорта истории при пустом канале. */
-                <ChannelCabinet
-                  key={channel!.username}
-                  username={channel!.username}
-                  title={channel!.title}
-                  channelId={channel!.id}
-                />
+                    v5.96: channelId — для кнопки импорта истории при пустом канале.
+                    v6.1: ниже — карточка Pro Analytics (402 → апселл Snap Pro). */
+                <>
+                  <ChannelCabinet
+                    key={channel!.username}
+                    username={channel!.username}
+                    title={channel!.title}
+                    channelId={channel!.id}
+                  />
+                  <ProAnalyticsCard key={`pro-${channel!.id}`} channelId={channel!.id} />
+                </>
               )}
               {section === 'ai' && (
                 <AssistantSection key={`ai-${channel!.id}`} channel={channel!} tier={tier} />
@@ -398,6 +410,15 @@ export function ChannelTab() {
                 <PromoSection
                   key={`promo-${channel.id}`}
                   data={data}
+                  channel={channel}
+                  onReload={() => void reload()}
+                />
+              )}
+              {section === 'monetize' && (
+                /* v6.1: «Доход» — верификация, буст, платные подписчики, биржа.
+                    channel может быть null — внутри заглушка «Сначала привяжите канал». */
+                <MonetizeSection
+                  key={`monetize-${channel?.id ?? 'none'}`}
                   channel={channel}
                   onReload={() => void reload()}
                 />
