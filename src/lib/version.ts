@@ -1,2 +1,2 @@
 /** Версия приложения (клиент + сервер; видна в /api/health и «О приложении») */
-export const APP_VERSION = "6.1.0"
+export const APP_VERSION = "6.1.1"

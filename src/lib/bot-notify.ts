@@ -25,6 +25,15 @@ import { escapeHtml } from '@/lib/tg-bot'
  *    уже N лайков»); ответы/комменты — не чаще 1 ЛС на пост в 2 минуты;
  *    поверх всего — жёсткий кап 4 ЛС в минуту на пользователя (любые типы);
  *    в инбоксе миниаппа события всё равно появляются все;
+ *  • v6.1.1: ГЛОБАЛЬНЫЙ антиспам. Маркеры v5.55 жили в памяти инстанса
+ *    (globalThis), а прод — serverless с множеством инстансов: дедуп работал
+ *    только внутри одного инстанса, и волна лайков на популярном посте
+ *    (лайки приходят на разные инстансы) присылала юзеру ЛС НА КАЖДЫЙ ЛАЙК —
+ *    «бот спамит в ЛС». Теперь маркеры в БД (BotSetting) — атомарный
+ *    create-lock: один инстанс на весь мир. Плюс: бюджет лайк-ЛС — не более
+ *    5 за 6ч на пользователя (горячий пост с 50 комментами = ≤5 ЛС), и
+ *    рубильник dm_notify_off (BotSetting) — мгновенно заглушить ВСЕ ЛС
+ *    уведомления без деплоя (panel/bot action:'dm_notify').
  *  • ошибки только в лог — уведомление в инбоксе уже создано, ЛС не критично.
  */
 
@@ -35,15 +44,21 @@ const TME_APP_URL =
 /** Интервал между отправками в очереди (20 msg/s — ниже лимита Bot API) */
 const SEND_INTERVAL_MS = 60
 
-/* — Антиспам v5.55 — */
+/* — Антиспам v6.1.1 (глобальный, в БД) — */
 /** Лайки: 1 ЛС на (пользователь × комментарий) в 6 часов — «залетевший»
  *  комментарий с сотней лайков даёт ОДНО ЛС, а не сотню */
 const LIKE_DM_PER_COMMENT_MS = 6 * 60 * 60_000
+/** Лайки: бюджет на пользователя — не более 5 лайк-ЛС за скользящие 6ч
+ *  (горячий пост с десятками комментов больше не «пулемётит» юзера) */
+const LIKE_DM_BUDGET_WINDOW_MS = 6 * 60 * 60_000
+const LIKE_DM_BUDGET_MAX = 5
 /** Ответы/комменты: 1 ЛС на (пользователь × пост × тип) в 2 минуты —
  *  горячая ветка/пост не долбят ЛС на каждое событие */
 const THREAD_DM_PER_POST_MS = 2 * 60_000
 /** Жёсткий кап ЛС на пользователя в минуту (любые типы, последний рубеж) */
 const USER_DM_CAP_PER_MIN = 4
+/** Рубильник: задан в BotSetting — ВСЕ ЛС-уведомления молча пропускаются */
+const DM_KILL_KEY = 'dm_notify_off'
 
 type BotNotifyData = {
   userId: string
@@ -65,62 +80,119 @@ function enqueueSend(task: () => Promise<void>): void {
     .catch((e) => console.error('[bot-notify] queue', e))
 }
 
-/* ------------------------------ Антиспам ЛС (v5.55) ------------------------------
- *  Хранилища на globalThis: route-бандлы Next.js изолируют модули — без
- *  синглтона каждый роут держал бы СВОЮ копию карт и лимиты молча не работали
- *  (тот же баг, что был с page-cache/overrides).
+/* ------------------------ Антиспам ЛС (v6.1.1, в БД) ------------------------
+ *  Все маркеры — в BotSetting: serverless-инстансов много, память каждого
+ *  своя, а BotSetting один на весь мир. Ключи:
+ *    dm:like:<userId>:<commentId>   → ISO ts последнего лайк-ЛС (окно 6ч)
+ *    dm:thread:<userId>:<postId>:<type> → ISO ts последнего ЛС ветки (2мин)
+ *    dm:likecap:<userId>            → JSON ts[] (бюджет 5 лайк-ЛС/6ч)
+ *    dm:cap:<userId>                → JSON ts[] (кап 4 ЛС/мин)
+ *    dm_notify_off                  → любое значение = заглушить все ЛС
  */
-type DmGuard = {
-  /** ключ "userId:commentId" → ts последней отправки ЛС-лайка */
-  likeAt: Map<string, number>
-  /** ключ "userId:postId:type" → ts последней ЛС ответа/коммента */
-  threadAt: Map<string, number>
-  /** userId → ts последних ЛС (окно 60с) */
-  userDm: Map<string, number[]>
-}
-const gDm = globalThis as unknown as { __tgfeedDmGuard?: DmGuard }
-const dm: DmGuard = (gDm.__tgfeedDmGuard ??= { likeAt: new Map(), threadAt: new Map(), userDm: new Map() })
 
-/** Пишем ts и подрезаем карту, если разрослась */
-function markAndCheck(map: Map<string, number>, key: string, windowMs: number): boolean {
-  const now = Date.now()
-  if (now - (map.get(key) ?? 0) < windowMs) return false
-  map.set(key, now)
-  if (map.size > 5000) {
-    for (const [k, ts] of map) {
-      if (now - ts > windowMs) map.delete(k)
+/** Ленивая подрезка старых маркеров: каждый ~40-й claim чистит 7-дневные.
+ *  value хранит ISO-строку — лексикографическое сравнение корректно.
+ *  JSON-массивы (cap/likecap) начинаются с '[' и фильтром не задеваются —
+ *  они и так перезаписываются по месту, не накапливаясь. */
+const gPrune = globalThis as unknown as { __tgDmPruneCount?: number }
+
+async function pruneDmMarkers(): Promise<void> {
+  gPrune.__tgDmPruneCount = (gPrune.__tgDmPruneCount ?? 0) + 1
+  if (gPrune.__tgDmPruneCount % 40 !== 0) return
+  const cutoff = new Date(Date.now() - 7 * 24 * 3600_000).toISOString()
+  await db.botSetting
+    .deleteMany({
+      where: {
+        OR: [{ key: { startsWith: 'dm:like:' } }, { key: { startsWith: 'dm:thread:' } }],
+        value: { lt: cutoff },
+      },
+    })
+    .catch(() => {})
+}
+
+/** Рубильник: все ЛС выключены? (панель → action:'dm_notify') */
+async function dmKilled(): Promise<boolean> {
+  const row = await db.botSetting
+    .findUnique({ where: { key: DM_KILL_KEY }, select: { value: true } })
+    .catch(() => null)
+  return Boolean(row?.value)
+}
+
+/** Атомарное занятие окна: первый инстанс создаёт ключ, остальные читают его
+ *  и отклоняются. Порядок «сначала тихое чтение, потом create» держит
+ *  P2002 (шумный лог Prisma) только в редкой гонке двух инстансов. */
+async function claimWindow(key: string, windowMs: number): Promise<boolean> {
+  const now = new Date()
+  const row = await db.botSetting
+    .findUnique({ where: { key }, select: { value: true } })
+    .catch(() => null)
+  if (row) {
+    const ts = Date.parse(row.value)
+    if (Number.isFinite(ts) && now.getTime() - ts < windowMs) return false
+    try {
+      await db.botSetting.update({ where: { key }, data: { value: now.toISOString() } })
+      return true
+    } catch {
+      return false
     }
   }
-  return true
-}
-
-/** ЛС-лайк по конкретному комментарию разрешён? (1 в 6ч) */
-function likeDmAllowed(userId: string, commentId: string | null | undefined): boolean {
-  // Без commentId — грубый пер-юзер лимит в 6ч (не должно случаться, но фолбэк)
-  return markAndCheck(dm.likeAt, `${userId}:${commentId ?? '_'}`, LIKE_DM_PER_COMMENT_MS)
-}
-
-/** Ответ/коммент по посту разрешён? (1 в 2мин на тип) */
-function threadDmAllowed(userId: string, postId: string | null | undefined, type: string): boolean {
-  return markAndCheck(dm.threadAt, `${userId}:${postId ?? '_'}:${type}`, THREAD_DM_PER_POST_MS)
-}
-
-/** Кап 4 ЛС в минуту на пользователя — последний рубеж против любых волн */
-function userDmAllowed(userId: string): boolean {
-  const now = Date.now()
-  const arr = (dm.userDm.get(userId) ?? []).filter((ts) => now - ts < 60_000)
-  if (arr.length >= USER_DM_CAP_PER_MIN) {
-    dm.userDm.set(userId, arr)
+  try {
+    await db.botSetting.create({ data: { key, value: now.toISOString() } })
+    void pruneDmMarkers()
+    return true
+  } catch {
+    // P2002 — ключ успел создать другой инстанс: окно занято
     return false
   }
-  arr.push(now)
-  dm.userDm.set(userId, arr)
-  if (dm.userDm.size > 5000) {
-    for (const [k, v] of dm.userDm) {
-      if (!v.some((ts) => now - ts < 60_000)) dm.userDm.delete(k)
-    }
+}
+
+/** Скользящее окно с лимитом (JSON-массив ts в одном ключе): лайк-бюджет 5/6ч
+ *  и жёсткий кап 4/мин. Гонки двух инстансов дают кап +1..2 — это приемлемо. */
+async function claimRolling(key: string, windowMs: number, max: number): Promise<boolean> {
+  const now = Date.now()
+  const row = await db.botSetting
+    .findUnique({ where: { key }, select: { value: true } })
+    .catch(() => null)
+  let arr: number[] = []
+  try {
+    const parsed: unknown = row ? JSON.parse(row.value) : []
+    if (Array.isArray(parsed)) arr = parsed.filter((x): x is number => typeof x === 'number')
+  } catch {
+    arr = []
   }
+  arr = arr.filter((ts) => now - ts < windowMs)
+  if (arr.length >= max) return false
+  arr.push(now)
+  await db.botSetting
+    .upsert({
+      where: { key },
+      create: { key, value: JSON.stringify(arr) },
+      update: { value: JSON.stringify(arr) },
+    })
+    .catch(() => {})
   return true
+}
+
+/** Рубильник: включить/выключить ВСЕ ЛС-уведомления (панель, action:'dm_notify') */
+export async function setDmNotifyOff(off: boolean): Promise<void> {
+  try {
+    if (off) {
+      await db.botSetting.upsert({
+        where: { key: DM_KILL_KEY },
+        create: { key: DM_KILL_KEY, value: new Date().toISOString() },
+        update: { value: new Date().toISOString() },
+      })
+    } else {
+      await db.botSetting.deleteMany({ where: { key: DM_KILL_KEY } })
+    }
+  } catch (e) {
+    console.error('[bot-notify] setDmNotifyOff', e)
+  }
+}
+
+/** Текущее состояние рубильника (для панели) */
+export async function dmNotifyOff(): Promise<boolean> {
+  return dmKilled()
 }
 
 /** «лайк/лайка/лайков» для агрегированного текста */
@@ -168,21 +240,33 @@ function htmlOf(data: BotNotifyData, link: string): string {
 /**
  * ЛС от бота об активности (fire-and-forget). Вызывается из notifyUser
  * (comments-server.ts) ПОСЛЕ создания записи в инбоксе — ЛС не блокирует ответ
- * API и не роняет его. Никогда не бросает.
+ * API и не роняет его. Никогда не бросает (вызовы без await безопасны).
+ *
+ * v6.1.1: гардды ГЛОБАЛЬНЫЕ (в BotSetting, см. блок выше) — дедуп работает
+ * между всеми serverless-инстансами, а не только внутри одного.
  */
-export function sendBotNotification(data: BotNotifyData): void {
+export async function sendBotNotification(data: BotNotifyData): Promise<void> {
   try {
     // Только проверенные пользователи (вход через бот) — остальным писать нельзя
     if (!data.userId.startsWith('tg_')) return
     const chatId = Number(data.userId.slice('tg_'.length))
     if (!Number.isInteger(chatId) || chatId <= 0) return
 
-    // Антиспам v5.55: коммент залетел → ЛС не чаще 1 на комментарий в 6ч;
-    // горячий пост → ответы/комменты не чаще 1 в 2мин; кап 4 ЛС/мин на юзера.
+    // Рубильник: ЛС полностью заглушены владельцем — инбокс миниаппа живёт
+    if (await dmKilled()) return
+
+    // Антиспам v6.1.1 (глобально): коммент залетел → ЛС не чаще 1 на
+    // комментарий в 6ч И не более 5 лайк-ЛС за 6ч на юзера; горячий пост →
+    // ответы/комменты не чаще 1 в 2мин; кап 4 ЛС/мин на юзера.
     // Прошедшие фильтр события живут в инбоксе миниаппа в любом случае.
-    if (data.type === 'comment_like' && !likeDmAllowed(data.userId, data.commentId)) return
-    if ((data.type === 'reply' || data.type === 'comment') && !threadDmAllowed(data.userId, data.postId, data.type)) return
-    if (!userDmAllowed(data.userId)) return
+    if (data.type === 'comment_like') {
+      if (!(await claimWindow(`dm:like:${data.userId}:${data.commentId ?? '_'}`, LIKE_DM_PER_COMMENT_MS))) return
+      if (!(await claimRolling(`dm:likecap:${data.userId}`, LIKE_DM_BUDGET_WINDOW_MS, LIKE_DM_BUDGET_MAX))) return
+    }
+    if ((data.type === 'reply' || data.type === 'comment')) {
+      if (!(await claimWindow(`dm:thread:${data.userId}:${data.postId ?? '_'}:${data.type}`, THREAD_DM_PER_POST_MS))) return
+    }
+    if (!(await claimRolling(`dm:cap:${data.userId}`, 60_000, USER_DM_CAP_PER_MIN))) return
 
     const startParam = startParamOf(data.postId, data.commentId)
     const link = deepLinkOf(startParam)
