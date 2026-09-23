@@ -16,7 +16,10 @@ import { escapeHtml } from '@/lib/tg-bot'
  *  • функции ЧИСТЫЕ (без БД/сети) — можно смоук-тестить локально.
  */
 
-/** Стриппер markdown-lite (жирный/курсив/код/спойлер/ссылки/цитаты) для сниппетов */
+/** Стриппер markdown-lite (жирный/курсив/код/спойлер/ссылки/цитаты/заголовки) для сниппетов.
+ *  v6.2.0: + заголовки «## », + остаточные «**»-пары без закрывающей половины —
+ *  исходники каналов пишут markdown, который Telegram не рендерит, и звёздочки
+ *  протекали в ЛС бота (скриншот владельца). */
 export function dmSnippet(text: string, max = 140): string {
   const plain = text
     .replace(/\*\*(.+?)\*\*/g, '$1')
@@ -24,7 +27,9 @@ export function dmSnippet(text: string, max = 140): string {
     .replace(/`(.+?)`/g, '$1')
     .replace(/\|\|(.+?)\|\|/g, '$1')
     .replace(/\[(.+?)\]\((.+?)\)/g, '$1')
+    .replace(/^#{1,4}\s+/gm, '')
     .replace(/^>\s?/gm, '')
+    .replace(/\*\*/g, '')
     .replace(/\s+/g, ' ')
     .trim()
   return plain.length > max ? `${plain.slice(0, max).trimEnd()}…` : plain

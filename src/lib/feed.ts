@@ -292,7 +292,14 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
    * хвоста не даёт ботовым каналам (их может стать десятки) разрастись.
    */
   const organic = capped.filter((e) => !e.b)
-  const claimedTail = capped.filter((e) => e.b).slice(0, CLAIMED_TAIL_CAP)
+  /* v6.2.0: АВАРИЙНЫЙ ФОЛБЭК «пустая лента». Жёсткий кап 0 нужен, когда есть
+   * живая органика — тогда ботовые не пролезают. Но если запарсенных постов
+   * НЕТ ВООБЩЕ (парсер лег на t.me-таймауты, каталог пересобирается, ИИ-моде-
+   * рация перефлажила органику), показывать пользователю «0 из 0» при живой
+   * БД — худший исход. Возвращаем ботовые посты хвостом (≤24): лента остаётся
+   * живой, как только органика появится — ярусы снова её приоритизируют. */
+  const claimedAll = capped.filter((e) => e.b)
+  const claimedTail = organic.length > 0 ? claimedAll.slice(0, CLAIMED_TAIL_CAP) : claimedAll.slice(0, 24)
   const finalEntries = [...organic, ...claimedTail]
 
   /* v6.0.1: диагностика последней пересборки индекса — видна в /api/health (поле feed):

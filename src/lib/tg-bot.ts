@@ -1,5 +1,6 @@
 import { db } from '@/lib/db'
 import { cacheGet, cacheSet } from '@/lib/redis'
+import { dmSnippet } from '@/lib/post-dm'
 
 /**
  * Клиент Telegram Bot API: реальная доставка уведомлений подписчикам.
@@ -1198,13 +1199,25 @@ export type NotifyResult = { sent: number; failed: number; recipients: number }
 const MAX_POSTS_PER_USER = 10 // защита от спама за один прогон парсера
 const SEND_INTERVAL_MS = 50 // 20 msg/s — ниже официального лимита 30 msg/s
 
+/** Ссылка на миниапп для deep-link кнопок (та же, что в bot-notify/webhook) */
+const TME_APP_URL =
+  process.env.NEXT_PUBLIC_TME_APP_URL?.trim() || 'https://t.me/tgswipe_bot/tgswipe'
+
+/**
+ * v6.2.0: КАРТОЧКА «новый пост в канале подписки» — единый дизайн-язык с
+ * остальными ЛС (post-dm.ts): заголовок-строка с эмодзи, контент в
+ * <blockquote> (выглядит как цитата из канала), кнопки вместо голой ссылки.
+ * Главное: сниппет режется dmSnippet — markdown-lite исходников («**жирный**»,
+ * «__курсив__», «## заголовки») больше НЕ протекает в текст ЛС звёздочками
+ * (скриншот владельца: «**Activision хочет создать…» в сообщении бота).
+ */
 function formatPostMessage(post: NotifiablePost): string {
-  const title = escapeHtml(post.channel.title)
-  const text = post.text ? escapeHtml(post.text.slice(0, 350)) + (post.text.length > 350 ? '…' : '') : ''
-  const url = post.link || `https://t.me/${post.channel.username}`
-  // Воздух и структура: заголовок канала, пустая строка, текст, пустая строка, ссылка.
-  // Эмодзи ВНЕ <a>: безопасно для premiumText (обёртка tg-emoji внутри ссылки не гарантирована)
-  return `<b>${title}</b>${text ? `\n\n${text}` : ''}\n\n📖 <a href="${url}">Читать в Telegram</a>`
+  const title = escapeHtml(post.channel.title.slice(0, 64))
+  const snippet = post.text ? escapeHtml(dmSnippet(post.text, 280)) : ''
+  return (
+    `🔔 <b>Новый пост в «${title}»</b>` +
+    (snippet ? `\n\n<blockquote>${snippet}</blockquote>` : '')
+  )
 }
 
 /**
@@ -1261,6 +1274,9 @@ export async function notifyNewPosts(posts: NotifiablePost[]): Promise<NotifyRes
   let sent = 0
   let failed = 0
 
+  // динамический импорт: tg-emoji ↔ tg-bot цикл (tg-emoji импортирует botBanned/markBotBan)
+  const { botSendRich } = await import('@/lib/tg-emoji')
+
   for (const [userId, chatId] of userChat) {
     // 429 в процессе рассылки: прекращаем дергать API (каждый вызов под баном
     // продлевает наказание). Посты ниже помечаются notifiedAt как при обычных
@@ -1273,13 +1289,22 @@ export async function notifyNewPosts(posts: NotifiablePost[]): Promise<NotifyRes
       .slice(0, MAX_POSTS_PER_USER)
 
     for (const post of relevant) {
-      const ok = await callMethod('sendMessage', {
-        chat_id: chatId,
-        text: formatPostMessage(post),
-        parse_mode: 'HTML',
-        disable_web_page_preview: true,
+      // v6.2.0: отправка через botSendRich — премиум-эмодзи в тексте,
+      // цветные кнопки с иконками + фолбэки клавиатур (вместо голого sendMessage
+      // со ссылкой в тексте). «Читать» открывает ПОСТ в миниаппе (startapp=n_<id>),
+      // «Источник» — оригинал в Telegram.
+      const srcUrl = post.link || `https://t.me/${post.channel.username}`
+      const startParam = post.id ? `n_${post.id}` : ''
+      const appUrl = startParam
+        ? `${TME_APP_URL}?startapp=${encodeURIComponent(startParam)}`
+        : TME_APP_URL
+      const r = await botSendRich(chatId, formatPostMessage(post), {
+        keyboard: [
+          [{ label: 'Читать в приложении', emoji: '📖', url: appUrl, style: 'primary' }],
+          [{ label: 'Источник', emoji: '🔗', url: srcUrl }],
+        ],
       })
-      if (ok) sent++
+      if (r.ok) sent++
       else failed++
       await new Promise((r) => setTimeout(r, SEND_INTERVAL_MS))
     }

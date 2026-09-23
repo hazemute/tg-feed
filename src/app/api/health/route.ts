@@ -7,6 +7,7 @@ import { checkSchema, ensureAppSchema } from '@/lib/ensure-schema'
 import { cronAuthorized } from '@/lib/guard'
 import { ensureContentCatalog, stepContentCatalog } from '@/lib/content-catalog'
 import { getFeedIndexStats } from '@/lib/feed'
+import { nsfwPostNotIn } from '@/lib/moderation'
 
 // Прод: очередь контента (discover кураторских каналов) может работать в after()
 // до 60с — response возвращается сразу, миграция доезжает в фоне
@@ -60,6 +61,65 @@ function envDbSummary(raw: string | undefined): Record<string, string> | null {
  */
 const WEBHOOK_CHECK_INTERVAL_MS = 5 * 60_000
 let lastWebhookCheckAt = 0
+
+/**
+ * v6.2.0: ДИАГНОСТИКА ЛЕНТЫ ПРЯМО ИЗ БД (агрегаты, публично).
+ * Полевая правда для жалобы «в поиске каналы есть, а в ленте 0 из 0»:
+ * per-instance feed-статы (getFeedIndexStats) на холодном инстансе всегда null,
+ * а здесь — медленные, но честные счётчики теми же фильтрами, что строит
+ * индекс ленты (каналы active/claimed, окно постов, разрез aiFlag, сколько
+ * постов проходит WHERE индекса). Кэш 60с: health дёргается часто.
+ */
+let feedDbCache: { at: number; data: Record<string, unknown> | null } | null = null
+async function feedDbDiag(): Promise<Record<string, unknown> | null> {
+  if (feedDbCache && Date.now() - feedDbCache.at < 60_000) return feedDbCache.data
+  if ((process.env.DATABASE_URL ?? '').startsWith('file:')) return null // локальная песочница
+  try {
+    const h48 = new Date(Date.now() - 48 * 3_600_000)
+    const d7 = new Date(Date.now() - 7 * 24 * 3_600_000)
+    const [chActive, chClaimed, posts48, posts24, flags, passing7, organic7] = await Promise.all([
+      db.channel.count({ where: { status: 'active' } }),
+      db.channel.count({ where: { status: 'active', claimedById: { not: null } } }),
+      db.post.count({ where: { publishedAt: { gte: h48 } } }),
+      db.post.count({ where: { publishedAt: { gte: new Date(Date.now() - 24 * 3_600_000) } } }),
+      db.post.groupBy({ by: ['aiFlag'], _count: { _all: true }, where: { publishedAt: { gte: h48 } } }),
+      db.post.count({
+        where: {
+          publishedAt: { gte: d7 },
+          memberOnly: false,
+          channel: { status: 'active' },
+          OR: [{ aiFlag: null }, { aiFlag: 'ok' }, { aiFlag: 'junk' }],
+          AND: nsfwPostNotIn(),
+        },
+      }),
+      db.post.count({
+        where: {
+          publishedAt: { gte: d7 },
+          memberOnly: false,
+          channel: { status: 'active', claimedById: null },
+          OR: [{ aiFlag: null }, { aiFlag: 'ok' }, { aiFlag: 'junk' }],
+          AND: nsfwPostNotIn(),
+        },
+      }),
+    ])
+    const byFlag: Record<string, number> = {}
+    for (const f of flags) byFlag[f.aiFlag ?? 'null'] = f._count._all
+    const data = {
+      chActive,
+      chClaimed,
+      posts24,
+      posts48,
+      aiFlag48: byFlag,
+      passing7, // постов за 7д проходит WHERE индекса ленты (любые каналы)
+      organic7, // из них запарсенных (не ботовых)
+      at: new Date().toISOString(),
+    }
+    feedDbCache = { at: Date.now(), data }
+    return data
+  } catch {
+    return null
+  }
+}
 
 function canonicalBotOrigin(): string | null {
   const explicit = process.env.NEXT_PUBLIC_APP_URL?.trim()
@@ -279,6 +339,8 @@ export async function GET(request: Request) {
       // claimedFirstPos — позиция первого ботового поста; фикс ленты считается
       // рабочим, когда она ≈ total (ботовые только в хвосте) либо -1.
       feed: getFeedIndexStats(),
+      // v6.2.0: полевая диагностика ленты прямо из БД (каналы/посты/aiFlag/порог индекса)
+      feedDb: await feedDbDiag(),
       // v5.76: диагноз вебхука наружу только за cron-секретом (url бота — цель для спама)
       ...(diag ? { webhook } : {}),
       botBanSec: await botBanRemainSecAsync(),

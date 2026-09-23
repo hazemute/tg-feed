@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { botSendRich } from '@/lib/tg-emoji'
 import { escapeHtml } from '@/lib/tg-bot'
+import { dmSnippet } from '@/lib/post-dm'
 
 /**
  * УВЕДОМЛЕНИЯ В ЛС ОТ БОТА (v5.45).
@@ -220,39 +221,42 @@ function deepLinkOf(startParam: string): string {
   return startParam ? `${TME_APP_URL}?startapp=${encodeURIComponent(startParam)}` : TME_APP_URL
 }
 
-function htmlOf(data: BotNotifyData, link: string): string {
+function htmlOf(data: BotNotifyData, ctx: { likesAgg?: number } = {}): string {
   const title = escapeHtml(data.title.slice(0, 64))
-  const snippet = (s: string) => escapeHtml(s.slice(0, 180)) + (s.length > 180 ? '…' : '')
+  // v6.2.0: сниппет чистится от markdown-lite (dmSnippet) — звёздочки/подчёркивания
+  // из исходников больше не протекают в ЛС, и текст в цитате читается аккуратно
+  const quote = (s: string, max = 220) => escapeHtml(dmSnippet(s, max))
   switch (data.type) {
-    case 'comment':
+    case 'comment': {
+      // body приходит «Имя автора: текст» — имя жирным внутри цитаты
+      const sep = data.body.indexOf(': ')
+      const author = sep > 0 ? data.body.slice(0, sep) : ''
+      const text = sep > 0 ? data.body.slice(sep + 2) : data.body
+      const inner = author
+        ? `<b>${escapeHtml(author.slice(0, 48))}:</b> ${quote(text)}`
+        : quote(data.body)
       return (
-        `💬 <b>Новый комментарий</b> · «${title}»\n\n` +
-        `<blockquote>${snippet(data.body)}</blockquote>\n\n` +
-        `<a href="${link}">Ответить в приложении →</a>`
+        `💬 <b>Новый комментарий в «${title}»</b>\n\n` +
+        `<blockquote>${inner}</blockquote>`
       )
+    }
     case 'reply':
       return (
         `↩️ <b>${title} ответил(а) тебе</b>\n\n` +
-        `<blockquote>${snippet(data.body)}</blockquote>\n\n` +
-        `<a href="${link}">Открыть диалог →</a>`
+        `<blockquote>${quote(data.body)}</blockquote>`
       )
-    case 'comment_like':
-      // title приходит уже готовым: «X оценил(а) ваш комментарий» или
-      // агрегированное «У вашего комментария уже N лайков»;
-      // body = «❤️ {текст комментария}» — ведущее сердечко убираем,
-      // текст уходит в цитату (v6.1.2)
-      return (
-        `<b>${title}</b>\n\n` +
-        `<blockquote>${snippet(data.body.replace(/^❤️\s*/, ''))}</blockquote>\n\n` +
-        `<a href="${link}">Открыть в приложении →</a>`
-      )
+    case 'comment_like': {
+      const comment = quote(data.body.replace(/^❤️\s*/, ''), 200)
+      // агрегированная версия (лайков ≥5 к моменту отправки) — заголовок-праздник
+      const header =
+        typeof ctx.likesAgg === 'number' && ctx.likesAgg >= 5
+          ? `🔥 <b>Твой комментарий залетел!</b>\n⭐ Уже <b>${ctx.likesAgg} ${likesWord(ctx.likesAgg)}</b>`
+          : `❤️ <b>${title} оценил(а) твой комментарий</b>`
+      return `${header}\n\n<blockquote>${comment}</blockquote>`
+    }
     case 'system':
-      // Заголовок обычно уже с эмодзи («✅ Задание выполнено…») — 🔔 добавляем
-      // только к «голому» тексту
-      return (
-        `<b>${title}</b>\n\n${snippet(data.body)}\n\n` +
-        `<a href="${link}">Открыть в приложении →</a>`
-      )
+      // Заголовок обычно уже с эмодзи («✅ Задание выполнено…»)
+      return `<b>${title}</b>\n\n${quote(data.body, 240)}`
   }
 }
 
@@ -291,16 +295,23 @@ export async function sendBotNotification(data: BotNotifyData): Promise<void> {
 
     const startParam = startParamOf(data.postId, data.commentId)
     const link = deepLinkOf(startParam)
-    // Глубокая ссылка на конкретное уведомление, либо просто кнопка запуска приложения
-    // v6.1.2: иконки кнопок через слоты (премиум) + стили; эмоциональная иконка в plain-фолбэке
-    const keyboard = startParam
-      ? [[{ label: 'Перейти к уведомлению', emoji: '🚀', url: link, style: 'primary' as const }]]
-      : [[{ label: 'Открыть Tg Swipe', emoji: '🚀', url: TME_APP_URL, style: 'primary' as const }]]
+    // v6.2.0: у каждого типа — свой глагол на кнопке (действие вместо места);
+    // иконки кнопок через слоты (премиум), фолбэк — юникод-эмодзи
+    const ctaOf = (t: BotNotifyData['type']): { label: string; emoji: string } =>
+      t === 'reply' || t === 'comment'
+        ? { label: 'Ответить', emoji: '💬' }
+        : t === 'comment_like'
+          ? { label: 'Открыть пост', emoji: '🔥' }
+          : { label: 'Открыть Tg Swipe', emoji: '🚀' }
+    const cta = ctaOf(data.type)
+    const keyboard = [
+      [{ label: cta.label, emoji: cta.emoji, url: startParam ? link : TME_APP_URL, style: 'primary' as const }],
+    ]
 
     enqueueSend(async () => {
       // Агрегация: к моменту отправки лайков может быть уже много — если ≥5,
-      // шлём «У вашего комментария уже N лайков» вместо «X оценил(а)»
-      let title = data.type === 'comment_like' ? `${data.title} оценил(а) твой комментарий` : data.title
+      // шлём праздничный заголовок «Твой комментарий залетел» вместо «X оценил(а)»
+      let likesAgg: number | undefined
       if (data.type === 'comment_like' && data.commentId) {
         try {
           const c = await db.comment.findUnique({
@@ -308,12 +319,12 @@ export async function sendBotNotification(data: BotNotifyData): Promise<void> {
             select: { likesCount: true },
           })
           const n = c?.likesCount ?? 0
-          if (n >= 5) title = `🔥 У твоего комментария уже ${n} ${likesWord(n)}`
+          if (n >= 5) likesAgg = n
         } catch {
           /* не получили счётчик — шлём обычный текст */
         }
       }
-      const html = htmlOf({ ...data, title }, link)
+      const html = htmlOf(data, { likesAgg })
       const r = await botSendRich(chatId, html, {
         keyboard,
         // premiumText сам обернёт эмодзи в премиум (v6.1.2 — красивые карточки);
