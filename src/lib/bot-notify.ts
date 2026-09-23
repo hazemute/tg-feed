@@ -106,7 +106,14 @@ async function pruneDmMarkers(): Promise<void> {
   await db.botSetting
     .deleteMany({
       where: {
-        OR: [{ key: { startsWith: 'dm:like:' } }, { key: { startsWith: 'dm:thread:' } }],
+        OR: [
+          { key: { startsWith: 'dm:like:' } },
+          { key: { startsWith: 'dm:thread:' } },
+          // v6.3.0: постовые окна «1 ЛС на канал в 12ч» (dm:postcap:* не задеваем —
+          // префикс 'dm:post:' не совпадает с 'dm:postcap:', а JSON-массивы
+          // перезаписываются по месту)
+          { key: { startsWith: 'dm:post:' } },
+        ],
         value: { lt: cutoff },
       },
     })
@@ -123,8 +130,10 @@ async function dmKilled(): Promise<boolean> {
 
 /** Атомарное занятие окна: первый инстанс создаёт ключ, остальные читают его
  *  и отклоняются. Порядок «сначала тихое чтение, потом create» держит
- *  P2002 (шумный лог Prisma) только в редкой гонке двух инстансов. */
-async function claimWindow(key: string, windowMs: number): Promise<boolean> {
+ *  P2002 (шумный лог Prisma) только в редкой гонке двух инстансов.
+ *  v6.3.0: экспорт — бюджетные маркеры постовых ЛС в tg-bot.ts (динамический
+ *  импорт, чтобы не создавать статический цикл tg-bot ↔ bot-notify). */
+export async function claimWindow(key: string, windowMs: number): Promise<boolean> {
   const now = new Date()
   const row = await db.botSetting
     .findUnique({ where: { key }, select: { value: true } })
@@ -150,8 +159,9 @@ async function claimWindow(key: string, windowMs: number): Promise<boolean> {
 }
 
 /** Скользящее окно с лимитом (JSON-массив ts в одном ключе): лайк-бюджет 5/6ч
- *  и жёсткий кап 4/мин. Гонки двух инстансов дают кап +1..2 — это приемлемо. */
-async function claimRolling(key: string, windowMs: number, max: number): Promise<boolean> {
+ *  и жёсткий кап 4/мин. Гонки двух инстансов дают кап +1..2 — это приемлемо.
+ *  v6.3.0: экспорт для постовых ЛС (см. claimWindow). */
+export async function claimRolling(key: string, windowMs: number, max: number): Promise<boolean> {
   const now = Date.now()
   const row = await db.botSetting
     .findUnique({ where: { key }, select: { value: true } })
@@ -196,6 +206,49 @@ export async function setDmNotifyOff(off: boolean): Promise<void> {
 /** Текущее состояние рубильника (для панели) */
 export async function dmNotifyOff(): Promise<boolean> {
   return dmKilled()
+}
+
+/* — Постовые ЛС v6.3.0 («бот в ЛС постами не спамил») —
+ * Рассылка «Новый пост в канале подписки» (tg-bot.ts notifyNewPosts) по
+ * умолчанию ВЫКЛЮЧЕНА: подписка создаётся с колокольчиком notify=true, парсер
+ * гоняется каждые ~15 минут, и активные каналы превращали ЛС в ленту-двойника.
+ * Включается рубильником в панели (BotSetting dm_post_notify = '1'). Даже
+ * после включения действуют глобальные бюджеты (маркеры в BotSetting):
+ *   dm:post:<userId>:<channelId> → ISO ts — 1 ЛС на канал в 12ч;
+ *   dm:postcap:<userId>          → JSON ts[] — ≤3 постовых ЛС за 24ч. */
+export const POST_DM_FLAG_KEY = 'dm_post_notify'
+export const POST_DM_BUDGET_WINDOW_MS = 24 * 3_600_000
+export const POST_DM_BUDGET_MAX = 3
+export const POST_DM_PER_CHANNEL_MS = 12 * 3_600_000
+
+/** Постовые ЛС разрешены? По умолчанию НЕТ. */
+export async function postDmAllowed(): Promise<boolean> {
+  const row = await db.botSetting
+    .findUnique({ where: { key: POST_DM_FLAG_KEY }, select: { value: true } })
+    .catch(() => null)
+  return row?.value === '1'
+}
+
+/** Текущее состояние постовых ЛС (для панели) */
+export async function postDmNotifyEnabled(): Promise<boolean> {
+  return postDmAllowed()
+}
+
+/** Рубильник постовых ЛС (панель, action:'dm_post') */
+export async function setPostDmNotify(on: boolean): Promise<void> {
+  try {
+    if (on) {
+      await db.botSetting.upsert({
+        where: { key: POST_DM_FLAG_KEY },
+        create: { key: POST_DM_FLAG_KEY, value: '1' },
+        update: { value: '1' },
+      })
+    } else {
+      await db.botSetting.deleteMany({ where: { key: POST_DM_FLAG_KEY } })
+    }
+  } catch (e) {
+    console.error('[bot-notify] setPostDmNotify', e)
+  }
 }
 
 /** «лайк/лайка/лайков» для агрегированного текста */

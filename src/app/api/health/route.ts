@@ -77,11 +77,12 @@ async function feedDbDiag(): Promise<Record<string, unknown> | null> {
   try {
     const h48 = new Date(Date.now() - 48 * 3_600_000)
     const d7 = new Date(Date.now() - 7 * 24 * 3_600_000)
-    const [chActive, chClaimed, posts48, posts24, flags, passing7, organic7] = await Promise.all([
+    const h24 = new Date(Date.now() - 24 * 3_600_000)
+    const [chActive, chClaimed, posts48, posts24, flags, passing7, organic7, organic24, organic48] = await Promise.all([
       db.channel.count({ where: { status: 'active' } }),
       db.channel.count({ where: { status: 'active', claimedById: { not: null } } }),
       db.post.count({ where: { publishedAt: { gte: h48 } } }),
-      db.post.count({ where: { publishedAt: { gte: new Date(Date.now() - 24 * 3_600_000) } } }),
+      db.post.count({ where: { publishedAt: { gte: h24 } } }),
       db.post.groupBy({ by: ['aiFlag'], _count: { _all: true }, where: { publishedAt: { gte: h48 } } }),
       db.post.count({
         where: {
@@ -101,6 +102,27 @@ async function feedDbDiag(): Promise<Record<string, unknown> | null> {
           AND: nsfwPostNotIn(),
         },
       }),
+      // v6.3.0: органика в свежих окнах — прямой мониторинг потока парсера:
+      // organic24 > 0 — парсер жив, organic24 = 0 при органичном organic7 —
+      // t.me снова недоступен с Vercel (именно так лента вырождалась в ботовый огрызок)
+      db.post.count({
+        where: {
+          publishedAt: { gte: h24 },
+          memberOnly: false,
+          channel: { status: 'active', claimedById: null },
+          OR: [{ aiFlag: null }, { aiFlag: 'ok' }, { aiFlag: 'junk' }],
+          AND: nsfwPostNotIn(),
+        },
+      }),
+      db.post.count({
+        where: {
+          publishedAt: { gte: h48 },
+          memberOnly: false,
+          channel: { status: 'active', claimedById: null },
+          OR: [{ aiFlag: null }, { aiFlag: 'ok' }, { aiFlag: 'junk' }],
+          AND: nsfwPostNotIn(),
+        },
+      }),
     ])
     const byFlag: Record<string, number> = {}
     for (const f of flags) byFlag[f.aiFlag ?? 'null'] = f._count._all
@@ -112,6 +134,8 @@ async function feedDbDiag(): Promise<Record<string, unknown> | null> {
       aiFlag48: byFlag,
       passing7, // постов за 7д проходит WHERE индекса ленты (любые каналы)
       organic7, // из них запарсенных (не ботовых)
+      organic24, // v6.3.0: органика за 24ч — пульс парсера
+      organic48, // v6.3.0: органика за 48ч
       at: new Date().toISOString(),
     }
     feedDbCache = { at: Date.now(), data }

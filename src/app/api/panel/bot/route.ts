@@ -18,7 +18,7 @@ import {
   setBusinessConnection,
 } from '@/lib/tg-emoji'
 import { getCustomEmojiStickers } from '@/lib/tg-bot'
-import { dmNotifyOff, setDmNotifyOff } from '@/lib/bot-notify'
+import { dmNotifyOff, postDmNotifyEnabled, setDmNotifyOff, setPostDmNotify } from '@/lib/bot-notify'
 import type { BotButton } from '@/lib/tg-buttons'
 
 export const dynamic = 'force-dynamic'
@@ -92,6 +92,12 @@ const bodySchema = z.discriminatedUnion('action', [
     action: z.literal('dm_notify'),
     off: z.boolean(),
   }),
+  z.object({
+    /** v6.3.0: рубильник ПОСТОВЫХ ЛС («Новый пост в канале подписки»)
+     *  — по умолчанию выключены (жалоба владельца на спам постами) */
+    action: z.literal('dm_post'),
+    on: z.boolean(),
+  }),
 ])
 
 export async function GET(request: Request) {
@@ -122,6 +128,7 @@ export async function GET(request: Request) {
       ownerChatId: OWNER_TG_ID,
       premiumCount: slots.filter((s) => s.customEmojiId).length,
       dmNotifyOff: await dmNotifyOff(),
+      postDmNotify: await postDmNotifyEnabled(),
     })
   } catch (e) {
     console.error('[panel/bot GET]', e)
@@ -194,6 +201,15 @@ export async function POST(request: Request) {
       await setDmNotifyOff(d.off)
       await logAdmin('bot_dm_notify', d.off ? 'off' : 'on', { note: d.off ? 'ЛС-уведомления заглушены' : 'ЛС-уведомления включены' })
       return NextResponse.json({ ok: true, dmNotifyOff: d.off })
+    }
+
+    /* ---------- v6.3.0: рубильник постовых ЛС ---------- */
+    if (d.action === 'dm_post') {
+      await setPostDmNotify(d.on)
+      await logAdmin('bot_dm_post_notify', d.on ? 'on' : 'off', {
+        note: d.on ? 'Постовые ЛС включены (бюджеты: 1/канал/12ч, 3/24ч на юзера)' : 'Постовые ЛС выключены (по умолчанию)',
+      })
+      return NextResponse.json({ ok: true, postDmNotify: d.on })
     }
 
     /* ---------- Тестовая отправка ---------- */

@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Bot, Inbox, ImageIcon, Loader2, PlugZap, RefreshCw, Send, Sparkles, Trash2 } from 'lucide-react'
+import { BellOff, Bot, Inbox, ImageIcon, Loader2, PlugZap, RefreshCw, Send, Sparkles, Trash2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 
@@ -25,6 +25,7 @@ type BotConfig = {
   ownerChatId: number
   premiumCount: number
   dmNotifyOff: boolean
+  postDmNotify: boolean
 }
 
 const VIA_LABEL: Record<string, string> = {
@@ -120,6 +121,22 @@ export function BotTab({ tick, onSettled }: TabProps) {
       await panelFetch('/api/panel/bot', { json: { action: 'dm_notify', off } })
       setData({ ...data, dmNotifyOff: off })
       toast.success(off ? 'ЛС-уведомления заглушены — бот молчит во всех личках' : 'ЛС-уведомления включены')
+    } catch (e) {
+      toast.error((e as Error).message || 'Не удалось изменить')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  /** v6.3.0: рубильник ПОСТОВЫХ ЛС (по умолчанию выключены — антиспам) */
+  const togglePostDm = async () => {
+    if (!data) return
+    const on = !data.postDmNotify
+    setSaving('dm_post')
+    try {
+      await panelFetch('/api/panel/bot', { json: { action: 'dm_post', on } })
+      setData({ ...data, postDmNotify: on })
+      toast.success(on ? 'Постовые ЛС включены — с бюджетом 1/канал/12ч и 3/24ч на юзера' : 'Постовые ЛС выключены — «Новый пост в подписке» больше не приходит')
     } catch (e) {
       toast.error((e as Error).message || 'Не удалось изменить')
     } finally {
@@ -362,6 +379,46 @@ export function BotTab({ tick, onSettled }: TabProps) {
             >
               {saving === 'dm_notify' ? <Loader2 className="size-4 animate-spin" /> : <Inbox className="size-4" />}
               {data.dmNotifyOff ? 'Включить ЛС' : 'Заглушить ЛС'}
+            </button>
+          </div>
+
+          {/* v6.3.0: рубильник ПОСТОВЫХ ЛС — по умолчанию выключены (антиспам) */}
+          <div
+            className={cn(
+              'flex flex-wrap items-center justify-between gap-3 rounded-lg border p-3',
+              data.postDmNotify ? 'border-amber-200 bg-amber-50/60' : 'border-emerald-200 bg-emerald-50/60',
+            )}
+          >
+            <div className="min-w-56">
+              <h3 className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <BellOff className="size-4" />
+                Постовые ЛС («Новый пост в подписке»)
+                <span
+                  className={cn(
+                    'rounded-full px-2 py-0.5 text-[11px] font-medium',
+                    data.postDmNotify ? 'bg-amber-100 text-amber-700' : 'bg-emerald-100 text-emerald-700',
+                  )}
+                >
+                  {data.postDmNotify ? 'включены' : 'ВЫКЛ (по умолчанию)'}
+                </span>
+              </h3>
+              <p className="mt-1 max-w-2xl text-xs leading-relaxed text-slate-500">
+                {data.postDmNotify
+                  ? 'Каждый новый пост канала с колокольчиком дублируется в личку. Бюджеты: ≤1 ЛС на канал в 12ч и ≤3 ЛС за 24ч на юзера. Новые посты и так видны в ленте и подписках.'
+                  : 'Рассылка постов в личку отключена — жалоба «бот спамит постами» закрыта. Новые посты подписок видны в ленте и в разделе «Подписки»; инбокс и награды не затронуты.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void togglePostDm()}
+              disabled={saving === 'dm_post'}
+              className={cn(
+                'flex h-10 items-center gap-2 rounded-lg px-4 text-sm font-medium text-white transition disabled:opacity-50',
+                data.postDmNotify ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700',
+              )}
+            >
+              {saving === 'dm_post' ? <Loader2 className="size-4 animate-spin" /> : <BellOff className="size-4" />}
+              {data.postDmNotify ? 'Выключить постовые ЛС' : 'Включить постовые ЛС'}
             </button>
           </div>
 

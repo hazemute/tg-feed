@@ -1227,6 +1227,18 @@ function formatPostMessage(post: NotifiablePost): string {
  */
 export async function notifyNewPosts(posts: NotifiablePost[]): Promise<NotifyResult> {
   if (!botEnabled() || posts.length === 0) return { sent: 0, failed: 0, recipients: 0 }
+  // v6.3.0 («бот в ЛС постами не спамил»): ПОСТОВЫЕ ЛС ВЫКЛЮЧЕНЫ ПО УМОЛЧАНИЮ.
+  // Рассылка «Новый пост в канале подписки» уходит ТОЛЬКО если в BotSetting
+  // dm_post_notify = '1' (панель → Бот → «Постовые ЛС»). Пока флаг выключен,
+  // посты сразу помечаются notifiedAt — накопленный бэклог не выстрелит залпом
+  // после включения, и ни один подписчик не получит ЛС.
+  // Динамический импорт: bot-notify импортирует escapeHtml отсюда — статический
+  // цикл tg-bot ↔ bot-notify не нужен.
+  const dmGuards = await import('@/lib/bot-notify')
+  if (!(await dmGuards.postDmAllowed())) {
+    await markNotified(posts)
+    return { sent: 0, failed: 0, recipients: 0 }
+  }
   // Флуд-бан Bot API: отправка в Telegram сейчас невозможна — но посты НЕ помечаем
   // notifiedAt (см. ниже): рассылка догонит после снятия бана при следующем прогоне
   await hydrateBotBan()
@@ -1282,13 +1294,24 @@ export async function notifyNewPosts(posts: NotifiablePost[]): Promise<NotifyRes
     // продлевает наказание). Посты ниже помечаются notifiedAt как при обычных
     // сбоях отправки — недоставленное не дублирует тем, кто уже получил.
     if (botBanned()) break
-    // Посты этого прогона, релевантные пользователю (по каналам с notify=true)
+    // Посты этого прогона, релевантные пользователю (по каналам с notify=true);
+    // v6.3.0: пара {post, channelId} — channelId нужен для маркера «1 ЛС на канал»
     const relevant = subs
       .filter((s) => s.userId === userId)
-      .flatMap((s) => postsByChannelId.get(s.channelId) ?? [])
+      .flatMap((s) =>
+        (postsByChannelId.get(s.channelId) ?? []).map((post) => ({ post, channelId: s.channelId })),
+      )
       .slice(0, MAX_POSTS_PER_USER)
 
-    for (const post of relevant) {
+    for (const { post, channelId } of relevant) {
+      // v6.3.0: даже при включённой рассылке — жёсткие бюджеты (глобально, в БД,
+      // те же маркеры, что у антиспама v6.1.1):
+      //  • не более 1 постового ЛС на (пользователь × канал) в 12ч — активный
+      //    канал больше не «пулемётит» по каждому посту;
+      //  • не более 3 постовых ЛС на пользователя за 24ч — подписка на 10
+      //    каналов не превращает бота в ленту-двойника.
+      if (!(await dmGuards.claimWindow(`dm:post:${userId}:${channelId}`, dmGuards.POST_DM_PER_CHANNEL_MS))) continue
+      if (!(await dmGuards.claimRolling(`dm:postcap:${userId}`, dmGuards.POST_DM_BUDGET_WINDOW_MS, dmGuards.POST_DM_BUDGET_MAX))) continue
       // v6.2.0: отправка через botSendRich — премиум-эмодзи в тексте,
       // цветные кнопки с иконками + фолбэки клавиатур (вместо голого sendMessage
       // со ссылкой в тексте). «Читать» открывает ПОСТ в миниаппе (startapp=n_<id>),

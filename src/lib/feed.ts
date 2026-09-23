@@ -426,13 +426,51 @@ export async function buildFeedScope(userId: string, category: string): Promise<
  * (2-3 канала), — это НЕ лента, а её огрызок (жалоба владельца «только
  * 2 канала»). Дешёвый count по индексу; вызывается только когда категорийный
  * фильтр установлен (до 1 раза на построение скоупа — сам скоуп кэшируется 60с).
+ *
+ * v6.3.0 («миллион раз одни и те же посты»): счёт теперь В ОКНЕ ИНДЕКСА,
+ * а не за всё время. Индекс берёт 1200 новейших постов (~4-5 суток при текущих
+ * темпах), а прежний count смотрел на ВСЮ историю: интересы с 40+ постами ЗА
+ * ЖИЗНЬ держали фильтр, хотя в реальном окне у этих категорий оставалось 2-4
+ * ботовых поста — лента вырождалась в «4 из 4», крутящиеся по кругу.
  */
 const SCOPE_MIN_POSTS = 40
+/** Окно счётчика скоупа ≈ фактическое окно индекса (1200 новейших). Заведомо
+ *  щедрое: при просадке темпов постинга реальное окно ШИРЕ — фолбэк сработает
+ *  раньше (fail-open), лента станет шире, но никогда уже. */
+const SCOPE_WINDOW_MS = 5 * 24 * 3_600_000
+
+function scopeWindowWhere(where: Prisma.PostWhereInput): Prisma.PostWhereInput {
+  return { ...where, publishedAt: { gt: new Date(Date.now() - SCOPE_WINDOW_MS) } }
+}
+
 async function scopePostCount(where: Prisma.PostWhereInput): Promise<number> {
   try {
-    return await db.post.count({ where })
+    return await db.post.count({ where: scopeWindowWhere(where) })
   } catch {
     return SCOPE_MIN_POSTS // ошибка count — не в коем случае не опустошаем ленту
+  }
+}
+
+/**
+ * v6.3.0: есть ли в скоупе хоть ОДИН запарсенный (не ботовый) пост в окне.
+ * Ботовые посты в ленту не попадают (CLAIMED_TAIL_CAP = 0), поэтому скоуп
+ * интересов без органики — это аварийный фолбэк из 2-4 ботовых постов, которые
+ * юзер видит бесконечно («те самые посты, которые я уже миллион раз видел»).
+ * Если ГЛОБАЛЬНО органика есть, а в скоупе её ноль — фильтр интересов снимается:
+ * лучше широкий поток из других категорий, чем вечное «то же самое».
+ */
+async function scopeHasOrganic(where: Prisma.PostWhereInput): Promise<boolean> {
+  try {
+    const ch = (where.channel ?? {}) as Prisma.ChannelWhereInput
+    const n = await db.post.count({
+      where: {
+        ...scopeWindowWhere(where),
+        channel: { ...ch, claimedById: null },
+      },
+    })
+    return n > 0
+  } catch {
+    return true // ошибка — считаем, что органика есть (не опустошаем ленту)
   }
 }
 
@@ -528,7 +566,11 @@ async function buildFeedScopeUncached(userId: string, category: string) {
       where.channel.category = { slug: { in: picked } }
       // v5.78 ФОЛБЭК → v6.0.1: узкий результат (< 40 постов) — снимаем
       // категорийный фильтр, лента показывает всё (лучше шире, чем огрызок)
-      if ((await scopePostCount(where)) < SCOPE_MIN_POSTS) {
+      // v6.3.0: узость меряется В ОКНЕ индекса, и дополнительно снимаем фильтр,
+      // если в скоупе вообще нет органики (иначе — ботовый огрызок фолбэка)
+      const narrow =
+        (await scopePostCount(where)) < SCOPE_MIN_POSTS || !(await scopeHasOrganic(where))
+      if (narrow) {
         delete where.channel.category
       }
     }
@@ -541,7 +583,12 @@ async function buildFeedScopeUncached(userId: string, category: string) {
       // v5.78 ФОЛБЭК → v6.0.1: интересы юзера не совпадают с фактическим
       // контентом ИЛИ совпадают слишком узко (< 40 постов) → снимаем фильтр:
       // лучше показать всё, чем 2 канала (жалоба владельца).
-      if ((await scopePostCount(where)) < SCOPE_MIN_POSTS) {
+      // v6.3.0: узость меряется В ОКНЕ индекса (а не за всю историю) + скоуп
+      // без единого запарсенного поста тоже считается узким — иначе лента
+      // вырождается в аварийный ботовый хвост, повторяющийся бесконечно.
+      const narrow =
+        (await scopePostCount(where)) < SCOPE_MIN_POSTS || !(await scopeHasOrganic(where))
+      if (narrow) {
         delete where.channel.category
         interests = []
       }
