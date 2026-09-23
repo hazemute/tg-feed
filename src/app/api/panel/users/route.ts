@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { err, readJson } from '@/lib/server'
+import { ciContains, err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { setMaintenanceAllowed, setBanned } from '@/lib/maintenance'
 import { invalidateBalance } from '@/lib/balance-cache'
@@ -36,13 +36,16 @@ export async function GET(request: Request) {
 
     const now = Date.now()
     const where: Prisma.UserWhereInput = {}
+    // v6.3.1: поиск НЕ перезаписывается фильтрами (AND-комбинация) и стал
+    // регистронезависимым (Postgres mode:'insensitive') — раньше в проде
+    // «Durov» не находился по «durov» и выдать юзеру было нечего/некому.
+    let searchOR: Prisma.UserWhereInput[] | null = null
     if (q) {
-      const qLower = q.toLowerCase()
-      where.OR = [
-        { id: { contains: qLower } },
-        { username: { contains: qLower } },
-        { firstName: { contains: qLower } },
-        { firstName: { contains: q } },
+      searchOR = [
+        { id: ciContains(q) },
+        { username: ciContains(q) },
+        { firstName: ciContains(q) },
+        { lastName: ciContains(q) },
       ]
     }
     // v5.18: фильтры по типу аккаунта, бану и подписке
@@ -74,6 +77,16 @@ export async function GET(request: Request) {
         break
       default:
         break
+    }
+    // v6.3.1: поисковый OR комбинируем через AND — не затирая фильтровые OR
+    if (searchOR) {
+      const ands: Prisma.UserWhereInput[] = Array.isArray(where.AND)
+        ? where.AND
+        : where.AND
+          ? [where.AND]
+          : []
+      ands.push({ OR: searchOR })
+      where.AND = ands
     }
 
     const [total, users] = await Promise.all([

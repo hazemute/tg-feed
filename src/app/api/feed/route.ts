@@ -722,9 +722,38 @@ async function buildFeedSnapshot(ctx: {
   const muted = signals.mutedIds
   const hidden = signals.hiddenPostIds
   const reported = signals.reportedPostIds
-  const pool = scopedEntries.filter(
+  const base = scopedEntries.filter(
     (e) => !muted.has(e.c) && !hidden.has(e.i) && !reported.has(e.i),
   )
+
+  /* ---------- 2.2 v6.4.0: ЖЁСТКОЕ ИСКЛЮЧЕНИЕ ПРОСМОТРЕННОГО (≤7 дней) ----------
+   * Жалоба владельца: «опять появились те же посты, которые я уже миллион раз
+   * видел». Раньше просмотренное лишь штрафовалось (−5000/−2200), а шум
+   * viewedShuffleNoise (до +2600) частично гасил штраф; viewedIds к тому же
+   * покрывал только последние 500 просмотров — хвост истории считался
+   * «непросмотренным» и возвращался в ленту (в т.ч. в unseen-голову).
+   * Теперь (покрытие даёт recentViews в loadPersonalSignals):
+   *   • просмотренное за последние 7 дней в пул НЕ попадает вовсе;
+   *   • старше 7 дней — «остыло» и может честно вернуться (мягкий штраф −900);
+   *   • страховка от пустой ленты (жалоба v5.x «в ленте пусто»): если после
+   *     исключения пула мало, досыпаем просмотренное от САМОГО СТАРОГО
+   *     просмотра к свежему — сначала то, что давно не показывалось. */
+  const VIEWED_EXCLUDE_MS = 7 * 24 * 3_600_000
+  const MIN_POOL = 40
+  const nowMs = Date.now()
+  const freshPool: typeof base = []
+  const viewedRecent: Array<{ e: (typeof base)[number]; at: number }> = []
+  for (const e of base) {
+    const at = signals.viewedAt.get(e.i)
+    if (at !== undefined && nowMs - at < VIEWED_EXCLUDE_MS) viewedRecent.push({ e, at })
+    else freshPool.push(e)
+  }
+  viewedRecent.sort((a, b) => a.at - b.at)
+  let pool = freshPool
+  if (pool.length < MIN_POOL && viewedRecent.length > 0) {
+    const need = Math.min(viewedRecent.length, MIN_POOL - pool.length)
+    pool = [...freshPool, ...viewedRecent.slice(0, need).map((x) => x.e)]
+  }
 
   /* ---------- 3. Каналы с взаимодействием юзера ----------
       Языковой множитель к ним не применяется: если человек сам лайкал/
@@ -752,8 +781,8 @@ async function buildFeedSnapshot(ctx: {
     }
     // Шум с userId внутри сида: у разных пользователей — разные сигнатуры
     w += shuffleNoise(`${userId}:${e.i}:${effSeed}`, e.w)
-    // v5.95: просмотренные дополнительно вращаются сидом (до +2600) — в пуле,
-    // где всё уже видно, каждый заход поднимает ДРУГИЕ посты (жалоба «одно и то же»)
+    // v5.95/v6.4.0: шум вращает только «остывшее» (>7 дней) виденное — свежее
+    // исключено из пула целиком (блок 2.2), и вращать там нечего
     if (signals.viewedIds.has(e.i)) w += viewedShuffleNoise(`${userId}:${e.i}:${effSeed}`, e.w)
     // Языковой множитель (Task 5-c): только к положительной части, штрафы
     // (просмотрено/не интересно/дизлайк тематики) не смягчаются
@@ -786,8 +815,8 @@ async function buildFeedSnapshot(ctx: {
 
   /* ---------- 5.5 v5.95: «при заходе — новое» — unseen-first голова ----------
       Смешанный пул: в первых 10 позициях органики минимум 7 непросмотренных
-      (когда их хватает). Просмотренные не исчезают — стоят следом и ниже
-      (−5000), но голову при каждом заходе занимает то, что ещё не видели. */
+      (когда их хватает). v6.4.0: свежее виденное исключено из пула — здесь
+      «seen» — только посты старше 7 дней (страховка MIN_POOL). */
   const UNSEEN_HEAD_SLOTS = 10
   const UNSEEN_HEAD_MIN = 7
   if (scored.length > UNSEEN_HEAD_SLOTS * 2) {

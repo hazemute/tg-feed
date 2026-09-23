@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import { db } from '@/lib/db'
 import { guardPublic } from '@/lib/guard'
+import { ciContains } from '@/lib/server'
 import { cacheAside, famKey } from '@/lib/redis'
 import { getNsfwChannelIds } from '@/lib/moderation'
 import { channelAvatarUrl } from '@/lib/media'
@@ -128,7 +129,8 @@ async function loadChannels(category: string, q: string) {
       status: 'active',
       id: { notIn: await getNsfwChannelIds() },
       ...(category ? { category: { slug: category } } : {}),
-      ...(q ? { OR: [{ title: { contains: q } }, { username: { contains: q } }] } : {}),
+      // v6.3.1: регистронезависимый поиск каталога (Postgres: «News» ↔ «news»)
+      ...(q ? { OR: [{ title: ciContains(q) }, { username: ciContains(q) }] } : {}),
     },
     // egress (11-a): select вместо include — styleProfile/avatarVideoUrl и пр.
     // (тяжёлые служебные колонки) из каталога не отдаются

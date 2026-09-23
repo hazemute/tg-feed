@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { z } from 'zod'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { err, readJson } from '@/lib/server'
+import { ciContains, err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { bumpCache } from '@/lib/redis'
 import { channelAvatarUrl } from '@/lib/media'
@@ -39,11 +39,10 @@ export async function GET(request: Request) {
     const where: Prisma.ChannelWhereInput = {}
     if (status !== 'all') where.status = status
     if (q) {
-      const qLower = q.toLowerCase()
+      // v6.3.1: регистронезависимый поиск (Postgres)
       where.OR = [
-        { username: { contains: qLower } },
-        { title: { contains: qLower } },
-        { title: { contains: q } },
+        { username: ciContains(q) },
+        { title: ciContains(q) },
       ]
     }
 

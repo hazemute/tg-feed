@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import type { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
-import { err, readJson } from '@/lib/server'
+import { ciContains, err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 
 export const dynamic = 'force-dynamic'
@@ -35,16 +35,20 @@ export async function GET(request: Request) {
       where.tierUntil = { gt: new Date(now), lte: new Date(now + 7 * DAY_MS) }
     }
     if (q) {
-      where.AND = [
-        {
-          OR: [
-            { id: { contains: qLower(q) } },
-            { username: { contains: qLower(q) } },
-            { firstName: { contains: qLower(q) } },
-            { firstName: { contains: q } },
-          ],
-        },
-      ]
+      const ands: Prisma.UserWhereInput[] = Array.isArray(where.AND)
+        ? where.AND
+        : where.AND
+          ? [where.AND]
+          : []
+      ands.push({
+        OR: [
+          { id: ciContains(q) },
+          { username: ciContains(q) },
+          { firstName: ciContains(q) },
+          { lastName: ciContains(q) },
+        ],
+      })
+      where.AND = ands
     }
 
     const [total, items, cntPlus, cntPro, expiring3, expiring7, logStats, recentPayments] =
@@ -151,10 +155,6 @@ export async function GET(request: Request) {
   }
 }
 
-function qLower(q: string): string {
-  return q.toLowerCase()
-}
-
 /**
  * POST { userId | handle, tier: 'plus'|'pro', days, reason? } — быстрая выдача
  * подписки по ID или @username прямо со вкладки «Подписки» (без поиска в юзерах).
@@ -189,8 +189,10 @@ export async function POST(request: Request) {
         if (!byId) return err(`пользователь ${handle.slice(0, 24)}… не найден`, 404)
         userId = byId.id
       } else {
+        // v6.3.1: username ищем регистронезависимо (Postgres) — иначе «@Durov»
+        // не находился и быстрая выдача подписки падала «не найден»
         const found = await db.user.findFirst({
-          where: { username: handle },
+          where: { username: ciContains(handle) },
           select: { id: true },
         })
         if (!found) return err(`пользователь @${handle} не найден`, 404)
