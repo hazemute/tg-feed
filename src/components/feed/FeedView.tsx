@@ -351,6 +351,25 @@ export function FeedView() {
     setPopularSort(false)
   }, [])
 
+  // v6.2.0: однотаповое самолечение «в ленте 0 из 0»: снимает СЕРВЕРНЫЕ скрытия
+  // (PostHide/ChannelMute/скрытые подписки) + локальные, и перезагружает ленту.
+  // Раньше юзер, случайно замьютивший себе все каналы, не имел выхода вообще.
+  const [resettingPersonal, setResettingPersonal] = useState(false)
+  const resetAllPersonal = useCallback(async () => {
+    if (resettingPersonal) return
+    setResettingPersonal(true)
+    try {
+      await api('/api/feed/reset-personal', { method: 'POST' })
+    } catch {
+      /* сервер мог быть недоступен — локальные скрытия всё равно снимаем */
+    }
+    setHiddenIds(new Set())
+    saveHidden(new Set())
+    setMutedChannels(new Set())
+    bumpFeed()
+    setResettingPersonal(false)
+  }, [resettingPersonal, bumpFeed])
+
   /** Язык ленты: один тап циклит все → русский → другие → все (без выпадающих
    *  меню — тулбар не перегружается, выбор всегда виден на самом чипе).
    *  Предпочтение сохраняется в localStorage и НЕ сбрасывается «сбросить фильтры». */
@@ -1455,16 +1474,32 @@ export function FeedView() {
                 </button>
               </div>
             ) : (
-              <button
-                type="button"
-                onClick={() => {
-                  haptic('light')
-                  openSearchWith('')
-                }}
-                className="press mt-1 h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white"
-              >
-                Открыть поиск
-              </button>
+              <div className="mt-1 flex flex-col items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    openSearchWith('')
+                  }}
+                  className="press h-10 rounded-full bg-tg-button px-5 text-[14px] font-semibold text-white"
+                >
+                  Открыть поиск
+                </button>
+                {/* v6.2.0: самолечение — снимает серверные и локальные скрытия.
+                    Юзер мог сам себя замьютить до «0 из 0»; кнопка всегда под рукой. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    haptic('light')
+                    void resetAllPersonal()
+                  }}
+                  disabled={resettingPersonal}
+                  className="press flex h-10 items-center gap-2 rounded-full bg-tg-surface px-5 text-[14px] font-semibold text-tg-link disabled:opacity-60"
+                >
+                  {resettingPersonal && <Loader2 className="size-4 animate-spin" aria-hidden />}
+                  Вернуть скрытые посты и каналы
+                </button>
+              </div>
             )}
           </div>
         ) : visibleItems.length === 0 ? (
