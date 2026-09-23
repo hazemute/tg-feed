@@ -40,21 +40,25 @@ function usageOf(u: ApiUsage | undefined, model: string): AiUsage | null {
 
 /** Приоритет бесплатных моделей: первая живая отвечает. Только :free — ноль рублей.
  *  Переопределяется env OPENROUTER_MODELS.
- *  v5.88: цепочка обновлена по живому каталогу (2026-09-22): из неё выброшены
- *  исчезнувшие слоты (glm-5.3-flash:free, deepseek-v4-flash-0731:free дают 404),
- *  добавлены живые бесплатные модели. Дискавери (ниже) всё равно пересобирает
- *  цепочку по факту — этот список нужен для холодного пути и порядка приоритета. */
+ *  v5.97 (задача 2-c, «все ИИ отвечают очень долго»): цепочка ПЕРЕСОБРАНА по
+ *  замерам .qa/ai-speed.ts (каталог OpenRouter 2026-09-23):
+ *   • z-ai/glm-5.3-flash:free — МЁРТВ (404, слот исчез из каталога). Владелец
+ *     просил держать его первым, но каждый запрос к нему = RTT до 404 +
+ *     фолбэк дальше (то самое «очень долго»). Убран совсем; вернётся в
+ *     каталог — дискавери его не подхватит, добавить вручную.
+ *   • inclusionai/ling-3.0-flash-vl:free — тоже 404, убран.
+ *   • порядок: проверенный основной GLM первым, дальше лёгкие/быстрые слоты
+ *     (lightning/mini/A4B-MoE стартуют быстрее тяжёлых 120b), тяжёлые — в хвост.
+ */
 const PREFERRED_FREE = [
-  'z-ai/glm-5.3-flash:free', // вернётся в каталог — снова станет первой (решение владельца)
-  'z-ai/glm-5.2:free', // GLM: фактический основной
+  'z-ai/glm-5.2:free', // GLM: фактический основной (живой, качество проверено)
+  'nvidia/nemotron-3.5-lightning:free', // lightning: быстрые первые токены
+  'nex-agi/nex-n2.5-mini:free', // mini: маленькая и быстрая
+  'google/gemma-4-26b-a4b-it:free', // MoE с 4b активных — быстрый старт
   'qwen/qwen3.8-27b:free',
-  'nvidia/nemotron-3.5-lightning:free',
-  'nvidia/nemotron-3-super-120b-a12b:free',
   'google/gemma-4-31b-it:free',
-  'google/gemma-4-26b-a4b-it:free',
   'thinkingmachines/inkling-small:free',
-  'inclusionai/ling-3.0-flash-vl:free',
-  'nex-agi/nex-n2.5-mini:free',
+  'nvidia/nemotron-3-super-120b-a12b:free', // тяжёлый 120b — последний
 ]
 
 const DEFAULT_MODELS = PREFERRED_FREE
@@ -214,7 +218,7 @@ async function rawComplete(body: Record<string, unknown>, timeoutMs: number): Pr
   return zaiRaw(body, timeoutMs)
 }
 
-async function postWith429Retry(body: Record<string, unknown>, timeoutMs: number): Promise<Response> {
+async function postWith429Retry(body: Record<string, unknown>, timeoutMs: number, externalSignal?: AbortSignal): Promise<Response> {
   const key = process.env.OPENROUTER_API_KEY ?? ''
   const headers = {
     Authorization: `Bearer ${key}`,
@@ -228,11 +232,14 @@ async function postWith429Retry(body: Record<string, unknown>, timeoutMs: number
       headers,
       // usage: { include: true } — OpenRouter возвращает token-usage запроса (v5.39)
       body: JSON.stringify({ usage: { include: true }, ...body }),
-      signal: AbortSignal.timeout(timeoutMs),
+      // v5.97: внешний AbortController (гонка моделей) + свой таймаут — AbortSignal.any
+      // комбинирует оба: рвём проигравшего гонщика мгновенно, не тратя его лимит
+      signal: externalSignal ? AbortSignal.any([externalSignal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs),
     })
   let res = await send()
   if (res.status === 429) {
     await sleep(1100 + Math.floor(Math.random() * 800))
+    if (externalSignal?.aborted) throw new Error('OpenRouter: отменено (гонку выиграл другой)')
     res = await send()
   }
   return res
@@ -291,15 +298,22 @@ export async function chatMessages(
   },
 ): Promise<string> {
   const maxTokens = opts?.maxTokens ?? 800
-  const timeoutMs = opts?.timeoutMs ?? 25_000
+  // v5.97 (задача 2-c): 25с → 13с. Медленный/зависший слот быстрее отваливается
+  // и цепочка берёт следующую модель: раньше 3 тихих слота = 75с ожидания юзера,
+  // теперь максимум 39с на худший случай, а живой первый слот возвращает ответ за 1-3с.
+  const timeoutMs = opts?.timeoutMs ?? 13_000
   const temperature = opts?.temperature ?? 0.2
   const chain = opts?.models ?? models()
   kickModelDiscovery()
 
   let lastError: unknown = null
   let rateLimited = 0 // v5.88: 2 подряд 429 = лимит аккаунта, а не модели — рвём цепочку
+  // v5.97: без ключа OpenRouter транспорт ЕДИНЫЙ (z-ai-web-dev-sdk, модель одна) —
+  // перебор 8 «моделей» гонял бы 8 одинаковых запросов через один транспорт
+  // (усугубляя 429 и растягивая фолбэк). Одна попытка — быстрее и честнее.
+  const hasKey = !!process.env.OPENROUTER_API_KEY
   for (const model of chain) {
-    if (opts?.models === undefined && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
+    if (hasKey && opts?.models === undefined && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
     try {
       const res = await rawComplete({ model, max_tokens: maxTokens, temperature, messages }, timeoutMs)
       if (!res.ok) {
@@ -314,6 +328,7 @@ export async function chatMessages(
           rateLimited = 0
         }
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
+        if (!hasKey) break // единый транспорт — цепочка не поможет
         continue
       }
       const data = (await res.json()) as {
@@ -327,11 +342,124 @@ export async function chatMessages(
         return content
       }
       lastError = new Error(`OpenRouter ${model}: пустой ответ`)
+      if (!hasKey) break // единый транспорт — цепочка не поможет
     } catch (e) {
       lastError = e
+      if (!hasKey) break // единый транспорт — цепочка не поможет
     }
   }
   throw lastError instanceof Error ? lastError : new Error('OpenRouter недоступен')
+}
+
+/* ===================== ПАРАЛЛЕЛЬНАЯ ГОНКА НЕСТРИМИНГОВЫХ ОТВЕТОВ (v5.97) =====================
+ *  Задача 2-c («все ИИ отвечают очень долго»): для КОРОТКИХ ответов (поддержка,
+ *  модерация) первые 2 живые модели стартуют ПАРАЛЛЕЛЬНО со сдвигом 250мс;
+ *  выигрывает та, что первой дала ПОЛНЫЙ ответ, проигравший немедленно рвётся
+ *  (AbortController — расход лимита второго слота копеечный: запрос обрывается
+ *  сразу после захвата лидерства). Ускорение на холодном пути 2-3×: вместо
+ *  «модель А: таймаут → модель Б: ответ» юзер ждёт max(A_мгновенный_отказ, B).
+ *  Все гонщики умерли → последовательный chatMessages по ПОЛНОЙ цепочке
+ *  (включая слоты за raceSize) — как раньше.
+ */
+export async function chatMessagesRace(
+  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
+  opts?: {
+    maxTokens?: number
+    timeoutMs?: number
+    temperature?: number
+    models?: string[]
+    /** Сколько моделей стартуют параллельно (по умолчанию 2) */
+    raceSize?: number
+    /** Реальный token-usage успешного вызова (для тарификации в свайпах) */
+    onUsage?: (u: AiUsage) => void
+  },
+): Promise<string> {
+  const base = opts?.models?.length ? opts.models : models()
+  const chain = liveChain(base)
+  const maxTokens = opts?.maxTokens ?? 800
+  const timeoutMs = opts?.timeoutMs ?? 13_000
+  const temperature = opts?.temperature ?? 0.2
+  const raceSize = Math.max(1, Math.min(opts?.raceSize ?? 2, chain.length))
+
+  kickModelDiscovery()
+
+  // Без ключа OpenRouter работает ЕДИНЫЙ транспорт (z-ai-web-dev-sdk) —
+  // параллелить нечего (одна и та же модель), прямой вызов без гонки
+  if (!process.env.OPENROUTER_API_KEY || raceSize === 1) {
+    return chatMessages(messages, { maxTokens, timeoutMs, temperature, models: chain, onUsage: opts?.onUsage })
+  }
+
+  let claimed = false
+  const controllers = new Set<AbortController>()
+  const timers = new Set<ReturnType<typeof setTimeout>>()
+  const claim = (ac: AbortController): boolean => {
+    if (claimed) return false
+    claimed = true
+    for (const c of controllers) if (c !== ac) c.abort() // проигравший рвётся немедленно
+    return true
+  }
+
+  const attempt = (model: string): Promise<string> =>
+    new Promise<string>((resolve, reject) => {
+      const ac = new AbortController()
+      controllers.add(ac)
+      void (async () => {
+        try {
+          const res = await postWith429Retry(
+            { model, max_tokens: maxTokens, temperature, messages },
+            timeoutMs,
+            ac.signal,
+          )
+          if (!res.ok) {
+            if (res.status === 404) markDeadSlot(model)
+            reject(new Error(`OpenRouter ${model}: HTTP ${res.status}`))
+            return
+          }
+          const data = (await res.json()) as {
+            choices?: Array<{ message?: { content?: string } }>
+            usage?: ApiUsage
+          }
+          const content = data.choices?.[0]?.message?.content?.trim()
+          if (!content) {
+            reject(new Error(`OpenRouter ${model}: пустой ответ`))
+            return
+          }
+          if (!claim(ac)) {
+            reject(new Error(`OpenRouter ${model}: проиграл гонку`))
+            return
+          }
+          const u = usageOf(data.usage, model)
+          if (u) opts?.onUsage?.(u)
+          resolve(content)
+        } catch (e) {
+          // abort проигравшего — тихий отказ, чтобы Promise.any не застрял на нём
+          if (ac.signal.aborted && !claimed) reject(new Error(`OpenRouter ${model}: отменён`))
+          else reject(e instanceof Error ? e : new Error(String(e)))
+        } finally {
+          controllers.delete(ac)
+        }
+      })()
+    })
+
+  try {
+    const runners = chain.slice(0, raceSize).map(
+      (model, i) =>
+        new Promise<string>((resolve, reject) => {
+          // сдвиг старта 250мс: если первый слот живой и быстрый, второй просто
+          // не успеет отправиться (timer очищается при первом claim через abort)
+          const timer = setTimeout(() => attempt(model).then(resolve, reject), i * 250)
+          timers.add(timer)
+        }),
+    )
+    return await Promise.any(runners)
+  } catch {
+    // Оба гонщика умерли (404/429/таймаут) — прежний последовательный путь
+    // переберёт всю цепочку; отметим первый слот как проблемный при таймаутах
+    return chatMessages(messages, { maxTokens, timeoutMs, temperature, models: chain, onUsage: opts?.onUsage })
+  } finally {
+    for (const t of timers) clearTimeout(t)
+    for (const c of controllers) c.abort() // страховка: не оставляем висящих соединений
+  }
 }
 
 /**
@@ -368,8 +496,9 @@ export async function chatStream(
   kickModelDiscovery()
   let lastError: unknown = null
   let rateLimited = 0 // v5.88: 2 подряд 429 = лимит аккаунта — рвём цепочку без перебора
+  const hasKey = !!process.env.OPENROUTER_API_KEY // v5.97: единый транспорт — цепочка не поможет
   for (const model of chain) {
-    if (!opts?.models?.length && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
+    if (hasKey && !opts?.models?.length && isDeadSlot(model)) continue // v5.56: не тратим RTT на исчезнувшие слоты
     let accumulated = ''
     try {
       const res = await rawComplete(
@@ -397,6 +526,7 @@ export async function chatStream(
           rateLimited = 0
         }
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
+        if (!hasKey) break // единый транспорт — цепочка не поможет
         continue
       }
 
@@ -456,6 +586,7 @@ export async function chatStream(
 
       if (accumulated.trim().length > 0) return accumulated
       lastError = new Error(`OpenRouter ${model}: пустой поток`)
+      if (!hasKey) break // единый транспорт — цепочка не поможет
     } catch (e) {
       lastError = e
       // Поток умер с содержательным куском — отдаём как есть (лучше, чем ничего)
@@ -621,6 +752,21 @@ export async function chatStreamRace(
   const raceSize = Math.max(1, Math.min(opts?.raceSize ?? 3, chain.length))
 
   kickModelDiscovery()
+
+  // v5.97: без ключа OpenRouter транспорт ЕДИНЫЙ (z-ai-web-dev-sdk) — гонять
+  // гонщиков по OpenRouter с пустым Bearer бессмысленно (три 401-RTT впустую
+  // перед рабочим фолбэком). Сразу последовательный chatStream.
+  if (!process.env.OPENROUTER_API_KEY || raceSize === 1) {
+    return chatStream(system, user, {
+      maxTokens,
+      timeoutMs,
+      temperature,
+      models: chain,
+      firstTokenMs,
+      onDelta: opts?.onDelta ?? (() => {}),
+      onUsage: opts?.onUsage,
+    })
+  }
 
   let claimed: string | null = null
   const controllers = new Set<AbortController>()
@@ -812,7 +958,9 @@ export async function chatWithTools(
   },
 ): Promise<{ content: string; toolCalls: ToolCall[]; model?: string; finishReason?: string }> {
   const maxTokens = opts?.maxTokens ?? 1200
-  const timeoutMs = opts?.timeoutMs ?? 45_000
+  // v5.97: 45с → 30с — нестриминговый вызов, юзер ждёт молча; таймаут-хвост
+  // быстрее переходит к следующей модели цепочки
+  const timeoutMs = opts?.timeoutMs ?? 30_000
   const temperature = opts?.temperature ?? 0.5
   const chain = opts?.models?.length ? opts.models : TOOL_MODELS
   kickModelDiscovery()
@@ -861,6 +1009,7 @@ export async function chatWithTools(
   }
 
   let lastError: unknown = null
+  const hasKey = !!process.env.OPENROUTER_API_KEY // v5.97: единый транспорт — цепочка не поможет
   for (const model of chain) {
     try {
       const res = await rawComplete(
@@ -901,9 +1050,11 @@ export async function chatWithTools(
             }
           }
           lastError = new Error(`OpenRouter ${model}: tools+fallback HTTP ${t.status}/${res.status}`)
+          if (!hasKey) break // единый транспорт — цепочка не поможет
           continue
         }
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
+        if (!hasKey) break // единый транспорт — цепочка не поможет
         continue
       }
       const data = (await res.json()) as { choices?: ToolResponseChoice[]; usage?: ApiUsage }
@@ -926,8 +1077,10 @@ export async function chatWithTools(
         return { content, toolCalls: [], model, finishReason }
       }
       lastError = new Error(`OpenRouter ${model}: пустой ответ`)
+      if (!hasKey) break // единый транспорт — цепочка не поможет
     } catch (e) {
       lastError = e
+      if (!hasKey) break // единый транспорт — цепочка не поможет
     }
   }
   throw lastError instanceof Error ? lastError : new Error('OpenRouter недоступен')
@@ -960,7 +1113,9 @@ export async function chatWithToolsStream(
   const timeoutMs = opts?.timeoutMs ?? 60_000
   const temperature = opts?.temperature ?? 0.5
   const chain = opts?.models?.length ? opts.models : TOOL_MODELS
-  const firstTokenMs = opts?.firstTokenMs ?? 12_000
+  // v5.97: 12с → 7с — первый токен ассистента/поиска приходит быстрее:
+  // молчаливый слот отдаёт эстафету следующему почти вдвое раньше
+  const firstTokenMs = opts?.firstTokenMs ?? 7_000
   kickModelDiscovery()
 
   // Провайдерам без role:'tool' — совместимая история (как в chatWithTools.encode)
@@ -983,6 +1138,7 @@ export async function chatWithToolsStream(
   })
 
   let lastError: unknown = null
+  const hasKeyStream = !!process.env.OPENROUTER_API_KEY // v5.97: единый транспорт — цепочка не поможет
   for (const model of chain) {
     let content = ''
     let sawAnyToken = false
@@ -1019,6 +1175,7 @@ export async function chatWithToolsStream(
           }
         }
         lastError = new Error(`OpenRouter ${model}: HTTP ${res.status}`)
+        if (!hasKeyStream) break // единый транспорт — цепочка не поможет
         continue
       }
 
@@ -1116,6 +1273,7 @@ export async function chatWithToolsStream(
         return { content: content.trim(), toolCalls: [], model, finishReason }
       }
       lastError = new Error(`OpenRouter ${model}: пустой поток`)
+      if (!hasKeyStream) break // единый транспорт — цепочка не поможет
     } catch (e) {
       lastError = e
       // Поток умер с содержательным куском — отдаём как есть (лучше, чем ничего);
@@ -1123,6 +1281,7 @@ export async function chatWithToolsStream(
       if (sawAnyToken && content.trim().length >= 40) {
         return { content: content.trim(), toolCalls: [], model, finishReason: finishReason ?? 'length' }
       }
+      if (!hasKeyStream) break // единый транспорт — цепочка не поможет
     }
   }
   throw lastError instanceof Error ? lastError : new Error('OpenRouter недоступен')

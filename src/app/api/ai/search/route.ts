@@ -502,7 +502,7 @@ export async function POST(request: Request) {
               { role: 'user', content: '[система] Больше не вызывай инструменты — ответь текстом по найденному.' },
             ],
             [],
-            { maxTokens: 800, timeoutMs: 45_000, temperature: 0.3, onUsage: collector.onUsage },
+            { maxTokens: 800, timeoutMs: 30_000, temperature: 0.3, onUsage: collector.onUsage },
           )
           const reply = await aiPremiumEmojiText(tail.content || 'Не нашёл — переформулируйте вопрос.')
           const sources = await sourcesDTO(sourceIds.slice(0, 6))

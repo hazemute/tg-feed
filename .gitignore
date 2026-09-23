@@ -72,3 +72,6 @@ scripts/run-migration.ts
 scripts/*.result.json
 shots/
 .qa/
+
+agent-ctx/
+scripts/tmp-*

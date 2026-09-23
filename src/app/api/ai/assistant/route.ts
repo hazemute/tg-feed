@@ -596,7 +596,7 @@ export async function POST(request: Request) {
               },
             ],
             [],
-            { maxTokens: 900, timeoutMs: 45_000, temperature: 0.6, onUsage: collector.onUsage },
+            { maxTokens: 900, timeoutMs: 30_000, temperature: 0.6, onUsage: collector.onUsage },
           )
           const reply = await aiPremiumEmojiText(tail.content || 'Готово!')
           await settle()
@@ -655,7 +655,7 @@ export async function POST(request: Request) {
         promptLine
 
       const collector = usageCollector()
-      const text = await chatSimple(system, user, { maxTokens: 700, timeoutMs: 40_000, temperature: 0.75, onUsage: collector.onUsage })
+      const text = await chatSimple(system, user, { maxTokens: 700, timeoutMs: 30_000, temperature: 0.75, onUsage: collector.onUsage })
       const clean = text.replace(/^["«»]+|["»]+$/g, '').trim()
       if (clean.length < 30) {
         // v5.74: пустой пост = ответа нет — НЕ тарифицируем

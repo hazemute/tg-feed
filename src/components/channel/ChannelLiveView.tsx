@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { AnimatePresence, motion } from 'framer-motion'
 import {
   AlertTriangle,
+  ArrowDown,
   ArrowLeft,
   Check,
   Copy,
@@ -24,7 +25,7 @@ import {
 import { cn } from '@/lib/utils'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
-import { formatCount } from '@/lib/format'
+import { formatCount, pluralRu } from '@/lib/format'
 import { haptic } from '@/lib/tg'
 import { uploadImage } from '@/lib/upload'
 import { RichText } from '@/components/feed/RichText'
@@ -127,6 +128,15 @@ export function ChannelLiveView({
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const pressTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  /* Стабилизация скролла (task 2-b): юзер у нижнего края → новые посты
+   * мягко дотягиваем; читает историю — позицию НЕ трогаем, вместо этого
+   * показываем пилюлю «N новых» (тап → плавно вниз). Раньше любой тик
+   * polling'а принудительно прыгал в конец и сбивал чтение. */
+  const atBottomRef = useRef(true)
+  const lastCountRef = useRef(0)
+  const followedRef = useRef(false)
+  const [newCount, setNewCount] = useState(0)
+
   /* Портал монтируем ПОСЛЕ первого коммита: createPortal во время
    * mount-прохода внутри AnimatePresence роняет React 19 (dev) с ошибкой
    * «Target container is not a DOM element» — это чисто технический guard,
@@ -138,48 +148,113 @@ export function ChannelLiveView({
 
   /* ----------------------------- данные ----------------------------- */
 
+  /* task 2-b: гонки polling'а. Каждый сетевой ответ получает монотонный
+   * номер «поколения» и применяется, только если он СВЕЖЕЕ последнего
+   * применённого: медленный ответ, стартовавший ДО мутации (send/delete/
+   * edit), больше не может затереть свежее состояние — раньше это выглядело
+   * как «только что отправленный пост исчез», «удалённый пост воскрес» и
+   * «список дёргается каждые 15 секунд». */
+  const seqRef = useRef(0)
+  const pollBusyRef = useRef(false)
+  const loadingRef = useRef(true)
+  /** Посты, удалённые в этой сессии: ответ polling'а (снапшот ДО удаления,
+   * уже летящий по сети) не должен их «воскрешать» до следующего тика */
+  const removedIdsRef = useRef<Set<string>>(new Set())
+
+  /** Слияние входящего списка с текущим по id: без дублей и без потерь.
+   *  Ответ сервера — последние 60 постов (take:60); локальные посты старее
+   *  этого окна сохраняем (сервер их не прислал, а не «удалил»), внутри
+   *  окна доверяем ответу (правки/просмотры/удаления с другого устройства). */
+  const mergePosts = useCallback((incoming: LivePost[]) => {
+    setPosts((prev) => {
+      if (incoming.length === 0) return prev.length === 0 ? prev : []
+      const oldest = incoming.reduce((min, p) => Math.min(min, +new Date(p.publishedAt)), Infinity)
+      const byId = new Map(incoming.map((p) => [p.id, p] as const))
+      for (const p of prev) {
+        if (removedIdsRef.current.has(p.id)) continue
+        if (byId.has(p.id)) continue
+        if (+new Date(p.publishedAt) < oldest) byId.set(p.id, p)
+      }
+      const merged = [...byId.values()]
+      // страховка от бесконтрольного роста за долгую сессию
+      return merged.length > 300 ? merged.slice(-300) : merged
+    })
+  }, [])
+
   const load = useCallback(async () => {
+    const seq = ++seqRef.current
     try {
       const r = await api<LiveResponse>(`/api/channel/live?channelId=${encodeURIComponent(channelId)}`)
+      if (seq !== seqRef.current) return // устарел: уже применён более свежий ответ
       setInfo(r.channel)
-      setPosts(r.posts)
+      mergePosts(r.posts)
       setFailed(false)
     } catch {
+      if (seq !== seqRef.current) return
       setFailed(true)
     } finally {
-      setLoading(false)
+      if (seq === seqRef.current) setLoading(false)
     }
-  }, [channelId])
+  }, [channelId, mergePosts])
 
   useEffect(() => {
+    loadingRef.current = true
     void load()
+    return () => {
+      seqRef.current++ // ответ после закрытия чата/смены канала не применяется
+    }
   }, [load])
 
-  /* v5.96: тихий полл 15с, пока чат открыт и видим. После импорта истории
-     (или публикации поста прямо в Telegram) баблы появляются сами, без
-     переоткрытия экрана; если новых постов нет — сетевых телодвижений
-     минимум, UI не трогаем. */
+  /* v5.96: тихий полл 15с, пока чат открыт и вкладка видима. После импорта
+     истории (или публикации поста прямо в Telegram) баблы появляются сами.
+     task 2-b: интервал живёт ВЕСЬ монтированный период (deps только
+     channelId) — раньше он пересоздавался на каждую смену loading/failed,
+     сбивая ритм; параллельные тики исключены флагом pollBusy; удачный тик
+     снимает failed — после транзиентного сбоя экран чинится сам. */
   useEffect(() => {
     const iv = setInterval(() => {
       if (document.visibilityState !== 'visible') return
-      if (loading || failed) return
+      if (pollBusyRef.current || loadingRef.current) return
+      pollBusyRef.current = true
+      const seq = ++seqRef.current
       void api<LiveResponse>(`/api/channel/live?channelId=${encodeURIComponent(channelId)}`)
         .then((r) => {
+          if (seq !== seqRef.current) return
           setInfo(r.channel)
-          setPosts(r.posts)
+          mergePosts(r.posts)
+          setFailed(false)
         })
         .catch(() => {}) // фоновый тик — сбои ждём следующего
+        .finally(() => {
+          pollBusyRef.current = false
+          if (seq === seqRef.current) setLoading(false)
+        })
     }, 15_000)
-    return () => clearInterval(iv)
-  }, [channelId, loading, failed])
-
-  /** Открытие чата = как в Telegram: сразу у последних сообщений */
-  useEffect(() => {
-    if (!loading && posts.length > 0) {
-      const el = scrollRef.current
-      if (el) el.scrollTop = el.scrollHeight
+    return () => {
+      clearInterval(iv)
+      seqRef.current++ // летящий ответ после unmount не применяется
     }
-  }, [loading, posts.length])
+  }, [channelId, mergePosts])
+
+  // зеркало state для коллбеков/эффектов, чтобы не пересоздавать интервал
+  loadingRef.current = loading
+
+  /** Юзер у нижнего края (±120px)? Тап по пилюле/ручная прокрутка вниз
+   *  сбрасывают счётчик непрочитанных новых */
+  const onChatScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    atBottomRef.current = nearBottom
+    if (nearBottom) setNewCount(0)
+  }, [])
+
+  const scrollToNew = useCallback(() => {
+    setNewCount(0)
+    atBottomRef.current = true
+    const el = scrollRef.current
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }, [])
 
   /* --------------------------- мутации ----------------------------- */
 
@@ -192,15 +267,18 @@ export function ChannelLiveView({
         method: 'POST',
         body: JSON.stringify({ action: 'send', channelId, text: text || '📎', imageUrl: attached ?? undefined }),
       })
-      if (r.post) setPosts((prev) => [...prev, r.post as LivePost])
+      seqRef.current++ // снапшоты летящих фоновых тиков старее публикации
+      if (r.post) mergePosts([r.post as LivePost]) // слияние по id — без дублей
       setDraft('')
       setAttached(null)
       haptic('success')
       toast.success('Опубликовано в канале')
+      atBottomRef.current = true
       requestAnimationFrame(() => {
         const el = scrollRef.current
         if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
       })
+      void load() // сверить с сервером (счётчики/порядок) без ожидания тика
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Не удалось опубликовать')
     } finally {
@@ -215,6 +293,8 @@ export function ChannelLiveView({
         method: 'POST',
         body: JSON.stringify({ action: 'delete', channelId, postId: p.id }),
       })
+      seqRef.current++ // летящий снапшот polling'а, сделанный до удаления, устарел
+      removedIdsRef.current.add(p.id) // и ближайший тик его не «воскресит»
       setPosts((prev) => prev.filter((x) => x.id !== p.id))
       haptic('warning')
       toast.success('Пост удалён из канала и ленты')
@@ -254,6 +334,7 @@ export function ChannelLiveView({
         method: 'POST',
         body: JSON.stringify({ action: 'edit', channelId, postId: editSheet.id, text }),
       })
+      seqRef.current++ // устаревший снапшот с прежним текстом не перетрёт правку
       setPosts((prev) => prev.map((x) => (x.id === editSheet.id ? { ...x, text } : x)))
       toast.success('Пост отредактирован')
       setEditSheet(null)
@@ -354,6 +435,31 @@ export function ChannelLiveView({
     return sorted
   }, [posts])
 
+  /** Открытие чата = как в Telegram: сразу у последних сообщений. Дальше —
+   *  только мягкое дотягивание, если юзер и так внизу; принудительный
+   *  прыжок на каждый тик polling'а сбивал чтение истории (task 2-b). */
+  useEffect(() => {
+    if (loading || rendered.length === 0) return
+    const el = scrollRef.current
+    if (!el) return
+    if (!followedRef.current) {
+      followedRef.current = true
+      el.scrollTop = el.scrollHeight
+      atBottomRef.current = true
+      lastCountRef.current = rendered.length
+      return
+    }
+    const added = rendered.length - lastCountRef.current
+    lastCountRef.current = rendered.length
+    if (added <= 0) return // правка/удаление — позицию не трогаем
+    if (atBottomRef.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+    } else {
+      // юзер читает историю: тихо считаем новые, скролл не трогаем
+      setNewCount((c) => Math.min(99, c + added))
+    }
+  }, [loading, rendered])
+
   if (!portalReady) return null
 
   return createPortal(
@@ -407,6 +513,7 @@ export function ChannelLiveView({
       {/* -------------------- Лента баблов (чат) ---------------------- */}
       <div
         ref={scrollRef}
+        onScroll={onChatScroll}
         className="chat-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain px-2.5 py-3"
       >
         <div className="mx-auto min-h-full w-full max-w-[760px]">
@@ -478,7 +585,27 @@ export function ChannelLiveView({
       </div>
 
       {/* ---------------- Строка ввода (в самом низу) ------------------ */}
-      <div className="shrink-0 border-t border-tg-sep bg-tg-surface pb-[max(env(safe-area-inset-bottom),8px)] pt-2">
+      <div className="relative shrink-0 border-t border-tg-sep bg-tg-surface pb-[max(env(safe-area-inset-bottom),8px)] pt-2">
+        {/* Пилюля «N новых» (task 2-b): юзер читает историю — новые посты
+            ждут тапа, вместо принудительного прыжка скролла вниз */}
+        <AnimatePresence>
+          {newCount > 0 && (
+            <motion.button
+              type="button"
+              onClick={scrollToNew}
+              initial={{ opacity: 0, y: 10, scale: 0.92 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 10, scale: 0.92 }}
+              transition={{ type: 'tween', duration: 0.16, ease: 'easeOut' }}
+              role="status"
+              aria-label="Прокрутить к новым постам"
+              className="absolute -top-11 left-1/2 z-[2] flex -translate-x-1/2 items-center gap-1.5 rounded-full bg-tg-link px-3.5 py-2 text-[13px] font-semibold text-white shadow-lg shadow-tg-link/40 transition-transform active:scale-95"
+            >
+              <ArrowDown size={15} />
+              {newCount} {pluralRu(newCount, 'новый пост', 'новых поста', 'новых постов')}
+            </motion.button>
+          )}
+        </AnimatePresence>
         <div className="mx-auto w-full max-w-[760px]">
         {attached && (
           <div className="mx-3 mb-2 flex items-center gap-2 rounded-xl bg-tg-surface2 p-1.5">
@@ -565,7 +692,10 @@ export function ChannelLiveView({
             >
               <div className="max-h-44 overflow-hidden px-3.5 py-2.5">
                 <div className="chat-bubble-clamp text-[13px] leading-snug text-tg-hint">
-                  <RichText text={menuPost.text.slice(0, 160) || '📎 Медиа-пост'} />
+                  {/* task 2-b: без slice(0,160) — срез по сырому markdown рвал
+                      токен (**бо, ||спо, [ссыл) и RichText рисовал мусор;
+                      высоту ограничивает CSS-clamp (chat-bubble-clamp) */}
+                  <RichText text={menuPost.text.trim() || '📎 Медиа-пост'} />
                 </div>
               </div>
               <div className="border-t border-tg-sep" />
@@ -926,7 +1056,7 @@ function Bubble({
           </div>
         )}
 
-        {post.text.trim() && (
+        {post.text.trim() && post.text.trim() !== '📎' && (
           <div className="text-[15px] leading-[1.35] text-tg-text [&_a]:text-tg-link">
             <RichText text={post.text} />
           </div>

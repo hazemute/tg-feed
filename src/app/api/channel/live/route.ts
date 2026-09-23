@@ -14,6 +14,7 @@ import {
   botSetChatPhoto,
   botSetChatTitle,
 } from '@/lib/tg-bot'
+import { markdownToTelegramHtml } from '@/lib/tg-format'
 
 export const dynamic = 'force-dynamic'
 
@@ -225,7 +226,13 @@ export async function POST(request: Request) {
       const absImage = d.imageUrl ? absoluteMediaUrl(d.imageUrl) : null
       if (d.imageUrl && !absImage) return err('Неподдерживаемая ссылка на картинку')
 
-      const r = await botPublishToChannel(username, d.text, absImage).catch(() => ({
+      // task 2-b: в БД текст хранится как markdown-lite (RichText миниаппы
+      // рендерит его), а в Telegram раньше уходил СЫРОЙ markdown с
+      // parse_mode:'HTML' — «**жирный**» оставался звёздочками, а любой «<»
+      // или «&» валил публикацию («can't parse entities»). Конвертируем.
+      // У фото caption Telegram ограничен 1024 — сжимаем сильнее.
+      const tgHtml = markdownToTelegramHtml(d.text, absImage ? 960 : 4000)
+      const r = await botPublishToChannel(username, tgHtml, absImage).catch(() => ({
         ok: false as const,
         error: 'Ошибка Bot API',
       }))
@@ -293,7 +300,7 @@ export async function POST(request: Request) {
       const messageId = Number(post.tgKey.split(':')[1])
       let tgEdited = false
       if (Number.isFinite(messageId) && messageId > 0) {
-        tgEdited = await botEditChannelMessage(username, messageId, d.text)
+        tgEdited = await botEditChannelMessage(username, messageId, markdownToTelegramHtml(d.text))
           .then((r) => r.ok)
           .catch(() => false)
       }

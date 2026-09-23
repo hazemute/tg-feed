@@ -474,19 +474,47 @@ function HrView() {
   )
 }
 
-/** Таблица: рамки, зебра, заголовок, горизонтальный скролл на узких экранах */
+/**
+ * v5.97 АДАПТИВНЫЕ ТАБЛИЦЫ (жалоба владельца: «таблицу приходится листать»).
+ *
+ *  • УЗКАЯ (≤3 колонок и короткие ячейки) — обычная таблица w-full: колонки
+ *    дышат, длинные слова/URL переносятся (break-words), таблица ВСЕГДА
+ *    влезает в экран без горизонтального скролла.
+ *  • ШИРОКАЯ (>3 колонок или длинные ячейки) — КОМПАКТНЫЕ КАРТОЧКИ-СТРОКИ:
+ *    каждая строка = мини-карточка, первая колонка — заголовок карточки,
+ *    остальные — пары «заголовок колонки: значение» строчками. Горизонтального
+ *    скролла нет в принципе. Тема — те же tg-* переменные.
+ *
+ * Порог «широкости»: колонок больше 3 ИЛИ самая длинная ячейка > 26 симв
+ * (при 13px это ~180px — три такие колонки уже не влезают в телефон).
+ */
+const TABLE_WIDE_MAX_CELL = 26
+
 function TableView({ block }: { block: Extract<Block, { type: 'table' }> }) {
+  const cols = Math.max(block.header?.length ?? 0, ...block.rows.map((r) => r.length))
+  let maxCell = 0
+  for (const cell of block.header ?? []) maxCell = Math.max(maxCell, spansLength(cell))
+  for (const row of block.rows) for (const cell of row) maxCell = Math.max(maxCell, spansLength(cell))
+
+  if (cols > 3 || maxCell > TABLE_WIDE_MAX_CELL) return <TableCards block={block} />
+  return <TableFit block={block} />
+}
+
+/** Узкая таблица: w-full без скролла, перенос длинных слов и кода */
+function TableFit({ block }: { block: Extract<Block, { type: 'table' }> }) {
+  // overflow-wrap:anywhere (а не break-word) ВАЖНО: он уменьшает min-content
+  // колонки, иначе браузер раздувает таблицу шире контейнера и обрезает край
+  const cellCls =
+    'whitespace-pre-line [overflow-wrap:anywhere] border-l border-t border-tg-sep/40 px-2.5 py-1.5 align-top first:border-l-0 [&_code]:break-words [&_code]:[overflow-wrap:anywhere]'
   return (
-    <div className="overflow-x-auto rounded-xl ring-1 ring-tg-sep/60" data-noswipe>
-      <table className="w-max min-w-full border-collapse text-[13.5px] leading-snug">
+    // data-noswipe остаётся: страховый overflow-hidden вместо скролла
+    <div className="w-full overflow-hidden rounded-xl ring-1 ring-tg-sep/60" data-noswipe>
+      <table className="w-full border-collapse text-[13px] leading-snug">
         {block.header && (
           <thead>
             <tr className="bg-tg-sep/40">
               {block.header.map((cell, i) => (
-                <th
-                  key={i}
-                  className="whitespace-pre-line border-l border-tg-sep/50 px-2.5 py-1.5 text-left font-semibold first:border-l-0"
-                >
+                <th key={i} className={cn(cellCls, 'font-semibold')}>
                   {cell.map((s, j) => (
                     <SpanView key={j} span={s} />
                   ))}
@@ -499,10 +527,7 @@ function TableView({ block }: { block: Extract<Block, { type: 'table' }> }) {
           {block.rows.map((row, r) => (
             <tr key={r} className={r % 2 === 1 ? 'bg-tg-sep/20' : undefined}>
               {row.map((cell, c) => (
-                <td
-                  key={c}
-                  className="whitespace-pre-line border-l border-t border-tg-sep/40 px-2.5 py-1.5 align-top first:border-l-0"
-                >
+                <td key={c} className={cellCls}>
                   {cell.map((s, j) => (
                     <SpanView key={j} span={s} />
                   ))}
@@ -512,6 +537,55 @@ function TableView({ block }: { block: Extract<Block, { type: 'table' }> }) {
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+/** Широкая таблица → карточки-строки: без горизонтального скролла в принципе */
+function TableCards({ block }: { block: Extract<Block, { type: 'table' }> }) {
+  const header = block.header
+  return (
+    <div className="w-full overflow-hidden rounded-xl ring-1 ring-tg-sep/60" data-noswipe>
+      <div className="divide-y divide-tg-sep/40">
+        {block.rows.map((row, r) => {
+          const [head, ...rest] = row
+          const hasTitle = spansLength(head ?? []) > 0
+          // пустые ячейки (парсер дополняет короткие строки до ширины) не рисуем
+          const pairs = rest.map((cell, c) => ({ cell, title: header?.[c + 1] })).filter((p) => spansLength(p.cell) > 0)
+          return (
+            <div key={r} className={cn('px-3 py-2', r % 2 === 1 && 'bg-tg-sep/15')}>
+              {hasTitle && (
+                <div className="break-words text-[13px] font-semibold text-tg-text">
+                  {(head ?? []).map((s, j) => (
+                    <SpanView key={j} span={s} />
+                  ))}
+                </div>
+              )}
+              {pairs.length > 0 && (
+                <div className={cn('space-y-0.5', hasTitle && 'mt-1')}>
+                  {pairs.map(({ cell, title }, c) => (
+                    <div key={c} className="flex items-start gap-1.5 text-[13px] leading-snug">
+                      {title && (
+                        <span className="shrink-0 whitespace-pre-line break-words text-tg-hint">
+                          {title.map((s, j) => (
+                            <SpanView key={j} span={s} />
+                          ))}
+                          :
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1 whitespace-pre-line break-words text-tg-text [&_code]:break-words [&_code]:[overflow-wrap:anywhere]">
+                        {cell.map((s, j) => (
+                          <SpanView key={j} span={s} />
+                        ))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )
+        })}
+      </div>
     </div>
   )
 }

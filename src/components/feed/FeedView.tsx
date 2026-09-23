@@ -290,8 +290,16 @@ export function FeedView() {
   const [ads, setAds] = useState<AdDTO[]>([])
   const [page, setPage] = useState(0)
   const [hasMore, setHasMore] = useState(true)
-  const [loading, setLoading] = useState(false)
-  const [initial, setInitial] = useState(true)
+  /* Два РАЗНЫХ вида загрузки (жалоба владельца: «во время загрузки ленты видны
+   * старые/чужие посты вместо скелетона»):
+   * — hardLoading: «полная» загрузка — список ЗАМЕЩАЕТСЯ новым (первичный
+   *   mount, смена категории, жёсткий refresh по bumpFeed). Пока она идёт,
+   *   рендерится ТОЛЬКО скелет PostCardSkeleton — никаких постов на экране;
+   * — appendLoading: пагинация «подгрузка при скролле» — старые посты остаются
+   *   видимыми, внизу появляется спиннер. Скелет на append НЕ показываем.
+   * Pull-to-refresh — ни то ни другое: старые посты на экране, спиннер сверху. */
+  const [appendLoading, setAppendLoading] = useState(false)
+  const [hardLoading, setHardLoading] = useState(true)
   // Ошибка загрузки ленты (сеть/сервер): показываем отдельный блок вместо «пустого»
   const [loadFailed, setLoadFailed] = useState(false)
   // Первая загрузка тянется дольше 7с (холодная пересборка индекса на дальнем
@@ -487,8 +495,8 @@ export function FeedView() {
   // к задержке первым рендером, сменой пропса тип корня не меняется).
   const [staggerBatch, setStaggerBatch] = useState(true)
   useEffect(() => {
-    if (!initial) setStaggerBatch(false)
-  }, [initial])
+    if (!hardLoading) setStaggerBatch(false)
+  }, [hardLoading])
   const userRef = useRef(user)
   userRef.current = user
   const itemsRef = useRef(items)
@@ -578,7 +586,7 @@ export function FeedView() {
       busyRef.current = true
       const seq = ++loadSeqRef.current
       // silent (смена языка): лента остаётся на экране — спиннеры не мигаем
-      if (!opts?.silent) setLoading(true)
+      if (!opts?.silent) setAppendLoading(true)
       const slowTimer = setTimeout(() => setSlowLoad(true), 7000)
       try {
         // Новый сид перемешивания при каждой полной перезагрузке ленты —
@@ -709,8 +717,8 @@ export function FeedView() {
           clearTimeout(slowTimer)
           setSlowLoad(false)
           busyRef.current = false
-          setLoading(false)
-          setInitial(false)
+          setAppendLoading(false)
+          setHardLoading(false)
           // Если сентинел уже в кадре (короткий контент/быстрый скролл) — догружаем сразу.
           // Через таймаут, чтобы React успел закоммитить обновлённые page/hasMore.
           setTimeout(() => checkRef.current(), 80)
@@ -748,7 +756,7 @@ export function FeedView() {
   checkRef.current = checkLoadMore
 
   // Наблюдатель сентинела. Эффект перезапускается, когда сентинел появляется
-  // в DOM (initial -> false) — раньше он не наблюдался вовсе и лента застревала
+  // в DOM (hardLoading -> false) — раньше он не наблюдался вовсе и лента застревала
   // на первой странице.
   useEffect(() => {
     const el = sentinelRef.current
@@ -756,25 +764,31 @@ export function FeedView() {
     const io = new IntersectionObserver(() => checkRef.current(), { rootMargin: '1200px' })
     io.observe(el)
     return () => io.disconnect()
-  }, [initial])
+  }, [hardLoading])
 
   useEffect(() => {
     if (!user) return
-    setInitial(true)
+    /* «Полная» загрузка (mount / смена категории / жёсткий refresh):
+     * 1) список ОБЯЗАН уйти с экрана — иначе до прихода ответа видны посты
+     *    предыдущего состояния ленты (жалоба владельца). Рендер ветки
+     *    hardLoading показывает скелет, а setItems([]) гарантирует, что
+     *    при ОШИБКЕ загрузки не «всплывёт» старый список, а покажется
+     *    честный error-state с кнопкой «Обновить»; */
+    setHardLoading(true)
     setLoadFailed(false)
     busyRef.current = false
+    setItems([])
+    emptyStreakRef.current = 0
     setQuery('') // поиски разных категорий/языков не смешиваются
-    // Stale-while-revalidate: мгновенно показываем кэш, сеть догонит
-    void loadFeedCache(category, lang).then((cached) => {
-      if (cached.length > 0 && !itemsRef.current.length) {
-        setItems(cached)
-        setInitial(false)
-      }
-    })
     load(0, true)
     scrollRef.current?.scrollTo({ top: 0 })
-    // ЯЗЫК НЕ В ЗАВИСИМОСТЯХ (v5.27): его смена обрабатывается ниже отдельным
-    // эффектом — без скелетона и ресета, мгновенной подменой прогретого варианта
+    /* Офлайн-кэш IndexedDB здесь НЕ рисуем: раньше stale-пейнт подменял
+     * скелет старыми постами прошлой сессии (тот самый баг «видно чужое
+     * во время загрузки»). Нет сети → fetch падает мгновенно, кэш рисует
+     * catch-ветка load() с баннером «Нет сети» — скелет при этом показан
+     * честно, как и требует владелец.
+     * ЯЗЫК НЕ В ЗАВИСИМОСТЯХ (v5.27): его смена обрабатывается ниже отдельным
+     * эффектом — без скелетона и ресета, мгновенной подменой прогретого варианта */
   }, [user, category, feedVersion, load])
 
   /* ---------- Смена языка: мгновенно, без «зачем загрузка» ----------
@@ -829,7 +843,7 @@ export function FeedView() {
 
         // 2) Stale-paint из офлайн-кэша (если текущий экран пуст)
         void loadFeedCache(category_, lang).then((cached) => {
-          if (cached.length > 0 && !itemsRef.current.length) setInitial(false)
+          if (cached.length > 0 && !itemsRef.current.length) setHardLoading(false)
         })
 
         // 3) Сеть: тот же сид → серверный L0-кэш тёплый от прогрева
@@ -934,7 +948,7 @@ export function FeedView() {
       clearInterval(iv)
       clearTimeout(t)
     }
-  }, [user, initial, checkFresh])
+  }, [user, hardLoading, checkFresh])
 
   // ---------- v5.88: ПОЛЛИНГ вместо SSE (срочная экономия Vercel Fluid) ----------
   // Раньше здесь открывался ВЕЧНЫЙ SSE-поток (/api/events, heartbeat 25с):
@@ -965,7 +979,7 @@ export function FeedView() {
 
   // ---------- Pull-to-refresh (тач-жест вниз на самом верху ленты) ----------
   const onTouchStart = (e: React.TouchEvent) => {
-    if (initial || refreshingRef.current || busyRef.current) return
+    if (hardLoading || refreshingRef.current || busyRef.current) return
     const el = scrollRef.current
     if (el && el.scrollTop <= 0) {
       ptrRef.current = { startY: e.touches[0].clientY, pulling: true, pull: 0 }
@@ -1403,8 +1417,10 @@ export function FeedView() {
           />
         </motion.div>
 
-        {initial ? (
+        {hardLoading ? (
           <>
+            {/* Жалоба владельца (task 2-a): пока идёт «полная» загрузка — на экране
+                ТОЛЬКО скелет-карточки, никаких постов предыдущего состояния */}
             <FeedSkeleton />
             {/* Долгая первая загрузка (холодная пересборка индекса): честный
                 статус вместо мгновенной ошибки — лента готовится, уже тянем */}
@@ -1554,9 +1570,10 @@ export function FeedView() {
             </div>
 
             {/* Спиннер догрузки: виден ТОЛЬКО пока реально идёт запрос следующей
-                страницы (не при initial-скелетонах и не после конца ленты) —
-                «пропадает, когда посты загрузились, появляется, когда закончились» */}
-            {!initial && loading && hasMore && (
+                страницы (append-пагинация; не при hardLoading-скелетонах и не после
+                конца ленты) — «пропадает, когда посты загрузились, появляется,
+                когда закончились». Старые посты при этом остаются на экране. */}
+            {!hardLoading && appendLoading && hasMore && (
               <div className="flex justify-center py-6">
                 <Loader2 className="h-5 w-5 animate-spin text-tg-hint" />
               </div>
@@ -1564,7 +1581,7 @@ export function FeedView() {
 
             {/* Ошибка догрузки при скролле вниз: ненавязчивая кнопка вместо
                 вечного ожидания — тап повторяет текущую страницу */}
-            {!initial && !loading && hasMore && loadFailed && (
+            {!hardLoading && !appendLoading && hasMore && loadFailed && (
               <div className="flex justify-center py-4">
                 <button
                   type="button"
@@ -1646,43 +1663,96 @@ export function FeedView() {
   )
 }
 
-function FeedSkeleton() {
+/* ====================== СКЕЛЕТ «ПОЛНОЙ» ЗАГРУЗКИ ЛЕНТЫ (task 2-a) ====================== */
+
+/**
+ * Скелет-карточка поста. Повторяет разметку реальной PostCard:
+ * шапка — аватар-круг 46px + имя/подписчики (две строки) + время + круглая
+ * кнопка подписки; дальше — медиа-блок с правым рельсом действий (у медиа-
+ * варианта) ИЛИ строки текста с горизонтальным рядом действий (у текстового);
+ * внизу — служебный ряд (скрыть/пожаловаться). Мягкое переливание — класс
+ * tg-shimmer (surface-цвета темы, НЕ ярко). Все элементы декоративные.
+ */
+function PostCardSkeleton({ variant }: { variant: 'media' | 'text' }) {
   return (
-    <div className="px-4 pt-4" aria-hidden>
-      <div className="flex items-center gap-3">
-        <div className="tg-shimmer h-[46px] w-[46px] rounded-full" />
-        <div className="flex-1 space-y-2">
+    <div className="feed-card pb-5 pt-4" aria-hidden>
+      {/* Шапка канала: аватар + две строки + время + круг подписки */}
+      <div className="flex items-center gap-3 px-4">
+        <div className="tg-shimmer size-[46px] shrink-0 rounded-full ring-1 ring-tg-sep/70" />
+        <div className="min-w-0 flex-1 space-y-2">
           <div className="tg-shimmer h-4 w-1/3 rounded-md" />
           <div className="tg-shimmer h-3 w-1/4 rounded-md" />
         </div>
-        <div className="tg-shimmer h-11 w-11 rounded-full" />
+        <div className="tg-shimmer h-3 w-10 shrink-0 rounded-md" />
+        <div className="tg-shimmer size-11 shrink-0 rounded-full" />
       </div>
-      <div className="mt-4 flex gap-2">
-        <div className="tg-shimmer h-64 flex-1 rounded-2xl" />
-        <div className="w-10 space-y-4 pt-2">
-          <div className="tg-shimmer h-6 w-6 rounded-full" />
-          <div className="tg-shimmer h-6 w-6 rounded-full" />
-          <div className="tg-shimmer h-6 w-6 rounded-full" />
-        </div>
+      {variant === 'media' ? (
+        <>
+          {/* Медиа 3:2 + правый рельс действий — как у медиа-поста */}
+          <div className="mt-3.5 flex items-start gap-1.5 px-4">
+            <div className="tg-shimmer aspect-[3/2] min-w-0 flex-1 rounded-2xl" />
+            <div className="flex w-10 shrink-0 flex-col items-center gap-3.5 pt-0.5">
+              <div className="tg-shimmer size-6 rounded-full" />
+              <div className="tg-shimmer size-6 rounded-full" />
+              <div className="tg-shimmer size-6 rounded-full" />
+              <div className="tg-shimmer size-6 rounded-full" />
+            </div>
+          </div>
+          {/* Текст под медиа */}
+          <div className="mt-3 space-y-2 px-4">
+            <div className="tg-shimmer h-3.5 w-full rounded-md" />
+            <div className="tg-shimmer h-3.5 w-4/5 rounded-md" />
+          </div>
+        </>
+      ) : (
+        <>
+          {/* Текстовый пост: строки на всю ширину + горизонтальный ряд действий */}
+          <div className="mt-2.5 space-y-2 px-4">
+            <div className="tg-shimmer h-3.5 w-full rounded-md" />
+            <div className="tg-shimmer h-3.5 w-11/12 rounded-md" />
+            <div className="tg-shimmer h-3.5 w-3/5 rounded-md" />
+          </div>
+          <div className="mt-2 flex items-center justify-between px-6">
+            <div className="tg-shimmer size-6 rounded-full" />
+            <div className="tg-shimmer size-6 rounded-full" />
+            <div className="tg-shimmer size-6 rounded-full" />
+            <div className="tg-shimmer size-6 rounded-full" />
+          </div>
+        </>
+      )}
+      {/* Служебный ряд карточки (скрыть/пожаловаться) */}
+      <div className="mt-1.5 flex items-center justify-end gap-3 px-4">
+        <div className="tg-shimmer size-5 rounded-md" />
+        <div className="tg-shimmer size-5 rounded-md" />
       </div>
-      <div className="mt-4 space-y-2">
-        <div className="tg-shimmer h-3.5 w-full rounded-md" />
-        <div className="tg-shimmer h-3.5 w-4/5 rounded-md" />
-      </div>
-      {/* Второй пост — каркас без медиа */}
-      <div className="mt-6 flex items-center gap-3">
-        <div className="tg-shimmer h-[46px] w-[46px] rounded-full" />
-        <div className="flex-1 space-y-2">
-          <div className="tg-shimmer h-4 w-2/5 rounded-md" />
-          <div className="tg-shimmer h-3 w-1/3 rounded-md" />
-        </div>
-        <div className="tg-shimmer h-11 w-11 rounded-full" />
-      </div>
-      <div className="mt-4 space-y-2">
-        <div className="tg-shimmer h-3.5 w-full rounded-md" />
-        <div className="tg-shimmer h-3.5 w-11/12 rounded-md" />
-        <div className="tg-shimmer h-3.5 w-3/5 rounded-md" />
-      </div>
+    </div>
+  )
+}
+
+/**
+ * Скелет-экран «полной» загрузки ленты: первичный mount, смена категории,
+ * жёсткий refresh. Замещает ВЕСЬ список постов — во время загрузки старые/
+ * чужие посты не видны (жалоба владельца). Ширина/рамки — как у реального
+ * списка (feed-col), карточки чередуются медиа/текст.
+ *
+ * A11y: контейнер — live-region «status» с aria-busy и sr-only текстом
+ * «Загружаем ленту» (скринридер объявляет состояние, картинки — aria-hidden).
+ */
+function FeedSkeleton() {
+  return (
+    <div
+      role="status"
+      aria-busy="true"
+      aria-label="Загружаем ленту"
+      className="feed-col mx-auto w-full max-w-[600px] lg:border-x lg:border-tg-sep/40"
+    >
+      <span className="sr-only">Загружаем ленту</span>
+      {[0, 1, 2, 3, 4].map((i) => (
+        <Fragment key={i}>
+          <PostCardSkeleton variant={i % 2 === 0 ? 'media' : 'text'} />
+          {i < 4 && <div className="mx-4 h-px bg-tg-sep/40" aria-hidden />}
+        </Fragment>
+      ))}
     </div>
   )
 }

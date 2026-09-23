@@ -1,4 +1,4 @@
-import { chatMessages } from '@/lib/openrouter'
+import { chatMessagesRace } from '@/lib/openrouter'
 import { knowledgeBlock } from '@/lib/ai-knowledge'
 
 /**
@@ -104,10 +104,20 @@ export async function supportAiReply(
     messages.push({ role: roleOf(h.sender), content: h.text.slice(0, 240) })
   }
 
-  // v5.96 СКОРОСТЬ (приказ владельца «ускорь её ответ»): timeout 12с вместо 25с —
-  // тормозной/зависший слот быстрее отваливается, цепочка берёт следующую модель;
-  // temperature 0.5 — живее тон; maxTokens 260 — ответы и так 1-4 предложения
-  const raw = await chatMessages(messages, { maxTokens: 260, timeoutMs: 12_000, temperature: 0.5 })
+  /* v5.96 СКОРОСТЬ (приказ владельца «ускорь её ответ»): timeout 12с вместо 25с —
+   * тормозной/зависший слот быстрее отваливается, цепочка берёт следующую модель;
+   * temperature 0.5 — живее тон; maxTokens 260 — ответы и так 1-4 предложения.
+   *
+   * v5.97 (задача 2-c, «в поддержке он вообще не работает»): диагноз и лечение.
+   *  ДИАГНОЗ (замеры .qa/ai-speed.ts + тест POST /api/support): локально через
+   *  транспорт z-ai-web-dev-sdk поддержка отвечает за ~1.1с — маршрут и промпт
+   *  (6.6КБ ≈ 2К токенов, база знаний не раздута) ЗДОРОВЫ. Ломалось на пути
+   *  OpenRouter (прод): мёртвый слот glm-5.3-flash:free первым в цепочке (404)
+   *  + перебор 429-слотов подряд → цепочка рвалась/тянулась до фолбэка.
+   *  ЛЕЧЕНИЕ: 1) цепочка пересобрана (мёртвые убраны, быстрые первыми);
+   *  2) ГОНКА: первые 2 живые модели отвечают параллельно, выигрывает первая
+   *  полноценная — ускорение 2-3× на холодном пути; 3) таймаут 11с. */
+  const raw = await chatMessagesRace(messages, { maxTokens: 260, timeoutMs: 11_000, temperature: 0.5 })
   // Маркер мог прийти в начале или отдельной строкой — вычищаем его
   const escalate = raw.includes(ESCALATE_MARKER)
   const text = (escalate ? raw.replaceAll(ESCALATE_MARKER, '').trim() : raw) || AI_FALLBACK_REPLY
