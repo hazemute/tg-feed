@@ -6,6 +6,7 @@ import { APP_VERSION } from '@/lib/server'
 import { checkSchema, ensureAppSchema } from '@/lib/ensure-schema'
 import { cronAuthorized } from '@/lib/guard'
 import { ensureContentCatalog, stepContentCatalog } from '@/lib/content-catalog'
+import { getFeedIndexStats } from '@/lib/feed'
 
 // Прод: очередь контента (discover кураторских каналов) может работать в after()
 // до 60с — response возвращается сразу, миграция доезжает в фоне
@@ -274,6 +275,10 @@ export async function GET(request: Request) {
       botUsername,
       // v5.77: диагностика перезагрузки контента (фаза purge/discover)
       catalog: catalogDiag,
+      // v6.0.0: статистика последнего индекса ленты (после партиции ярусов):
+      // claimedFirstPos — позиция первого ботового поста; фикс ленты считается
+      // рабочим, когда она ≈ total (ботовые только в хвосте) либо -1.
+      feed: getFeedIndexStats(),
       // v5.76: диагноз вебхука наружу только за cron-секретом (url бота — цель для спама)
       ...(diag ? { webhook } : {}),
       botBanSec: await botBanRemainSecAsync(),

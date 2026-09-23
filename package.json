@@ -1,6 +1,6 @@
 {
   "name": "tg-swipe",
-  "version": "5.97.0",
+  "version": "6.0.0",
   "private": true,
   "scripts": {
     "dev": "bun next dev -p 3000 2>&1 | tee dev.log",

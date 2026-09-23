@@ -68,8 +68,9 @@ export type IndexEntry = {
 }
 export type RankedIndex = { entries: IndexEntry[]; total: number }
 
-/** Максимум постов одного канала в окне индекса (разнообразие ленты) */
-const MAX_PER_CHANNEL = 5
+/** Максимум постов одного канала в окне индекса (разнообразие ленты).
+ *  v6.0.0: 5 → 4 — жалоба «одно и то же» реже встречается на длинной сессии. */
+const MAX_PER_CHANNEL = 4
 
 /**
  * Единая формула сигнатуры скоупа для ключа кэша индекса (v5.48).
@@ -87,22 +88,29 @@ export function feedScopeSignature(category: string, whereChannel: unknown): str
  * первый бёрст пользователей запускал тяжёлую пересборку индекса на пуле.
  * Единая константа делает расхождение невозможным по построению.
  */
-export const FEED_INDEX_KEY_V = 'v10'
+export const FEED_INDEX_KEY_V = 'v11'
 
 /*
- * v5.99: ПРИКАЗ ВЛАДЕЛЬЦА — «отпаршенные каналы не отображаются, только те,
+ * v6.0.0: ПРИКАЗ ВЛАДЕЛЬЦА — «отпаршенные каналы не отображаются, только те,
  * в которых есть бот… чтоб с ботом ВООБЩЕ не отображались либо РЕДКО чем
- * запаршенные с интернета». Диагноз: каналы с ботом (claimedById != null)
- * инжестятся вебхуком в реальном времени и забивают окно индекса, пока
- * каталог запаршенных ещё мал. Грубый фикс на двух уровнях ИНДЕКСА:
+ * запаршенные с интернета». v5.99 (пул 1 пост + демотиватор ×0.12) оказался
+ * недостаточным: демотиватор ВЕСОВОЙ, а свежесть — экспонента (полураспад 36ч).
+ * Пока запаршенные посты свежие (≤3–4 суток), ×0.12 держал ботовые внизу; но
+ * парсер в проде работал по крону РАЗ в СУТКИ (Vercel Hobby), запаршенный
+ * контент старел, и свежие ботовые посты из вебхука поднимались над ним.
+ * Поэтому фикс сделан СТРУКТУРНЫМ, не весовым:
  *  1) по-канальный пул для ботовых каналов — 1 пост (запаршенным — 12);
- *  2) демотиватор веса ×0.12 — ботовые посты стоят ниже ВСЕХ запаршенных
- *     (в хвосте ленты), но не дают ей опустеть, если запаршенных мало.
+ *  2) ЖЁСТКИЕ ЯРУСИ в порядке индекса: ВСЕ запаршенные посты стоят прежде
+ *     ВСЕХ ботовых, независимо от свежести/весов (см. финальную партицию
+ *     в computeRankedIndex и такую же партицию в снапшоте /api/feed);
+ *  3) ботовых в индексе не более CLAIMED_TAIL_CAP постов суммарно (хвост).
  * Платное промо не страдает: промо-посты пиннятся в голову роутом отдельным
  * механизмом (getPromotedCandidates), их органический вес не важен.
  */
 export const CLAIMED_MAX_PER_CHANNEL = 1
 export const CLAIMED_DEMOTE = 0.12
+/** v6.0.0: максимум ботовых постов в хвосте индекса (после всех запаршенных) */
+export const CLAIMED_TAIL_CAP = 24
 
 /** Where-условие выборки индекса (совместимо с Prisma PostWhereInput) */
 type IndexWhere = {
@@ -265,7 +273,55 @@ export async function computeRankedIndex(where: IndexWhere): Promise<RankedIndex
     perChannel.set(e.c, n + 1)
     capped.push(e)
   }
-  return { entries: capped, total: capped.length }
+
+  /* ---------- v6.0.0: ЖЁСТКИЕ ЯРУСИ (финальная партиция индекса) ----------
+   * Внутри каждого яруса порядок по весу; между ярусами — ВСЕГДА
+   * запаршенные прежде ботовых. Пагинация режет список сверху вниз,
+   * поэтому ботовые посты физически не могут попасть в первые страницы
+   * ленты, пока есть хоть сколько-то запаршенных. Захардкоженный кап
+   * хвоста не даёт ботовым каналам (их может стать десятки) разрастись.
+   */
+  const organic = capped.filter((e) => !e.b)
+  const claimedTail = capped.filter((e) => e.b).slice(0, CLAIMED_TAIL_CAP)
+  const finalEntries = [...organic, ...claimedTail]
+
+  /* v6.0.0: статистика последнего индекса — видна в /api/health (поле feed):
+   * владелец проверяет одним взглядом, что ботовые в топе отсутствуют. */
+  recordIndexStats(finalEntries)
+
+  return { entries: finalEntries, total: finalEntries.length }
+}
+
+/* ---------------- Статистика индекса для /api/health ---------------- */
+
+export type FeedIndexStats = {
+  at: string
+  total: number
+  channels: number
+  claimed: number
+  /** позиция первого ботового поста (-1 — ботовых нет вообще) */
+  claimedFirstPos: number
+}
+
+const GIDX = globalThis as unknown as { __tgFeedIndexStats?: FeedIndexStats }
+
+function recordIndexStats(entries: IndexEntry[]): void {
+  try {
+    const claimedFirstPos = entries.findIndex((e) => e.b)
+    GIDX.__tgFeedIndexStats = {
+      at: new Date().toISOString(),
+      total: entries.length,
+      channels: new Set(entries.map((e) => e.c)).size,
+      claimed: entries.reduce((n, e) => (e.b ? n + 1 : n), 0),
+      claimedFirstPos,
+    }
+  } catch {
+    /* статистика не должна ронять индекс */
+  }
+}
+
+export function getFeedIndexStats(): FeedIndexStats | null {
+  return GIDX.__tgFeedIndexStats ?? null
 }
 
 /**

@@ -54,6 +54,11 @@ export async function GET(request: Request) {
           ...nsfwPostNotIn(),
           // ИИ-модерация: свежая пачка тоже без junk/nsfw/spam
           { OR: [{ aiFlag: null }, { aiFlag: 'ok' }] },
+          // v6.0.0: ботовые каналы (привязанные, claimedById != null) НЕ участвуют
+          // в пилюле «N новых». Раньше их свежие посты (вебхук инжестит мгновенно)
+          // вставлялись этой пилюлей в голову ленты МИМО ярусного индекса —
+          // и контент владельцев снова оказывался выше запаршенного.
+          { channel: { claimedById: null } },
         ],
       },
       orderBy: { publishedAt: 'desc' },

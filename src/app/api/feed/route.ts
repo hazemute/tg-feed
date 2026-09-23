@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server'
+import { NextResponse, after } from 'next/server'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { Channel, Post } from '@prisma/client'
@@ -19,6 +19,59 @@ import { IS_SQLITE } from '@/lib/server'
 import type { PostDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
+/** v6.0.0: фоновый тик парсера (after) может длиться до ~150с — функция должна
+ *  пережить self-fetch до /api/parse/tick (у самого тика внутренние бюджеты). */
+export const maxDuration = 150
+
+/* ---------- v6.0.0: ТРАФИК-ДИСПЕТЧЕР ПАРСЕРА (грубо фикс ленты) ----------
+ * КОРЕНЬ проблемы «в ленте одни ботовые каналы»: парсер t.me/s (запаршенные
+ * с интернета каналы) в проде дёргался кроной Vercel РАЗ в СУТКИ (02:00),
+ * пока ботовые каналы инжестились вебхуком в реальном времени. Запаршенный
+ * контент старел — свежесть (полураспад 36ч) топила его под свежими ботовыми.
+ * Внешний постоянный крон на Vercel Hobby недоступен → тик запускает
+ * САМ ТРАФИК ЛЕНТЫ: любой запрос /api/feed (даже неавторизованный) раз в
+ * ≥15 минут долбит /api/parse/tick в фоне (after) — ответа юзер не ждёт.
+ * Тик адаптивный (партия ~6+2 канала, бюджеты внутри), идемпотентен,
+ * локально в dev роль диспетчера продолжает играть mini-services/feed-cron.
+ */
+const PARSE_TICK_THROTTLE_MS = 15 * 60_000
+let memTickDispatchedAt = 0 // in-memory страховка на случай недоступности Redis
+
+function dispatchParseTick(request: Request): void {
+  after(async () => {
+    try {
+      const secret = process.env.CRON_SECRET?.trim() ?? ''
+      const prod = process.env.NODE_ENV === 'production' && !IS_SQLITE
+      if (prod && !secret) return // прод без секрета: тик не авторизуется — не дёргаем
+      const now = Date.now()
+      if (now - memTickDispatchedAt < PARSE_TICK_THROTTLE_MS) return
+      const marker = await cacheGet<number>('parse:tick:dispatched').catch(() => null)
+      if (marker && now - marker < PARSE_TICK_THROTTLE_MS) return
+      memTickDispatchedAt = now
+      await cacheSet('parse:tick:dispatched', now, PARSE_TICK_THROTTLE_MS / 1000).catch(() => {})
+      const origin = new URL(request.url).origin
+      const res = await fetch(`${origin}/api/parse/tick`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(secret ? { authorization: `Bearer ${secret}` } : {}),
+        },
+        body: '{}',
+        // у тика внутренние бюджеты (35-110с); 150с — страховка сверху
+        signal: AbortSignal.timeout(150_000),
+      })
+      const data = (await res.json().catch(() => ({}))) as { added?: number; batch?: number }
+      if (typeof data.added === 'number' && data.added > 0) {
+        console.log(`[feed] parse-tick (traffic): batch=${data.batch ?? '?'} added=${data.added}`)
+      }
+    } catch (e) {
+      console.error(
+        '[feed] parse-tick (traffic) failed',
+        e instanceof Error ? e.message.slice(0, 160) : e,
+      )
+    }
+  })
+}
 
 /**
  * Спонсорские/промо-экстры страницы 0 (кампании, промо-посты, кандидаты) —
@@ -379,6 +432,11 @@ const querySchema = z.object({
  * Требуется сессия (Bearer); лимит 120 запросов в минуту на пользователя.
  */
 export async function GET(request: Request) {
+  // v6.0.0: ДО guardAuth — тик запускает любой запрос ленты (свежесть
+  // запаршенного контента важнее лишнего тика на спам-запросах, а троттл 15 мин
+  // делает цену вопроса нулевой).
+  dispatchParseTick(request)
+
   const g = guardAuth(request, { limit: 120, windowMs: 60_000, bucket: 'feed' })
   if (!g.ok) return g.res
   const userId = g.uid
@@ -636,13 +694,28 @@ async function buildFeedSnapshot(ctx: {
       w *= e.l === 'foreign' ? FOREIGN_LANG_MULTIPLIER : UNDETECTED_FROM_FOREIGN_CHANNEL_MULTIPLIER
     }
     w -= parts.penalty
-    return { id: e.i, cid: e.c, w }
+    return { id: e.i, cid: e.c, b: e.b, w }
   })
 
   /* ---------- 5. Сортировка с детерминированным tiebreak ----------
       Равные веса упорядочиваются по id — порядок воспроизводим между
       пересборками снапшота и одинаков у всех реплик инстанса. */
   scored.sort((a, b) => b.w - a.w || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+
+  /* ---------- 5.2 v6.0.0: ЖЁСТКИЕ ЯРУСИ в персональном порядке ----------
+   * Персональные бусты (аффинити/подписки) могут поднять ботовый пост над
+   * запарченным — после сортировки восстанавливаем СТРУКТУРНЫЙ инвариант:
+   * сначала все запаренные, потом все ботовые (внутри яруса — по весу).
+   * Инвариант дублирует партицию индекса (feed.ts) на случай будущих
+   * персональных множителей — приказ владельца не должен зависеть от весов. */
+  {
+    const organicScored = scored.filter((s) => !s.b)
+    const claimedScored = scored.filter((s) => s.b)
+    if (organicScored.length > 0 && claimedScored.length > 0) {
+      scored.length = 0
+      scored.push(...organicScored, ...claimedScored)
+    }
+  }
 
   /* ---------- 5.5 v5.95: «при заходе — новое» — unseen-first голова ----------
       Смешанный пул: в первых 10 позициях органики минимум 7 непросмотренных
@@ -719,7 +792,9 @@ async function buildFeedSnapshot(ctx: {
   const popularHead: Array<{ id: string; cid: string }> = []
   try {
     const seenChans = new Set<string>(head.map((x) => x.cid))
+    // v6.0.0: «популярное сначала» — только запаршенные; ботовые и так в хвосте ярусов
     const topQuality = [...pool]
+      .filter((e) => !e.b)
       .sort((a, b) => b.w - a.w || (a.i < b.i ? -1 : a.i > b.i ? 1 : 0))
       .slice(0, 24)
     // сид-перемешивание топа: у каждого refresh — свой порядок популярного
