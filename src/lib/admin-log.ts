@@ -44,4 +44,5 @@ export const ADMIN_ACTION_LABELS: Record<string, string> = {
   moderation: 'Модерация канала',
   campaign: 'Модерация кампании',
   comment: 'Действие с комментарием',
+  broadcast: 'Рассылка в ЛС',
 }

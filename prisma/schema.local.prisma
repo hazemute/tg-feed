@@ -1041,6 +1041,16 @@ model BotChat {
   updatedAt DateTime @updatedAt
 }
 
+// v6.6: ВСЯ аудитория бота в ЛС (каждый приватный апдейт вебхука сохраняет
+// chat_id) — рассылки доходят и до тех, кто миниапп не открывал.
+model BotUser {
+  chatId     String   @id // числовой Telegram chat_id строкой
+  username   String?
+  firstName  String?
+  lastSeenAt DateTime @updatedAt
+  createdAt  DateTime @default(now())
+}
+
 // v5.88: начисления наград лидербордов — топ-3 по набранному XP за период
 // (неделя/месяц, Europe/Moscow) получают свайпы. Unique-ключи страхуют от
 // двойной выплаты при рестарте/гонке крона.

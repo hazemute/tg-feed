@@ -1,6 +1,7 @@
 import { db } from '@/lib/db'
 import { botSendRich } from '@/lib/tg-emoji'
 import { escapeHtml, getBotChatRights, getChatInfo } from '@/lib/tg-bot'
+import { botBroadcastAudience } from '@/lib/bot-audience'
 import { plategaCreatePayment, plategaEnabled, plategaStatusInfo, PLATEGA_METHOD } from '@/lib/platega'
 import { botChatIdOfUser } from '@/lib/bot-notify'
 import { AutoModError, AUTOMOD_REJECT_MESSAGE, guardAdContent } from '@/services/autoMod'
@@ -416,7 +417,7 @@ export async function handleFsmText(msg: { text?: string; caption?: string; phot
         '',
         preview,
         '',
-        `👥 Получателей: <b>${await db.user.count({ where: { id: { startsWith: 'tg_' } } })}</b>`,
+        `👥 Получателей: <b>${(await botBroadcastAudience()).ids.length}</b>`,
         link ? `🔗 Кнопка: ${escapeHtml(link)}` : '🔗 Без кнопки',
         '',
         'Запускаем? Идёт пачками по 30 сообщений в секунду.',
@@ -922,15 +923,17 @@ export async function handleCommerceCallback(cqId: string, data: string, chatId:
  * 429 → пауза retry_after и продолжение.
  */
 async function runBroadcast(ownerChatId: number, text: string, link: string): Promise<void> {
-  const users = await db.user.findMany({ where: { id: { startsWith: 'tg_' } }, select: { id: true }, orderBy: { id: 'asc' } })
+  // v6.6: вся аудитория ЛС — юзеры миниаппа ∪ бот-юзеры (BotUser/botlang),
+  // забаненные миниаппа исключены. До этого шлём только юзерам миниаппа.
+  const audience = await botBroadcastAudience()
   const html = escapeHtml(text).slice(0, 3500)
   const markup = link
     ? { inline_keyboard: [[{ text: '👉 Открыть', url: link }]] }
     : undefined
   let sent = 0
   let failed = 0
-  const chatIds = users
-    .map((u) => Number(u.id.slice('tg_'.length)))
+  const chatIds = audience.ids
+    .map((id) => Number(id))
     .filter((n) => Number.isInteger(n) && n > 0)
 
   for (let i = 0; i < chatIds.length; i += 30) {

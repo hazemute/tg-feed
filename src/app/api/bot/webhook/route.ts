@@ -1096,6 +1096,31 @@ async function handleStarsPayment(sp: NonNullable<NonNullable<TgUpdate['message'
 
 /* --------------------------------- Роут --------------------------------- */
 
+/**
+ * v6.6: копим ВСЮ аудиторию ЛС бота (BotUser). Каждый приватный апдейт —
+ * upsert chat_id + последний известный username/имя. Идемпотентно и дёшево
+ * (один upsert на апдейт), рассылки потом доходят до всех, кто трогал бота.
+ */
+async function rememberBotUser(from: TgFrom): Promise<void> {
+  try {
+    const chatId = String(from.id)
+    const username = from.username ?? null
+    const firstName = (from.first_name ?? '').trim() || null
+    await db.botUser.upsert({
+      where: { chatId },
+      // username/firstName обновляем только если пришли непустые — не затираем
+      // прошлые данные апдейтами без профиля
+      create: { chatId, username, firstName },
+      update: {
+        ...(username ? { username } : {}),
+        ...(firstName ? { firstName } : {}),
+      },
+    })
+  } catch {
+    /* таблицы нет / БД мигала — рассылка просто не увидит этого юзера */
+  }
+}
+
 export async function POST(request: Request) {
   // Секрет вебхука (setWebhook secret_token → Telegram эхом шлёт заголовок)
   const secret = process.env.TELEGRAM_WEBHOOK_SECRET?.trim()
@@ -1148,6 +1173,15 @@ export async function POST(request: Request) {
   const blacklistedFromId = update.message?.from?.id ?? update.callback_query?.from?.id ?? 0
   if (blacklistedFromId > 0 && (await isBlacklisted(blacklistedFromId))) {
     return NextResponse.json({ ok: true })
+  }
+
+  // v6.6: АУДИТОРИЯ РАССЫЛОК — каждый приватный контакт с ботом (сообщение,
+  // нажатие кнопки) сохраняет chat_id в BotUser. Fire-and-forget: не тормозит
+  // обработку, сбой БД не мешает боту отвечать.
+  const dmFrom = update.message?.from ?? update.callback_query?.from
+  const dmChatType = update.message?.chat?.type ?? update.callback_query?.message?.chat?.type
+  if (dmChatType === 'private' && dmFrom?.id && dmFrom.id > 0) {
+    void rememberBotUser(dmFrom)
   }
 
   // v5.98: меню команд бота (setMyCommands) — раз в сутки, fire-and-forget

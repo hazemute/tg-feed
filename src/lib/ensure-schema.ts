@@ -378,6 +378,12 @@ export const MIGRATIONS: Record<string, string[]> = {
     `CREATE INDEX IF NOT EXISTS "CrossPromo_fromChannelId_status_idx" ON "CrossPromo"("fromChannelId", "status")`,
     `CREATE INDEX IF NOT EXISTS "Channel_boostUntil_idx" ON "Channel"("boostUntil")`,
   ],
+  'v6.6-botuser': [
+    // v6.6: ВСЯ аудитория бота в ЛС (каждый приватный апдейт вебхука сохраняет
+    // chat_id) — рассылки /send и вкладки «Рассылка» доходят и до тех, кто
+    // миниапп не открывал.
+    `CREATE TABLE IF NOT EXISTS "BotUser" ("chatId" text PRIMARY KEY, "username" text, "firstName" text, "lastSeenAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP, "createdAt" timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  ],
 }
 
 const ALL: string[] = Object.values(MIGRATIONS).flat()
@@ -388,6 +394,7 @@ function isSqlite(): boolean {
 
 /** Критичные объекты схемы: [таблица, колонка] (колонка null → проверяется сама таблица) */
 const CRITICAL: Array<[string, string | null]> = [
+  ['BotUser', null],
   ['User', 'tier'],
   ['User', 'tierUntil'],
   ['Channel', 'ctaLabel'],

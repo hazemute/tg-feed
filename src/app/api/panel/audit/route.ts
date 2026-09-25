@@ -29,7 +29,7 @@ export async function GET(request: Request) {
     else if (group === 'moderation') where.action = { in: ['moderation', 'campaign', 'comment'] }
     else if (group === 'users') {
       where.action = {
-        in: ['ban', 'unban', 'swipes', 'premium_on', 'premium_off', 'bypass_on', 'bypass_off'],
+        in: ['ban', 'unban', 'swipes', 'premium_on', 'premium_off', 'bypass_on', 'bypass_off', 'broadcast'],
       }
     }
 

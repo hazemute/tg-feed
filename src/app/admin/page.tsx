@@ -19,6 +19,7 @@ import {
   Moon,
   Palette,
   RefreshCw,
+  Send,
   Server,
   ShieldAlert,
   Star,
@@ -101,6 +102,7 @@ const PromosTab = dynamic(() => import('./components/promos-tab').then((m) => m.
 const SystemTab = dynamic(() => import('./components/system-tab').then((m) => m.SystemTab), { ssr: false, loading: () => <TabFallback /> })
 const ToolsTab = dynamic(() => import('./components/tools-tab').then((m) => m.ToolsTab), { ssr: false, loading: () => <TabFallback /> })
 const BotTab = dynamic(() => import('./components/bot-tab').then((m) => m.BotTab), { ssr: false, loading: () => <TabFallback /> })
+const BroadcastTab = dynamic(() => import('./components/broadcast-tab').then((m) => m.BroadcastTab), { ssr: false, loading: () => <TabFallback /> })
 
 type AuthState = 'checking' | 'authed' | 'anon'
 
@@ -121,6 +123,7 @@ const NAV_KEYS = [
   'giveaways',
   'quests',
   'promos',
+  'broadcast',
   'system',
   'tools',
 ] as const
@@ -162,7 +165,7 @@ const NAV_GROUPS: Array<{ title?: string; keys: TabKey[] }> = [
   { title: 'Деньги', keys: ['finance', 'subscriptions', 'ads'] },
   { title: 'Контент', keys: ['channels', 'moderation', 'feedback'] },
   { title: 'Люди', keys: ['users', 'badges', 'support'] },
-  { title: 'Рост', keys: ['giveaways', 'quests', 'promos'] },
+  { title: 'Рост', keys: ['giveaways', 'quests', 'promos', 'broadcast'] },
   { title: 'Система', keys: ['audit', 'system', 'tools', 'bot'] },
 ]
 
@@ -502,6 +505,7 @@ export default function AdminPage() {
     { key: 'giveaways', label: 'Розыгрыши', icon: Gift },
     { key: 'quests', label: 'Задания', icon: ListChecks },
     { key: 'promos', label: 'Промокоды', icon: Ticket },
+    { key: 'broadcast', label: 'Рассылка', icon: Send },
     {
       key: 'system',
       label: 'Система',
@@ -568,6 +572,8 @@ export default function AdminPage() {
         return <QuestsTab tick={tick} onSettled={handleSettled} />
       case 'promos':
         return <PromosTab tick={tick} onSettled={handleSettled} />
+      case 'broadcast':
+        return <BroadcastTab tick={tick} onSettled={handleSettled} />
       case 'system':
         return <SystemTab tick={tick} onSettled={handleSettled} onMaintenance={handleMaintenance} />
       case 'tools':
