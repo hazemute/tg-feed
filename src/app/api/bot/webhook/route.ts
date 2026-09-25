@@ -262,7 +262,7 @@ type TgEntity = {
 type TgUpdate = {
   update_id?: number
   message?: {
-    chat?: { id?: number }
+    chat?: { id?: number; type?: string }
     from?: TgFrom
     text?: string
     /** Entities текста: здесь прилетает type='custom_emoji' с custom_emoji_id —
@@ -292,7 +292,7 @@ type TgUpdate = {
     id: string
     data?: string
     from?: TgFrom
-    message?: { chat?: { id?: number }; message_id?: number }
+    message?: { chat?: { id?: number; type?: string }; message_id?: number }
   }
   business_connection?: {
     id?: string
