@@ -33,6 +33,8 @@ interface AudienceStats {
   app: number
   botOnly: number
   banned: number
+  /** v6.7.0: заблокировали бота / удалили аккаунт — исключены заранее */
+  blocked: number
 }
 
 type Phase = 'idle' | 'sending' | 'done'
@@ -50,7 +52,10 @@ export function BroadcastTab({ tick, onSettled }: TabProps) {
   const [phase, setPhase] = useState<Phase>('idle')
   const [progress, setProgress] = useState({ done: 0, sent: 0, failed: 0 })
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [dupWarn, setDupWarn] = useState<string | null>(null)
   const abortRef = useRef(false)
+  /** v6.7.0: подтверждённый повтор — после 409 все чанки уходят с confirm:true */
+  const dupRef = useRef(false)
 
   const loadStats = useCallback(async () => {
     setLoading(true)
@@ -109,9 +114,13 @@ export function BroadcastTab({ tick, onSettled }: TabProps) {
     }
   }, [canSend, text, link, testChatId])
 
-  /** Массовая отправка чанками с прогрессом */
+  /** Массовая отправка чанками с прогрессом.
+   *  v6.7.0: сервер отвечает 409, если тот же текст уже уходил < 30 минут назад
+   *  (инцидент с двойной рассылкой итогов конкурса). Тогда показываем диалог
+   *  ещё раз с предупреждением; подтверждённый повтор шлёт confirm:true. */
   const runBroadcast = useCallback(async () => {
     setConfirmOpen(false)
+    setDupWarn(null)
     if (!canSend) return
     setPhase('sending')
     abortRef.current = false
@@ -125,18 +134,26 @@ export function BroadcastTab({ tick, onSettled }: TabProps) {
 
     let sent = 0
     let failed = 0
+    let dupBlocked = false
     for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
       if (abortRef.current) break
       const chunk = ids.slice(i, i + CHUNK_SIZE)
       try {
         const r = await panelFetch<{ ok: boolean; sent: number; failed: number }>('/api/panel/broadcast', {
           method: 'POST',
-          json: { text: text.trim(), link: link.trim(), ids: chunk },
+          json: { text: text.trim(), link: link.trim(), ids: chunk, ...(dupRef.current ? { confirm: true } : {}) },
           timeoutMs: 120_000,
         })
         sent += r.sent
         failed += r.failed
       } catch (e) {
+        if (e instanceof PanelError && e.status === 409) {
+          dupBlocked = true
+          dupRef.current = true
+          setDupWarn(e.message || 'Этот же текст уже отправлялся совсем недавно')
+          setConfirmOpen(true)
+          break
+        }
         failed += chunk.length
         if (e instanceof PanelError && e.status === 401) break
         toast.error(e instanceof PanelError ? `Чанк прерван: ${e.message}` : 'Сеть: чанк прерван')
@@ -144,6 +161,10 @@ export function BroadcastTab({ tick, onSettled }: TabProps) {
       setProgress({ done: Math.min(i + CHUNK_SIZE, ids.length), sent, failed })
     }
 
+    if (dupBlocked) {
+      setPhase('idle')
+      return
+    }
     setPhase('done')
     toast.success(`Рассылка завершена: доставлено ${sent}, ошибок ${failed}`)
     void loadStats()
@@ -184,11 +205,12 @@ export function BroadcastTab({ tick, onSettled }: TabProps) {
             ) : loadError || !stats ? (
               <EmptyState icon={Users} title="Аудитория не загрузилась" hint="Попробуйте ещё раз" />
             ) : (
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
                 <StatBox label="Всего получателей" value={fmtNum(stats.total)} accent />
                 <StatBox label="Из миниаппа" value={fmtNum(stats.app)} />
                 <StatBox label="Только в боте" value={fmtNum(stats.botOnly)} />
-                <StatBox label="Забанено (исключено)" value={fmtNum(stats.banned)} />
+                <StatBox label="Бот заблокирован (мимо)" value={fmtNum(stats.blocked)} />
+                <StatBox label="Забанено (мимо)" value={fmtNum(stats.banned)} />
               </div>
             )}
           </CardContent>
@@ -331,6 +353,11 @@ export function BroadcastTab({ tick, onSettled }: TabProps) {
             <p className="mb-1 text-sm text-slate-600">
               Сообщение уйдёт <b>{stats ? fmtNum(stats.total) : '…'}</b> пользователям в ЛС. Отменить отправку нельзя.
             </p>
+            {dupWarn && (
+              <p className="mb-1 mt-2 rounded-md border border-amber-300 bg-amber-50 p-2 text-xs font-medium text-amber-800">
+                ⚠️ {dupWarn}
+              </p>
+            )}
             <p className="mb-4 text-xs text-slate-400">
               Совет: сначала отправьте тест себе — кнопка «Тест» выше.
             </p>
@@ -343,7 +370,7 @@ export function BroadcastTab({ tick, onSettled }: TabProps) {
                 onClick={() => void runBroadcast()}
               >
                 <Send className="h-4 w-4" />
-                Запустить
+                {dupWarn ? 'Всё равно отправить' : 'Запустить'}
               </Button>
             </div>
           </motion.div>

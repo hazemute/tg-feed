@@ -128,6 +128,29 @@ export async function isReleased(): Promise<boolean> {
 
   const explicit = await redisReleasedValue()
   if (explicit !== null) {
+    /*
+     * v6.7.0: САМОЛЕЧЕНИЕ РАСХОЖДЕНИЯ «Redis 'off' ↔ БД 'выпущено'» прямо
+     * на запросе (инцидент 25.09: Edge-зеркало стояло 'off' при БД released='1'
+     * — все пользователи видели экран разработки, а heartbeat в serverless
+     * подмерзал между запросами и не чинил). Если Redis ЯВНО говорит 'off',
+     * а БД (кэш зеркала, 60с) — «выпущено», доверяем БД (она источник истины),
+     * восстанавливаем Redis и продолжаем штатно. Стоимость: 1 доп. Redis SET
+     * только в расхождении; штатные режимы не тронуты.
+     */
+    if (!explicit) {
+      const dbOn = await releasedDbCached()
+      if (dbOn) {
+        if (redis) {
+          try {
+            await redis.set(RELEASED_KEY, 'on')
+          } catch {
+            /*heartbeat повторит*/
+          }
+        }
+        releasedMem = { v: true, exp: Date.now() + MEM_TTL_OFF_MS }
+        return true
+      }
+    }
     // выпущено кэшируем дольше (штатный режим), «разработка» — коротко (релиз подхватится быстро)
     releasedMem = { v: explicit, exp: Date.now() + (explicit ? MEM_TTL_OFF_MS : MEM_TTL_MS) }
     return explicit

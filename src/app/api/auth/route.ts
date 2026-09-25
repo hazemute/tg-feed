@@ -10,6 +10,8 @@ import { effectiveTier } from '@/lib/tiers'
 import { parseBadges } from '@/lib/badges'
 import { activateReferrals } from '@/lib/giveaway-tickets'
 import { userAvatarProxyUrl } from '@/lib/media'
+// v6.7.0: авто-выдача призов конкурса при входе победителя в миниапп
+import { maybeGrantContestPrize } from '@/lib/contest-grants'
 import type { UserDTO } from '@/lib/types'
 
 export const dynamic = 'force-dynamic'
@@ -165,6 +167,9 @@ export async function POST(request: Request) {
     // v5.46: юзер открыл Mini App → активируем его реферальные приглашения
     // (задание «пригласи друзей» у пригласивших) — fire-and-forget
     void activateReferrals(user.id, tgId)
+    // v6.7.0: победитель конкурса вошёл в миниапп → приз выдаётся сам (один раз,
+    // идемпотентно по маркеру в BotSetting) — fire-and-forget, вход не ждёт
+    void maybeGrantContestPrize({ id: user.id, username: user.username })
     const maintenance = {
       active: maintenanceActive,
       canBypass: adminUids().includes(user.id) || user.bypassMaintenance,

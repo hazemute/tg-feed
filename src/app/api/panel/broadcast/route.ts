@@ -1,8 +1,10 @@
 import { NextResponse } from 'next/server'
+import { db } from '@/lib/db'
 import { err, readJson } from '@/lib/server'
 import { guardAdmin } from '@/lib/guard'
 import { logAdmin } from '@/lib/admin-log'
 import { botBroadcastAudience } from '@/lib/bot-audience'
+import { shortHash } from '@/lib/redis'
 
 export const dynamic = 'force-dynamic'
 
@@ -28,6 +30,14 @@ const MAX_TEXT = 3500 // как в /send — Telegram режет сообщен�
 const CHUNK_PER_REQUEST = 300
 const SUB_BATCH = 30
 const SUB_BATCH_PAUSE_MS = 1000
+/** v6.7.0: защита от СЛУЧАЙНОГО повтора рассылки тем же текстом (инцидент 25.09:
+ *  «Итоги конкурса» ушли дважды с интервалом 13 минут). В окне 30 минут
+ *  идентичный текст+ссылка требуют confirm:true от отправителя. */
+const DUP_GUARD_MS = 30 * 60_000
+const DUP_GUARD_KEY = 'broadcast:last'
+/** Telegram-ошибки «чат недостижим навсегда» → маркер bot:blocked:<chatId>,
+ *  чтобы аудитория рассылки не таскала мёртвые chat_id (на 25.09 их было 183). */
+const UNREACHABLE_RE = /bot was blocked by the user|chat not found|user is deactivated|chat member status is/i
 
 type TgResult = { ok: boolean; result?: unknown; description?: string }
 
@@ -66,16 +76,19 @@ function validatePayload(raw: { text?: unknown; link?: unknown }): { html: strin
   return { html: escapeHtml(text), link }
 }
 
-/** Последовательная отправка пачке chat_id с уважением к 429 */
+/** Последовательная отправка пачке chat_id с уважением к 429.
+ *  v6.7.0: недостижимые (заблокировали бота/удалили аккаунт) помечаются
+ *  bot:blocked:<chatId> — следующие рассылки их просто не возьмут. */
 async function sendMany(
   chatIds: string[],
   html: string,
   link: string,
-): Promise<{ sent: number; failed: number; errors: Array<{ id: string; error: string }> }> {
+): Promise<{ sent: number; failed: number; errors: Array<{ id: string; error: string }>; blockedMarked: number }> {
   const markup = link ? { inline_keyboard: [[{ text: '👉 Открыть', url: link }]] } : undefined
   let sent = 0
   let failed = 0
   const errors: Array<{ id: string; error: string }> = []
+  const unreachable = new Set<string>()
 
   for (let i = 0; i < chatIds.length; i += SUB_BATCH) {
     const batch = chatIds.slice(i, i + SUB_BATCH)
@@ -98,6 +111,7 @@ async function sendMany(
       } else {
         failed++
         if (errors.length < 40) errors.push({ id, error: (r.description ?? 'unknown').slice(0, 160) })
+        if (UNREACHABLE_RE.test(r.description ?? '')) unreachable.add(id)
         const m = /retry after (\d+)/i.exec(r.description ?? '')
         if (m) retryAfterSec = Math.max(retryAfterSec, Number(m[1]))
       }
@@ -109,7 +123,24 @@ async function sendMany(
       await new Promise((res) => setTimeout(res, SUB_BATCH_PAUSE_MS))
     }
   }
-  return { sent, failed, errors }
+  if (unreachable.size > 0) {
+    // fire-and-forget: ответ рассылки не ждёт пометки (до пары сотен upsert-ов
+    // в худшем случае; обычно десятки). upsert вместо createMany+skipDuplicates —
+    // skipDuplicates недоступен в SQLite-клиенте (локальная схема).
+    const now = new Date().toISOString()
+    void Promise.all(
+      [...unreachable].map((id) =>
+        db.botSetting
+          .upsert({
+            where: { key: `bot:blocked:${id}` },
+            create: { key: `bot:blocked:${id}`, value: now },
+            update: { value: now },
+          })
+          .catch(() => {}),
+      ),
+    )
+  }
+  return { sent, failed, errors, blockedMarked: unreachable.size }
 }
 
 export async function GET(request: Request) {
@@ -127,6 +158,7 @@ export async function GET(request: Request) {
         app: audience.appCount,
         botOnly: audience.botOnlyCount,
         banned: audience.bannedCount,
+        blocked: audience.blockedCount,
       },
       ...(withIds ? { ids: audience.ids } : {}),
     })
@@ -142,6 +174,8 @@ type BroadcastBody = {
   ids?: unknown
   testChatId?: unknown
   dryRun?: unknown
+  /** v6.7.0: подтверждение повторной отправки того же текста (см. DUP_GUARD) */
+  confirm?: unknown
 }
 
 export async function POST(request: Request) {
@@ -214,15 +248,54 @@ export async function POST(request: Request) {
       return err('Ни один id не входит в текущую аудиторию', 400)
     }
 
-    const { sent, failed, errors } = await sendMany(targets, html, link)
+    // ---------- v6.7.0: защита от случайного повторного дубля ----------
+    if (body.confirm !== true) {
+      const last = await db.botSetting
+        .findUnique({ where: { key: DUP_GUARD_KEY }, select: { value: true } })
+        .catch(() => null)
+      let parsed: { h?: unknown; at?: unknown } = {}
+      try {
+        parsed = last ? (JSON.parse(last.value) as { h?: unknown; at?: unknown }) : {}
+      } catch {
+        /* нет корректного маркера — отправляем */
+      }
+      const atMs = typeof parsed.at === 'string' ? Date.parse(parsed.at) : NaN
+      if (parsed.h === shortHash(`${html}|${link}`) && Number.isFinite(atMs) && Date.now() - atMs < DUP_GUARD_MS) {
+        return NextResponse.json(
+          {
+            ok: false,
+            duplicate: true,
+            lastAt: new Date(atMs).toISOString(),
+            error: 'Этот же текст уже отправлялся менее 30 минут назад. Если нужно повторить — подтвердите повторную отправку.',
+          },
+          { status: 409 },
+        )
+      }
+    }
+
+    const { sent, failed, errors, blockedMarked } = await sendMany(targets, html, link)
+
+    // ---------- v6.7.0: маркер последнего текста (защита от дубля) ----------
+    const sig = shortHash(`${html}|${link}`)
+    const at = new Date().toISOString()
+    await db.botSetting
+      .upsert({
+        where: { key: DUP_GUARD_KEY },
+        create: { key: DUP_GUARD_KEY, value: JSON.stringify({ h: sig, at }) },
+        update: { value: JSON.stringify({ h: sig, at }) },
+      })
+      .catch(() => {})
+
     await logAdmin('broadcast', `chunk ${sent}+${failed}`, {
       chunkSize: targets.length,
       audience: audience.ids.length,
       link: link || null,
+      ...(body.confirm === true ? { confirmDuplicate: true } : {}),
+      blockedMarked,
       errors: errors.slice(0, 10),
       preview: html.slice(0, 120),
     })
-    return NextResponse.json({ ok: true, sent, failed, errors })
+    return NextResponse.json({ ok: true, sent, failed, errors, blockedMarked })
   } catch (e) {
     console.error('[panel/broadcast POST]', e)
     return err('Рассылка не выполнена', 500)
